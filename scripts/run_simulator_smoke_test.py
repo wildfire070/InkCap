@@ -34,6 +34,7 @@ THEMES = {
     "lyra-carousel": 4,
     "lyra_carousel": 4,
     "carousel": 4,
+    "dashboard": 6,
 }
 
 

@@ -359,14 +359,15 @@ bool selectPinnedSleepImage(SleepImageMode mode, SleepImageSelection& selection)
   return false;
 }
 
-bool selectRandomSleepImage(SleepImageMode mode, SleepImageSelection& selection) {
+bool selectRandomSleepImage(SleepImageMode mode, SleepImageSelection& selection, bool validateBmpHeaders = false,
+                            bool bmpOnly = false) {
   FsFile dir;
   std::string sleepDir;
   if (!openPreferredSleepDirectory(dir, sleepDir)) {
     return false;
   }
 
-  const bool allowPng = mode == SleepImageMode::Overlay;
+  const bool allowPng = mode == SleepImageMode::Overlay && !bmpOnly;
   // Keep one reservoir for every candidate and one that excludes recent images.
   // This avoids holding the whole directory in RAM or opening every BMP just to
   // parse its header before picking one.
@@ -400,6 +401,20 @@ bool selectRandomSleepImage(SleepImageMode mode, SleepImageSelection& selection)
     if (!isBmp && !isPng) {
       file.close();
       continue;
+    }
+
+    // The normal path defers this SD read until after selection so folders with
+    // many wallpapers stay fast. Only use the slower validation pass after a
+    // selected BMP failed to render.
+    if (isBmp && validateBmpHeaders) {
+      Bitmap bitmap(file);
+      const BmpReaderError parseResult = bitmap.parseHeaders();
+      if (parseResult != BmpReaderError::Ok) {
+        LOG_ERR("SLP", "Skipping invalid BMP sleep image %s/%.*s: %s", sleepDir.c_str(),
+                static_cast<int>(filename.size()), filename.data(), Bitmap::errorToString(parseResult));
+        file.close();
+        continue;
+      }
     }
 
     if (candidateCount == UINT16_MAX) {
@@ -499,22 +514,42 @@ void SleepActivity::onEnter() {
 }
 
 void SleepActivity::renderCustomSleepScreen() const {
-  SleepImageSelection selection;
-  if (selectPinnedSleepImage(SleepImageMode::Custom, selection) ||
-      selectRandomSleepImage(SleepImageMode::Custom, selection)) {
+  const auto tryRenderSelection = [this](const SleepImageSelection& selection) {
     FsFile file;
-    if (Storage.openFileForRead("SLP", selection.path, file)) {
-      LOG_INF("SLP", "Loading custom sleep image: %s", selection.path.c_str());
-      delay(100);
-      Bitmap bitmap(file, true);
-      if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-        renderBitmapSleepScreen(bitmap);
-        return;
-      }
-      LOG_ERR("SLP", "Failed to parse custom sleep BMP: %s", selection.path.c_str());
-    } else {
+    if (!Storage.openFileForRead("SLP", selection.path, file)) {
       LOG_ERR("SLP", "Failed to open custom sleep image: %s", selection.path.c_str());
+      return false;
     }
+
+    LOG_INF("SLP", "Loading custom sleep image: %s", selection.path.c_str());
+    delay(100);
+    Bitmap bitmap(file, true);
+    const BmpReaderError parseResult = bitmap.parseHeaders();
+    if (parseResult != BmpReaderError::Ok) {
+      LOG_ERR("SLP", "Failed to parse custom sleep BMP %s: %s", selection.path.c_str(),
+              Bitmap::errorToString(parseResult));
+      return false;
+    }
+
+    renderBitmapSleepScreen(bitmap);
+    return true;
+  };
+
+  SleepImageSelection selection;
+  if (selectPinnedSleepImage(SleepImageMode::Custom, selection) && tryRenderSelection(selection)) {
+    return;
+  }
+
+  if (selectRandomSleepImage(SleepImageMode::Custom, selection) && tryRenderSelection(selection)) {
+    return;
+  }
+
+  // A corrupt BMP should not make an otherwise valid custom folder fall back
+  // to the dark default screen. Re-scan only on this error path and choose
+  // from the files whose headers are valid.
+  if (!selection.path.empty() && selectRandomSleepImage(SleepImageMode::Custom, selection, true) &&
+      tryRenderSelection(selection)) {
+    return;
   }
 
   // Look for sleep.bmp on the root of the sd card to determine if we should
@@ -896,6 +931,17 @@ void SleepActivity::renderOverlaySleepScreen() const {
       return OverlayDrawResult::NotFound;
     }
 
+    // The reader activity has already released its document/layout state, and
+    // Page Overlay has captured the page framebuffer. Its active SD-font glyph
+    // cache is therefore regenerable and not needed for the final sleep frame.
+    // Free it before PNGdec requests its contiguous decode buffer.
+    const uint32_t freeBeforeRelease = ESP.getFreeHeap();
+    const uint32_t maxAllocBeforeRelease = ESP.getMaxAllocHeap();
+    if (renderer.releaseSdCardFontForLowMemory(SETTINGS.getReaderFontId())) {
+      LOG_DBG("SLP", "Released reader font cache for PNG overlay: free=%u->%u maxAlloc=%u->%u", freeBeforeRelease,
+              ESP.getFreeHeap(), maxAllocBeforeRelease, ESP.getMaxAllocHeap());
+    }
+
     constexpr size_t MIN_FREE_HEAP = 60 * 1024;  // PNG decoder ~42 KB + overhead
     if (ESP.getFreeHeap() < MIN_FREE_HEAP) {
       LOG_ERR("SLP", "Not enough heap for PNG overlay decoder: %u free, need %u for %s", ESP.getFreeHeap(),
@@ -964,6 +1010,18 @@ void SleepActivity::renderOverlaySleepScreen() const {
     trySelectedOverlay(selection);
   }
   if (!overlayDrawn && selectRandomSleepImage(SleepImageMode::Overlay, selection)) {
+    trySelectedOverlay(selection);
+  }
+
+  // Page Overlay can mix PNGs and BMPs. PNG decoding needs a sizeable
+  // temporary buffer while the reader page is still resident, so an otherwise
+  // valid PNG can fail on C3 devices. Try another folder image before using
+  // the root/default fallback: use BMP-only after a PNG failure, or validate
+  // BMP headers after a failed BMP selection.
+  if (!overlayDrawn && overlayCandidateFailed && !selection.path.empty() &&
+      selectRandomSleepImage(SleepImageMode::Overlay, selection,
+                             /*validateBmpHeaders=*/!selection.isPng,
+                             /*bmpOnly=*/selection.isPng)) {
     trySelectedOverlay(selection);
   }
 

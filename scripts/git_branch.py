@@ -3,9 +3,9 @@ PlatformIO pre-build script: inject git info into version defines.
 
   default:       1.1.0-dev+<branch>  (local development builds)
   production:    1.1.0               (when $CROSSINK_RELEASE_VERSION is set)
-  default RC:    1.1.0-rc+<hash>       (when $CROSSPOINT_RC_HASH is set)
+  default RC:    1.1.0-rc+<hash>       (when $CROSSINK_RC_HASH is set)
   test & debug:          1.2.6-<branch>+<5-char-hash>
-  gh_release_rc: 1.1.0-rc+<hash>       (hash from $CROSSPOINT_RC_HASH in CI,
+  gh_release_rc: 1.1.0-rc+<hash>       (hash from $CROSSINK_RC_HASH in CI,
                                         or from git locally)
 
 All other environments set CROSSINK_VERSION directly in platformio.ini.
@@ -116,7 +116,7 @@ def get_crossink_version(project_dir):
 
 
 def get_release_candidate_version(project_dir):
-    short_hash = os.environ.get('CROSSPOINT_RC_HASH') or get_git_short_hash(project_dir)
+    short_hash = os.environ.get('CROSSINK_RC_HASH') or get_git_short_hash(project_dir)
     return f'{get_crossink_version(project_dir)}-rc+{sanitize_version_component(short_hash)}'
 
 
@@ -132,7 +132,7 @@ def inject_version(env):
     pioenv = env['PIOENV']
 
     if pioenv == 'default':
-        if os.environ.get('CROSSPOINT_RC_HASH'):
+        if os.environ.get('CROSSINK_RC_HASH'):
             version_string = get_release_candidate_version(project_dir)
             print(f'CrossInk RC build version: {version_string}')
         elif os.environ.get('CROSSINK_RELEASE_VERSION'):
@@ -180,7 +180,7 @@ def inject_version(env):
         print(f'CrossInk test build version: {ci_version}{suffix}')
 
     elif pioenv == 'gh_release_rc':
-        # CI passes CROSSPOINT_RC_HASH as an env var; locally we derive it from git.
+        # CI passes CROSSINK_RC_HASH as an env var; locally we derive it from git.
         version_string = get_release_candidate_version(project_dir)
         env.Append(CPPDEFINES=[
             ('CROSSINK_VERSION', f'\\"{version_string}\\"'),

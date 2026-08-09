@@ -10,7 +10,7 @@ For focused reference material, see [Reader Features](./reader-features.md),
 [Controls](./controls.md), [SD Card Fonts](./sd-card-fonts.md),
 [File Transfer](./webserver.md), and [Troubleshooting](./troubleshooting.md).
 
-- [CrossInk User Guide](#CrossInk-user-guide)
+- [CrossInk User Guide](#crossink-user-guide)
   - [1. Hardware Overview](#1-hardware-overview)
     - [Button Layout](#button-layout)
     - [Taking a Screenshot](#taking-a-screenshot)
@@ -24,10 +24,6 @@ For focused reference material, see [Reader Features](./reader-features.md),
     - [3.4 Recent Books Screen](#34-recent-books-screen)
     - [3.5 File Transfer Screen](#35-file-transfer-screen)
     - [3.5.1 Calibre Wireless Transfers](#351-calibre-wireless-transfers)
-      - [Installing the Plugin in Calibre](#installing-the-plugin-in-calibre)
-      - [Configuring the CrossPoint Plugin in Calibre](#configuring-the-crosspoint-plugin-in-calibre)
-      - [Uploading Books](#uploading-books)
-      - [Removing a Book](#removing-a-book)
     - [3.6 Settings](#36-settings)
       - [3.6.1 Display](#361-display)
       - [3.6.2 Reader](#362-reader)
@@ -36,8 +32,9 @@ For focused reference material, see [Reader Features](./reader-features.md),
       - [3.6.5 OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries)
       - [3.6.6 Web Settings (Wi-Fi + OPDS)](#366-web-settings-wi-fi--opds)
       - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
-        - [Option A: Free Public Server (`sync.koreader.rocks`)](#option-a-free-public-server-synckoreaderrocks)
-        - [Option B: Self-Hosted Server (Docker Compose)](#option-b-self-hosted-server-docker-compose)
+        - [Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)](#option-a-crosspoint-sync-server-synccrosspointreadercom-default)
+        - [Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)](#option-b-legacy-public-koreader-server-synckoreaderrocks)
+        - [Option C: Self-Hosted Server (Docker Compose)](#option-c-self-hosted-server-docker-compose)
     - [3.7 Sleep Screen](#37-sleep-screen)
       - [Cover settings](#cover-settings)
       - [Custom images](#custom-images)
@@ -254,7 +251,8 @@ device model and build.
 
 - **Reader Dark Mode**, **Embedded Style**, **Images**, **Bionic Reading**, and
   **Guide Dots** are directly available from the Reader settings. See
-  [Reader Features](./reader-features.md) for their behavior.
+  [Reader Features](./reader-features.md) for their behavior, including the
+  [Bionic Reading](./reader-features.md#bionic-reading) guide.
 
 - **Touch Reader Controls**: Enable or disable touchscreen page turns and
   reader gestures on supported devices. **Disable Touchscreen** blocks touch
@@ -674,7 +672,7 @@ Bookmarks are stored as per-book `.bin` files in the `.crosspoint/bookmarks` fol
 
 ### 5.3 Dictionary
 
-Dictionary lookup supports word selection, recent per-book history, chained lookups from definitions, and per-book dictionary overrides. See the [Dictionary guide](./docs/dictionary.md) for installation and preparation instructions.
+Dictionary lookup supports word selection, recent per-book history, chained lookups from definitions, and per-book dictionary overrides. See the [Dictionary guide](./dictionary.md) for installation and preparation instructions.
 
 ## 6. Current Limitations & Roadmap
 

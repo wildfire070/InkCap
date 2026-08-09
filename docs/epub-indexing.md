@@ -15,10 +15,10 @@ The default is **Full Section**. Most books work well with it. Choose
 an entire chapter to open is more disruptive than seeing a short indexing wait
 later.
 
-| Method | What happens | Main benefit | Main tradeoff |
-| --- | --- | --- | --- |
-| Full Section | Builds and caches the whole chapter before it is shown. | Normal page turns within the chapter do not need more indexing. | A large uncached chapter can take a noticeable time to open. |
-| Incremental | Builds enough pages to show your current position, then continues in small background steps while you read. | You can begin reading a large chapter sooner. | If you reach pages that have not been built yet, CrossInk may briefly show **Indexing** while it catches up. |
+| Method       | What happens                                                                                                | Main benefit                                                    | Main tradeoff                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Full Section | Builds and caches the whole chapter before it is shown.                                                     | Normal page turns within the chapter do not need more indexing. | A large uncached chapter can take a noticeable time to open.                                                 |
+| Incremental  | Builds enough pages to show your current position, then continues in small background steps while you read. | You can begin reading a large chapter sooner.                   | If you reach pages that have not been built yet, CrossInk may briefly show **Indexing** while it catches up. |
 
 ## Full Section
 
@@ -93,7 +93,7 @@ or reading statistics.
 
 ## If A Book Is Still Slow Or Cannot Index
 
-Indexing Method changes *when* CrossInk performs layout work; it does not
+Indexing Method changes _when_ CrossInk performs layout work; it does not
 simplify the publisher's CSS, images, or tables. If a difficult EPUB is still
 slow or runs out of memory, try a lighter [EPUB Render Mode](./epub-render-modes.md)
-or optimize the EPUB before copying it to the device.
+or [optimize](https://inky.crossink.dev) the EPUB before copying it to the device.

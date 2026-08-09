@@ -520,13 +520,6 @@ void CrossPointWebServer::handleLogo() const {
 }
 
 void CrossPointWebServer::handleNotFound() const {
-  // CORS preflight: routes are registered per-method, so OPTIONS requests land
-  // here. The Access-Control-Allow-* headers are added by enableCORS().
-  if (server->method() == HTTP_OPTIONS) {
-    server->send(204, "text/plain", "");
-    return;
-  }
-
   // in AP mode, redirect unmatched browser/captive-portal requests to "/" so the OS auto-opens the browser
   // API requests (/api/*) still return 404 so XHR errors surface correctly
   // see https://en.wikipedia.org/wiki/Captive_portal#Detection
@@ -1309,6 +1302,11 @@ void CrossPointWebServer::handleGetSettings() const {
             }
           }
           doc["value"] = selected;
+        } else if (s.nameId == StrId::STR_FONT_SIZE && selectedSdFamily && s.valuePtr) {
+          const auto sizes = selectedSdFamily->availableSizes();
+          const uint8_t selectedPointSize = SETTINGS.*(s.valuePtr);
+          const auto it = std::find(sizes.begin(), sizes.end(), selectedPointSize);
+          doc["value"] = static_cast<int>(it == sizes.end() ? 0 : std::distance(sizes.begin(), it));
         } else if (s.valuePtr) {
           doc["value"] = static_cast<int>(enumDisplayIndexForRawValue(s, SETTINGS.*(s.valuePtr)));
         } else if (s.valueGetter) {

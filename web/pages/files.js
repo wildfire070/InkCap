@@ -2708,13 +2708,35 @@ function rewriteCollapsedSpineReferences(content, sourcePath, redirects) {
   return changed ? safeSerialize(doc, content) : content;
 }
 
+function rewriteSplitSectionReferences(content, sourcePath, anchorTargets) {
+  if (anchorTargets.size === 0) return content;
+  const doc = new DOMParser().parseFromString(content, "application/xml");
+  if (doc.querySelector("parsererror")) return content;
+  let changed = false;
+  for (const element of Array.from(doc.getElementsByTagName("*"))) {
+    for (const attribute of ["href", "xlink:href"]) {
+      const value = element.getAttribute(attribute);
+      if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value)) continue;
+      const [href, fragment = ""] = value.split(/#(.*)/s, 2);
+      if (!fragment) continue;
+      const targetPath = href ? resolvePath(sourcePath, decodeHref(href)) : sourcePath;
+      const partPath = anchorTargets.get(targetPath)?.get(decodeHref(fragment));
+      if (!partPath) continue;
+      element.setAttribute(attribute, `${relativeZipPath(sourcePath, partPath)}#${fragment}`);
+      changed = true;
+    }
+  }
+  return changed ? safeSerialize(doc, content) : content;
+}
+
 function splitLongXhtmlSections(xhtmlFiles, opfContent, opfPath, enabled) {
-  if (!enabled) return { files: xhtmlFiles, splitSections: {}, sourceSpineMap: null };
+  if (!enabled) return { files: xhtmlFiles, splitSections: {}, anchorTargets: new Map(), sourceSpineMap: null };
 
   const parser = new DOMParser();
   const serializer = new XMLSerializer();
   const out = {};
   const splitSections = {};
+  const anchorTargets = new Map();
   const originalSpineHrefs = parseOpfSpineHrefs(opfContent, opfPath);
   const spinePaths = new Set(originalSpineHrefs);
   const sourceByHref = {};
@@ -2808,6 +2830,8 @@ function splitLongXhtmlSections(xhtmlFiles, opfContent, opfPath, enabled) {
     }
 
     splitSections[path] = [];
+    const sectionAnchors = new Map();
+    anchorTargets.set(path, sectionAnchors);
     const tagOffsets = new Map();
     chunks.forEach((chunk, partIndex) => {
       const partPath = makeSectionSplitPath(path, partIndex);
@@ -2816,6 +2840,10 @@ function splitLongXhtmlSections(xhtmlFiles, opfContent, opfPath, enabled) {
       for (const childIndex of splitContainer.childPath) partContainer = partContainer.childNodes[childIndex];
       while (partContainer.firstChild) partContainer.removeChild(partContainer.firstChild);
       for (const node of chunk) partContainer.appendChild(partDoc.importNode(node, true));
+      for (const element of Array.from(partDoc.getElementsByTagName("*"))) {
+        const anchor = element.getAttribute("id") || (localName(element) === "a" ? element.getAttribute("name") : null);
+        if (anchor && !sectionAnchors.has(anchor)) sectionAnchors.set(anchor, partPath);
+      }
       out[partPath] = safeSerialize(partDoc, content);
       splitSections[path].push(partPath);
       const rangesByName = new Map();
@@ -2839,6 +2867,7 @@ function splitLongXhtmlSections(xhtmlFiles, opfContent, opfPath, enabled) {
   return {
     files: out,
     splitSections,
+    anchorTargets,
     sourceSpineMap: hasSplits ? { version: 1, spineCount: originalSpineHrefs.length, sourceByHref } : null,
   };
 }
@@ -4241,6 +4270,13 @@ async function convertEpubFile(file, progressCallback) {
   const splitLongSections = !!document.getElementById("splitLongSectionsToggle")?.checked;
   const sectionSplitResult = splitLongXhtmlSections(processedXhtmlFiles, opfContent, opfPath, splitLongSections);
   processedXhtmlFiles = sectionSplitResult.files;
+  for (const [xhtmlPath, content] of Object.entries(processedXhtmlFiles)) {
+    processedXhtmlFiles[xhtmlPath] = rewriteSplitSectionReferences(
+      content,
+      xhtmlPath,
+      sectionSplitResult.anchorTargets,
+    );
+  }
   if (Object.keys(sectionSplitResult.splitSections).length > 0) {
     const splitPartCount = Object.values(sectionSplitResult.splitSections).reduce(
       (sum, parts) => sum + parts.length,
@@ -4261,11 +4297,12 @@ async function convertEpubFile(file, progressCallback) {
     if (fileObj.dir || path === "mimetype") continue;
     const low = path.toLowerCase();
     if (low.endsWith(".ncx") || low.match(/\.(xml|svg)$/)) {
-      extraTextFiles[path] = rewriteCollapsedSpineReferences(
+      const content = rewriteCollapsedSpineReferences(
         scrubEpubTextResource(path, await safeReadText(fileObj)),
         path,
         collapseResult.redirects,
       );
+      extraTextFiles[path] = rewriteSplitSectionReferences(content, path, sectionSplitResult.anchorTargets);
     }
   }
 
@@ -4278,6 +4315,7 @@ async function convertEpubFile(file, progressCallback) {
     const opfDir = opfPath.includes("/") ? opfPath.substring(0, opfPath.lastIndexOf("/")) : "";
     t = fixOPF(t, opfContent, opfDir, splitImages);
     t = addSplitSectionsToOpf(t, opfPath, sectionSplitResult.splitSections);
+    t = rewriteSplitSectionReferences(t, opfPath, sectionSplitResult.anchorTargets);
     if (t !== opfContent) logFix("OPF", "manifest updated");
     out.file(opfPath, t, DEFLATE_OPTS);
 

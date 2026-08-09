@@ -8,11 +8,6 @@
 #include <XteinkDetect.h>
 #include <esp_sleep.h>
 
-#ifdef STICKY_SIDE_BUTTON_DIAGNOSTICS
-#include <driver/gpio.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#endif
 #if FREEINK_MCU_S3
 #include <soc/usb_serial_jtag_reg.h>
 #endif
@@ -22,114 +17,6 @@ HalGPIO gpio;
 
 namespace {
 constexpr unsigned long BUTTON_DEBOUNCE_REPOLL_MS = 6;
-
-#ifdef STICKY_SIDE_BUTTON_DIAGNOSTICS
-constexpr uint8_t SIDE_BUTTON_DIAGNOSTIC_QUEUE_SIZE = 32;
-
-struct SideButtonDiagnosticEdge {
-  TickType_t tick;
-  int8_t pin;
-  uint8_t level;
-};
-
-DRAM_ATTR SideButtonDiagnosticEdge sideButtonDiagnosticEdges[SIDE_BUTTON_DIAGNOSTIC_QUEUE_SIZE] = {};
-DRAM_ATTR volatile uint8_t sideButtonDiagnosticReadIndex = 0;
-DRAM_ATTR volatile uint8_t sideButtonDiagnosticWriteIndex = 0;
-DRAM_ATTR volatile uint32_t sideButtonDiagnosticDroppedEdges = 0;
-DRAM_ATTR portMUX_TYPE sideButtonDiagnosticMux = portMUX_INITIALIZER_UNLOCKED;
-TickType_t sideButtonDiagnosticLastUpdateTick = 0;
-
-void IRAM_ATTR recordSideButtonDiagnosticEdge(void* context) {
-  const int8_t pin = static_cast<int8_t>(reinterpret_cast<intptr_t>(context));
-  const SideButtonDiagnosticEdge edge = {xTaskGetTickCountFromISR(), pin,
-                                         static_cast<uint8_t>(gpio_get_level(static_cast<gpio_num_t>(pin)))};
-
-  portENTER_CRITICAL_ISR(&sideButtonDiagnosticMux);
-  const uint8_t nextWriteIndex =
-      static_cast<uint8_t>((sideButtonDiagnosticWriteIndex + 1) % SIDE_BUTTON_DIAGNOSTIC_QUEUE_SIZE);
-  if (nextWriteIndex == sideButtonDiagnosticReadIndex) {
-    sideButtonDiagnosticDroppedEdges = sideButtonDiagnosticDroppedEdges + 1;
-  } else {
-    sideButtonDiagnosticEdges[sideButtonDiagnosticWriteIndex] = edge;
-    sideButtonDiagnosticWriteIndex = nextWriteIndex;
-  }
-  portEXIT_CRITICAL_ISR(&sideButtonDiagnosticMux);
-}
-
-bool popSideButtonDiagnosticEdge(SideButtonDiagnosticEdge& edge) {
-  bool hasEdge = false;
-  portENTER_CRITICAL(&sideButtonDiagnosticMux);
-  if (sideButtonDiagnosticReadIndex != sideButtonDiagnosticWriteIndex) {
-    edge = sideButtonDiagnosticEdges[sideButtonDiagnosticReadIndex];
-    sideButtonDiagnosticReadIndex =
-        static_cast<uint8_t>((sideButtonDiagnosticReadIndex + 1) % SIDE_BUTTON_DIAGNOSTIC_QUEUE_SIZE);
-    hasEdge = true;
-  }
-  portEXIT_CRITICAL(&sideButtonDiagnosticMux);
-  return hasEdge;
-}
-
-uint32_t takeDroppedSideButtonDiagnosticEdges() {
-  portENTER_CRITICAL(&sideButtonDiagnosticMux);
-  const uint32_t dropped = sideButtonDiagnosticDroppedEdges;
-  sideButtonDiagnosticDroppedEdges = 0;
-  portEXIT_CRITICAL(&sideButtonDiagnosticMux);
-  return dropped;
-}
-
-const char* sideButtonDiagnosticName(const int8_t pin) { return pin == BoardConfig::ACTIVE.input.up ? "up" : "down"; }
-
-void beginStickySideButtonDiagnostics() {
-  if (!BoardConfig::isSticky()) return;
-
-  const int8_t pins[] = {BoardConfig::ACTIVE.input.up, BoardConfig::ACTIVE.input.down};
-  for (const int8_t pin : pins) {
-    if (pin >= 0) {
-      attachInterruptArg(pin, recordSideButtonDiagnosticEdge, reinterpret_cast<void*>(static_cast<intptr_t>(pin)),
-                         CHANGE);
-    }
-  }
-  sideButtonDiagnosticLastUpdateTick = xTaskGetTickCount();
-  LOG_INF("BTNDIAG", "Sticky raw side-button diagnostics enabled (up=%d down=%d)", BoardConfig::ACTIVE.input.up,
-          BoardConfig::ACTIVE.input.down);
-}
-
-void logStickySideButtonDiagnostics(const InputManager& inputManager) {
-  if (!BoardConfig::isSticky()) return;
-
-  const TickType_t updateTick = xTaskGetTickCount();
-  const unsigned long pollGapMs =
-      static_cast<unsigned long>(updateTick - sideButtonDiagnosticLastUpdateTick) * portTICK_PERIOD_MS;
-  sideButtonDiagnosticLastUpdateTick = updateTick;
-
-  SideButtonDiagnosticEdge edge{};
-  while (popSideButtonDiagnosticEdge(edge)) {
-    const unsigned long edgeMs = static_cast<unsigned long>(edge.tick) * portTICK_PERIOD_MS;
-    const unsigned long observedAfterMs = static_cast<unsigned long>(updateTick - edge.tick) * portTICK_PERIOD_MS;
-    LOG_INF("BTNDIAG", "raw %s %s edge_ms=%lu observed_after_ms=%lu poll_gap_ms=%lu",
-            sideButtonDiagnosticName(edge.pin), edge.level == LOW ? "pressed" : "released", edgeMs, observedAfterMs,
-            pollGapMs);
-  }
-
-  const uint32_t droppedEdges = takeDroppedSideButtonDiagnosticEdges();
-  if (droppedEdges > 0) {
-    LOG_ERR("BTNDIAG", "raw edge buffer overflow: dropped=%lu", static_cast<unsigned long>(droppedEdges));
-  }
-
-  const uint8_t buttons[] = {InputManager::BTN_UP, InputManager::BTN_DOWN};
-  const char* const names[] = {"up", "down"};
-  for (size_t i = 0; i < 2; ++i) {
-    if (inputManager.wasPressed(buttons[i])) {
-      LOG_INF("BTNDIAG", "manager %s pressed poll_gap_ms=%lu held_ms=%lu", names[i], pollGapMs,
-              inputManager.getHeldTime());
-    }
-    if (inputManager.wasReleased(buttons[i])) {
-      LOG_INF("BTNDIAG", "manager %s released poll_gap_ms=%lu held_ms=%lu", names[i], pollGapMs,
-              inputManager.getHeldTime());
-    }
-  }
-}
-#endif
 
 // The X3-vs-X4 fingerprint (freeink::detectXteinkVerdict) only makes sense on
 // Xteink hardware; other boards keep their compile-time BoardConfig profile.
@@ -276,9 +163,6 @@ void HalGPIO::begin() {
   }
 #endif
   inputMgr.begin();
-#ifdef STICKY_SIDE_BUTTON_DIAGNOSTICS
-  beginStickySideButtonDiagnostics();
-#endif
 }
 
 void HalGPIO::update() {
@@ -290,9 +174,6 @@ void HalGPIO::update() {
     delay(BUTTON_DEBOUNCE_REPOLL_MS);
     inputMgr.update();
   }
-#ifdef STICKY_SIDE_BUTTON_DIAGNOSTICS
-  logStickySideButtonDiagnostics(inputMgr);
-#endif
   const bool connected = isUsbConnected();
   usbStateChanged = (connected != lastUsbConnected);
   lastUsbConnected = connected;

@@ -18,7 +18,6 @@ body:
         - X4
         - X3
         - Seeed Sticky
-        - Both
     validations:
       required: true
 

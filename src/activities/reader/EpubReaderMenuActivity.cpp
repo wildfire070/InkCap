@@ -290,8 +290,11 @@ void EpubReaderMenuActivity::focusTabRow() {
   topIndex = 0;
 }
 
-void EpubReaderMenuActivity::cycleActiveTab() {
-  const auto nextTabIndex = ButtonNavigator::nextIndex(static_cast<int>(activeTabIndex()), MENU_TAB_COUNT);
+void EpubReaderMenuActivity::cycleActiveTab() { moveActiveTab(true); }
+
+void EpubReaderMenuActivity::moveActiveTab(const bool forward) {
+  const int nextTabIndex = forward ? ButtonNavigator::nextIndex(static_cast<int>(activeTabIndex()), MENU_TAB_COUNT)
+                                   : ButtonNavigator::previousIndex(static_cast<int>(activeTabIndex()), MENU_TAB_COUNT);
   activeTab = static_cast<MenuTab>(nextTabIndex);
   focusTabRow();
   requestUpdate();
@@ -557,6 +560,8 @@ void EpubReaderMenuActivity::loop() {
   buttonNavigator.onPreviousRelease([this, menuCount, &moveSelection] {
     moveSelection(ButtonNavigator::previousIndex(selectedIndex + 1, menuCount + 1));
   });
+  buttonNavigator.onNextContinuous([this] { moveActiveTab(true); });
+  buttonNavigator.onPreviousContinuous([this] { moveActiveTab(false); });
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     activateSelectedItem();

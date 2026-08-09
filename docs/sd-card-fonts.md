@@ -62,68 +62,36 @@ There are three ways to install fonts:
 ## Dictionary Fonts
 
 EPUB books can use a different installed SD-card family for dictionary definitions.
-Open **Reader Options > Font Options > Dictionary Font** while reading and choose
-an installed family, or leave it on **Use Reader Font**. Use the following
-**Dictionary Font Size** setting to select one of that family's installed point
-sizes, or leave it on **Use Reader Size**. Both choices are saved per book. If a
+This can be set globally or per-book via `Font Options`. If a
 saved point size is no longer available, CrossInk chooses the closest file from
-the dictionary family.
+the dictionary family. If the device experiences low available RAM, you may see the
+dictionary font fall back to your reader font. This is normal.
 
-CrossInk keeps only one SD-card font family resident. It unloads the reader
-family before loading the dictionary font and restores the reader family after
-the lookup. A missing dictionary selection falls back to the reader font without
-being erased, so reinstalling the family restores it automatically.
+### Generating dictionary font families
 
-## CJK in the User Interface
+Use the dictionary-specific builder to generate the complete family catalog with
+the extra coverage used by dictionary definitions:
 
-The built-in UI fonts are Latin-only, so by default the interface (book titles
-in the library, file names in the browser, list rows, headers) shows
-replacement boxes for Chinese/Japanese/Korean text even when book *content*
-renders correctly with a selected SD-card font.
+    python3 -m pip install -r lib/EpdFont/scripts/requirements.txt
+    python3 lib/EpdFont/scripts/build-dictionary-fonts.py \
+      --output-dir ./generated-dictionary-fonts \
+      --clean \
+      --jobs 2
 
-To avoid shipping a large CJK glyph set in flash, CrossPoint instead reuses the
-SD-card font you already selected: when a UI string contains a CJK character
-the built-in font cannot draw, that whole string is rendered with your selected
-SD-card font instead.
+The dictionary build includes the `reading` ranges and the built-in ranges, plus
+IPA and phonetic-extension characters (`U+0250–U+02FF` and `U+1D00–U+1DBF`) and
+combining-mark ranges (`U+1DC0–U+1DFF`, `U+20D0–U+20FF`, and
+`U+FE20–U+FE2F`).
 
-The fallback is **size-matched**. The built-in UI fonts render at 8 pt
-(small/author lines), 10 pt (list rows) and 12 pt (book-cover titles, headers),
-so CrossPoint loads your SD family at those sizes too and maps each UI font to
-its same-size SD font. CJK book names therefore appear at the same size as the
-Latin text around them. For this to work the family must contain `.cpfont`
-files at sizes **8, 10 and 12** (in addition to the reader sizes 12–18); any UI
-size missing from the family simply keeps showing boxes for CJK at that size.
-
-When converting your own font, include the UI sizes:
-
-    python3 lib/EpdFont/scripts/fontconvert_sdcard.py \
-      MyCJKFont-Regular.otf \
-      --intervals cjk \
-      --sizes 8,10,12,14,16,18 \
-      --style regular \
-      --name MyCJKFont \
-      --output-dir ./MyCJKFont/
-
-What this means in practice:
-
-- Select a CJK-capable SD font under **Settings > Reader > Font Family**
-  (see [Installing Fonts](#installing-fonts) and the `cjk` / `hangul` presets
-  under [Converting Custom Fonts](#converting-custom-fonts)). That single
-  selection drives both book content *and* size-matched CJK fallback in the UI.
-- Pure-Latin UI strings keep the crisp built-in font; only strings that
-  actually contain CJK are routed to the SD font.
-- The fallback is per *string*, not per glyph: a mixed title such as
-  `三体 Vol.1` renders entirely in the SD font (including the Latin part). If
-  that SD font is a `Mono` family, the Latin portion will appear half/full
-  width.
-- If no SD font is selected (a built-in reading font is active), there is no
-  CJK fallback and the UI again shows boxes for CJK — pick a CJK SD font to
-  restore it.
+The default output is `../crossink-fonts/dictionary-fonts`. Use a separate
+`--output-dir` for personal builds, because `--clean` removes the selected output
+directory before generating the fonts. The output contains family folders and ZIP
+archives; copy a family folder or unzip its archive into `/.fonts/` or `/fonts/`
+on the SD card. Use `--only FamilyA,FamilyB` to generate selected families.
 
 ## Available Pre-Built Fonts
 
-The current list of pre-built fonts is maintained in the
-[CrossInk Fonts](https://github.com/uxjulia/crossink-fonts) repository. Device-initiated downloads use the versioned font manifest published for the current `.cpfont` format.
+You can view pre-built fonts available for download at [Inky](https://inky.crossink.dev/#downloads).
 
 ## Converting Custom Fonts with CrossPoint's Font Builder
 

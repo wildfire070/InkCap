@@ -22,7 +22,9 @@ Open the reader menu and select **Reader Options** to adjust settings such as:
 - Margins
 - Alignment
 - Image rendering
-- Bionic Reading / Guide Dots
+- [Publisher Page Numbers](#publisher-page-numbers)
+- [Stable Page Numbers](#stable-page-numbers), when the book includes CrossInk reference metadata
+- [Bionic Reading](#bionic-reading) / Guide Dots
 - Dark Reader Mode
 
 Changes take effect immediately.
@@ -30,6 +32,45 @@ Changes take effect immediately.
 For books that are slow to index or fail because of complex publisher styling,
 see [EPUB Indexing Methods](./epub-indexing.md) and
 [EPUB Render Modes](./epub-render-modes.md).
+
+## Bionic Reading
+
+Bionic Reading is a reading aid that bolds the first portion of each word,
+guiding your eyes to natural fixation points and helping you read faster with
+less effort. Some readers, particularly those with ADHD, find it helps them
+stay engaged with the text and reduces mind-wandering.
+
+### Enabling Bionic Reading
+
+1. Open **Settings > Reader**.
+2. Toggle **Bionic Reading** on.
+
+Toggling the setting triggers a re-index of the current book, just like changing
+font settings. Once indexing is complete, page turns proceed as normal. No
+changes are made to the EPUB file.
+
+### Examples
+
+<img src="./images/bionic-reading/bionic-reading.jpg" height="500" alt="Comparison of the same page with and without Bionic Reading enabled" />
+
+_Left: Bionic Reading off. Right: Bionic Reading on. Both using Literata._
+
+<img src="./images/bionic-reading/bionic-reading-notoserif.jpg" height="500" alt="Bionic Reading with Noto Serif font" />
+
+_Bionic Reading with Noto Serif font._
+
+<img src="./images/bionic-reading/bionic-reading-merriweather.jpg" height="500" alt="Bionic Reading with Merriweather font" />
+
+_Bionic Reading with Merriweather font._
+
+<img src="./images/bionic-reading/bionic-reading-atkinson.jpg" height="500" alt="Bionic Reading with Atkinson Hyperlegible Next font" />
+
+_Bionic Reading with Atkinson Hyperlegible Next font._
+
+### Notes
+
+Bionic Reading only applies to regular body text. Already-bold text, including
+headings and emphasis, is left unchanged.
 
 ## Font Sizes And Downloadable Font Ranges
 
@@ -65,6 +106,45 @@ Open the reader menu, then select **Reader Options > Font Options > Word
 Spacing**. The current EPUB is laid out again when you change this setting, so
 the number and positions of pages may change. Word Spacing is not available for
 TXT books.
+
+## Publisher Page Numbers
+
+Publisher Page Numbers show page labels supplied by the EPUB, such as the
+printed page numbers from a physical edition. When the book includes labeled
+page-break markers, CrossInk displays those labels in the reader margin beside
+the matching content.
+
+To enable them, open the reader menu and select **Reader Options > Publisher
+Page Numbers**. If an EPUB does not contain labeled page-break markers, there
+are no publisher page numbers for CrossInk to display.
+
+Publisher page markers are preserved by **CrossInk Default** and **Balanced**
+render modes. **Light** and **Safe Mode** omit them when simplifying a difficult
+book's layout.
+
+## Stable Page Numbers
+
+Stable Page Numbers show a consistent reference page number in the reader's
+status bar, such as `120/540`. They are calculated from fixed reference-page
+metadata in the EPUB instead of the current screen layout, so they remain
+consistent when you change fonts, spacing, orientation, or indexing mode.
+
+To enable them:
+
+1. Open the reader menu and select **Reader Options**.
+2. Select **Customize Status Bar**.
+3. Toggle **Stable Page Numbers** on.
+
+The option appears only when the current EPUB contains valid CrossInk reference
+metadata. To create that metadata, optimize the EPUB in the CrossInk web
+interface or with [Inky](https://inky.crossink.dev) before uploading it to the reader.
+In the optimizer's settings, the **Characters per Page** controls the reference-page size; the default
+is 1,500 characters. Lower values create more reference pages, while higher
+values create fewer.
+
+Stable Page Numbers are not publisher or printed-edition page numbers. Use
+[Publisher Page Numbers](#publisher-page-numbers) when you want the page labels
+provided by the book itself.
 
 ## Guide Dots
 

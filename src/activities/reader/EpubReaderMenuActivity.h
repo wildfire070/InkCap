@@ -99,6 +99,7 @@ class EpubReaderMenuActivity final : public Activity {
   [[nodiscard]] const std::vector<MenuItem>& activeMenuItems() const;
   [[nodiscard]] size_t activeTabIndex() const { return static_cast<size_t>(activeTab); }
   void cycleActiveTab();
+  void moveActiveTab(bool forward);
   void focusTabRow();
   void finishCancelled();
   bool activateSelectedItem();
