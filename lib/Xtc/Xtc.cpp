@@ -125,11 +125,20 @@ bool Xtc::hasChapters() const {
   return parser->hasChapters();
 }
 
-xtc::ChapterListView Xtc::getChapters() {
-  if (!loaded || !parser) {
-    return {};
-  }
-  return parser->getChapters();
+size_t Xtc::getChapterCount() const {
+  return loaded && parser ? const_cast<xtc::XtcParser*>(parser.get())->getChapterCount() : 0;
+}
+
+size_t Xtc::getChapters(const size_t firstIndex, xtc::ChapterInfo* chapters, const size_t capacity) const {
+  return loaded && parser ? const_cast<xtc::XtcParser*>(parser.get())->getChapters(firstIndex, chapters, capacity) : 0;
+}
+
+bool Xtc::getChapter(const size_t index, xtc::ChapterInfo& chapter) const {
+  return loaded && parser && const_cast<xtc::XtcParser*>(parser.get())->getChapter(index, chapter);
+}
+
+bool Xtc::getChapterForPage(const uint32_t page, xtc::ChapterInfo& chapter, size_t* chapterIndex) const {
+  return loaded && parser && const_cast<xtc::XtcParser*>(parser.get())->getChapterForPage(page, chapter, chapterIndex);
 }
 
 std::string Xtc::getCoverBmpPath() const { return cachePath + "/cover.bmp"; }

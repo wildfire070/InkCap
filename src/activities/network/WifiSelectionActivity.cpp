@@ -1138,7 +1138,8 @@ void WifiSelectionActivity::render(RenderLock&&) {
       break;  // Handled by early return above
   }
 
-  renderer.displayBuffer(screenTransitionRefresh.modeFor(static_cast<uint8_t>(state)));
+  // Entry gets one clean refresh; scan/list/connect changes use differential refresh.
+  renderer.displayBuffer(screenTransitionRefresh.modeFor(0));
 }
 
 void WifiSelectionActivity::listScreen(UiApp::ScreenType& screen, void* user) {

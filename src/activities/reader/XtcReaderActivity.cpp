@@ -159,7 +159,7 @@ void XtcReaderActivity::onExit() {
 }
 
 void XtcReaderActivity::openReaderMenu() {
-  const bool hasChapters = xtc->hasChapters() && !xtc->getChapters().empty();
+  const bool hasChapters = xtc->hasChapters() && xtc->getChapterCount() > 0;
   pauseReadingStatsTimer("reader_menu");
   startActivityForResult(
       std::make_unique<XtcReaderMenuActivity>(renderer, mappedInput, xtc->getTitle(), hasChapters, stats.isCompleted),
@@ -573,7 +573,7 @@ float XtcReaderActivity::getCurrentBookProgressPercent() const {
 }
 
 void XtcReaderActivity::openChapterSelection() {
-  if (!xtc || !xtc->hasChapters() || xtc->getChapters().empty()) {
+  if (!xtc || !xtc->hasChapters() || xtc->getChapterCount() == 0) {
     resumeReadingStatsTimer("chapter_selection_unavailable");
     requestUpdate();
     return;
@@ -784,21 +784,17 @@ XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo() const {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
-  const auto chapters = xtc->getChapters();
-  const auto chapterIt = std::find_if(chapters.begin(), chapters.end(), [this](const xtc::ChapterInfo& chapter) {
-    return currentPage >= chapter.startPage && currentPage <= chapter.endPage;
-  });
-
-  if (chapterIt == chapters.end() || chapterIt->endPage < chapterIt->startPage) {
+  xtc::ChapterInfo chapter{};
+  if (!xtc->getChapterForPage(currentPage, chapter) || chapter.endPage < chapter.startPage) {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
   if (statusBar.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
-    title = chapterIt->name[0] == '\0' ? tr(STR_UNNAMED) : chapterIt->name;
+    title = chapter.name[0] == '\0' ? tr(STR_UNNAMED) : chapter.name;
   }
 
-  return StatusBarInfo{static_cast<int>(currentPage - chapterIt->startPage) + 1,
-                       static_cast<int>(chapterIt->endPage - chapterIt->startPage) + 1, std::move(title)};
+  return StatusBarInfo{static_cast<int>(currentPage - chapter.startPage) + 1,
+                       static_cast<int>(chapter.endPage - chapter.startPage) + 1, std::move(title)};
 }
 
 void XtcReaderActivity::renderStatusBarOverlay(const StatusBarOverlayPosition position) const {

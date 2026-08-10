@@ -43,7 +43,14 @@ std::string EndOfBookOptions::fullPath(const size_t index) const {
 }
 
 EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputManager& input, std::string* openPath) {
-  if (input.wasReleased(MappedInputManager::Button::Confirm)) {
+  const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
+  int tappedIndex = -1;
+  const bool itemTapped = input.wasItemTapped(tappedIndex) && tappedIndex >= 0 && tappedIndex < itemCount;
+  if (itemTapped) {
+    selector = tappedIndex;
+  }
+
+  if (itemTapped || input.wasReleased(MappedInputManager::Button::Confirm)) {
     if (selector < static_cast<int>(names.size())) {
       if (openPath) {
         *openPath = fullPath(selector);
@@ -65,7 +72,6 @@ EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputMana
   const auto sideTriggered = [&](const MappedInputManager::Button button) {
     return sideUsePress ? input.wasPressed(button) : input.wasReleased(button);
   };
-  const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
   if (sideTriggered(MappedInputManager::Button::PageBack) || input.wasReleased(MappedInputManager::Button::Left)) {
     selector = ButtonNavigator::previousIndex(selector, itemCount);  // wraps to the bottom
     return Action::Redraw;

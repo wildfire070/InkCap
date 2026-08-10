@@ -7,6 +7,16 @@
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- Font Family choices now identify built-in and SD-card fonts by their available point-size ranges.
+
+### Fixed
+
+- Network connections no longer trigger repeated full-panel flashes.
+- Dictionary word selection now follows the physical front-button direction in counter-clockwise landscape mode.
+- End-of-book suggestions can now be opened by tapping them on touch devices.
+- Dictionary font switches now retry after releasing the reader font when memory is tight.
+- XTC table of contents now includes every available page entry, so large books can jump beyond the first 128 pages.
+- Saved clipping highlights now remain accurate when a font or font-size change reflows a word across an inserted hyphen.
 
 ## [v1.5.0] - 2026-08-08
 

@@ -37,6 +37,7 @@
 #include "html/StyleCss.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
+#include "util/FontFamilyLabel.h"
 #include "util/StringUtils.h"
 
 namespace {
@@ -1314,10 +1315,11 @@ void CrossPointWebServer::handleGetSettings() const {
         }
         JsonArray options = doc["options"].to<JsonArray>();
         if (s.nameId == StrId::STR_FONT_FAMILY && !fontFamilies.empty()) {
-          options.add(I18N.get(StrId::STR_LEXEND_DECA));
-          options.add(I18N.get(StrId::STR_BITTER));
+          constexpr FontFamilyPointSizeRange builtinRange{10, 16};
+          options.add(fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange));
+          options.add(fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange));
           for (const auto& family : fontFamilies) {
-            options.add(family.name);
+            options.add(fontFamilyLabel(family.name, fontFamilyPointSizeRange(family)));
           }
         } else if (s.nameId == StrId::STR_FONT_SIZE && selectedSdFamily) {
           const auto sizes = selectedSdFamily->availableSizes();
