@@ -10,13 +10,12 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #include <algorithm>
 #include <cstring>
-
-#include "Memory/Memory.h"
 
 namespace {
 void yieldDuringThumbnail(uint8_t& rowsSinceYield) {

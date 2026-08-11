@@ -4001,13 +4001,14 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
     case CrossPointSettings::LONG_MENU_SLEEP:
       enterDeepSleep();
       break;
-    case CrossPointSettings::LONG_MENU_CHANGE_FONT:
+    case CrossPointSettings::LONG_MENU_CHANGE_FONT: {
       const CrossPointSettings::FONT_SIZE effectiveSize = SETTINGS.getEffectiveReaderFontSize();
       SETTINGS.fontFamily = (SETTINGS.fontFamily + 1) % CrossPointSettings::FONT_FAMILY_COUNT;
       SETTINGS.sdFontFamilyName[0] = '\0';
       SETTINGS.readerFontPointSize = CrossPointSettings::getReaderFontPointSize(effectiveSize);
       reindexCurrentSection();
       break;
+    }
     case CrossPointSettings::LONG_MENU_TOGGLE_GUIDE_DOTS:
       SETTINGS.guideReadingEnabled = !SETTINGS.guideReadingEnabled;
       reindexCurrentSection();
