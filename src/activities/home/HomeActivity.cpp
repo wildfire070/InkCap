@@ -872,6 +872,7 @@ void HomeActivity::onEnter() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int recentBooksToLoad =
       std::min(kMaxCachedBooks, std::max(metrics.homeRecentBooksCount, HOME_BOOK_SWAP_RECENT_COUNT));
+  RECENT_BOOKS.ensureLoaded();
   loadRecentBooks(recentBooksToLoad);
 
   if (!APP_STATE.openEpubPath.empty()) {

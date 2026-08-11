@@ -1357,6 +1357,9 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   // Full repaint path. The framebuffer retains the book pixels outside the
   // opaque, stable modal, so ordinary definition page turns only repaint the
   // modal. Rebuild the book after another screen or overlay disturbed it.
+  if (hasModalBackground() && !isWordSelectMode && wordSelectHintsVisible_) {
+    modalBackgroundNeedsRedraw_ = true;
+  }
   if (hasModalBackground()) {
     redrawModalBackground();
   } else {
@@ -1576,6 +1579,7 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
     }
 
     DictUtils::drawWordSelectButtonHints(renderer, mappedInput, navigator);
+    wordSelectHintsVisible_ = true;
     displayModalBuffer();
 
     prevHighlightIdx_ = currIdx;
@@ -1591,9 +1595,10 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   // Button hints
   const char* btn2 = inlineFailureFeedback ? tr(STR_DONE) : (showLookupButton ? tr(STR_LOOKUP_SHORT) : "");
   const char* btn3 = showLookupButton ? tr(STR_DICT_SWITCH) : "";
-  const char* btn4 = "";
+  const char* btn4 = nullptr;
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, btn3, btn4);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  wordSelectHintsVisible_ = false;
 
   if (hasModalBackground()) {
     displayModalBuffer();

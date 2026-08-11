@@ -150,12 +150,13 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(FsFile& file
 }
 
 bool TableFragmentCell::serialize(FsFile& file) const {
-  if (lines.size() > MAX_TABLE_LINES_PER_CELL) {
-    LOG_ERR("PTB", "Serialization failed: cell line count %u exceeds maximum", static_cast<uint32_t>(lines.size()));
+  if (colSpan == 0 || colSpan > MAX_TABLE_CELLS_PER_ROW || lines.size() > MAX_TABLE_LINES_PER_CELL) {
+    LOG_ERR("PTB", "Serialization failed: invalid cell span/line count (span=%u lines=%u)", colSpan,
+            static_cast<uint32_t>(lines.size()));
     return false;
   }
 
-  if (!serialization::tryWritePod(file, isHeader) ||
+  if (!serialization::tryWritePod(file, isHeader) || !serialization::tryWritePod(file, colSpan) ||
       !serialization::tryWritePod(file, static_cast<uint8_t>(lines.size()))) {
     LOG_ERR("PTB", "Serialization failed: could not write table cell header");
     return false;
@@ -171,12 +172,14 @@ bool TableFragmentCell::serialize(FsFile& file) const {
 
 bool TableFragmentCell::deserialize(FsFile& file, TableFragmentCell& outCell) {
   uint8_t lineCount = 0;
-  if (!serialization::tryReadPod(file, outCell.isHeader) || !serialization::tryReadPod(file, lineCount)) {
+  if (!serialization::tryReadPod(file, outCell.isHeader) || !serialization::tryReadPod(file, outCell.colSpan) ||
+      !serialization::tryReadPod(file, lineCount)) {
     LOG_ERR("PTB", "Deserialization failed: truncated table cell metadata");
     return false;
   }
-  if (lineCount > MAX_TABLE_LINES_PER_CELL) {
-    LOG_ERR("PTB", "Deserialization failed: cell line count %u exceeds maximum", lineCount);
+  if (outCell.colSpan == 0 || outCell.colSpan > MAX_TABLE_CELLS_PER_ROW || lineCount > MAX_TABLE_LINES_PER_CELL) {
+    LOG_ERR("PTB", "Deserialization failed: invalid cell span/line count (span=%u lines=%u)", outCell.colSpan,
+            lineCount);
     return false;
   }
 
@@ -197,6 +200,14 @@ bool TableFragmentRow::serialize(FsFile& file) const {
   if (cells.size() > MAX_TABLE_CELLS_PER_ROW) {
     LOG_ERR("PTB", "Serialization failed: row cell count %u exceeds maximum", static_cast<uint32_t>(cells.size()));
     return false;
+  }
+  uint8_t logicalColumns = 0;
+  for (const auto& cell : cells) {
+    if (cell.colSpan == 0 || static_cast<uint8_t>(logicalColumns + cell.colSpan) > MAX_TABLE_CELLS_PER_ROW) {
+      LOG_ERR("PTB", "Serialization failed: row colspan exceeds maximum");
+      return false;
+    }
+    logicalColumns = static_cast<uint8_t>(logicalColumns + cell.colSpan);
   }
 
   if (!serialization::tryWritePod(file, height) || !serialization::tryWritePod(file, headerSeparator) ||
@@ -226,11 +237,17 @@ bool TableFragmentRow::deserialize(FsFile& file, TableFragmentRow& outRow) {
 
   outRow.cells.clear();
   outRow.cells.reserve(cellCount);
+  uint8_t logicalColumns = 0;
   for (uint8_t i = 0; i < cellCount; i++) {
     TableFragmentCell cell;
     if (!TableFragmentCell::deserialize(file, cell)) {
       return false;
     }
+    if (static_cast<uint8_t>(logicalColumns + cell.colSpan) > MAX_TABLE_CELLS_PER_ROW) {
+      LOG_ERR("PTB", "Deserialization failed: row colspan exceeds maximum");
+      return false;
+    }
+    logicalColumns = static_cast<uint8_t>(logicalColumns + cell.colSpan);
     outRow.cells.push_back(std::move(cell));
   }
   return true;
@@ -261,24 +278,46 @@ void PageTableFragment::render(GfxRenderer& renderer, const int fontId, const in
   columnStarts[columnCount] = static_cast<int16_t>(width - 1);
 
   renderer.drawRect(drawX, drawY, width, totalHeight, foregroundBlack);
-  for (uint8_t i = 1; i < columnCount; i++) {
-    const int x = drawX + columnStarts[i];
-    renderer.drawLine(x, drawY, x, drawY + totalHeight - 1, foregroundBlack);
-  }
 
   int currentY = 0;
   for (size_t rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
     const auto& row = rows[rowIndex];
 
-    for (size_t colIndex = 0; colIndex < row.cells.size() && colIndex < columnCount; colIndex++) {
-      const auto& cell = row.cells[colIndex];
-      const int cellTextX = drawX + columnStarts[colIndex] + cellPadding;
-      const int cellTextY = drawY + currentY + cellPadding;
+    uint8_t logicalColumn = 0;
 
+    for (size_t colIndex = 0; colIndex < row.cells.size() && colIndex < columnCount; colIndex++) {
+      if (logicalColumn >= columnCount) break;
+      const auto& cell = row.cells[colIndex];
+      const uint8_t span =
+          std::min<uint8_t>(cell.colSpan == 0 ? 1 : cell.colSpan, static_cast<uint8_t>(columnCount - logicalColumn));
+      const int cellTextX = drawX + columnStarts[logicalColumn] + cellPadding;
+      const int cellTextY = drawY + currentY + cellPadding;
+      const int cellTextWidth = columnStarts[logicalColumn + span] - columnStarts[logicalColumn] - cellPadding * 2;
+      const int cellTextHeight = row.height - cellPadding * 2;
+
+      renderer.beginTextClip(cellTextX, cellTextY, cellTextWidth, cellTextHeight);
       for (size_t lineIndex = 0; lineIndex < cell.lines.size(); lineIndex++) {
         cell.lines[lineIndex]->render(renderer, fontId, cellTextX, cellTextY + static_cast<int>(lineIndex) * lineHeight,
                                       foregroundBlack);
       }
+      renderer.endTextClip();
+      logicalColumn = static_cast<uint8_t>(logicalColumn + span);
+    }
+
+    // Colspan cells own the interior vertical boundaries they cover. Draw
+    // only boundaries that are present in this row, preserving the existing
+    // one-column grid for ordinary cells.
+    logicalColumn = 0;
+    for (const auto& cell : row.cells) {
+      if (logicalColumn >= columnCount) break;
+      const uint8_t span =
+          std::min<uint8_t>(cell.colSpan == 0 ? 1 : cell.colSpan, static_cast<uint8_t>(columnCount - logicalColumn));
+      if (logicalColumn + span < columnCount) {
+        const int x = drawX + columnStarts[logicalColumn + span];
+        renderer.drawLine(x, drawY + currentY, x, drawY + currentY + row.height - 1, foregroundBlack);
+      }
+      logicalColumn = static_cast<uint8_t>(logicalColumn + span);
+      if (logicalColumn >= columnCount) break;
     }
 
     currentY += row.height;

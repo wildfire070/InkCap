@@ -60,6 +60,13 @@ constexpr uint8_t WARNING_BODY_MAX_LINES = 6;
 // Cap chapter anchors so converter-generated IDs do not grow memory without bound.
 constexpr size_t MAX_ANCHORS_PER_CHAPTER = 1024;
 constexpr size_t MAX_PENDING_FOOTNOTES_BEFORE_LAYOUT = Page::MAX_FOOTNOTES_PER_PAGE * 3;
+// Rich tables retain ParsedText and per-cell vectors until the closing tag. The
+// C3 SD-font resume path normally has only about 85-90 KiB free and a 49 KiB
+// largest block, so leave that baseline to the compact row model as well.
+// Select before the first cell is captured; never build both representations
+// and retry after an OOM.
+constexpr uint32_t MIN_FREE_HEAP_FOR_RICH_TABLE = 96U * 1024U;
+constexpr uint32_t MIN_MAX_ALLOC_FOR_RICH_TABLE = 56U * 1024U;
 
 static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
 static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
@@ -596,6 +603,21 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SMALL_CAPS);
   }
 
+  if (currentCompactTable && currentCompactTable->valid() && currentCompactTable->hasActiveCell()) {
+    if (!currentCompactTable->appendWord(std::string_view(partWordBuffer, static_cast<size_t>(partWordBufferIndex)),
+                                         fontStyle, nextWordContinues,
+                                         honorsPublisherDecorations() && effectiveBackgroundBlack,
+                                         insideFootnoteLink ? currentFootnote.linkId : 0)) {
+      LOG_ERR("EHP", "Compact table text capture failed");
+      lowMemoryAbort = true;
+    }
+    currentTextRunBytes = static_cast<uint16_t>(
+        std::min<size_t>(currentTextRunBytes + static_cast<size_t>(partWordBufferIndex), UINT16_MAX));
+    partWordBufferIndex = 0;
+    nextWordContinues = false;
+    return;
+  }
+
   // flush the buffer
   partWordBuffer[partWordBufferIndex] = '\0';
   currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues,
@@ -722,6 +744,19 @@ void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
   }
 
   if (tableDepth != 1 || !currentTextBlock) {
+    if (tableDepth == 1 && currentCompactTable && currentCompactTable->hasActiveCell()) {
+      if (!currentCompactTable->endCell(pendingFootnotes)) {
+        LOG_ERR("EHP", "Failed to finalize compact table cell");
+        lowMemoryAbort = true;
+      }
+      pendingFootnotes.clear();
+      currentTableCellIsHeader = false;
+      currentTableCellColSpan = 1;
+      currentTextRunBytes = 0;
+      wordsExtractedInBlock = 0;
+      nextWordContinues = false;
+      return;
+    }
     return;
   }
 
@@ -1081,6 +1116,121 @@ void ChapterHtmlSlimParser::finishStreamingTable(BufferedTable& table) {
   }
 }
 
+bool ChapterHtmlSlimParser::flushCompactTableFragment() {
+  if (compactFragmentRows.empty()) return true;
+  if (!currentPage && !startNewPage("compact table fragment")) return false;
+
+  const auto& style = currentCompactTable->tableStyle();
+  const int horizontalInset = style.totalHorizontalInset();
+  const uint16_t width =
+      horizontalInset < viewportWidth ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  const uint16_t lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+  auto fragment =
+      makeUniqueNoThrow<PageTableFragment>(width, compactFragmentColumnCount, TABLE_CELL_PADDING, lineHeight,
+                                           std::move(compactFragmentRows), style.leftInset(), currentPageNextY);
+  if (!fragment) {
+    LOG_ERR("EHP", "Failed to create compact PageTableFragment");
+    lowMemoryAbort = true;
+    return false;
+  }
+
+  const uint16_t fragmentHeight = compactFragmentHeight;
+  currentPage->elements.push_back(std::move(fragment));
+  setCurrentPageVisibleOffset(compactFragmentVisibleOffset);
+  markCurrentPageFromCurrentElement();
+  for (const auto& footnote : compactFragmentFootnotes) {
+    currentPage->addFootnote(footnote.number, footnote.href, footnote.linkId);
+  }
+  compactFragmentFootnotes.clear();
+  compactFragmentRows.clear();
+  compactFragmentHeight = 1;
+  compactFragmentColumnCount = 0;
+  currentPageNextY = static_cast<int16_t>(currentPageNextY + fragmentHeight);
+  return true;
+}
+
+bool ChapterHtmlSlimParser::emitCompactTableRow(TableFragmentRow& row,
+                                                std::vector<std::shared_ptr<TextBlock>>& flatLines,
+                                                const std::vector<FootnoteEntry>& footnotes,
+                                                const uint32_t rowVisibleOffset, const uint8_t fragmentColumnCount,
+                                                const bool flatten) {
+  if (!currentCompactTable) return false;
+  const auto& style = currentCompactTable->tableStyle();
+  if (!currentPage && !startNewPage(flatten ? "compact table paragraph fallback" : "compact table row")) return false;
+  if (!compactTableTopSpacingApplied) {
+    currentPageNextY = static_cast<int16_t>(currentPageNextY + style.marginTop + style.paddingTop);
+    compactTableTopSpacingApplied = true;
+  }
+
+  if (flatten) {
+    if (!flushCompactTableFragment()) return false;
+    for (const auto& line : flatLines) {
+      if (!line) continue;
+      if (!currentPage->elements.empty() &&
+          currentPageNextY + renderer.getLineHeight(fontId) * lineCompression > viewportHeight) {
+        completeCurrentPage();
+        completedPageCount++;
+        stopPreviewIfPageLimitReached();
+        if (previewStopRequested || !startNewPage("compact table paragraph page break")) return false;
+      }
+      auto pageLine = makeUniqueNoThrow<PageLine>(line, style.leftInset(), currentPageNextY);
+      if (!pageLine) {
+        LOG_ERR("EHP", "Failed to create compact table paragraph line");
+        lowMemoryAbort = true;
+        return false;
+      }
+      currentPage->elements.push_back(std::move(pageLine));
+      setCurrentPageVisibleOffset(rowVisibleOffset);
+      markCurrentPageFromCurrentElement();
+      currentPageNextY = static_cast<int16_t>(currentPageNextY + renderer.getLineHeight(fontId) * lineCompression);
+    }
+    for (const auto& footnote : footnotes) {
+      currentPage->addFootnote(footnote.number, footnote.href, footnote.linkId);
+    }
+    return !lowMemoryAbort;
+  }
+
+  if (row.cells.empty() || row.cells.size() > TableFragmentRow::MAX_SERIALIZED_CELLS) {
+    return false;
+  }
+  const uint8_t columnCount = fragmentColumnCount;
+  const bool startsNewFragment =
+      !compactFragmentRows.empty() && (compactFragmentColumnCount != columnCount ||
+                                       compactFragmentRows.size() >= PageTableFragment::MAX_SERIALIZED_ROWS ||
+                                       currentPageNextY + compactFragmentHeight + row.height > viewportHeight);
+  if (startsNewFragment && !flushCompactTableFragment()) return false;
+
+  if (compactFragmentRows.empty() && currentPageNextY + 1 + row.height > viewportHeight &&
+      !currentPage->elements.empty()) {
+    completeCurrentPage();
+    completedPageCount++;
+    stopPreviewIfPageLimitReached();
+    if (previewStopRequested || !startNewPage("compact table page break")) return false;
+  }
+
+  if (compactFragmentRows.empty()) {
+    compactFragmentColumnCount = columnCount;
+    compactFragmentVisibleOffset = rowVisibleOffset;
+  }
+  compactFragmentHeight = static_cast<uint16_t>(compactFragmentHeight + row.height);
+  const size_t availableFootnoteSlots = Page::MAX_FOOTNOTES_PER_PAGE > compactFragmentFootnotes.size()
+                                            ? Page::MAX_FOOTNOTES_PER_PAGE - compactFragmentFootnotes.size()
+                                            : 0;
+  const size_t footnotesToCopy = std::min(availableFootnoteSlots, footnotes.size());
+  compactFragmentFootnotes.insert(compactFragmentFootnotes.end(), footnotes.begin(),
+                                  footnotes.begin() + footnotesToCopy);
+  compactFragmentRows.push_back(std::move(row));
+  return true;
+}
+
+void ChapterHtmlSlimParser::finishCompactTable() {
+  if (!currentCompactTable) return;
+  if (!flushCompactTableFragment()) return;
+  const auto& style = currentCompactTable->tableStyle();
+  currentPageNextY = static_cast<int16_t>(currentPageNextY + style.marginBottom + style.paddingBottom);
+  if (extraParagraphSpacing) currentPageNextY += renderer.getLineHeight(fontId) * lineCompression / 2;
+}
+
 void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
   struct PreparedRow {
     TableFragmentRow fragmentRow;
@@ -1362,7 +1512,32 @@ void ChapterHtmlSlimParser::flushMalformedPartialContent() {
     if (tableDepth == 1 && currentTextBlock) {
       finalizeCurrentTableCell();
     }
-    if (currentTableBuffer) {
+    if (tableDepth == 1 && currentCompactTable) {
+      if (currentCompactTable->hasActiveCell()) {
+        currentCompactTable->endCell(pendingFootnotes);
+        pendingFootnotes.clear();
+      }
+      if (currentCompactTable->hasActiveRow()) {
+        currentCompactTable->setFlattened();
+        TableFragmentRow row;
+        std::vector<std::shared_ptr<TextBlock>> flatLines;
+        std::vector<FootnoteEntry> rowFootnotes;
+        rowFootnotes.reserve(Page::MAX_FOOTNOTES_PER_PAGE);
+        uint32_t rowVisibleOffset = visibleTextOffset;
+        const auto result = currentCompactTable->finishRow(row, flatLines, rowFootnotes, rowVisibleOffset);
+        if (result == CompactTableLayout::RowResult::Abort) {
+          lowMemoryAbort = true;
+        } else if (result == CompactTableLayout::RowResult::Flatten) {
+          compactTableFlattened = true;
+          if (!emitCompactTableRow(row, flatLines, rowFootnotes, rowVisibleOffset,
+                                   currentCompactTable->fragmentColumnCount(), true)) {
+            lowMemoryAbort = true;
+          }
+        }
+      }
+      finishCompactTable();
+      currentCompactTable.reset();
+    } else if (currentTableBuffer) {
       fallbackCurrentTableBufferToParagraphs("malformed markup");
     }
     tableDepth = 0;
@@ -1676,6 +1851,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       if (self->currentTableBuffer) {
         self->currentTableBuffer->unsupported = true;
       }
+      if (self->currentCompactTable) {
+        self->compactTableUnsupported = true;
+        self->currentCompactTable->markUnsupported();
+      }
       self->tableDepth += 1;
       return;
     }
@@ -1686,17 +1865,45 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     const float emSize = self->renderer.getLineHeight(self->fontId) * self->lineCompression;
     auto tableBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
 
-    self->currentTableBuffer = makeUniqueNoThrow<BufferedTable>();
-    if (!self->currentTableBuffer) {
-      const auto heap = MemoryBudget::snapshot();
-      LOG_ERR("EHP", "Failed to buffer table (%u free, %u max alloc); aborting section build", heap.freeHeap,
-              heap.maxAllocHeap);
-      self->lowMemoryAbort = true;
-      return;
+    const auto heap = MemoryBudget::snapshot();
+    const bool useCompact = !MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_RICH_TABLE, MIN_MAX_ALLOC_FOR_RICH_TABLE);
+    if (useCompact) {
+      const uint16_t lineHeight =
+          static_cast<uint16_t>(self->renderer.getLineHeight(self->fontId) * self->lineCompression);
+      self->currentCompactTable =
+          makeUniqueNoThrow<CompactTableLayout>(self->renderer, self->fontId, self->viewportWidth, self->viewportHeight,
+                                                lineHeight, TABLE_CELL_PADDING, tableBlockStyle);
+      if (!self->currentCompactTable || !self->currentCompactTable->valid()) {
+        LOG_ERR("EHP", "Failed to allocate compact table layout (free=%u, maxAlloc=%u)", heap.freeHeap,
+                heap.maxAllocHeap);
+        self->lowMemoryAbort = true;
+        return;
+      }
+      self->compactTableFlattened = false;
+      self->compactTableUnsupported = false;
+      self->compactTableTopSpacingApplied = false;
+      self->compactFragmentRows.clear();
+      self->compactFragmentRows.reserve(PageTableFragment::MAX_SERIALIZED_ROWS);
+      self->compactFragmentFootnotes.clear();
+      self->compactFragmentFootnotes.reserve(Page::MAX_FOOTNOTES_PER_PAGE);
+      self->compactFragmentHeight = 1;
+      self->compactFragmentColumnCount = 0;
+      LOG_DBG("EHP", "Compact table layout selected (free=%u, maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
+      // The preceding paragraph belongs before the table and must not become a
+      // second representation of the first compact cell.
+      self->makePages();
+      self->currentTextBlock.reset();
+    } else {
+      self->currentTableBuffer = makeUniqueNoThrow<BufferedTable>();
+      if (!self->currentTableBuffer) {
+        LOG_ERR("EHP", "Failed to buffer rich table (free=%u, maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
+        self->lowMemoryAbort = true;
+        return;
+      }
+      self->currentTableBuffer->blockStyle = tableBlockStyle;
+      self->currentTableBuffer->streaming = true;
+      LOG_DBG("EHP", "Rich table layout selected (free=%u, maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
     }
-    self->currentTableBuffer->blockStyle = tableBlockStyle;
-    self->currentTableBuffer->streaming = true;
-    LOG_DBG("EHP", "Streaming table layout: row-by-row");
     self->tableDepth += 1;
     self->tableRowIndex = 0;
     self->tableColIndex = 0;
@@ -1708,7 +1915,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (self->tableDepth == 1 && strcmp(name, "tr") == 0) {
     self->tableRowIndex += 1;
     self->tableColIndex = 0;
-    if (self->currentTableBuffer) {
+    if (self->currentCompactTable) {
+      if (!self->currentCompactTable->beginRow()) {
+        LOG_ERR("EHP", "Failed to begin compact table row");
+        self->lowMemoryAbort = true;
+        return;
+      }
+    } else if (self->currentTableBuffer) {
       self->currentTableBuffer->rows.push_back({});
     }
     self->pushCssAncestor(self->depth, name, classAttr);
@@ -1735,12 +1948,20 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         if (self->currentTableBuffer) {
           self->currentTableBuffer->unsupported = true;
         }
+        if (self->currentCompactTable) {
+          self->compactTableUnsupported = true;
+          self->currentCompactTable->markUnsupported();
+        }
       } else {
         parsedColSpan = static_cast<uint8_t>(parsedValue);
       }
     }
     if (self->currentTableBuffer && rowspan && strcmp(rowspan, "1") != 0) {
       self->currentTableBuffer->unsupported = true;
+    }
+    if (self->currentCompactTable && rowspan && strcmp(rowspan, "1") != 0) {
+      self->compactTableUnsupported = true;
+      self->currentCompactTable->markUnsupported();
     }
     self->currentTableCellColSpan = parsedColSpan;
     self->currentTableCellVisibleOffset = self->visibleTextOffset;
@@ -1779,7 +2000,19 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       }
       self->updateEffectiveInlineStyle();
     }
-    self->startNewTextBlock(tableCellBlockStyle);
+    if (self->currentCompactTable) {
+      if (!self->currentCompactTable->beginCell(self->currentTableCellIsHeader, parsedColSpan,
+                                                self->currentTableCellVisibleOffset, tableCellBlockStyle)) {
+        LOG_ERR("EHP", "Failed to begin compact table cell");
+        self->lowMemoryAbort = true;
+        return;
+      }
+      self->currentTextBlock.reset();
+      self->currentTextRunBytes = 0;
+      self->pendingFootnotes.clear();
+    } else {
+      self->startNewTextBlock(tableCellBlockStyle);
+    }
 
     self->pushCssAncestor(self->depth, name, classAttr);
     self->depth += 1;
@@ -1805,6 +2038,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (self->currentTableBuffer) {
       self->currentTableBuffer->unsupported = true;
     }
+    if (self->currentCompactTable) {
+      self->compactTableUnsupported = true;
+      self->currentCompactTable->markUnsupported();
+    }
     const char* altAttr = getAttribute(atts, "alt");
     if (altAttr && altAttr[0] != '\0') {
       self->characterData(userData, altAttr, strlen(altAttr));
@@ -1820,6 +2057,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (self->tableDepth == 1 && strcmp(name, "hr") == 0) {
     if (self->currentTableBuffer) {
       self->currentTableBuffer->unsupported = true;
+    }
+    if (self->currentCompactTable) {
+      self->compactTableUnsupported = true;
+      self->currentCompactTable->markUnsupported();
     }
     self->pushCssAncestor(self->depth, name, classAttr);
     self->depth += 1;
@@ -2980,6 +3221,30 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 
   if (self->tableDepth == 1 && (strcmp(name, "tr") == 0)) {
+    if (self->currentCompactTable) {
+      if (self->compactTableUnsupported || self->compactTableFlattened) {
+        self->currentCompactTable->setFlattened();
+      }
+      TableFragmentRow row;
+      std::vector<std::shared_ptr<TextBlock>> flatLines;
+      std::vector<FootnoteEntry> rowFootnotes;
+      rowFootnotes.reserve(Page::MAX_FOOTNOTES_PER_PAGE);
+      uint32_t rowVisibleOffset = self->visibleTextOffset;
+      const auto result = self->currentCompactTable->finishRow(row, flatLines, rowFootnotes, rowVisibleOffset);
+      if (result == CompactTableLayout::RowResult::Abort) {
+        self->lowMemoryAbort = true;
+        return;
+      }
+      const bool flatten = result == CompactTableLayout::RowResult::Flatten;
+      if (flatten) self->compactTableFlattened = true;
+      if (!self->emitCompactTableRow(row, flatLines, rowFootnotes, rowVisibleOffset,
+                                     self->currentCompactTable->fragmentColumnCount(), flatten)) {
+        self->lowMemoryAbort = true;
+        return;
+      }
+      self->nextWordContinues = false;
+      return;
+    }
     if (self->currentTableBuffer && self->currentTableBuffer->streaming && !self->streamCurrentTableRow()) {
       return;
     }
@@ -2987,7 +3252,12 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 
   if (self->tableDepth == 1 && strcmp(name, "table") == 0) {
-    if (self->currentTableBuffer && self->currentTableBuffer->streaming) {
+    if (self->currentCompactTable) {
+      self->finishCompactTable();
+      self->currentCompactTable.reset();
+      self->compactTableFlattened = false;
+      self->compactTableUnsupported = false;
+    } else if (self->currentTableBuffer && self->currentTableBuffer->streaming) {
       self->finishStreamingTable(*self->currentTableBuffer);
       self->currentTableBuffer.reset();
     } else {

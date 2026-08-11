@@ -235,6 +235,9 @@ class BaseTheme {
                         bool foregroundBlack = true) const;  // Right aligned (UI headers)
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage,
                                bool foregroundBlack = true) const;
+  // Button hint labels use three states: non-empty labels draw an active hint,
+  // an empty string clears an inactive slot, and nullptr preserves the existing
+  // background without drawing or registering a target.
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                const char* btn4, bool allowInvertedText = false) const;
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
