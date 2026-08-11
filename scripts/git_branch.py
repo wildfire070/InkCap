@@ -1,7 +1,7 @@
 """
 PlatformIO pre-build script: inject git info into version defines.
 
-  default:       1.1.0-dev+<branch>  (local development builds)
+  default:       1.1.0-InkCap+<4-char-hash>  (local development builds)
   production:    1.1.0               (when $CROSSINK_RELEASE_VERSION is set)
   default RC:    1.1.0-rc+<hash>       (when $CROSSINK_RC_HASH is set)
   test & debug:          1.2.6-<branch>+<5-char-hash>
@@ -140,9 +140,9 @@ def inject_version(env):
             print(f'CrossInk production build version: {version_string}')
         else:
             base_version = get_crossink_version(project_dir)
-            branch = get_git_branch(project_dir)
-            version_string = f'{base_version}-dev+{branch}'
-            print(f'CrossInk build version: {version_string}')
+            short_hash = get_git_short_hash(project_dir, length=4)
+            version_string = f'{base_version}-InkCap+{short_hash}'
+            print(f'InkCap build version: {version_string}')
         env.Append(CPPDEFINES=[('CROSSINK_VERSION', f'\\"{version_string}\\"')])
 
     elif pioenv == 'debug':
