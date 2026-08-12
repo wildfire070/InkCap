@@ -26,6 +26,7 @@
 #include "Epub/converters/ImageDimsProbe.h"
 #include "Epub/converters/ImageToFramebufferDecoder.h"
 #include "Epub/htmlEntities.h"
+#include "Epub/tables/TableColumnLayout.h"
 #include "PreviewBlockLocator.h"
 
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
@@ -1027,12 +1028,11 @@ bool ChapterHtmlSlimParser::streamCurrentTableRow() {
   const int horizontalInset = table.blockStyle.totalHorizontalInset();
   const uint16_t tableWidth =
       (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
-  const uint16_t baseColumnWidth = tableWidth / columnCount;
-  const uint16_t innerColumnWidth =
-      baseColumnWidth > TABLE_CELL_PADDING * 2 ? static_cast<uint16_t>(baseColumnWidth - TABLE_CELL_PADDING * 2) : 0;
-  if (innerColumnWidth < 20) {
-    fallbackStreamingTableToParagraphs("column width too small");
-    return !lowMemoryAbort;
+  for (uint8_t column = 0; column < columnCount; ++column) {
+    if (TableColumnLayout::innerWidth(tableWidth, columnCount, column, 1, TABLE_CELL_PADDING) < 20) {
+      fallbackStreamingTableToParagraphs("column width too small");
+      return !lowMemoryAbort;
+    }
   }
 
   TableFragmentRow fragmentRow;
@@ -1047,8 +1047,10 @@ bool ChapterHtmlSlimParser::streamCurrentTableRow() {
     destCell.isHeader = sourceCell.isHeader;
     if (sourceCell.text &&
         !sourceCell.text->layoutAndExtractLinesPreservingSource(
-            renderer, fontId, innerColumnWidth,
-            [&destCell](const std::shared_ptr<TextBlock>& textBlock) { destCell.lines.push_back(textBlock); })) {
+            renderer, fontId,
+            TableColumnLayout::innerWidth(tableWidth, columnCount, static_cast<uint8_t>(cellIndex), 1,
+                                          TABLE_CELL_PADDING),
+            [&destCell](const std::shared_ptr<TextBlock>& textBlock) { destCell.lines.push_back(textBlock); }, true)) {
       fallbackStreamingTableToParagraphs("cell layout failed");
       return !lowMemoryAbort;
     }
@@ -1268,13 +1270,15 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
   };
 
   auto prepareRow = [&](const BufferedTableRow& row, const uint8_t columnCount, PreparedSegment& segment) -> bool {
-    const uint16_t baseColumnWidth = columnCount > 0 ? tableWidth / columnCount : 0;
-    const uint16_t innerColumnWidth = (baseColumnWidth > TABLE_CELL_PADDING * 2)
-                                          ? static_cast<uint16_t>(baseColumnWidth - TABLE_CELL_PADDING * 2)
-                                          : 0;
-    if (columnCount == 0 || innerColumnWidth < 20) {
+    if (columnCount == 0) {
       LOG_DBG("EHP", "Table layout fallback: width %u too small for %u columns", tableWidth, columnCount);
       return false;
+    }
+    for (uint8_t column = 0; column < columnCount; ++column) {
+      if (TableColumnLayout::innerWidth(tableWidth, columnCount, column, 1, TABLE_CELL_PADDING) < 20) {
+        LOG_DBG("EHP", "Table layout fallback: width %u too small for %u columns", tableWidth, columnCount);
+        return false;
+      }
     }
 
     PreparedRow prepared;
@@ -1295,8 +1299,11 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
 
       if (sourceCell.text) {
         if (!sourceCell.text->layoutAndExtractLinesPreservingSource(
-                renderer, fontId, innerColumnWidth,
-                [&destCell](const std::shared_ptr<TextBlock>& textBlock) { destCell.lines.push_back(textBlock); })) {
+                renderer, fontId,
+                TableColumnLayout::innerWidth(tableWidth, columnCount, static_cast<uint8_t>(colIndex), 1,
+                                              TABLE_CELL_PADDING),
+                [&destCell](const std::shared_ptr<TextBlock>& textBlock) { destCell.lines.push_back(textBlock); },
+                true)) {
           LOG_DBG("EHP", "Table layout fallback: cell text layout failed");
           return false;
         }
@@ -2329,6 +2336,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                 }
 
+                // A viewport-height image leaves no room for a container top
+                // margin, including after the page break above starts a fresh page.
+                // Keep the placement inside the renderable viewport.
+                if (self->currentPageNextY + imageMarginTop + displayHeight > self->viewportHeight) {
+                  const int remainingTopMargin = self->viewportHeight - displayHeight - self->currentPageNextY;
+                  imageMarginTop = static_cast<int16_t>(std::max(0, remainingTopMargin));
+                }
                 self->currentPageNextY += imageMarginTop;
                 self->attachPendingPublisherPageMarkers(self->currentPageNextY);
 

@@ -414,7 +414,7 @@ void MinimalTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
   const int batteryX = rect.x + rect.width - 12 - MinimalMetrics::values.batteryWidth;
-  const int batteryY = rect.y + homeHeaderTopInset;
+  const int batteryY = rect.y + homeHeaderTopInset + UITheme::getTopStatusBarInset(renderer);
   drawBatteryRight(renderer,
                    Rect{batteryX, batteryY, MinimalMetrics::values.batteryWidth, MinimalMetrics::values.batteryHeight},
                    showBatteryPercentage);

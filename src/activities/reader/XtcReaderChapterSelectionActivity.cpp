@@ -47,7 +47,7 @@ void XtcReaderChapterSelectionActivity::onEnter() {
   visibleRows = 1;
   initialViewportPending = true;
   uiReady = false;
-  app.setTheme(uiThemeTokens(uiTarget));
+  applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &XtcReaderChapterSelectionActivity::onRowEvent, this);
   app.setScreen(&XtcReaderChapterSelectionActivity::chapterScreen, this);
   requestUpdate();

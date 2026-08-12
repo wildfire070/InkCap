@@ -207,6 +207,7 @@ class DictionaryDefinitionActivity final : public Activity {
 #if CROSSINK_APP_CAP_TOUCH
   bool showTouchDictionarySwitch() const;
   bool dictionarySwitchButtonContains(int x, int y) const;
+  bool modalContains(int x, int y) const;
 #endif
   int dictionaryFooterHeight() const;
   bool hasModalBackground() const { return backgroundContext_ && backgroundRender_; }

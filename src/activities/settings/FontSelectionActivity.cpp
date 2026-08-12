@@ -122,7 +122,7 @@ void FontSelectionActivity::onEnter() {
   visibleRows_ = 1;
   initialViewportPending_ = true;
   uiReady_ = false;
-  app_.setTheme(uiThemeTokens(uiTarget_));
+  applySharedUiTheme(app_, uiTarget_);
   app_.on(ACTION_ROW, &FontSelectionActivity::onRowEvent, this);
   app_.setScreen(&FontSelectionActivity::listScreen, this);
 

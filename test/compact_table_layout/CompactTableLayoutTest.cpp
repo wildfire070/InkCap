@@ -6,6 +6,7 @@
 
 #include "CompactTableLayout.h"
 #include "GfxRenderer.h"
+#include "TableColumnLayout.h"
 
 namespace {
 
@@ -47,6 +48,39 @@ TEST(CompactTableLayoutTest, SourceFixtureModelsLargeAndUnsupportedTables) {
   EXPECT_NE(source.find("nested-table"), std::string::npos);
   EXPECT_NE(source.find("too-wide"), std::string::npos);
   EXPECT_NE(source.find("长"), std::string::npos);
+}
+
+TEST(CompactTableLayoutTest, WideLeadingColumnKeepsEightColumnTableLabelsReadable) {
+  constexpr uint16_t tableWidth = 480;
+  EXPECT_EQ(TableColumnLayout::columnWidth(tableWidth, 8, 0, 1), 106);
+  EXPECT_EQ(TableColumnLayout::columnWidth(tableWidth, 8, 1, 1), 54);
+  EXPECT_EQ(TableColumnLayout::columnWidth(tableWidth, 8, 0, 8), tableWidth);
+  EXPECT_EQ(TableColumnLayout::columnStart(tableWidth, 8, 8), tableWidth);
+
+  // Other grids keep their established equal column sizing.
+  EXPECT_EQ(TableColumnLayout::columnWidth(tableWidth, 6, 0, 1), 80);
+  EXPECT_EQ(TableColumnLayout::columnWidth(tableWidth, 6, 5, 1), 80);
+}
+
+TEST(CompactTableLayoutTest, CompactLayoutUsesWideLeadingColumnForEightCellRows) {
+  GfxRenderer renderer;
+  renderer.codepointWidth = 10;
+  CompactTableLayout layout(renderer, 0, 480, 300, 10, 6, leftStyle());
+  ASSERT_TRUE(layout.beginRow());
+
+  for (uint8_t column = 0; column < 8; ++column) {
+    ASSERT_TRUE(layout.beginCell(column == 0, 1, 0, leftStyle()));
+    ASSERT_TRUE(layout.appendWord(column == 0 ? "Oatmeal" : "100", EpdFontFamily::REGULAR, false, false, 0));
+    ASSERT_TRUE(layout.endCell({}));
+  }
+
+  TableFragmentRow row;
+  std::vector<std::shared_ptr<TextBlock>> flatLines;
+  std::vector<FootnoteEntry> footnotes;
+  uint32_t offset = 0;
+  ASSERT_EQ(layout.finishRow(row, flatLines, footnotes, offset), CompactTableLayout::RowResult::Ok);
+  ASSERT_EQ(row.cells.size(), 8u);
+  EXPECT_EQ(row.cells.front().lines.size(), 1u);
 }
 
 TEST(CompactTableLayoutTest, PreservesColspanAndFullWidthRows) {

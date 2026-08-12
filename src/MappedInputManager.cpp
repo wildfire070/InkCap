@@ -213,6 +213,10 @@ bool MappedInputManager::hasTouch() const { return touchInputEnabled(); }
 
 bool MappedInputManager::hasTouchHardware() const { return gpio.hasTouch(); }
 
+bool MappedInputManager::isHomeButtonLockedInReader() const {
+  return readerMode && hasHomeKeyHardware() && !SETTINGS.homeButtonInReaderEnabled && !readerTouchscreenOverride;
+}
+
 void MappedInputManager::rememberTouchHeldTime() const {
   touchHeldOverrideValid = true;
   touchHeldOverrideMs = gpio.lastTouchHeldMs();
@@ -229,6 +233,10 @@ bool MappedInputManager::wasScreenTapped(int& x, int& y) const {
   }
 #ifdef SIMULATOR
   if (simulatorTouch.releasedThisFrame) {
+    if (simulatorTouch.longPressFired) {
+      simulatorTouch.longPressFired = false;
+      return false;
+    }
     x = simulatorTouch.startX;
     y = simulatorTouch.startY;
     rememberTouchHeldTime();
@@ -252,6 +260,24 @@ bool MappedInputManager::wasScreenTapped(int& x, int& y, unsigned long& heldMs) 
 bool MappedInputManager::isScreenTouchLongPress(int& x, int& y, const unsigned long thresholdMs) const {
   unsigned long heldMs = 0;
   return isScreenTouchTapCandidate(x, y, heldMs) && heldMs >= thresholdMs;
+}
+
+bool MappedInputManager::wasScreenLongPress(int& x, int& y) const {
+  if (!touchInputEnabled()) return false;
+#ifdef SIMULATOR
+  if (simulatorTouch.pressed && !simulatorTouch.longPressFired && millis() - simulatorTouch.startedAt >= 500UL) {
+    simulatorTouch.longPressFired = true;
+    x = simulatorTouch.startX;
+    y = simulatorTouch.startY;
+    return true;
+  }
+#endif
+  float nx = 0.0f;
+  float ny = 0.0f;
+  if (!gpio.wasTouchLongPress(nx, ny)) return false;
+  gpio.suppressTouchContact();
+  renderer.tapToLogical(nx, ny, x, y);
+  return true;
 }
 
 bool MappedInputManager::isInVerticalEdgeGestureZone(const int y) const {
@@ -524,7 +550,7 @@ bool MappedInputManager::wasLeftEdgeGesture() const { return wasBackGesture(); }
 
 bool MappedInputManager::hasHomeKeyHardware() const {
 #ifdef SIMULATOR
-#ifdef SIMULATOR_DEVICE_X4PRO
+#ifdef SIMULATOR_DEVICE_X4_PRO
   return true;
 #else
   return false;
@@ -575,7 +601,12 @@ bool MappedInputManager::wasReaderMenuGesture() const {
   return hasHomeKeyHardware() ? direction == SwipeDir::Up : direction == SwipeDir::Down;
 }
 
-bool MappedInputManager::wasReaderHomeGesture() const { return !hasHomeKeyHardware() && wasSwipe() == SwipeDir::Up; }
+bool MappedInputManager::wasReaderHomeGesture() const {
+  // X4 Pro's capacitive Home key remains the reader's Home action. Only the
+  // touch gesture changes in reader mode: other touch boards use an upward
+  // swipe across the page.
+  return hasHomeKeyHardware() ? wasHomeGesture() : wasSwipe() == SwipeDir::Up;
+}
 
 bool MappedInputManager::wasReaderLightPanelGesture() const {
   return hasHomeKeyHardware() && wasSwipe() == SwipeDir::Down;
@@ -583,6 +614,20 @@ bool MappedInputManager::wasReaderLightPanelGesture() const {
 
 bool MappedInputManager::wasHomeGesture() const {
   if (!hasHomeKeyHardware()) return wasBottomEdgeUpSwipe();
+  if (!touchInputEnabled()) return false;
+  if (isHomeButtonLockedInReader()) {
+    clearDeferredHomeGesture();
+    return false;
+  }
+  if (SETTINGS.homeButtonTapAction != CrossPointSettings::HOME_BUTTON_BACK_HOME) return false;
+  // A swipe starting on the lower bezel can also report a short capacitive Home
+  // tap on the X4 Pro. The screen gesture belongs to the active list/reader, so
+  // give it priority over the global Home route for this release frame.
+  if (wasSwipe() != SwipeDir::None) return false;
+  if (deferredHomeGesture) {
+    deferredHomeGesture = false;
+    return true;
+  }
 #ifdef SIMULATOR
   return simulatorHomeKeyInput.wasTapped();
 #else
@@ -591,7 +636,9 @@ bool MappedInputManager::wasHomeGesture() const {
 }
 
 bool MappedInputManager::wasReaderMenuHold() const {
-  if (!hasHomeKeyHardware()) return false;
+  if (!hasHomeKeyHardware() || !touchInputEnabled()) return false;
+  if (isHomeButtonLockedInReader()) return false;
+  if (SETTINGS.homeButtonLongPressAction != CrossPointSettings::HOME_BUTTON_READER_MENU) return false;
 #ifdef SIMULATOR
   return simulatorHomeKeyInput.wasLongPressed();
 #else
@@ -614,6 +661,13 @@ bool MappedInputManager::wasPressed(const Button button) const {
       return true;
     }
     if (wasFrontButtonHintTouchedDown(mappedFrontButtonFor(button))) {
+      return true;
+    }
+
+    if (powerAsConfirmInReaderMode && gpio.wasPressed(HalGPIO::BTN_POWER)) {
+      // The active reader popup owns this Power press. Keep its configured
+      // short/long action from firing after the popup confirms on press.
+      suppressPowerRelease = true;
       return true;
     }
 
@@ -729,6 +783,10 @@ bool MappedInputManager::isPressed(const Button button) const {
     return !isPowerButtonActionAvailableOutsideReader(
                static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn)) ||
            gpio.getHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
+  }
+
+  if (button == Button::Power && suppressPowerRelease) {
+    return false;
   }
 
   return mapButton(button, &HalGPIO::isPressed);
@@ -883,6 +941,7 @@ void MappedInputManager::simulatorClearInputFrame() {
 #if CROSSINK_APP_CAP_TOUCH
   simulatorTouch.pressedThisFrame = false;
   simulatorTouch.releasedThisFrame = false;
+  simulatorTouch.longPressFired = false;
 #endif
 }
 

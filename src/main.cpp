@@ -118,12 +118,15 @@ DictionaryRegistry dictionaryRegistry;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
+static unsigned long lastX4ProHomeKeyTapAt = 0;
+static bool x4ProHomeKeyTapPending = false;
 // A held power button can span deep-sleep wake and the first main-loop frame.
 // Do not treat that wake gesture as an in-session shortcut until it has been released.
 static bool powerButtonReleasedSinceWake = false;
 
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
+constexpr unsigned long X4PRO_HOME_KEY_DOUBLE_TAP_MS = 300;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
 }  // namespace
 
@@ -509,11 +512,12 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       enterDeepSleep();
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH: {
-      if (SETTINGS.textAntiAliasing && activityManager.requestManualReaderRefresh()) {
+      // Reader redraws must replace overlays before the panel refreshes.
+      if (activityManager.requestManualReaderRefresh()) {
         return true;
       }
       RenderLock lock;
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      renderer.displayBuffer(HalDisplay::FULL_REFRESH);
       return true;
     }
     case CrossPointSettings::SHORT_PWRBTN::SCREENSHOT: {
@@ -553,9 +557,28 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       }
       activityManager.goToHotspotFileTransfer();
       return true;
+    case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT: {
+      if (!Frontlight.present()) return false;
+      const bool lightOn = !Frontlight.isOn();
+      Frontlight.setOn(lightOn);
+      SETTINGS.frontlightOn = lightOn ? 1 : 0;
+      SETTINGS.saveToFile();
+      LOG_INF("LIGHT", "Frontlight toggled %s by shortcut", lightOn ? "on" : "off");
+      return true;
+    }
+    case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
+      if (!gpio.hasTouch()) return false;
+      SETTINGS.disableReaderTouchscreen = SETTINGS.disableReaderTouchscreen ? 0 : 1;
+      SETTINGS.saveToFile();
+      LOG_INF("TOUCH", "Reader touchscreen %s by shortcut", SETTINGS.disableReaderTouchscreen ? "disabled" : "enabled");
+      return true;
     default:
       return false;
   }
+}
+
+bool dispatchShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  return handleGlobalPowerButtonAction(action) || activityManager.handleShortcutAction(action);
 }
 
 namespace {
@@ -581,6 +604,13 @@ bool handleX4ProFrontlightDoubleClick() {
 #ifdef SIMULATOR
   return false;
 #else
+  if (mappedInputManager.isPowerReleaseSuppressed()) {
+    // A modal consumed this Power press as Confirm. Do not pair its release
+    // with the click that opened the modal.
+    lastX4ProPowerClickAt = 0;
+    return false;
+  }
+
   if (!BoardConfig::isX4Pro() || !gpio.wasReleased(HalGPIO::BTN_POWER)) {
     return false;
   }
@@ -602,6 +632,102 @@ bool handleX4ProFrontlightDoubleClick() {
   SETTINGS.frontlightOn = lightOn ? 1 : 0;
   SETTINGS.saveToFile();
   LOG_INF("LIGHT", "Frontlight toggled %s by power-button double-click", lightOn ? "on" : "off");
+  return true;
+#endif
+}
+
+bool executeX4ProHomeButtonAction(const uint8_t action) {
+  switch (action) {
+    case CrossPointSettings::HOME_BUTTON_BACK_HOME:
+      return activityManager.handleHomeButtonBackOrHome();
+    case CrossPointSettings::HOME_BUTTON_TOGGLE_FRONTLIGHT: {
+      const bool lightOn = !Frontlight.isOn();
+      Frontlight.setOn(lightOn);
+      SETTINGS.frontlightOn = lightOn ? 1 : 0;
+      SETTINGS.saveToFile();
+      LOG_INF("LIGHT", "Frontlight toggled %s by Home key", lightOn ? "on" : "off");
+      return true;
+    }
+    case CrossPointSettings::HOME_BUTTON_READER_MENU:
+      return activityManager.openReaderMenuFromShortcut();
+    default:
+      break;
+  }
+
+  if (action >= CrossPointSettings::SHORT_PWRBTN_COUNT) {
+    return false;
+  }
+
+  const auto powerAction = static_cast<CrossPointSettings::SHORT_PWRBTN>(action);
+  if (handleGlobalPowerButtonAction(powerAction)) {
+    return true;
+  }
+  activityManager.handleShortcutAction(powerAction);
+  return true;
+}
+
+bool handleX4ProHomeKeyShortcuts() {
+#ifdef SIMULATOR
+  return false;
+#else
+  if (!mappedInputManager.hasHomeKey()) {
+    return false;
+  }
+
+  // Reader menus set the touchscreen override while they are active, which
+  // intentionally lets Home work there. On a page, consume every Home edge
+  // and discard a deferred single tap so nothing fires after it is re-enabled.
+  if (mappedInputManager.isHomeButtonLockedInReader()) {
+    const bool hadPendingTap = x4ProHomeKeyTapPending;
+    x4ProHomeKeyTapPending = false;
+    mappedInputManager.clearDeferredHomeGesture();
+    return hadPendingTap || gpio.wasHomeKeyTapped() || gpio.wasHomeKeyLongPressed();
+  }
+
+  // A lower-bezel swipe can report a capacitive Home tap as well. Let the
+  // screen gesture win and cancel any delayed single-tap interpretation so it
+  // cannot navigate Home after the list has already handled the swipe.
+  if (mappedInputManager.wasSwipe() != MappedInputManager::SwipeDir::None) {
+    x4ProHomeKeyTapPending = false;
+    mappedInputManager.clearDeferredHomeGesture();
+    return false;
+  }
+
+  const unsigned long now = millis();
+  bool completedPendingTap = false;
+  if (x4ProHomeKeyTapPending && now - lastX4ProHomeKeyTapAt > X4PRO_HOME_KEY_DOUBLE_TAP_MS) {
+    // A single-tap action must wait briefly so the reader does not navigate
+    // away before a second capacitive-key tap can be recognized.
+    x4ProHomeKeyTapPending = false;
+    if (SETTINGS.homeButtonTapAction == CrossPointSettings::HOME_BUTTON_BACK_HOME) {
+      // Keep reader menus and other overlays on their existing local Home route.
+      mappedInputManager.queueDeferredHomeGesture();
+    } else {
+      executeX4ProHomeButtonAction(SETTINGS.homeButtonTapAction);
+      completedPendingTap = true;
+    }
+  }
+
+  if (gpio.wasHomeKeyLongPressed()) {
+    // A hold is a separate gesture, not the second half of a double tap.
+    x4ProHomeKeyTapPending = false;
+    if (SETTINGS.homeButtonLongPressAction == CrossPointSettings::HOME_BUTTON_READER_MENU) {
+      return completedPendingTap;
+    }
+    executeX4ProHomeButtonAction(SETTINGS.homeButtonLongPressAction);
+    return true;
+  }
+
+  if (!gpio.wasHomeKeyTapped()) return completedPendingTap;
+
+  if (!x4ProHomeKeyTapPending) {
+    lastX4ProHomeKeyTapAt = now;
+    x4ProHomeKeyTapPending = true;
+    return true;
+  }
+
+  x4ProHomeKeyTapPending = false;
+  executeX4ProHomeButtonAction(SETTINGS.homeButtonDoubleTapAction);
   return true;
 #endif
 }
@@ -787,6 +913,9 @@ void setup() {
 #endif
 
   HalSystem::begin();
+  // checkPanic() clears the watchdog capture marker after a successful SD
+  // dump, so retain the boot classification for the later activity route.
+  const bool rebootedFromPanic = HalSystem::isRebootFromPanic();
   LOG_INF("BOOT", "Reset diagnostic: reset=%d(%s) sleepWake=%d(%s)", static_cast<int>(rawResetReason),
           resetReasonName(rawResetReason), static_cast<int>(rawWakeupCause), wakeupCauseName(rawWakeupCause));
 
@@ -897,13 +1026,13 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
-  // Frontlight PWM up (no-op on boards without one). Brightness + warmth are always
-  // restored from persisted settings. The on/off state defaults to OFF at wake/boot —
-  // so the user isn't greeted by a surprise glow (or a silent battery drain) — unless
-  // "Restore Light on Wake" is enabled, which brings back the pre-sleep on/off state too.
-  // Silent/network restarts are automated transitions rather than deliberate
-  // sleep, so preserve the light state across them regardless of that setting.
+  // Frontlight PWM up (no-op on boards without one). X4 Pro restores the complete
+  // persisted state; other frontlight boards retain their opt-in wake behavior.
+#if FREEINK_DEVICE_X4PRO || defined(SIMULATOR_DEVICE_X4_PRO)
+  const bool restoreLightOn = SETTINGS.frontlightOn != 0;
+#else
   const bool restoreLightOn = SETTINGS.frontlightOn != 0 && (SETTINGS.frontlightRestoreOnWake != 0 || isSilentReboot);
+#endif
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   // Re-sync the wake-hold NVS mirror with the freshly-loaded settings, covering
@@ -998,7 +1127,7 @@ void setup() {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
         std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
-  } else if (HalSystem::isRebootFromPanic()) {
+  } else if (rebootedFromPanic) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
   } else if (resume == BootResume::Network) {
@@ -1170,9 +1299,9 @@ void loop() {
     return;
   }
 #endif
-  // X4 Pro-only frontlight shortcut. Consume the second release so a configured
-  // short-power action does not also run for the click that toggled the light.
-  if (handleX4ProFrontlightDoubleClick()) {
+  // X4 Pro-only button shortcuts. Home-key taps are consumed until their
+  // single- or double-tap action is known.
+  if (handleX4ProFrontlightDoubleClick() || handleX4ProHomeKeyShortcuts()) {
     return;
   }
 
@@ -1194,7 +1323,7 @@ void loop() {
     if (!gpio.isPressed(HalGPIO::BTN_POWER)) {
       powerButtonReleasedSinceWake = true;
     }
-  } else if (millis() >= allowSleepAt && handleGlobalPowerButtonAction(getPowerButtonAction())) {
+  } else if (millis() >= allowSleepAt && dispatchShortcutAction(getPowerButtonAction())) {
     lastActivityTime = millis();
     return;
   }
@@ -1224,6 +1353,11 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
+#if CROSSINK_APP_CAP_TOUCH
+  // A delayed Home event is valid for this activity dispatch only. If an
+  // unrelated gesture took priority, do not carry it into the next activity.
+  mappedInputManager.clearDeferredHomeGesture();
+#endif
   const unsigned long activityDuration = millis() - activityStartTime;
 
 #ifdef SIMULATOR

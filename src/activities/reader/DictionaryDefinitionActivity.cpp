@@ -496,6 +496,12 @@ bool DictionaryDefinitionActivity::dictionarySwitchButtonContains(const int x, c
   const int buttonY = modalY_ + modalHeight_ - kDictionarySwitchTouchHeight;
   return x >= modalX_ && x < modalX_ + modalWidth_ && y >= buttonY && y < buttonY + kDictionarySwitchTouchHeight;
 }
+
+bool DictionaryDefinitionActivity::modalContains(const int x, const int y) const {
+  const int frameThickness = UITheme::getInstance().getMetrics().popupFrameThickness;
+  return x >= modalX_ - frameThickness && x < modalX_ + modalWidth_ + frameThickness && y >= modalY_ - frameThickness &&
+         y < modalY_ + modalHeight_ + frameThickness;
+}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -1096,6 +1102,16 @@ void DictionaryDefinitionActivity::loop() {
   // Own the complete long-press gesture. Returning to the reader while Back is
   // still held would let the reader fire its configured long-press shortcut.
   if (handleLongPressExitAll(showLookupButton)) return;
+
+#if CROSSINK_APP_CAP_TOUCH
+  int modalTouchX = 0;
+  int modalTouchY = 0;
+  if (hasModalBackground() && mappedInput.hasTouch() && !controller.requiresBackgroundRedrawAfterOverlay() &&
+      mappedInput.wasScreenTapped(modalTouchX, modalTouchY) && !modalContains(modalTouchX, modalTouchY)) {
+    DictUtils::cancelAndFinish(*this);
+    return;
+  }
+#endif
 
   // --- Controller active (LookingUp / AltFormPrompt / NotFound) ---
   if (controller.isActive()) {

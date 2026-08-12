@@ -123,7 +123,7 @@ class CompactTableLayout final {
 
   bool ensureBuffer(size_t additionalBytes);
   uint16_t tableWidth() const;
-  uint16_t innerWidthForSpan(uint8_t columns, uint8_t span) const;
+  uint16_t innerWidthForSpan(uint8_t columns, uint8_t startColumn, uint8_t span) const;
   uint16_t measure(uint16_t offset, uint16_t length, EpdFontFamily::Style style);
   bool appendLineToken(std::array<LineToken, MAX_ROW_TOKENS>& line, uint16_t& lineCount, uint16_t& lineWidth,
                        uint16_t maxWidth, uint16_t offset, uint16_t length, EpdFontFamily::Style style, uint8_t flags,

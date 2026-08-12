@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "Epub/blocks/BlockStyle.h"
 #include "EpdFontFamily.h"
+#include "Epub/blocks/BlockStyle.h"
 
 class TextBlock {
  public:
@@ -18,9 +18,8 @@ class TextBlock {
   BlockStyle style;
 
   TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& xPositions,
-            const std::vector<EpdFontFamily::Style>& styles, const std::vector<uint8_t>&,
-            const std::vector<uint16_t>&, const std::vector<uint16_t>&, const std::vector<uint8_t>&,
-            const BlockStyle& style)
+            const std::vector<EpdFontFamily::Style>& styles, const std::vector<uint8_t>&, const std::vector<uint16_t>&,
+            const std::vector<uint16_t>&, const std::vector<uint8_t>&, const BlockStyle& style)
       : words(words), xPositions(xPositions), styles(styles), style(style) {}
 
   bool valid() const { return true; }

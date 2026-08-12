@@ -4,6 +4,8 @@
 #include <Logging.h>
 #include <Serialization.h>
 
+#include "tables/TableColumnLayout.h"
+
 namespace {
 
 constexpr uint16_t MAX_PAGE_ELEMENTS = 1024;
@@ -273,9 +275,11 @@ void PageTableFragment::render(GfxRenderer& renderer, const int fontId, const in
 
   std::vector<int16_t> columnStarts(columnCount + 1);
   for (uint8_t i = 0; i < columnCount; i++) {
-    columnStarts[i] = static_cast<int16_t>((static_cast<uint32_t>(width) * i) / columnCount);
+    columnStarts[i] = static_cast<int16_t>(TableColumnLayout::columnStart(width, columnCount, i));
   }
-  columnStarts[columnCount] = static_cast<int16_t>(width - 1);
+  // Text clips use a half-open right edge; keep the final cell's full width
+  // available while the border itself remains one pixel inside the table.
+  columnStarts[columnCount] = static_cast<int16_t>(TableColumnLayout::columnStart(width, columnCount, columnCount));
 
   renderer.drawRect(drawX, drawY, width, totalHeight, foregroundBlack);
 
@@ -423,6 +427,42 @@ void Page::renderWithImagePlaceholders(GfxRenderer& renderer, const int fontId, 
       pageImage.render(renderer, fontId, xOffset, yOffset, foregroundBlack);
     }
   }
+}
+
+uint16_t Page::imageEstimateUnits(const uint16_t viewportHeight) const {
+  bool hasImage = false;
+  bool hasReadableContent = false;
+  uint32_t imageHeight = 0;
+  for (const auto& element : elements) {
+    switch (element->getTag()) {
+      case TAG_PageImage: {
+        hasImage = true;
+        const auto& image = static_cast<const PageImage&>(*element).getImageBlock();
+        if (viewportHeight > 0) {
+          const int imageTop = std::max(0, static_cast<int>(element->yPos));
+          const int imageBottom =
+              std::min(static_cast<int>(viewportHeight),
+                       static_cast<int>(element->yPos) + std::max(0, static_cast<int>(image.getHeight())));
+          if (imageBottom > imageTop) {
+            imageHeight += static_cast<uint32_t>(imageBottom - imageTop);
+          }
+        }
+        break;
+      }
+      case TAG_PageLine:
+      case TAG_PageTableFragment:
+        hasReadableContent = true;
+        break;
+      case TAG_PageHorizontalRule:
+        break;
+    }
+  }
+
+  if (!hasImage) return 0;
+  if (!hasReadableContent || viewportHeight == 0) return PageCountEstimator::kUnitsPerPage;
+
+  const uint32_t units = (imageHeight * PageCountEstimator::kUnitsPerPage) / viewportHeight;
+  return static_cast<uint16_t>(std::min<uint32_t>(PageCountEstimator::kUnitsPerPage, units));
 }
 
 bool Page::serialize(FsFile& file) const {

@@ -4,8 +4,8 @@
 #include <memory>
 #include <vector>
 
-#include "Epub/blocks/TextBlock.h"
 #include "Epub/FootnoteEntry.h"
+#include "Epub/blocks/TextBlock.h"
 
 struct TableFragmentCell {
   static constexpr uint8_t MAX_SERIALIZED_LINES = 64;

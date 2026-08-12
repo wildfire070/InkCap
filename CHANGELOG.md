@@ -3,14 +3,20 @@
 ### Added
 
 - BookFusion cloud sync: sign in with your BookFusion account via OAuth device-code pairing (a short code and QR code), browse and download from your BookFusion library by category, and sync reading progress between BookFusion and this device.
+- Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
 
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- Reader menu settings now group Controls and Mark as Finished with the gear-tab actions in a consistent order.
 - Font Family choices now identify built-in and SD-card fonts by their available point-size ranges.
 
 ### Fixed
 
+- Long-pressing Up or Down in long popup lists now advances by a full page.
+- EPUB table fixes now preserve final-column widths, give dense tables enough space for leading labels, and split oversized words instead of clipping them.
+- Nearby Position Sync now leaves the sending device with a single Back action after sharing a position and tolerates repeated packets while the receiving reader prepares the location.
+- Clearing an EPUB's reading cache now returns Home so the book can rebuild its cache safely when reopened.
 - Large EPUB tables now use a bounded row-streaming grid on low-memory devices, preserving readable styled cells and falling back explicitly for unsupported table structures.
 - Dictionary definition popups no longer leave an empty white button-hint block over the reader page.
 - Recent Books and KOReader Sync settings now remain intact after returning from lightweight network screens.
@@ -24,11 +30,24 @@
 - Dictionary font switches now retry after releasing the reader font when memory is tight.
 - XTC table of contents now includes every available page entry, so large books can jump beyond the first 128 pages.
 - Saved clipping highlights now remain accurate when a font or font-size change reflows a word across an inserted hyphen.
+- Xteink readers wake faster by skipping redundant bootloader image validation after sleep.
+- Large EPUB images keep the reader responsive during decoding.
+- Full-height EPUB images no longer disappear when their container adds a top margin.
+- EPUB page estimates now keep image-only and mixed image pages from being multiplied by XHTML byte density.
+- Cancelling a chapter, footnote, location, or QR screen opened from the EPUB menu returns to that menu.
+- EPUB and XTC readers retain less memory during ordinary reading by loading end-of-book suggestions only when needed.
+- Long inherited dictionary-font names no longer overlap or extend beyond Font Options rows at Large UI size.
 - KOReader Sync progress no longer remains interleaved with EPUB image pages after returning to the reader.
 
 ## [v1.5.0] - 2026-08-08
 
 ### Added
+
+- X4 Pro readers can lock the Home button while reading, with a Power-button shortcut to toggle it.
+- End-of-book suggestions can now be opened directly by tapping their rows on touch devices.
+- Quick Actions lets readers assign up to five favorite reader commands to one Power, Back, or Menu shortcut.
+
+### Fixed
 
 - EPUB tables now lay out a row at a time in both Incremental and Full Section indexing, keeping regular tables readable without whole-table buffering.
 - Touch support for Seeed Studio Sticky
@@ -50,6 +69,7 @@
 
 ### Changed
 
+- PSRAM-equipped readers now keep EPUB grayscale and image-cache working buffers in external memory, preserving more internal RAM for layout and reducing repeated SD reads on image pages.
 - Reader font sizes now persist as actual point sizes, keeping the closest matching size when font families or installed files change.
 - SD-card fonts now include the built-in reader fallback stack for common symbols, emoji, and selected CJK glyphs while retaining Noto Sans fallback coverage.
 - Downloadable SD-card fonts are now rendered with the same darker anti-aliasing as the built-in reading fonts.
