@@ -28,6 +28,10 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
 
+  // AO3 library: selector index to restore when returning to the library screen.
+  // Not persisted; -1 means no return index is pending.
+  int ao3LibraryReturnIndex = -1;
+
   // Returns true if idx was shown within the last checkCount picks.
   // Walks backwards from the most recently written slot.
   bool isRecentSleep(uint16_t idx, uint8_t checkCount) const;

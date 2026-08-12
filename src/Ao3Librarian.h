@@ -2,9 +2,9 @@
 
 #include <string>
 #include <vector>
-#include "Ao3LibraryMetadata.h"
 
 #include "Ao3CompactIndexRecord.h"
+#include "Ao3LibraryMetadata.h"
 
 class Epub;
 
@@ -78,13 +78,8 @@ class Ao3Librarian {
   /**
    * @brief Internal parser that handles the HTML streaming and anchor searching.
    */
-  static bool parseTitlePage(const Epub& epub,
-                             Ao3LibraryMetadata& meta,
-                             std::string& scrapedWorkId,
-                             std::string& scrapedDate,
-                             char* scrapedFandom,
-                             char* scrapedRel1,
-                             char* scrapedRel2);
+  static bool parseTitlePage(const Epub& epub, Ao3LibraryMetadata& meta, std::string& scrapedWorkId,
+                             std::string& scrapedDate, char* scrapedFandom, char* scrapedRel1, char* scrapedRel2);
 
   /**
    * @brief Estimates a book's word count by counting whitespace-delimited

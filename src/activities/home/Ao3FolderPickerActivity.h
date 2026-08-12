@@ -1,13 +1,11 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "../Activity.h"
-#include "../../util/ButtonNavigator.h"
 
-enum class PickerMode {
-  SINGLE,
-  MULTI
-};
+#include "../../util/ButtonNavigator.h"
+#include "../Activity.h"
+
+enum class PickerMode { SINGLE, MULTI };
 
 class Ao3FolderPickerActivity final : public Activity {
   std::string title;
@@ -24,10 +22,8 @@ class Ao3FolderPickerActivity final : public Activity {
   void toggleSelection(const std::string& path);
 
  public:
-  Ao3FolderPickerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                          std::string title, PickerMode mode,
-                          std::vector<std::string> initialSelected = {},
-                          std::string startPath = "/")
+  Ao3FolderPickerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string title, PickerMode mode,
+                          std::vector<std::string> initialSelected = {}, std::string startPath = "/")
       : Activity("Ao3FolderPicker", renderer, mappedInput),
         title(std::move(title)),
         mode(mode),

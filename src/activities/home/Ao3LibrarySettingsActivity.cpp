@@ -1,11 +1,13 @@
 #include "Ao3LibrarySettingsActivity.h"
-#include "Ao3TagMergeActivity.h"
-#include "../ActivityResult.h"
-#include <HalStorage.h>
+
 #include <ArduinoJson.h>
-#include <Logging.h>
+#include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
+
+#include "../ActivityResult.h"
 #include "Ao3FolderPickerActivity.h"
+#include "Ao3TagMergeActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -139,7 +141,9 @@ void Ao3LibrarySettingsActivity::loop() {
         }
         requestUpdate(true);
       };
-      startActivityForResult(std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select AO3 Folder", PickerMode::SINGLE), handler);
+      startActivityForResult(
+          std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select AO3 Folder", PickerMode::SINGLE),
+          handler);
     } else if (selectorIndex == 1) {
       auto handler = [this](const ActivityResult& res) {
         if (!res.isCancelled) {
@@ -153,12 +157,18 @@ void Ao3LibrarySettingsActivity::loop() {
         requestUpdate(true);
       };
       std::string startPath = ao3Folder.empty() ? "/" : ao3Folder;
-      startActivityForResult(std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select Folders to Exclude", PickerMode::MULTI, excludedFolders, startPath), handler);
+      startActivityForResult(
+          std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select Folders to Exclude",
+                                                    PickerMode::MULTI, excludedFolders, startPath),
+          handler);
     } else if (selectorIndex == 2) {
       const int sizes[] = {10, 25, 50};
       int current = 0;
       for (int i = 0; i < 3; i++) {
-        if (sizes[i] == batchSize) { current = i; break; }
+        if (sizes[i] == batchSize) {
+          current = i;
+          break;
+        }
       }
       batchSize = sizes[(current + 1) % 3];
       saveSettings();
@@ -172,9 +182,7 @@ void Ao3LibrarySettingsActivity::loop() {
       saveSettings();
       requestUpdate();
     } else if (selectorIndex == 5) {
-      filterMode = (filterMode == FilterMode::AUTOMATIC)
-                     ? FilterMode::FOLDER_TREE
-                     : FilterMode::AUTOMATIC;
+      filterMode = (filterMode == FilterMode::AUTOMATIC) ? FilterMode::FOLDER_TREE : FilterMode::AUTOMATIC;
       saveSettings();
       requestUpdate();
     } else if (selectorIndex == 6) {
@@ -194,7 +202,7 @@ void Ao3LibrarySettingsActivity::loop() {
       return;
     }
     return;
-}
+  }
 
   buttonNavigator.onNextRelease([this] {
     selectorIndex = (selectorIndex + 1) % 9;
@@ -238,7 +246,8 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     renderer.clearScreen();
     const auto pageHeight = renderer.getScreenHeight();
     const auto& metrics = UITheme::getInstance().getMetrics();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, "Library Cleanup");
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   "Library Cleanup");
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Please Wait. Cleaning up library...");
     renderer.displayBuffer();
     return;
@@ -248,11 +257,10 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     renderer.clearScreen();
     const auto pageHeight = renderer.getScreenHeight();
     const auto& metrics = UITheme::getInstance().getMetrics();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, "Library Cleanup");
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10,
-      "The cleanup process will remove");
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 14,
-      "ghost books from your AO3 Library.");
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   "Library Cleanup");
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10, "The cleanup process will remove");
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 14, "ghost books from your AO3 Library.");
     const auto labels = mappedInput.mapLabels("Cancel", "Start", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
@@ -263,7 +271,8 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     renderer.clearScreen();
     const auto pageHeight = renderer.getScreenHeight();
     const auto& metrics = UITheme::getInstance().getMetrics();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, "Library Cleanup");
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   "Library Cleanup");
     if (cleanupRemovedCount < 0) {
       renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Index not found.");
     } else if (cleanupRemovedCount == 0) {
@@ -289,20 +298,11 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
 
   // Two rows: Your AO3 Folder and Non-AO3 Folders
   std::vector<std::string> rows = {
-    "Your AO3 Folder",
-    "Never Index",
-    "Index Batch Size",
-    "Auto-Index on Library Open",
-    "Hide Finished Fics",
-    "Filter Mode",
-    "Merge Similar Tags",
-    "Side Button Layout",
-    "Library Cleanup"
-  };
+      "Your AO3 Folder",    "Never Index", "Index Batch Size",   "Auto-Index on Library Open",
+      "Hide Finished Fics", "Filter Mode", "Merge Similar Tags", "Side Button Layout",
+      "Library Cleanup"};
 
-  auto rowTitle = [&rows](int index) {
-    return rows[index];
-  };
+  auto rowTitle = [&rows](int index) { return rows[index]; };
 
   auto rowValue = [this](int index) -> std::string {
     if (index == 0) return formatFolderPill();
@@ -314,17 +314,15 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     if (index == 6) return "";
     if (index == 7) return swapNavButtons ? "Scroll List" : "Open Panels";
     return "";
-};
+  };
 
-  auto rowDimmed = [this](int index) -> bool {
-    return index == 6 && filterMode != FilterMode::AUTOMATIC;
-};
+  auto rowDimmed = [this](int index) -> bool { return index == 6 && filterMode != FilterMode::AUTOMATIC; };
 
   int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 9, selectorIndex,
-               rowTitle, nullptr, nullptr, rowValue, true, rowDimmed);
+  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 9, selectorIndex, rowTitle, nullptr, nullptr,
+               rowValue, true, rowDimmed);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Select", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

@@ -4,10 +4,10 @@
 #include <HalStorage.h>
 #include <I18n.h>
 
+#include "../../Ao3Librarian.h"
 #include "../../components/UITheme.h"
 #include "../util/ConfirmationActivity.h"
 #include "Ao3IndexActivity.h"
-#include "../../Ao3Librarian.h"
 
 BookActionActivity::BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
                                        std::string fileName)
@@ -49,11 +49,11 @@ void BookActionActivity::render(RenderLock&&) {
     return std::string(tr(STR_DELETE));
   };
 
-  GUI.drawList(renderer,
-               Rect{0, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, renderer.getScreenWidth(),
-                    renderer.getScreenHeight() - metrics.headerHeight - metrics.buttonHintsHeight -
-                        metrics.verticalSpacing * 2},
-               3, selectorIndex, rowTitle);
+  GUI.drawList(
+      renderer,
+      Rect{0, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, renderer.getScreenWidth(),
+           renderer.getScreenHeight() - metrics.headerHeight - metrics.buttonHintsHeight - metrics.verticalSpacing * 2},
+      3, selectorIndex, rowTitle);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -96,9 +96,9 @@ void BookActionActivity::loop() {
         }
         requestUpdate(true);
       };
-      startActivityForResult(std::make_unique<Ao3IndexActivity>(renderer, mappedInput, Ao3IndexMode::SINGLE, filePath), handler);
+      startActivityForResult(std::make_unique<Ao3IndexActivity>(renderer, mappedInput, Ao3IndexMode::SINGLE, filePath),
+                             handler);
     } else {
-
       // Trigger delete confirmation
       auto handler = [this](const ActivityResult& res) {
         if (!res.isCancelled) {
@@ -128,7 +128,6 @@ void BookActionActivity::loop() {
   });
 }
 
-
 void BookActionActivity::saveStatus() {
   std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(filePath));
   HalFile f;
@@ -149,8 +148,8 @@ void BookActionActivity::saveStatus() {
 
   // Sync finished flag to AO3 index (only on boundary crossing)
   if (hasAo3LibraryInfo) {
-    bool isNowFinished  = (currentStatus == BookStatus::FINISHED);
-    bool wasFinished    = (initialStatus  == BookStatus::FINISHED);
+    bool isNowFinished = (currentStatus == BookStatus::FINISHED);
+    bool wasFinished = (initialStatus == BookStatus::FINISHED);
     if (isNowFinished != wasFinished) {
       Ao3Librarian::setRecordFinished(filePath, isNowFinished);
     }

@@ -1,16 +1,14 @@
 #pragma once
+#include <algorithm>
 #include <string>
 #include <vector>
-#include <algorithm>
-#include "../Activity.h"
+
 #include "../../Ao3CompactIndexRecord.h"
 #include "../../Ao3Librarian.h"
 #include "../../util/ButtonNavigator.h"
+#include "../Activity.h"
 
-enum class Ao3IndexMode {
-  SINGLE,
-  DIRECTORY
-};
+enum class Ao3IndexMode { SINGLE, DIRECTORY };
 
 class Ao3IndexActivity final : public Activity {
  public:
@@ -36,7 +34,7 @@ class Ao3IndexActivity final : public Activity {
 
  private:
   Ao3IndexMode mode;
-  std::string targetPath; // file path for SINGLE mode
+  std::string targetPath;  // file path for SINGLE mode
   State state = State::HEAP_CHECK;
   std::string errorMessage;
   ButtonNavigator buttonNavigator;

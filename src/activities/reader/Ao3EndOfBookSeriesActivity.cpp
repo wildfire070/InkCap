@@ -2,15 +2,16 @@
 
 #include <HalStorage.h>
 #include <I18n.h>
-#include <cstring>
+
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <new>
 
 #include "../../Ao3Librarian.h"
-#include "../../fontIds.h"
 #include "../../MappedInputManager.h"
 #include "../../components/UITheme.h"
+#include "../../fontIds.h"
 #include "ReaderUtils.h"
 
 // ---------------------------------------------------------------------------
@@ -36,18 +37,14 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
   HalFile f;
   if (!Storage.openFileForRead("AO3S", indexPath, f)) return;
 
-  char     magic[4];
-  uint8_t  version;
+  char magic[4];
+  uint8_t version;
   uint16_t recordCount;
   uint32_t nextSequence;
-  uint8_t  reserved;
+  uint8_t reserved;
 
-  const bool readOk =
-      f.read(magic, 4) == 4 &&
-      f.read(&version, 1) == 1 &&
-      f.read((uint8_t*)&recordCount, 2) == 2 &&
-      f.read((uint8_t*)&nextSequence, 4) == 4 &&
-      f.read(&reserved, 1) == 1;
+  const bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
+                      f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(&reserved, 1) == 1;
 
   if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 1 || recordCount > MAX_LIBRARY_BOOKS) {
     f.close();
@@ -57,7 +54,7 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
   CompactIndexRecord rec;
   for (uint16_t i = 0; i < recordCount; i++) {
     if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-    if (rec.flags & 0x01) continue;                     // tombstone
+    if (rec.flags & 0x01) continue;                      // tombstone
     if (fnv1a(rec.seriesName) != seriesHash_) continue;  // different series
     viewEntries.push_back(buildViewEntry(rec));
     yield();
@@ -65,9 +62,8 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
   f.close();
 
   // Always sort by series part ascending
-  std::sort(viewEntries.begin(), viewEntries.end(), [](const ViewEntry& a, const ViewEntry& b) {
-    return a.seriesPart < b.seriesPart;
-  });
+  std::sort(viewEntries.begin(), viewEntries.end(),
+            [](const ViewEntry& a, const ViewEntry& b) { return a.seriesPart < b.seriesPart; });
 
   // Position selector on the just-closed book
   for (size_t i = 0; i < viewEntries.size(); i++) {
@@ -102,7 +98,7 @@ BookStatus Ao3EndOfBookSeriesActivity::getBookStatus(uint32_t cacheHash) {
 
 void Ao3EndOfBookSeriesActivity::loadPageCache(int page) {
   const int startIdx = page * 3;
-  const int endIdx   = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
+  const int endIdx = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
 
   for (int i = 0; i < 3; i++) {
     new (&pageCache[i]) Ao3LibraryMetadata();
@@ -111,8 +107,7 @@ void Ao3EndOfBookSeriesActivity::loadPageCache(int page) {
 
   for (int i = startIdx; i < endIdx; i++) {
     const int slot = i - startIdx;
-    std::string infoPath =
-        "/.crosspoint/epub_" + std::to_string(viewEntries[i].cacheHash) + "/ao3_library_info";
+    std::string infoPath = "/.crosspoint/epub_" + std::to_string(viewEntries[i].cacheHash) + "/ao3_library_info";
     HalFile f;
     if (Storage.openFileForRead("AO3S", infoPath, f)) {
       f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata));
@@ -143,8 +138,7 @@ void Ao3EndOfBookSeriesActivity::loadPageCache(int page) {
 
 void Ao3EndOfBookSeriesActivity::loop() {
   // Long press Back → go home
-  if (mappedInput.isPressed(MappedInputManager::Button::Back) &&
-      mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
     onGoHome();
     return;
   }
@@ -220,21 +214,20 @@ void Ao3EndOfBookSeriesActivity::render(RenderLock&& lock) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   // Header: series name, truncated if needed
-  const std::string headerText = renderer.truncatedText(
-      UI_12_FONT_ID, seriesName_.c_str(), renderer.getScreenWidth() - 30, EpdFontFamily::BOLD);
+  const std::string headerText =
+      renderer.truncatedText(UI_12_FONT_ID, seriesName_.c_str(), renderer.getScreenWidth() - 30, EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, 15, 12, headerText.c_str(), true, EpdFontFamily::BOLD);
   renderer.drawLine(0, 48, renderer.getScreenWidth(), 48);
 
   if (viewEntries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2,
-                              "No books found in this series.");
+    renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, "No books found in this series.");
   } else {
     const int startIdx = (selectorIndex / 3) * 3;
-    const int endIdx   = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
+    const int endIdx = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
 
-    const int topPad       = 18;
-    const int contentEnd   = renderer.getScreenHeight() - metrics.buttonHintsHeight;
-    const int entrySlot    = (contentEnd - (42 + topPad)) / 3;
+    const int topPad = 18;
+    const int contentEnd = renderer.getScreenHeight() - metrics.buttonHintsHeight;
+    const int entrySlot = (contentEnd - (42 + topPad)) / 3;
     const int contentStart = 48 + topPad;
 
     const int currentPage = static_cast<int>(selectorIndex) / 3;
@@ -255,12 +248,9 @@ void Ao3EndOfBookSeriesActivity::render(RenderLock&& lock) {
     // Page counter
     if (static_cast<int>(viewEntries.size()) > 3) {
       char pageBuf[32];
-      sprintf(pageBuf, "%d / %d",
-              (startIdx / 3) + 1,
-              (static_cast<int>(viewEntries.size()) + 2) / 3);
+      sprintf(pageBuf, "%d / %d", (startIdx / 3) + 1, (static_cast<int>(viewEntries.size()) + 2) / 3);
       // Anchor symmetrically to the right with a 15px margin
-      const int counterX =
-          renderer.getScreenWidth() - 15 - renderer.getTextWidth(SMALL_FONT_ID, pageBuf);
+      const int counterX = renderer.getScreenWidth() - 15 - renderer.getTextWidth(SMALL_FONT_ID, pageBuf);
       renderer.drawText(SMALL_FONT_ID, counterX, 15, pageBuf);
     }
   }
@@ -275,29 +265,28 @@ void Ao3EndOfBookSeriesActivity::render(RenderLock&& lock) {
 //  renderEntry — mirrors Ao3LibraryActivity exactly
 // ---------------------------------------------------------------------------
 
-void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& ve,
-                                             int cacheSlot, bool selected) {
-  const int margin          = 20;
+void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot,
+                                             bool selected) {
+  const int margin = 20;
   const int selectionHeight = 56;
-  const int squareSize      = selectionHeight;
-  const int textX           = margin + squareSize + 15;
+  const int squareSize = selectionHeight;
+  const int textX = margin + squareSize + 15;
 
   if (selected) {
-    renderer.fillRoundedRect(textX - 8, y - 3,
-                             renderer.getScreenWidth() - textX - 15,
-                             selectionHeight + 6, 8, LightGray);
+    renderer.fillRoundedRect(textX - 8, y - 3, renderer.getScreenWidth() - textX - 15, selectionHeight + 6, 8,
+                             LightGray);
   }
 
-  const Ao3LibraryMetadata& meta       = pageCache[cacheSlot];
-  const bool                metaLoaded = meta.isValid();
+  const Ao3LibraryMetadata& meta = pageCache[cacheSlot];
+  const bool metaLoaded = meta.isValid();
 
-  const char rating    = metaLoaded ? meta.rating         : '-';
-  const char warning   = metaLoaded ? meta.warning        : 0;
+  const char rating = metaLoaded ? meta.rating : '-';
+  const char warning = metaLoaded ? meta.warning : 0;
   const bool completed = metaLoaded ? (bool)meta.isCompleted : false;
 
   drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot]);
 
-  std::string title      = metaLoaded && meta.title[0]  ? std::string(meta.title)  : std::string(ve.title);
+  std::string title = metaLoaded && meta.title[0] ? std::string(meta.title) : std::string(ve.title);
   std::string authorText = metaLoaded && meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
 
   if (metaLoaded && meta.seriesName[0] != 0) {
@@ -317,8 +306,7 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
 
   auto truncateToFit = [&](std::string& text, int fontId, EpdFontFamily::Style style) {
     if (renderer.getTextWidth(fontId, text.c_str(), style) > maxTextWidth) {
-      while (!text.empty() &&
-             renderer.getTextWidth(fontId, (text + "..").c_str(), style) > maxTextWidth) {
+      while (!text.empty() && renderer.getTextWidth(fontId, (text + "..").c_str(), style) > maxTextWidth) {
         while (!text.empty()) {
           const char c = text.back();
           text.pop_back();
@@ -329,10 +317,10 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
     }
   };
 
-  truncateToFit(title,      UI_12_FONT_ID, EpdFontFamily::BOLD);
+  truncateToFit(title, UI_12_FONT_ID, EpdFontFamily::BOLD);
   truncateToFit(authorText, UI_10_FONT_ID, EpdFontFamily::REGULAR);
 
-  renderer.drawText(UI_12_FONT_ID, textX, y + 6,  title.c_str(),      true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, textX, y + 6, title.c_str(), true, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, textX, y + 32, authorText.c_str());
 
   if (metaLoaded) {
@@ -357,19 +345,17 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
 
     char metaBuf[128];
     if (meta.updatedDate[0] != '\0') {
-      sprintf(metaBuf, "Chapters: %d   Words: %lu   Updated: %s",
-              meta.chapterCount, (unsigned long)meta.wordCount, meta.updatedDate);
+      sprintf(metaBuf, "Chapters: %d   Words: %lu   Updated: %s", meta.chapterCount, (unsigned long)meta.wordCount,
+              meta.updatedDate);
     } else {
-      sprintf(metaBuf, "Chapters: %d   Words: %lu",
-              meta.chapterCount, (unsigned long)meta.wordCount);
+      sprintf(metaBuf, "Chapters: %d   Words: %lu", meta.chapterCount, (unsigned long)meta.wordCount);
     }
     renderer.drawText(SMALL_FONT_ID, margin, blockY, metaBuf);
   }
 }
 
-void Ao3EndOfBookSeriesActivity::drawAo3Square(RenderLock& lock, int x, int y, int s,
-                                               char rating, char warning, bool completed,
-                                               BookStatus status) {
+void Ao3EndOfBookSeriesActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning,
+                                               bool completed, BookStatus status) {
   const int h = s / 2;
   renderSymbol(x + 1, y + 1, h - 1, rating, true, false, false, false, -1);
   renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1);
@@ -380,8 +366,8 @@ void Ao3EndOfBookSeriesActivity::drawAo3Square(RenderLock& lock, int x, int y, i
   renderer.drawLine(x + h, y + 1, x + h, y + s - 1);
 }
 
-void Ao3EndOfBookSeriesActivity::renderSymbol(int x, int y, int s, char c,
-                                              bool tl, bool tr, bool bl, bool br, int yOffset) {
+void Ao3EndOfBookSeriesActivity::renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br,
+                                              int yOffset) {
   Color bg = White;
   if (c == 'T') bg = LightGray;
   if (c == 'M') bg = DarkGray;
@@ -391,19 +377,19 @@ void Ao3EndOfBookSeriesActivity::renderSymbol(int x, int y, int s, char c,
   if (c == '-' || c == 0) buf[0] = '-';
   const int tw = renderer.getTextWidth(UI_10_FONT_ID, buf);
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset,
-                    buf, (bg == DarkGray || bg == Black) ? false : true);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, buf,
+                    (bg == DarkGray || bg == Black) ? false : true);
 }
 
-void Ao3EndOfBookSeriesActivity::renderStatusSymbol(int x, int y, int s, BookStatus status,
-                                                    bool tl, bool tr, bool bl, bool br, int yOffset) {
+void Ao3EndOfBookSeriesActivity::renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl,
+                                                    bool br, int yOffset) {
   if (status == BookStatus::WAITING_FOR_CHAPTER || status == BookStatus::NEW_CHAPTER_AVAILABLE) {
     int triW = s / 2;
     int triH = s / 2;
     int triX = x + (s - triW) / 2;
     int triY = y + (s - triH) / 2 + yOffset;
-    int xPts[] = { triX + triW / 2, triX, triX + triW };
-    int yPts[] = { triY, triY + triH, triY + triH };
+    int xPts[] = {triX + triW / 2, triX, triX + triW};
+    int yPts[] = {triY, triY + triH, triY + triH};
     renderer.fillPolygon(xPts, yPts, 3, Black);
     if (status == BookStatus::NEW_CHAPTER_AVAILABLE) {
       renderer.fillRoundedRect(x + s - 6, y - 3, 11, 10, 4, true, true, true, true, Black);
@@ -412,39 +398,50 @@ void Ao3EndOfBookSeriesActivity::renderStatusSymbol(int x, int y, int s, BookSta
   }
   const char* txt = "-";
   Color bg = White;
-  if (status == BookStatus::READING)  { bg = LightGray; txt = "R"; }
-  if (status == BookStatus::FINISHED) { bg = Black;     txt = "F"; }
+  if (status == BookStatus::READING) {
+    bg = LightGray;
+    txt = "R";
+  }
+  if (status == BookStatus::FINISHED) {
+    bg = Black;
+    txt = "F";
+  }
   if (bg != White) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
   const int tw = renderer.getTextWidth(UI_10_FONT_ID, txt);
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset,
-                    txt, (bg == Black) ? false : true);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, (bg == Black) ? false : true);
 }
 
-void Ao3EndOfBookSeriesActivity::renderWarningSymbol(int x, int y, int s, char warning,
-                                                     bool tl, bool tr, bool bl, bool br, int yOffset) {
+void Ao3EndOfBookSeriesActivity::renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl,
+                                                     bool br, int yOffset) {
   Color bg = White;
   const char* txt = "-";
-  if (warning == 'B') { bg = DarkGray; txt = "!?"; }
-  if (warning == '!') { bg = Black;    txt = "!"; }
+  if (warning == 'B') {
+    bg = DarkGray;
+    txt = "!?";
+  }
+  if (warning == '!') {
+    bg = Black;
+    txt = "!";
+  }
   if (bg != White) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
   const int tw = renderer.getTextWidth(UI_10_FONT_ID, txt);
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset,
-                    txt, (bg == DarkGray || bg == Black) ? false : true);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt,
+                    (bg == DarkGray || bg == Black) ? false : true);
 }
 
-void Ao3EndOfBookSeriesActivity::renderCompletionSymbol(int x, int y, int s, bool completed,
-                                                        bool tl, bool tr, bool bl, bool br, int yOffset) {
+void Ao3EndOfBookSeriesActivity::renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl,
+                                                        bool br, int yOffset) {
   const Color bg = completed ? LightGray : Black;
   renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
   if (completed) {
     for (int dy = 0; dy < 4; dy++) {
-      renderer.drawLine(x + 8,  y + 14 + yOffset + dy, x + 12, y + 18 + yOffset + dy);
+      renderer.drawLine(x + 8, y + 14 + yOffset + dy, x + 12, y + 18 + yOffset + dy);
       renderer.drawLine(x + 12, y + 18 + yOffset + dy, x + 19, y + 11 + yOffset + dy);
     }
   } else {
-    renderer.drawLine(x + 7, y + 8  + yOffset, x + 18, y + 18 + yOffset, 4, false);
-    renderer.drawLine(x + 7, y + 18 + yOffset, x + 18, y + 8  + yOffset, 4, false);
+    renderer.drawLine(x + 7, y + 8 + yOffset, x + 18, y + 18 + yOffset, 4, false);
+    renderer.drawLine(x + 7, y + 18 + yOffset, x + 18, y + 8 + yOffset, 4, false);
   }
 }

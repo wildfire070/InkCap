@@ -38,6 +38,13 @@ class ButtonNavigator final {
   void onPreviousContinuous(const Callback& callback);
   void onContinuous(const Buttons& buttons, const Callback& callback);
 
+  // AO3 library: front/side-specific continuous-hold navigation, independent of
+  // the generic Next/Previous mapping above.
+  void onFrontNextContinuous(const Callback& callback);
+  void onFrontPreviousContinuous(const Callback& callback);
+  void onSideNextContinuous(const Callback& callback);
+  void onSidePreviousContinuous(const Callback& callback);
+
   [[nodiscard]] static int nextIndex(int currentIndex, int totalItems);
   [[nodiscard]] static int previousIndex(int currentIndex, int totalItems);
 

@@ -1,12 +1,14 @@
 #include "Ao3FolderPickerActivity.h"
-#include "../ActivityResult.h"
+
 #include <HalStorage.h>
-#include <Logging.h>
 #include <I18n.h>
+#include <Logging.h>
+
 #include <algorithm>
+
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
-
+#include "../ActivityResult.h"
 
 void Ao3FolderPickerActivity::loadDirectories() {
   directories.clear();
@@ -21,16 +23,16 @@ void Ao3FolderPickerActivity::loadDirectories() {
   HalFile file;
   while (file = root.openNextFile()) {
     file.getName(name, sizeof(name));
-    if (name[0] != '.' && file.isDirectory() && strcmp(name, "System Volume Information") != 0 && strcmp(name, ".crosspoint") != 0) {
+    if (name[0] != '.' && file.isDirectory() && strcmp(name, "System Volume Information") != 0 &&
+        strcmp(name, ".crosspoint") != 0) {
       directories.push_back(name);
     }
     file.close();
   }
   root.close();
 
-  std::sort(directories.begin(), directories.end(), [](const std::string& a, const std::string& b) {
-    return strcasecmp(a.c_str(), b.c_str()) < 0;
-  });
+  std::sort(directories.begin(), directories.end(),
+            [](const std::string& a, const std::string& b) { return strcasecmp(a.c_str(), b.c_str()) < 0; });
 
   if (currentPath == "/" && mode == PickerMode::SINGLE) {
     directories.insert(directories.begin(), "/");
@@ -153,13 +155,13 @@ void Ao3FolderPickerActivity::render(RenderLock&&) {
   // Draw current path below header
   std::string displayPath = "root" + currentPath;
   if (displayPath.back() != '/') displayPath += "/";
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding,
-                metrics.topPadding + metrics.headerHeight + 5,
-                displayPath.c_str(), true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding + metrics.headerHeight + 5,
+                    displayPath.c_str(), true, EpdFontFamily::BOLD);
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + 38;
   const int helperTextHeight = 37;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - helperTextHeight;
+  const int contentHeight =
+      pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - helperTextHeight;
 
   if (directories.empty()) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, "No directories found.");
@@ -175,12 +177,10 @@ void Ao3FolderPickerActivity::render(RenderLock&&) {
       }
       return "";
     };
-    auto rowIcon = [this](int index) {
-      return UITheme::getFileIcon(directories[index] + "/");
-    };
+    auto rowIcon = [this](int index) { return UITheme::getFileIcon(directories[index] + "/"); };
 
-    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, directories.size(), selectorIndex,
-                 rowTitle, nullptr, rowIcon, rowValue, false);
+    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, directories.size(), selectorIndex, rowTitle,
+                 nullptr, rowIcon, rowValue, false);
   }
 
   // Draw Helper Text

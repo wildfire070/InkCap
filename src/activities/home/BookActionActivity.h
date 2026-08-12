@@ -5,7 +5,6 @@
 
 #include "BookStatus.h"
 #include "activities/Activity.h"
-
 #include "util/ButtonNavigator.h"
 
 class BookActionActivity final : public Activity {
@@ -16,7 +15,6 @@ class BookActionActivity final : public Activity {
   BookStatus initialStatus = BookStatus::START;
   ButtonNavigator buttonNavigator;
   bool hasAo3LibraryInfo = false;
-
 
  public:
   BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
