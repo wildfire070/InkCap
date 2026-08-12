@@ -23,8 +23,11 @@
 #include <memory>
 #include <new>
 
+#include "../../Ao3Librarian.h"
+#include "../../Ao3ViewEntry.h"
 #include "../settings/DictionarySelectActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
+#include "Ao3EndOfBookSeriesActivity.h"
 #include "BookFusionSyncActivity.h"
 #include "BookStatsActivity.h"
 #include "ClipSelectionActivity.h"
@@ -2025,6 +2028,7 @@ void EpubReaderActivity::onEnter() {
 
   captureGlobalReaderSettings();
   epub->setupCacheDir();
+  currentStatus = Ao3Librarian::getBookStatus(epub->getCachePath());
   loadBookReaderSettings();
   ensureReaderSdFontLoaded(renderer);
   ImageBlock::clearSessionRenderFailures();
@@ -4962,6 +4966,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   // Show end of book screen
   if (currentSpineIndex == epub->getSpineItemsCount()) {
+    loadAo3SeriesInfoOnce();
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
       if (!endOfBookOptions) {
@@ -5913,6 +5918,38 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
   if (!epub) {
     return false;
   }
+
+  // AO3 library: automatic reading-status detection, decoupled from progress.bin.
+  // Reset a manual override once the user has moved to a meaningfully different position.
+  if (spineIndex != lastSavedSpineIndex || currentPage != lastSavedPage) {
+    statusManuallySet = false;
+  }
+  if (!statusManuallySet) {
+    if (currentStatus != BookStatus::WAITING_FOR_CHAPTER && currentStatus != BookStatus::NEW_CHAPTER_AVAILABLE) {
+      if (spineIndex == 0 && currentPage == 0) {
+        currentStatus = BookStatus::START;
+      } else if (spineIndex >= epub->getSpineItemsCount()) {
+        if (epub->hasAo3Info() && !epub->isAo3Completed()) {
+          currentStatus = BookStatus::WAITING_FOR_CHAPTER;
+        } else {
+          currentStatus = BookStatus::FINISHED;
+          // Sync to the AO3 index on completion (once per finish, not once per redundant save).
+          if (epub->hasAo3Info() && !ao3FinishedRecordWritten) {
+            ao3FinishedRecordWritten = true;
+            Ao3Librarian::setRecordFinished(epub->getPath(), true);
+          }
+        }
+      } else {
+        currentStatus = BookStatus::READING;
+      }
+    } else if (!((spineIndex == 0 && currentPage == 0) || spineIndex >= epub->getSpineItemsCount())) {
+      // Was waiting on a chapter/update; the user paged back in, so resume tracking as READING.
+      currentStatus = BookStatus::READING;
+      ao3FinishedRecordWritten = false;
+    }
+  }
+  Ao3Librarian::saveBookStatus(epub->getCachePath(), currentStatus);
+
   std::optional<uint32_t> visibleTextOffset;
   if (section && spineIndex == currentSpineIndex && currentPage >= 0 && currentPage < section->pageCount) {
     visibleTextOffset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage));
@@ -6924,6 +6961,49 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
                            ReaderUtils::readerForegroundBlack());
   // No displayBuffer call; caller (SleepActivity) handles that after compositing the overlay.
   return true;
+}
+
+void EpubReaderActivity::onGoHome(HomeMenuItem item) {
+  if (ao3LibraryReturnIndex >= 0) {
+    activityManager.goToAo3Library(static_cast<size_t>(ao3LibraryReturnIndex));
+    return;
+  }
+  Activity::onGoHome(item);
+}
+
+void EpubReaderActivity::loadAo3SeriesInfoOnce() {
+  if (ao3SeriesInfoLoaded || !epub) {
+    return;
+  }
+  ao3SeriesInfoLoaded = true;
+  Ao3LibraryMetadata seriesMeta;
+  if (Ao3Librarian::getLibraryInfo(*epub, seriesMeta) && seriesMeta.seriesPart > 0 &&
+      seriesMeta.seriesName[0] != '\0') {
+    ao3HasSeries = true;
+    ao3SeriesPart = seriesMeta.seriesPart;
+    strncpy(ao3SeriesName, seriesMeta.seriesName, sizeof(ao3SeriesName) - 1);
+    ao3SeriesName[sizeof(ao3SeriesName) - 1] = '\0';
+  }
+}
+
+void EpubReaderActivity::launchAo3SeriesActivity() {
+  if (!epub) {
+    onGoHome();
+    return;
+  }
+
+  const std::string originPath = epub->getPath();
+  const uint32_t originHash = static_cast<uint32_t>(std::hash<std::string>{}(originPath));
+
+  // CompactIndexRecord.seriesName is truncated to 31 chars on write, so the hash
+  // must be computed from the same truncated string to match index records.
+  char truncatedName[32];
+  strncpy(truncatedName, ao3SeriesName, 31);
+  truncatedName[31] = '\0';
+  const uint32_t seriesHash = fnv1a(truncatedName);
+
+  activityManager.replaceActivity(std::make_unique<Ao3EndOfBookSeriesActivity>(
+      renderer, mappedInput, std::string(ao3SeriesName), seriesHash, originHash, originPath));
 }
 
 ScreenshotInfo EpubReaderActivity::getScreenshotInfo() const {
