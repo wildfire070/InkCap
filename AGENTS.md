@@ -21,6 +21,17 @@ Project: Open-source e-reader firmware for ESP32-C3 and ESP32-S3 devices.
 - Read `.claude/CONTEXT.md` at session start for durable repo-specific gotchas.
 - Keep `.claude/CONTEXT.md` short. Add only reusable findings, not turn-by-turn history.
 
+## InkCap Divergence Policy
+
+InkCap's default posture is zero drift from `uxjulia/CrossInk`'s `development` branch — sync early, resolve conflicts in upstream's favor, and don't add InkCap-only config/build changes without asking first.
+
+Two deliberate feature additions are sanctioned exceptions to that rule:
+
+- **BookFusion cloud sync** — owns `lib/BookFusionSync/*`, `BookFusion*Activity.*`, and their wiring points.
+- **AO3 library** — ported from [`wildfire070/xAO3`](https://github.com/wildfire070/xAO3) (a sibling CrossPoint Reader fork focused on an Archive of Our Own library/reader). Owns `src/Ao3*`, `src/activities/home/Ao3*Activity.*`, `src/activities/network/AO3SyncActivity.*`, plus wiring touches in `HomeActivity`, `FileBrowserActivity`, `EpubReaderActivity`/`EpubReaderMenuActivity`, `RecentBooksStore`, `CrossPointSettings`, and theme files — including new status-icon rendering for the `minimal`/`dashboard` themes, which have no xAO3 equivalent to port from.
+
+Any other InkCap-only change (CI config, build environments, feature flags) should be flagged and confirmed before merging, not assumed.
+
 ## Repo Skills
 
 - Do not read every `.claude/skills/*/SKILL.md` at session start.
