@@ -1266,6 +1266,10 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
     const bool showCancelButton = gpio.hasTouch();
     renderer.drawLine(dialogX, footerY, dialogX + dialogW, footerY, true);
     const int labelY = footerY + (footerHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+    // cppcheck-suppress knownConditionTrueFalse
+    // gpio.hasTouch() folds to a compile-time constant per build; cppcheck's
+    // default (non-touch) analysis target sees showCancelButton as always
+    // false, but it's true on touch-capable builds (Sticky, X4 Pro).
     if (showCancelButton) {
       const int dividerX = dialogX + dialogW / 2;
       renderer.drawLine(dividerX, footerY, dividerX, dialogY + dialogH, true);
