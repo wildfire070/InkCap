@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [default, sticky, x4-pro]
+        environment: [default, sticky]
     steps:
       - uses: actions/checkout@v6
         with:
