@@ -5,6 +5,7 @@
 
 #include "Ao3CompactIndexRecord.h"
 #include "Ao3LibraryMetadata.h"
+#include "BookStatus.h"
 
 class Epub;
 
@@ -66,6 +67,14 @@ class Ao3Librarian {
    */
   static bool tombstoneRecord(const std::string& epubPath);
   static bool setRecordFinished(const std::string& epubPath, bool finished);
+
+  /**
+   * @brief Reads/writes the reading-status sidecar (Unread/Reading/Finished/...).
+   * Independent of progress.bin, whose layout is unrelated to this feature.
+   * @param cachePath The book's `/.crosspoint/epub_<hash>` cache directory.
+   */
+  static BookStatus getBookStatus(const std::string& cachePath);
+  static void saveBookStatus(const std::string& cachePath, BookStatus status);
 
   /**
    * @brief Tombstones any index record whose epub file or ao3_library_info

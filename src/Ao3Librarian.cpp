@@ -1427,6 +1427,26 @@ bool Ao3Librarian::setRecordFinished(const std::string& epubPath, bool finished)
   return false;
 }
 
+BookStatus Ao3Librarian::getBookStatus(const std::string& cachePath) {
+  HalFile f;
+  if (Storage.openFileForRead("AO3L", cachePath + "/ao3-status.bin", f)) {
+    uint8_t status = 0;
+    const bool ok = f.read(&status, 1) == 1;
+    f.close();
+    if (ok) return static_cast<BookStatus>(status);
+  }
+  return BookStatus::START;
+}
+
+void Ao3Librarian::saveBookStatus(const std::string& cachePath, const BookStatus status) {
+  HalFile f;
+  if (Storage.openFileForWrite("AO3L", cachePath + "/ao3-status.bin", f)) {
+    const uint8_t data = static_cast<uint8_t>(status);
+    f.write(&data, 1);
+    f.close();
+  }
+}
+
 int Ao3Librarian::sanitizeIndex() {
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
   if (!Storage.exists(indexPath)) return 0;

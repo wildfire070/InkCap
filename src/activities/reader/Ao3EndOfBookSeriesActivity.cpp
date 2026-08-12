@@ -75,21 +75,11 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
 }
 
 // ---------------------------------------------------------------------------
-//  getBookStatus
+//  getBookStatus — reads the ao3-status.bin sidecar for the given cache hash
 // ---------------------------------------------------------------------------
 
 BookStatus Ao3EndOfBookSeriesActivity::getBookStatus(uint32_t cacheHash) {
-  std::string cachePath = "/.crosspoint/epub_" + std::to_string(cacheHash) + "/progress.bin";
-  HalFile f;
-  if (Storage.openFileForRead("AO3S", cachePath, f)) {
-    uint8_t data[7];
-    if (f.read(data, 7) >= 7) {
-      f.close();
-      return static_cast<BookStatus>(data[6]);
-    }
-    f.close();
-  }
-  return BookStatus::START;
+  return Ao3Librarian::getBookStatus("/.crosspoint/epub_" + std::to_string(cacheHash));
 }
 
 // ---------------------------------------------------------------------------

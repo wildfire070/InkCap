@@ -18,15 +18,8 @@ void BookActionActivity::onEnter() {
 
   // Load current status
   std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(filePath));
-  HalFile f;
-  if (Storage.openFileForRead("BROWSER", cachePath + "/progress.bin", f)) {
-    uint8_t data[7];
-    if (f.read(data, 7) >= 7) {
-      currentStatus = static_cast<BookStatus>(data[6]);
-      initialStatus = currentStatus;
-    }
-    f.close();
-  }
+  currentStatus = Ao3Librarian::getBookStatus(cachePath);
+  initialStatus = currentStatus;
 
   hasAo3LibraryInfo = Storage.exists((cachePath + "/ao3_library_info").c_str());
 
@@ -130,21 +123,7 @@ void BookActionActivity::loop() {
 
 void BookActionActivity::saveStatus() {
   std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(filePath));
-  HalFile f;
-
-  uint8_t data[7] = {0, 0, 0, 0, 0, 0, static_cast<uint8_t>(currentStatus)};
-
-  // Try to preserve position if file exists
-  if (Storage.openFileForRead("BROWSER", cachePath + "/progress.bin", f)) {
-    f.read(data, 6);
-    f.close();
-  }
-
-  // Write updated status
-  if (Storage.openFileForWrite("BROWSER", cachePath + "/progress.bin", f)) {
-    f.write(data, 7);
-    f.close();
-  }
+  Ao3Librarian::saveBookStatus(cachePath, currentStatus);
 
   // Sync finished flag to AO3 index (only on boundary crossing)
   if (hasAo3LibraryInfo) {

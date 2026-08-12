@@ -7,10 +7,12 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "BookStatus.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
@@ -90,6 +92,11 @@ class FileBrowserActivity final : public Activity {
   const char* entryNameAt(size_t row);
   void toggleHiddenFiles();
   size_t findEntry(const std::string& name);
+
+  // AO3 library: cheap glance status (Reading/Finished/Waiting for Chapter/...)
+  // read from each book's own progress.bin, cached per visible row index.
+  BookStatus getBookStatus(const std::string& path);
+  std::map<size_t, BookStatus> visibleStatusCache;
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
