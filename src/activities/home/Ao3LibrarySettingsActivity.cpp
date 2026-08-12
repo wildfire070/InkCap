@@ -7,7 +7,6 @@
 
 #include "../ActivityResult.h"
 #include "Ao3FolderPickerActivity.h"
-#include "Ao3TagMergeActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -186,17 +185,10 @@ void Ao3LibrarySettingsActivity::loop() {
       saveSettings();
       requestUpdate();
     } else if (selectorIndex == 6) {
-      // Merge Similar Tags — only active in Automatic mode
-      if (filterMode == FilterMode::AUTOMATIC) {
-        auto handler = [this](const ActivityResult&) { requestUpdate(true); };
-        startActivityForResult(std::make_unique<Ao3TagMergeActivity>(renderer, mappedInput), handler);
-      }
-      return;
-    } else if (selectorIndex == 7) {
       swapNavButtons = !swapNavButtons;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 8) {
+    } else if (selectorIndex == 7) {
       showingCleanupConfirm = true;
       requestUpdate(true);
       return;
@@ -205,38 +197,22 @@ void Ao3LibrarySettingsActivity::loop() {
   }
 
   buttonNavigator.onNextRelease([this] {
-    selectorIndex = (selectorIndex + 1) % 9;
-    // Skip "Merge Similar Tags" if disabled (moving forward)
-    if (selectorIndex == 6 && filterMode != FilterMode::AUTOMATIC) {
-      selectorIndex = 7;
-    }
+    selectorIndex = (selectorIndex + 1) % 8;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
-    selectorIndex = (selectorIndex + 8) % 9;
-    // Skip "Merge Similar Tags" if disabled (moving backward)
-    if (selectorIndex == 6 && filterMode != FilterMode::AUTOMATIC) {
-      selectorIndex = 5;
-    }
+    selectorIndex = (selectorIndex + 7) % 8;
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this] {
-    selectorIndex = (selectorIndex + 2) % 9;
-    // Skip "Merge Similar Tags" if disabled (fast scrolling forward)
-    if (selectorIndex == 6 && filterMode != FilterMode::AUTOMATIC) {
-      selectorIndex = 7;
-    }
+    selectorIndex = (selectorIndex + 2) % 8;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this] {
-    selectorIndex = (selectorIndex + 7) % 9;
-    // Skip "Merge Similar Tags" if disabled (fast scrolling backward)
-    if (selectorIndex == 6 && filterMode != FilterMode::AUTOMATIC) {
-      selectorIndex = 5;
-    }
+    selectorIndex = (selectorIndex + 6) % 8;
     requestUpdate();
   });
 }
@@ -296,11 +272,9 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "AO3 Library Settings");
 
-  // Two rows: Your AO3 Folder and Non-AO3 Folders
   std::vector<std::string> rows = {
       "Your AO3 Folder",    "Never Index", "Index Batch Size",   "Auto-Index on Library Open",
-      "Hide Finished Fics", "Filter Mode", "Merge Similar Tags", "Side Button Layout",
-      "Library Cleanup"};
+      "Hide Finished Fics", "Filter Mode", "Side Button Layout", "Library Cleanup"};
 
   auto rowTitle = [&rows](int index) { return rows[index]; };
 
@@ -311,18 +285,15 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     if (index == 3) return autoIndexOnOpen ? "ON" : "OFF";
     if (index == 4) return hideFinished ? "ON" : "OFF";
     if (index == 5) return (filterMode == FilterMode::FOLDER_TREE) ? "Folder Tree" : "Automatic";
-    if (index == 6) return "";
-    if (index == 7) return swapNavButtons ? "Scroll List" : "Open Panels";
+    if (index == 6) return swapNavButtons ? "Scroll List" : "Open Panels";
     return "";
   };
-
-  auto rowDimmed = [this](int index) -> bool { return index == 6 && filterMode != FilterMode::AUTOMATIC; };
 
   int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 9, selectorIndex, rowTitle, nullptr, nullptr,
-               rowValue, true, rowDimmed);
+  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 8, selectorIndex, rowTitle, nullptr, nullptr,
+               rowValue, true);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Select", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
