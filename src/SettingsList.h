@@ -93,6 +93,10 @@ inline void removeEnumRawValue(SettingInfo& setting, const uint8_t rawValue) {
   }
 }
 
+inline bool settingKeyIs(const SettingInfo& setting, const char* key) {
+  return setting.key && std::strcmp(setting.key, key) == 0;
+}
+
 inline SettingInfo buildFontSizeSetting(const SdCardFontRegistry* registry) {
   if (registry && SETTINGS.sdFontFamilyName[0] != '\0') {
     const SdCardFontFamilyInfo* family = registry->findFamily(SETTINGS.sdFontFamilyName);
@@ -546,7 +550,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                                 CrossPointSettings::NEXT_PREV, CrossPointSettings::NEXT_NEXT}));
     add(SettingInfo::Enum(StrId::STR_ORIENTATION_AWARE, &CrossPointSettings::sideButtonOrientationAware,
                           {StrId::STR_NO, StrId::STR_YES}, "sideButtonOrientationAware", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_SIDE_BTN_LONG_PRESS, &CrossPointSettings::sideButtonLongPress,
+    add(SettingInfo::Enum(StrId::STR_LONG_PRESS_ACTION, &CrossPointSettings::sideButtonLongPress,
                           {StrId::STR_IGNORE, StrId::STR_CHAPTER_SKIP_OPT, StrId::STR_CHANGE_FONT_SIZE,
                            StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
                           "sideButtonLongPress", StrId::STR_CAT_CONTROLS)
@@ -556,7 +560,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_ORIENTATION_AWARE, &CrossPointSettings::frontButtonOrientationAware,
                           {StrId::STR_NO, StrId::STR_NAV_BUTTONS, StrId::STR_ALL_BUTTONS},
                           "frontButtonOrientationAware", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
+    add(SettingInfo::Enum(StrId::STR_LONG_PRESS_ACTION, &CrossPointSettings::longPressButtonBehavior,
                           {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                            StrId::STR_CHANGE_FONT_SIZE, StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
                           "longPressButtonBehavior", StrId::STR_CAT_CONTROLS)
@@ -678,7 +682,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                                      "homeButtonTapAction"));
     add(buildHomeButtonActionSetting(StrId::STR_HOME_BUTTON_DOUBLE_TAP, &CrossPointSettings::homeButtonDoubleTapAction,
                                      "homeButtonDoubleTapAction"));
-    add(buildHomeButtonActionSetting(StrId::STR_HOME_BUTTON_LONG_PRESS, &CrossPointSettings::homeButtonLongPressAction,
+    add(buildHomeButtonActionSetting(StrId::STR_LONG_PRESS_ACTION, &CrossPointSettings::homeButtonLongPressAction,
                                      "homeButtonLongPressAction"));
     add(SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU_ACTION, &CrossPointSettings::longPressMenuAction,
                           {StrId::STR_IGNORE,
@@ -919,7 +923,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     // Only show tilt page turn settings when the active device has a supported IMU.
     if (QuickActions::supportsTiltPageTurn()) {
       for (auto& setting : v) {
-        if (setting.nameId == StrId::STR_SHORT_PWR_BTN || setting.nameId == StrId::STR_LONG_PRESS_ACTION ||
+        if (setting.nameId == StrId::STR_SHORT_PWR_BTN || settingKeyIs(setting, "longPwrBtn") ||
             setting.nameId == StrId::STR_LONG_PRESS_MENU_ACTION ||
             setting.nameId == StrId::STR_LONG_PRESS_BACK_ACTION) {
           const uint8_t rawValue =
@@ -989,18 +993,18 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_IN_READER || s.nameId == StrId::STR_HOME_BUTTON_TAP ||
                                     s.nameId == StrId::STR_HOME_BUTTON_DOUBLE_TAP ||
-                                    s.nameId == StrId::STR_HOME_BUTTON_LONG_PRESS;
+                                    settingKeyIs(s, "homeButtonLongPressAction");
                            }),
             v.end());
     for (auto& setting : v) {
-      if (setting.nameId == StrId::STR_SHORT_PWR_BTN || setting.nameId == StrId::STR_LONG_PRESS_ACTION) {
+      if (setting.nameId == StrId::STR_SHORT_PWR_BTN || settingKeyIs(setting, "longPwrBtn")) {
         removeEnumRawValue(setting, CrossPointSettings::TOGGLE_HOME_BUTTON_IN_READER);
       }
     }
   }
   if (!Frontlight.present() || !gpio.hasTouch()) {
     for (auto& setting : v) {
-      if (setting.nameId != StrId::STR_SHORT_PWR_BTN && setting.nameId != StrId::STR_LONG_PRESS_ACTION) continue;
+      if (setting.nameId != StrId::STR_SHORT_PWR_BTN && !settingKeyIs(setting, "longPwrBtn")) continue;
       if (!Frontlight.present()) removeEnumRawValue(setting, CrossPointSettings::TOGGLE_FRONTLIGHT);
       if (!gpio.hasTouch()) removeEnumRawValue(setting, CrossPointSettings::TOGGLE_TOUCHSCREEN);
     }
@@ -1146,7 +1150,7 @@ inline std::vector<SettingInfo> buildReaderPageLayoutSettingsList(const std::vec
 inline void addSettingByKey(std::vector<SettingInfo>& target, const std::vector<SettingInfo>& allSettings,
                             const char* key) {
   const auto it = std::find_if(allSettings.begin(), allSettings.end(), [key](const auto& setting) {
-    return setting.key && std::strcmp(setting.key, key) == 0;
+    return settingKeyIs(setting, key);
   });
   if (it != allSettings.end()) {
     target.push_back(*it);
@@ -1187,7 +1191,7 @@ inline std::vector<SettingInfo> buildControlsHomeButtonSettingsList(const std::v
   addSettingByName(settings, allSettings, StrId::STR_IN_READER);
   addSettingByName(settings, allSettings, StrId::STR_HOME_BUTTON_TAP);
   addSettingByName(settings, allSettings, StrId::STR_HOME_BUTTON_DOUBLE_TAP);
-  addSettingByName(settings, allSettings, StrId::STR_HOME_BUTTON_LONG_PRESS);
+  addSettingByKey(settings, allSettings, "homeButtonLongPressAction");
   return settings;
 }
 
@@ -1195,7 +1199,7 @@ inline std::vector<SettingInfo> buildControlsPowerSettingsList(const std::vector
   std::vector<SettingInfo> settings;
   settings.reserve(3);
   addSettingByName(settings, allSettings, StrId::STR_SHORT_PWR_BTN);
-  addSettingByName(settings, allSettings, StrId::STR_LONG_PRESS_ACTION);
+  addSettingByKey(settings, allSettings, "longPwrBtn");
   if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ||
       SETTINGS.longPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ||
       SETTINGS.longPressMenuAction == CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FOOTNOTES ||
@@ -1212,7 +1216,7 @@ inline std::vector<SettingInfo> buildControlsFrontButtonSettingsList(const std::
   settings.push_back(
       SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS_READER, SettingAction::RemapFrontButtonsReader));
   addSettingByKey(settings, allSettings, "frontButtonOrientationAware");
-  addSettingByName(settings, allSettings, StrId::STR_LONG_PRESS_BEHAVIOR);
+  addSettingByKey(settings, allSettings, "longPressButtonBehavior");
   addSettingByName(settings, allSettings, StrId::STR_LONG_PRESS_BACK_ACTION);
   addSettingByName(settings, allSettings, StrId::STR_LONG_PRESS_MENU_ACTION);
   return settings;
@@ -1223,7 +1227,7 @@ inline std::vector<SettingInfo> buildControlsSideButtonSettingsList(const std::v
   settings.reserve(3);
   addSettingByName(settings, allSettings, StrId::STR_SIDE_BTN_LAYOUT);
   addSettingByKey(settings, allSettings, "sideButtonOrientationAware");
-  addSettingByName(settings, allSettings, StrId::STR_SIDE_BTN_LONG_PRESS);
+  addSettingByKey(settings, allSettings, "sideButtonLongPress");
   return settings;
 }
 

@@ -4,10 +4,13 @@
 
 - BookFusion cloud sync: sign in with your BookFusion account via OAuth device-code pairing (a short code and QR code), browse and download from your BookFusion library by category, and sync reading progress between BookFusion and this device.
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
+- On one-cover Lyra, Dashboard, and Minimal Home screens, swipe left to switch between the two most recent books.
 
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- EPUB progress calculations now reuse a bounded in-memory spine-size index while reading, reducing repeated SD-card seeks.
+- Waking from deep sleep now keeps the selected sleep screen visible until Home or the reader is ready, removing the boot-up splash screen.
 - Reader menu settings now group Controls and Mark as Finished with the gear-tab actions in a consistent order.
 - Font Family choices now identify built-in and SD-card fonts by their available point-size ranges.
 

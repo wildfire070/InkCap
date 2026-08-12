@@ -5,8 +5,9 @@ nav_order: 2
 
 # Touch Navigation
 
-This guide covers the touchscreen shortcuts available from the **Dashboard**
-and **Minimal** Home screens. Both themes use the same gestures.
+This guide covers the touchscreen shortcuts available from the **Lyra**,
+**Dashboard**, and **Minimal** Home screens. These themes use the same gestures
+when they show one recent-book cover.
 
 ## Home-screen shortcuts
 
@@ -18,6 +19,7 @@ the indicated direction. The following swipe gestures do not need to start at th
 | Swipe **down**  | **Settings**     |
 | Swipe **right** | **Browse Files** |
 | Swipe **up**    | **Home menu**    |
+| Swipe **left**  | **Next recent book** |
 | Tap book cover  | Book             |
 
 On X4 Pro, keep a down-swipe for Settings away from the very top edge. A
@@ -37,6 +39,11 @@ a book to start reading it. Tap and hold to open the context menu. Use the back 
 Swipe up to reveal shortcuts for Recent Books, OPDS Browser, Bookmarks &
 Clippings, Reading Stats, and File Transfer. Tap an item to open it; tap
 outside the panel to close the menu.
+
+### Swipe left to switch recent books
+
+When at least two books are in Recent Books, swipe left anywhere on a one-cover
+Lyra, Dashboard, or Minimal Home screen to switch to the other recent book.
 
 ## Other touch navigation
 
