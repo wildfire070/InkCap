@@ -293,6 +293,14 @@ class EpubReaderActivity final : public Activity {
   char ao3SeriesName[128] = {};
   void loadAo3SeriesInfoOnce();
   void launchAo3SeriesActivity();
+  // AO3 fics get a bespoke end-of-book screen (update-check for WIP fics + series
+  // affordance) in place of the sibling-suggestion EndOfBookOptions menu. Both
+  // are gated on epub->hasAo3Info(), so non-AO3 books are completely unaffected.
+  void renderAo3EndOfBook();
+  // Returns true if it consumed the end-of-book input (Confirm = update-check,
+  // Back = open series); false lets the caller fall through to normal handling.
+  bool handleAo3EndOfBookInput();
+  void launchAo3UpdateCheck();
   // Shadows Activity::onGoHome (not virtual): when this book was opened from the AO3
   // library, "going home" returns there at the remembered index instead of Home.
   void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
