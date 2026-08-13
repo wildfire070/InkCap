@@ -1540,6 +1540,11 @@ void HomeActivity::loop() {
         requestUpdate();
         return;
       case MappedInputManager::SwipeDir::Left:
+        if (mappedInput.hasTouch() && canSwapHomeBook()) {
+          showNextRecentBookOnHome();
+          return;
+        }
+        break;
       case MappedInputManager::SwipeDir::None:
         break;
     }
@@ -1721,6 +1726,12 @@ void HomeActivity::loop() {
   if (!isCarousel && canSwapHomeBook() && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() >= HOME_BOOK_SWAP_LONG_PRESS_MS) {
     homeBookSwapLongPressHandled = true;
+    showNextRecentBookOnHome();
+    return;
+  }
+
+  if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA &&
+      mappedInput.hasTouch() && canSwapHomeBook() && mappedInput.wasSwipe() == MappedInputManager::SwipeDir::Left) {
     showNextRecentBookOnHome();
     return;
   }

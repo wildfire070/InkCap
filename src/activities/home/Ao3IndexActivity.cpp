@@ -252,7 +252,7 @@ void Ao3IndexActivity::tickSingleScraping() {
   }
 
   Epub epub(targetPath, "/.crosspoint");
-  if (!epub.load(true, true, Epub::XLocationLoadMode::Skip, true)) {
+  if (!epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false, /*skipScraping=*/true)) {
     state = State::ERROR;
     errorMessage = "Failed to load epub file structure.";
     requestUpdate(true);
@@ -475,7 +475,7 @@ void Ao3IndexActivity::tickDirIndexing() {
   pendingBooks[currentBookIndex].shrink_to_fit();
   Epub epub(filePath, "/.crosspoint");
 
-  if (epub.load(true, true, Epub::XLocationLoadMode::Skip, true)) {
+  if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false, /*skipScraping=*/true)) {
     currentBookTitle = epub.getTitle();
     bool success = Ao3Librarian::scrape(epub, /*force=*/true);
     if (success) {
