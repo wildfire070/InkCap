@@ -15,6 +15,7 @@
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "activities/ActivityManager.h"
+#include "activities/home/Ao3LibraryActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
@@ -97,6 +98,10 @@ void CrossPointWebServerActivity::onEnter() {
 
 void CrossPointWebServerActivity::onExit() {
   Activity::onExit();
+
+  // AO3 library: browser/hotspot uploads may have added new fics — flag a rescan
+  // so the AO3 library re-indexes them next time it opens.
+  Ao3LibraryActivity::pendingTransferScan = true;
 
   state = WebServerActivityState::SHUTTING_DOWN;
 

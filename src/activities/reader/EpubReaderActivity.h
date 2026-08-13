@@ -194,6 +194,10 @@ class EpubReaderActivity final : public Activity {
   bool pendingCompletedFeedback = false;
   bool completedFeedbackIsFinished = false;
   unsigned long completedFeedbackShowTime = 0UL;
+  // AO3 fics: transient toast confirming the reading status picked via the reader menu.
+  bool pendingStatusFeedback = false;
+  BookStatus statusFeedbackValue = BookStatus::START;
+  unsigned long statusFeedbackShowTime = 0UL;
   bool pendingTiltPageTurnFeedback = false;
   bool tiltPageTurnFeedbackEnabled = false;
   bool homeButtonInReaderFeedback = false;
@@ -447,6 +451,7 @@ class EpubReaderActivity final : public Activity {
   void queueCompletionPromptIfNeeded();
   void setBookCompleted(bool isCompleted);
   void showCompletedFeedback(bool isCompleted);
+  void showStatusFeedback(BookStatus status);
   void showTiltPageTurnFeedback(bool enabled);
   void toggleHomeButtonInReader();
   void showRenderModeToast(uint8_t renderMode);
@@ -462,13 +467,13 @@ class EpubReaderActivity final : public Activity {
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
                               const BookReaderSettingsData& readerSettings, int initialRefreshCountdown,
-                              bool cleanImageBaseOnEntry = false, int ao3LibraryReturnIndex = -1)
+                              bool cleanImageBaseOnEntry = false)
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
         initialBookReaderSettings(readerSettings),
         pagesUntilFullRefresh(initialRefreshCountdown),
-        cleanImageBasePending(cleanImageBaseOnEntry),
-        ao3LibraryReturnIndex(ao3LibraryReturnIndex) {}
+        cleanImageBasePending(cleanImageBaseOnEntry) {}
+  // Set from APP_STATE.ao3LibraryReturnIndex in onEnter(); -1 unless opened from the AO3 library.
   void onEnter() override;
   void onExit() override;
   void loop() override;

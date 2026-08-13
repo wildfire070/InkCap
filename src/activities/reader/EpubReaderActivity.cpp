@@ -2030,6 +2030,11 @@ void EpubReaderActivity::onEnter() {
   captureGlobalReaderSettings();
   epub->setupCacheDir();
   currentStatus = Ao3Librarian::getBookStatus(epub->getCachePath());
+  // AO3 library: if this book was opened from the AO3 library, remember the library's
+  // selector index so onGoHome() returns there. Consume (clear) the shared field so a
+  // book later opened from the file browser doesn't inherit a stale return index.
+  ao3LibraryReturnIndex = APP_STATE.ao3LibraryReturnIndex;
+  APP_STATE.ao3LibraryReturnIndex = -1;
   loadBookReaderSettings();
   ensureReaderSdFontLoaded(renderer);
   ImageBlock::clearSessionRenderFailures();
@@ -2266,7 +2271,7 @@ void EpubReaderActivity::openReaderMenu() {
           !previewActive && epub && Dictionary::exists(epub->getCachePath().c_str()), !BOOKMARKS.getBookmarks().empty(),
           CLIPPINGS.hasClippings(),
           !previewActive && BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount), isBookCompleted,
-          automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
+          epub && epub->hasAo3Info(), automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
           SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE,
           saveReaderOptionsForBook, this, saveGlobalSettingsForBookReader, this, beginGlobalSettingsEditForBookReader,
           this, !previewActive && epub && epub->hasStablePageNumbers(), endGlobalSettingsEditForBookReader, this,
@@ -2518,6 +2523,18 @@ void EpubReaderActivity::loop() {
                             mappedInput.wasReleased(MappedInputManager::Button::Down);
     if (timedOut || navPressed) {
       pendingCompletedFeedback = false;
+      requestUpdate();
+      return;
+    }
+  }
+  if (pendingStatusFeedback) {
+    const bool timedOut = (millis() - statusFeedbackShowTime) >= 1000UL;
+    const bool navPressed = mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Right) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Down);
+    if (timedOut || navPressed) {
+      pendingStatusFeedback = false;
       requestUpdate();
       return;
     }
@@ -3461,6 +3478,23 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       const bool markCompleted = !stats.isCompleted;
       setBookCompleted(markCompleted);
       showCompletedFeedback(markCompleted);
+      requestUpdate();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::CYCLE_STATUS: {
+      // AO3 fics only (the menu offers this item only when hasAo3Info()). Advance the
+      // 5-state reading status by one, mark it a manual override so saveProgress won't
+      // auto-revert it, persist it, and toast the new state.
+      if (epub) {
+        currentStatus = static_cast<BookStatus>((static_cast<uint8_t>(currentStatus) + 1) % 5);
+        statusManuallySet = true;
+        ao3FinishedRecordWritten = false;
+        Ao3Librarian::saveBookStatus(epub->getCachePath(), currentStatus);
+        if (epub->hasAo3Info()) {
+          Ao3Librarian::setRecordFinished(epub->getPath(), currentStatus == BookStatus::FINISHED);
+        }
+        showStatusFeedback(currentStatus);
+      }
       requestUpdate();
       break;
     }
@@ -4640,6 +4674,12 @@ void EpubReaderActivity::showCompletedFeedback(bool isCompleted) {
   completedFeedbackIsFinished = isCompleted;
   pendingCompletedFeedback = true;
   completedFeedbackShowTime = millis();
+}
+
+void EpubReaderActivity::showStatusFeedback(BookStatus status) {
+  statusFeedbackValue = status;
+  pendingStatusFeedback = true;
+  statusFeedbackShowTime = millis();
 }
 
 void EpubReaderActivity::showTiltPageTurnFeedback(bool enabled) {
@@ -6185,6 +6225,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (pendingCompletedFeedback) {
     const char* msg = completedFeedbackIsFinished ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED);
     drawToastBuffer(renderer, msg);
+  }
+  if (pendingStatusFeedback) {
+    drawToastBuffer(renderer, getStatusLabel(statusFeedbackValue));
   }
   if (pendingTiltPageTurnFeedback) {
     const char* msg = homeButtonInReaderFeedback
