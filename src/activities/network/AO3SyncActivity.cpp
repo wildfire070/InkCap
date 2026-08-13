@@ -20,8 +20,27 @@ extern "C" {
 extern esp_err_t esp_crt_bundle_attach(void* conf);
 }
 
+namespace {
+// The update check runs a TLS session + streamed HTTP download alongside the 48 KB
+// framebuffer and the paused reader — the tightest heap moment in the AO3 feature on
+// the ESP32-C3 (no PSRAM). Gate on both total free heap and the largest allocatable
+// block (TLS needs a contiguous record buffer) so a low/fragmented heap fails with a
+// clear message instead of an OOM abort() mid-handshake. Mirrors Ao3IndexActivity.
+constexpr uint32_t AO3_SYNC_MIN_FREE_HEAP = 90 * 1024;
+constexpr uint32_t AO3_SYNC_MIN_MAX_ALLOC = 32 * 1024;
+}  // namespace
+
 void AO3SyncActivity::onEnter() {
   Activity::onEnter();
+
+  if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
+    LOG_ERR("AO3", "Insufficient heap for update check: free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    errorMessage = "Not enough memory";
+    state = AO3SyncState::ERROR;
+    requestUpdate();
+    return;
+  }
+
   WiFi.mode(WIFI_STA);
 
   state = AO3SyncState::CONNECTING_WIFI;
