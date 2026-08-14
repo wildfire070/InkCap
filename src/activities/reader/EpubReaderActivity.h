@@ -13,6 +13,7 @@
 #include <string>
 
 #include "BookReadingStats.h"
+#include "BookStatus.h"
 #include "BookmarkStore.h"
 #include "EndOfBookOptions.h"
 #include "EpubReaderMenuActivity.h"
@@ -193,6 +194,10 @@ class EpubReaderActivity final : public Activity {
   bool pendingCompletedFeedback = false;
   bool completedFeedbackIsFinished = false;
   unsigned long completedFeedbackShowTime = 0UL;
+  // AO3 fics: transient toast confirming the reading status picked via the reader menu.
+  bool pendingStatusFeedback = false;
+  BookStatus statusFeedbackValue = BookStatus::START;
+  unsigned long statusFeedbackShowTime = 0UL;
   bool pendingTiltPageTurnFeedback = false;
   bool tiltPageTurnFeedbackEnabled = false;
   bool homeButtonInReaderFeedback = false;
@@ -274,6 +279,35 @@ class EpubReaderActivity final : public Activity {
   int lastSavedSpineIndex = -1;
   int lastSavedPage = -1;
   int lastSavedPageCount = -1;
+
+  // AO3 library: automatic reading-status tracking (Unread/Reading/Finished/...),
+  // decoupled from progress.bin -- see Ao3Librarian::getBookStatus/saveBookStatus.
+  BookStatus currentStatus = BookStatus::START;
+  bool statusManuallySet = false;
+  // Guards the finished-record sync to the AO3 index so it fires once per completion,
+  // not once per redundant saveProgress call while sitting on the end-of-book page.
+  bool ao3FinishedRecordWritten = false;
+  // -1 when opened from the file browser/recents/etc; >= 0 when opened from the AO3
+  // library at this selector index, so Back returns there instead of Home.
+  int ao3LibraryReturnIndex = -1;
+  // Series info for the end-of-book screen, loaded once when EOB is first reached.
+  bool ao3SeriesInfoLoaded = false;
+  bool ao3HasSeries = false;
+  uint16_t ao3SeriesPart = 0;
+  char ao3SeriesName[128] = {};
+  void loadAo3SeriesInfoOnce();
+  void launchAo3SeriesActivity();
+  // AO3 fics get a bespoke end-of-book screen (update-check for WIP fics + series
+  // affordance) in place of the sibling-suggestion EndOfBookOptions menu. Both
+  // are gated on epub->hasAo3Info(), so non-AO3 books are completely unaffected.
+  void renderAo3EndOfBook();
+  // Returns true if it consumed the end-of-book input (Confirm = update-check,
+  // Back = open series); false lets the caller fall through to normal handling.
+  bool handleAo3EndOfBookInput();
+  void launchAo3UpdateCheck();
+  // Shadows Activity::onGoHome (not virtual): when this book was opened from the AO3
+  // library, "going home" returns there at the remembered index instead of Home.
+  void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   ReaderProgressSaveDebouncer progressSaveDebouncer;
   bool progressSaveRequiredAfterRelayout = false;
   // Adapted from Sichroteph/YACP commit 3f3c5fc42e794c021edb9832856ef98c2d2065b9
@@ -419,6 +453,7 @@ class EpubReaderActivity final : public Activity {
   void queueCompletionPromptIfNeeded();
   void setBookCompleted(bool isCompleted);
   void showCompletedFeedback(bool isCompleted);
+  void showStatusFeedback(BookStatus status);
   void showTiltPageTurnFeedback(bool enabled);
   void toggleHomeButtonInReader();
   void showRenderModeToast(uint8_t renderMode);
@@ -440,6 +475,7 @@ class EpubReaderActivity final : public Activity {
         initialBookReaderSettings(readerSettings),
         pagesUntilFullRefresh(initialRefreshCountdown),
         cleanImageBasePending(cleanImageBaseOnEntry) {}
+  // Set from APP_STATE.ao3LibraryReturnIndex in onEnter(); -1 unless opened from the AO3 library.
   void onEnter() override;
   void onExit() override;
   void loop() override;

@@ -112,7 +112,8 @@ class Epub {
   static bool hasCache(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false,
-            XLocationLoadMode xLocationLoadMode = XLocationLoadMode::Immediate, bool cacheCumulativeSpineSizes = false);
+            XLocationLoadMode xLocationLoadMode = XLocationLoadMode::Immediate, bool cacheCumulativeSpineSizes = false,
+            bool skipScraping = false);
   // Loads optional stable-page and source-spine metadata after a Skip-mode open.
   // Failure leaves normal size-based progress available.
   bool loadXLocations();
@@ -188,6 +189,14 @@ class Epub {
                                  uint16_t& currentSiblingIndex) const;
   CssParser* getCssParser() const { return cssParser.get(); }
   int resolveHrefToSpineIndex(const std::string& href) const;
+
+  // AO3 Support
+  bool hasAo3Info() const;
+  std::string getAo3WorkId() const;
+  std::string getAo3UpdateDate() const;
+  bool isAo3Completed() const;
+  void saveAo3Info(const std::string& workId, const std::string& date, bool completed) const;
+  std::string sniffPublisher() const;
 
  private:
   std::string getCachedCoverImagePath(const std::string& coverImageHref) const;

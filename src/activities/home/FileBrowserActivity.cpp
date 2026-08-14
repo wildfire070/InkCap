@@ -1,6 +1,7 @@
 #include "FileBrowserActivity.h"
 
 #include <Arduino.h>
+#include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -11,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "../../Ao3Librarian.h"
 #include "BookActions.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -255,6 +257,7 @@ void FileBrowserActivity::loadFiles() {
   usingIndex = false;
   clearIndexNameCache();
   fileListMemoryLimited = false;
+  visibleStatusCache.clear();
   if (fileIndex) fileIndex->close();
 
   bool overflow = false;
@@ -986,7 +989,16 @@ std::string getFileExtension(const std::string& filename) {
   return filename.substr(pos);
 }
 
+// AO3 library: cheap glance status shown in the value column, e.g. "Reading".
+// BookStatus::START (no status set) renders as nothing to avoid cluttering
+// the common case of non-AO3 books.
+const char* ao3StatusGlance(BookStatus status) { return status == BookStatus::START ? "" : getStatusLabel(status); }
 }  // namespace
+
+BookStatus FileBrowserActivity::getBookStatus(const std::string& path) {
+  if (!FsHelpers::hasEpubExtension(path)) return BookStatus::START;
+  return Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(path, "/.crosspoint"));
+}
 
 void FileBrowserActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<FileBrowserActivity*>(user)->buildListScreen(screen);
@@ -1063,6 +1075,16 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     const std::string fullPath = buildFullPath(basepath, entry);
     if ((entry.back() == '/' && isPreferredSleepFolder(fullPath)) || isPinnedSleepFavorite(fullPath)) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
+    }
+    if (entry.back() != '/') {
+      auto cached = visibleStatusCache.find(entryIndex);
+      const BookStatus status = cached != visibleStatusCache.end()
+                                    ? cached->second
+                                    : (visibleStatusCache[entryIndex] = getBookStatus(fullPath));
+      const char* glance = ao3StatusGlance(status);
+      if (glance[0] != '\0') {
+        values[i] = values[i].empty() ? glance : std::string(glance) + " " + values[i];
+      }
     }
     fui::ListItem item;
     item.label = names[i].c_str();

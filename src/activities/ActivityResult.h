@@ -6,6 +6,9 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
+
+#include "BookStatus.h"
 
 struct WifiResult {
   bool connected = false;
@@ -119,14 +122,47 @@ struct ClippingJumpResult {
   bool settingsChanged = false;
 };
 
-using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
-                                   IntervalResult, OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult,
-                                   NetworkModeResult, FootnoteResult, BookmarkResult, FileBrowserActionResult,
-                                   FilePathResult, WordResult, ReadingStatsResult, ClippingResult, ClippingJumpResult>;
+// AO3 library
+struct BookActionResult {
+  bool deleted = false;
+  bool modified = false;
+  BookStatus newStatus = BookStatus::START;
+  bool indexingCompleted = false;
+};
+
+struct AO3Result {
+  std::string scrapedDate;
+  bool isCompleted = false;
+  bool updateFound = false;
+  bool downloaded = false;
+};
+
+struct FolderPickerResult {
+  std::string singlePath;               // populated in SINGLE mode
+  std::vector<std::string> multiPaths;  // populated in MULTI mode
+  bool isMulti = false;
+};
+
+struct Ao3IndexResult {
+  bool indexingCompleted = false;
+  bool successfullyIndexed = false;
+};
+
+using ResultVariant =
+    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
+                 OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult, NetworkModeResult, FootnoteResult,
+                 BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
+                 ClippingResult, ClippingJumpResult, BookActionResult, AO3Result, FolderPickerResult, Ao3IndexResult>;
 
 struct ActivityResult {
   bool isCancelled = false;
   ResultVariant data;
+
+  static ActivityResult cancel() {
+    ActivityResult r;
+    r.isCancelled = true;
+    return r;
+  }
 
   explicit ActivityResult() = default;
 

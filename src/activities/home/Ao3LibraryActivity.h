@@ -1,0 +1,117 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "../../Ao3LibraryMetadata.h"
+#include "../../Ao3SortFilterState.h"
+#include "../../Ao3ViewEntry.h"
+#include "../../BookStatus.h"
+#include "../../util/ButtonNavigator.h"
+#include "../Activity.h"
+#include "Ao3LibrarySettingsActivity.h"
+
+// Automatic-mode filter criteria (Folder Tree mode uses allowedHashes instead — see passesFilter).
+struct FilterHashes {
+  bool ratingActive;
+  char ratingValue;
+  bool completionActive;
+  bool completionValue;
+};
+
+inline FilterHashes computeFilterHashes(const SortFilterState& state) {
+  FilterHashes h;
+  h.ratingActive = state.rating != 0;
+  h.ratingValue = state.rating;
+  h.completionActive = state.completion != -1;
+  h.completionValue = state.completion == 1;
+  return h;
+}
+
+class Ao3LibraryActivity final : public Activity {
+ public:
+  explicit Ao3LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, size_t initialSelectorIndex = 0)
+      : Activity("Ao3Library", renderer, mappedInput), initialSelectorIndex_(initialSelectorIndex) {}
+
+  void onEnter() override;
+  void loop() override;
+  void onExit() override;
+  void render(RenderLock&&) override;
+  static bool pendingTransferScan;
+
+ private:
+  enum class IndexState {
+    UNKNOWN,  // not yet loaded
+    OK,       // index file valid
+    MISSING,  // ao3_library_index.bin does not exist
+    CORRUPT   // file exists but failed magic/version/OOM sanity check
+  };
+
+  enum class ScreenState { LIBRARY, FILTER_PANEL, FANDOM_PICKER, RELATIONSHIP_PICKER, MANAGE_PANEL };
+
+  std::vector<ViewEntry> viewEntries;
+  size_t selectorIndex = 0;
+  IndexState indexState = IndexState::UNKNOWN;
+  ScreenState screenState = ScreenState::LIBRARY;
+  ButtonNavigator buttonNavigator;
+  bool swapNavButtons = false;
+
+  // Page cache
+  Ao3LibraryMetadata pageCache[3];
+  BookStatus pageCacheStatus[3] = {BookStatus::START, BookStatus::START, BookStatus::START};
+  std::vector<std::string> wrappedSummary[3];
+  int cachedPage = -1;
+  bool buttonsSetup = false;
+
+  // Filter & Sort State
+  SortFilterState activeState;
+  SortFilterState pendingState;
+  FilterMode filterMode = FilterMode::AUTOMATIC;
+  std::string ao3Folder;
+  std::vector<uint32_t> allowedHashes;
+  int overlayRowIndex = 0;      // 0=Fandom, 1=Relationship, 2=Sort By, 3=Order, 4=Confirm
+  int managePanelRowIndex = 0;  // 0=Index New Books, 1=AO3 Library Settings
+
+  // Pickers support
+  std::vector<std::string> uniqueFandoms;
+  std::vector<std::string> pickerItems;
+  size_t pickerSelectedIndex = 0;
+  bool pickerHasNone = false;
+
+  size_t initialSelectorIndex_ = 0;
+  bool skipNextBackRelease = false;
+  bool autoIndexOnOpen_ = false;
+  bool autoIndexLaunched_ = false;
+
+  void loadViewEntries();
+  void loadPageCache(int page);
+  BookStatus getBookStatus(uint32_t cacheHash);
+
+  void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
+  void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
+                     BookStatus status);
+
+  void renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+
+  // Sorting & Filtering helpers
+  void loadFilterMode();
+  void buildAllowedHashes(const std::string& scanPath, int maxDepth);
+  void loadSortFilterState();
+  void saveSortFilterState() const;
+  void resortViewEntries();
+  void rebuildViewEntries();
+  void applyStateChange(const SortFilterState& prev, const SortFilterState& next);
+  bool passesFilter(const ViewEntry& v, const FilterHashes& h) const;
+
+  void buildFandomList(std::vector<std::string>& out) const;
+  void buildRelationshipList(const char* fandom, std::vector<std::string>& out, bool& hasNoneEntries) const;
+
+  // Rendering subsets
+  void renderLibrary(RenderLock& lock);
+  void renderFilterOverlay();
+  void renderPicker();
+  void renderManagePanel();
+};

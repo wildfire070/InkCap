@@ -23,8 +23,12 @@
 #include <memory>
 #include <new>
 
+#include "../../Ao3Librarian.h"
+#include "../../Ao3ViewEntry.h"
+#include "../network/AO3SyncActivity.h"
 #include "../settings/DictionarySelectActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
+#include "Ao3EndOfBookSeriesActivity.h"
 #include "BookStatsActivity.h"
 #include "ClipSelectionActivity.h"
 #include "ClippingStore.h"
@@ -2032,6 +2036,12 @@ void EpubReaderActivity::onEnter() {
 
   captureGlobalReaderSettings();
   epub->setupCacheDir();
+  currentStatus = Ao3Librarian::getBookStatus(epub->getCachePath());
+  // AO3 library: if this book was opened from the AO3 library, remember the library's
+  // selector index so onGoHome() returns there. Consume (clear) the shared field so a
+  // book later opened from the file browser doesn't inherit a stale return index.
+  ao3LibraryReturnIndex = APP_STATE.ao3LibraryReturnIndex;
+  APP_STATE.ao3LibraryReturnIndex = -1;
   loadBookReaderSettings();
   ensureReaderSdFontLoaded(renderer);
   ImageBlock::clearSessionRenderFailures();
@@ -2268,7 +2278,7 @@ void EpubReaderActivity::openReaderMenu() {
           !previewActive && epub && Dictionary::exists(epub->getCachePath().c_str()), !BOOKMARKS.getBookmarks().empty(),
           CLIPPINGS.hasClippings(),
           !previewActive && BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount), isBookCompleted,
-          automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
+          epub && epub->hasAo3Info(), automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
           SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE,
           saveReaderOptionsForBook, this, saveGlobalSettingsForBookReader, this, beginGlobalSettingsEditForBookReader,
           this, !previewActive && epub && epub->hasStablePageNumbers(), endGlobalSettingsEditForBookReader, this,
@@ -2524,6 +2534,18 @@ void EpubReaderActivity::loop() {
       return;
     }
   }
+  if (pendingStatusFeedback) {
+    const bool timedOut = (millis() - statusFeedbackShowTime) >= 1000UL;
+    const bool navPressed = mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Right) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+                            mappedInput.wasReleased(MappedInputManager::Button::Down);
+    if (timedOut || navPressed) {
+      pendingStatusFeedback = false;
+      requestUpdate();
+      return;
+    }
+  }
   if (pendingTiltPageTurnFeedback) {
     const bool timedOut = (millis() - tiltPageTurnFeedbackShowTime) >= 1000UL;
     const bool navPressed = mappedInput.wasReleased(MappedInputManager::Button::Left) ||
@@ -2567,8 +2589,9 @@ void EpubReaderActivity::loop() {
 
   // The render task is asynchronous. Prepare suggestions before an input can
   // leave the reader and move this EPUB into /Read/, while still allocating
-  // this UI state only when the end screen is reached.
-  if (atEndOfBook) {
+  // this UI state only when the end screen is reached. AO3 fics use their own end
+  // screen (renderAo3EndOfBook), so skip the sibling-suggestion scan/alloc for them.
+  if (atEndOfBook && !epub->hasAo3Info()) {
     RenderLock lock(*this);
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
@@ -2652,6 +2675,12 @@ void EpubReaderActivity::loop() {
       executeReaderQuickAction(action);
       return;
     }
+  }
+
+  // AO3 fics own the end-of-book Confirm (update-check) and short Back (open
+  // series) before the standard handlers. Falls through when it has nothing to do.
+  if (atEndOfBook && epub->hasAo3Info() && handleAo3EndOfBookInput()) {
+    return;
   }
 
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
@@ -3456,6 +3485,23 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       const bool markCompleted = !stats.isCompleted;
       setBookCompleted(markCompleted);
       showCompletedFeedback(markCompleted);
+      requestUpdate();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::CYCLE_STATUS: {
+      // AO3 fics only (the menu offers this item only when hasAo3Info()). Advance the
+      // 5-state reading status by one, mark it a manual override so saveProgress won't
+      // auto-revert it, persist it, and toast the new state.
+      if (epub) {
+        currentStatus = static_cast<BookStatus>((static_cast<uint8_t>(currentStatus) + 1) % 5);
+        statusManuallySet = true;
+        ao3FinishedRecordWritten = false;
+        Ao3Librarian::saveBookStatus(epub->getCachePath(), currentStatus);
+        if (epub->hasAo3Info()) {
+          Ao3Librarian::setRecordFinished(epub->getPath(), currentStatus == BookStatus::FINISHED);
+        }
+        showStatusFeedback(currentStatus);
+      }
       requestUpdate();
       break;
     }
@@ -4625,6 +4671,12 @@ void EpubReaderActivity::showCompletedFeedback(bool isCompleted) {
   completedFeedbackShowTime = millis();
 }
 
+void EpubReaderActivity::showStatusFeedback(BookStatus status) {
+  statusFeedbackValue = status;
+  pendingStatusFeedback = true;
+  statusFeedbackShowTime = millis();
+}
+
 void EpubReaderActivity::showTiltPageTurnFeedback(bool enabled) {
   tiltPageTurnFeedbackEnabled = enabled;
   homeButtonInReaderFeedback = false;
@@ -4957,6 +5009,15 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   // Show end of book screen
   if (currentSpineIndex == epub->getSpineItemsCount()) {
+    loadAo3SeriesInfoOnce();
+    // AO3 fics get the bespoke AO3 end screen (update-check / series); every other
+    // book keeps the standard sibling-suggestion EndOfBookOptions menu untouched.
+    if (epub->hasAo3Info()) {
+      renderAo3EndOfBook();
+      automaticPageTurnActive = false;
+      showPendingSyncSaveError();
+      return;
+    }
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
       if (!endOfBookOptions) {
@@ -5936,6 +5997,38 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
   if (!epub) {
     return false;
   }
+
+  // AO3 library: automatic reading-status detection, decoupled from progress.bin.
+  // Reset a manual override once the user has moved to a meaningfully different position.
+  if (spineIndex != lastSavedSpineIndex || currentPage != lastSavedPage) {
+    statusManuallySet = false;
+  }
+  if (!statusManuallySet) {
+    if (currentStatus != BookStatus::WAITING_FOR_CHAPTER && currentStatus != BookStatus::NEW_CHAPTER_AVAILABLE) {
+      if (spineIndex == 0 && currentPage == 0) {
+        currentStatus = BookStatus::START;
+      } else if (spineIndex >= epub->getSpineItemsCount()) {
+        if (epub->hasAo3Info() && !epub->isAo3Completed()) {
+          currentStatus = BookStatus::WAITING_FOR_CHAPTER;
+        } else {
+          currentStatus = BookStatus::FINISHED;
+          // Sync to the AO3 index on completion (once per finish, not once per redundant save).
+          if (epub->hasAo3Info() && !ao3FinishedRecordWritten) {
+            ao3FinishedRecordWritten = true;
+            Ao3Librarian::setRecordFinished(epub->getPath(), true);
+          }
+        }
+      } else {
+        currentStatus = BookStatus::READING;
+      }
+    } else if (!((spineIndex == 0 && currentPage == 0) || spineIndex >= epub->getSpineItemsCount())) {
+      // Was waiting on a chapter/update; the user paged back in, so resume tracking as READING.
+      currentStatus = BookStatus::READING;
+      ao3FinishedRecordWritten = false;
+    }
+  }
+  Ao3Librarian::saveBookStatus(epub->getCachePath(), currentStatus);
+
   std::optional<uint32_t> visibleTextOffset;
   if (section && spineIndex == currentSpineIndex && currentPage >= 0 && currentPage < section->pageCount) {
     visibleTextOffset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage));
@@ -6155,6 +6248,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (pendingCompletedFeedback) {
     const char* msg = completedFeedbackIsFinished ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED);
     drawToastBuffer(renderer, msg);
+  }
+  if (pendingStatusFeedback) {
+    drawToastBuffer(renderer, getStatusLabel(statusFeedbackValue));
   }
   if (pendingTiltPageTurnFeedback) {
     const char* msg = homeButtonInReaderFeedback
@@ -6947,6 +7043,153 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
                            ReaderUtils::readerForegroundBlack());
   // No displayBuffer call; caller (SleepActivity) handles that after compositing the overlay.
   return true;
+}
+
+void EpubReaderActivity::onGoHome(HomeMenuItem item) {
+  if (ao3LibraryReturnIndex >= 0) {
+    activityManager.goToAo3Library(static_cast<size_t>(ao3LibraryReturnIndex));
+    return;
+  }
+  Activity::onGoHome(item);
+}
+
+void EpubReaderActivity::loadAo3SeriesInfoOnce() {
+  if (ao3SeriesInfoLoaded || !epub) {
+    return;
+  }
+  ao3SeriesInfoLoaded = true;
+  Ao3LibraryMetadata seriesMeta;
+  if (Ao3Librarian::getLibraryInfo(*epub, seriesMeta) && seriesMeta.seriesPart > 0 &&
+      seriesMeta.seriesName[0] != '\0') {
+    ao3HasSeries = true;
+    ao3SeriesPart = seriesMeta.seriesPart;
+    strncpy(ao3SeriesName, seriesMeta.seriesName, sizeof(ao3SeriesName) - 1);
+    ao3SeriesName[sizeof(ao3SeriesName) - 1] = '\0';
+  }
+}
+
+void EpubReaderActivity::launchAo3SeriesActivity() {
+  if (!epub) {
+    onGoHome();
+    return;
+  }
+
+  const std::string originPath = epub->getPath();
+  const uint32_t originHash = static_cast<uint32_t>(std::hash<std::string>{}(originPath));
+
+  // CompactIndexRecord.seriesName is truncated to 31 chars on write, so the hash
+  // must be computed from the same truncated string to match index records.
+  char truncatedName[32];
+  strncpy(truncatedName, ao3SeriesName, 31);
+  truncatedName[31] = '\0';
+  const uint32_t seriesHash = fnv1a(truncatedName);
+
+  activityManager.replaceActivity(std::make_unique<Ao3EndOfBookSeriesActivity>(
+      renderer, mappedInput, std::string(ao3SeriesName), seriesHash, originHash, originPath));
+}
+
+void EpubReaderActivity::renderAo3EndOfBook() {
+  renderer.clearScreen();
+
+  const int lh12 = renderer.getLineHeight(UI_12_FONT_ID);
+  const int lh10 = renderer.getLineHeight(UI_10_FONT_ID);
+  const int screenW = renderer.getScreenWidth();
+
+  auto drawSeriesLine = [&](int startY) {
+    if (!ao3HasSeries) return;
+    char seriesBuf[160];
+    snprintf(seriesBuf, sizeof(seriesBuf), "Book %u of %s", static_cast<unsigned>(ao3SeriesPart), ao3SeriesName);
+    int y = startY;
+    for (const auto& line : renderer.wrappedText(UI_10_FONT_ID, seriesBuf, screenW - 40, 2)) {
+      renderer.drawCenteredText(UI_10_FONT_ID, y, line.c_str());
+      y += lh10;
+    }
+  };
+
+  if (epub->hasAo3Info() && !epub->isAo3Completed()) {
+    // Work-in-progress AO3 fic: offer an on-device check for new chapters.
+    const int mainY = 280;
+    renderer.drawCenteredText(UI_12_FONT_ID, mainY, tr(STR_AO3_END_REACHED), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_12_FONT_ID, mainY + 40, tr(STR_AO3_LOOK_FOR_UPDATES), true, EpdFontFamily::BOLD);
+    drawSeriesLine(mainY + 40 + lh12 + lh10);
+    // Back button -> Series, Confirm button -> Update (matches handleAo3EndOfBookInput).
+    const auto labels =
+        mappedInput.mapLabels(ao3HasSeries ? tr(STR_EOB_SERIES_BUTTON) : "", tr(STR_AO3_SEARCH), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  } else {
+    // Completed AO3 fic: plain end screen, plus a Series affordance when applicable.
+    const int mainY = 300;
+    renderer.drawCenteredText(UI_12_FONT_ID, mainY, tr(STR_END_OF_BOOK), true, EpdFontFamily::BOLD);
+    drawSeriesLine(mainY + lh12 + lh10);
+    if (ao3HasSeries) {
+      const auto labels = mappedInput.mapLabels(tr(STR_EOB_SERIES_BUTTON), "", "", "");
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    }
+  }
+  renderer.displayBuffer();
+}
+
+bool EpubReaderActivity::handleAo3EndOfBookInput() {
+  // Short Confirm: check AO3 for new chapters (only meaningful for WIP fics).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() < longPressMenuMs) {
+    if (epub->hasAo3Info() && !epub->isAo3Completed()) {
+      launchAo3UpdateCheck();
+      return true;
+    }
+  }
+  // Short Back: open the series view instead of going home (when in a series).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS && footnoteDepth == 0 && ao3HasSeries) {
+    launchAo3SeriesActivity();
+    return true;
+  }
+  return false;
+}
+
+void EpubReaderActivity::launchAo3UpdateCheck() {
+  const std::string bookPath = epub->getPath();
+  const std::string workId = epub->getAo3WorkId();
+  const std::string updateDate = epub->getAo3UpdateDate();
+  const int spineCountBeforeDownload = epub->getSpineItemsCount();
+  const bool hadAfterword = Ao3Librarian::sniffNativeAo3Preface(*epub);
+  const int eobSpineIndex = currentSpineIndex;
+  const int eobPageNumber = nextPageNumber;
+
+  // Persist the end-of-book position before handing off to the network activity.
+  saveProgress(eobSpineIndex, eobPageNumber, spineCountBeforeDownload);
+
+  // Free the section's heap and cache-file handles: the sync activity needs RAM for
+  // WiFi/TLS, and we return Home regardless of outcome, so the live section is not reused.
+  section.reset();
+
+  startActivityForResult(
+      std::make_unique<AO3SyncActivity>(renderer, mappedInput, workId, updateDate, bookPath),
+      [this, bookPath, spineCountBeforeDownload, hadAfterword, eobSpineIndex](const ActivityResult& res) {
+        // Post-download cache writes run against a fresh, local Epub so they never
+        // disturb the reader's own (about-to-be-destroyed) epub/section state.
+        Epub freshEpub(bookPath, "/.crosspoint");
+        const std::string cachePath = freshEpub.getCachePath();
+
+        if (!res.isCancelled && std::holds_alternative<AO3Result>(res.data)) {
+          const auto& ao3Res = std::get<AO3Result>(res.data);
+          if (ao3Res.downloaded) {
+            // New chapters landed on disk: refresh the AO3 sidecar, force a re-index by
+            // dropping the stale spine/section caches, and land on the first new chapter.
+            freshEpub.saveAo3Info(freshEpub.getAo3WorkId(), ao3Res.scrapedDate, ao3Res.isCompleted);
+            Storage.remove((cachePath + "/book.bin").c_str());
+            Storage.removeDir((cachePath + "/sections").c_str());
+            Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+            int firstNewChapter = eobSpineIndex;
+            if (hadAfterword && eobSpineIndex > 0) {
+              firstNewChapter -= 1;
+            }
+            EpubReaderUtils::saveProgress(freshEpub, firstNewChapter, 0, spineCountBeforeDownload);
+          } else if (ao3Res.updateFound) {
+            Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+          }
+        }
+        onGoHome();
+      });
 }
 
 ScreenshotInfo EpubReaderActivity::getScreenshotInfo() const {

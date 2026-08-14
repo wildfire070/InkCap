@@ -29,6 +29,22 @@ void ButtonNavigator::onNextContinuous(const Callback& callback) { onContinuous(
 
 void ButtonNavigator::onPreviousContinuous(const Callback& callback) { onContinuous(getPreviousButtons(), callback); }
 
+void ButtonNavigator::onFrontNextContinuous(const Callback& callback) {
+  onContinuous({MappedInputManager::Button::Right}, callback);
+}
+
+void ButtonNavigator::onFrontPreviousContinuous(const Callback& callback) {
+  onContinuous({MappedInputManager::Button::Left}, callback);
+}
+
+void ButtonNavigator::onSideNextContinuous(const Callback& callback) {
+  onContinuous({MappedInputManager::Button::Down}, callback);
+}
+
+void ButtonNavigator::onSidePreviousContinuous(const Callback& callback) {
+  onContinuous({MappedInputManager::Button::Up}, callback);
+}
+
 void ButtonNavigator::onPress(const Buttons& buttons, const Callback& callback) {
   const bool wasPressed = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->wasPressed(button);

@@ -18,6 +18,7 @@
 #include "browser/OpdsBookBrowserActivity.h"
 #include "components/TouchRegistry.h"
 #include "home/AlertActivity.h"
+#include "home/Ao3LibraryActivity.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
@@ -503,6 +504,10 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFul
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, initialFullRefresh));
 }
+void ActivityManager::goToAo3Library(const size_t initialIndex) {
+  replaceActivity(std::make_unique<Ao3LibraryActivity>(renderer, mappedInput, initialIndex));
+}
+
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {

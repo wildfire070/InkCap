@@ -33,6 +33,25 @@ bool startsWithImageMediaType(const std::string& mediaType) {
   return true;
 }
 
+// AO3 support: pulls the numeric work ID out of an AO3 work URL, e.g.
+// "https://archiveofourown.org/works/12345678" -> "12345678".
+std::string extractAo3WorkId(const std::string& text) {
+  const size_t pos = text.find("archiveofourown.org/works/");
+  if (pos == std::string::npos) {
+    return "";
+  }
+  const std::string rawId = text.substr(pos + sizeof("archiveofourown.org/works/") - 1);
+  std::string cleanId;
+  for (const char c : rawId) {
+    if (isdigit(static_cast<unsigned char>(c))) {
+      cleanId += c;
+    } else if (!cleanId.empty()) {
+      break;
+    }
+  }
+  return cleanId;
+}
+
 bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches) {
   uint32_t storedLength = 0;
   if (!serialization::tryReadPod(file, storedLength)) {
@@ -240,6 +259,27 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
+  // AO3 support
+  if (self->state == IN_METADATA && strcmp(name, "dc:identifier") == 0) {
+    self->state = IN_DC_IDENTIFIER;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:publisher") == 0) {
+    self->state = IN_DC_PUBLISHER;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:subject") == 0) {
+    self->state = IN_DC_SUBJECT;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:source") == 0) {
+    self->state = IN_DC_SOURCE;
+    return;
+  }
+
   if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_MANIFEST;
     if (!Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
@@ -271,19 +311,25 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 
   if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
-    bool isCover = false;
-    std::string coverItemId;
+    const char* nameAttr = nullptr;
+    const char* contentAttr = nullptr;
 
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "name") == 0 && strcmp(atts[i + 1], "cover") == 0) {
-        isCover = true;
+      if (strcmp(atts[i], "name") == 0) {
+        nameAttr = atts[i + 1];
       } else if (strcmp(atts[i], "content") == 0) {
-        coverItemId = atts[i + 1];
+        contentAttr = atts[i + 1];
       }
     }
 
-    if (isCover) {
-      self->coverItemId = coverItemId;
+    if (nameAttr && contentAttr) {
+      if (strcmp(nameAttr, "cover") == 0) {
+        self->coverItemId = contentAttr;
+      } else if (strcmp(nameAttr, "calibre:timestamp") == 0) {
+        // AO3 support: FanFicFare/Calibre stamp the export date here; take the date portion.
+        std::string ts = contentAttr;
+        self->ao3UpdateDate = (ts.size() >= 10) ? ts.substr(0, 10) : ts;
+      }
     }
     return;
   }
@@ -435,6 +481,20 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  // AO3 support
+  if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
+    self->identifierBuffer.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_DC_SUBJECT) {
+    const std::string val(s, len);
+    if (val.find("Completed") != std::string::npos) {
+      self->ao3IsCompleted = true;
+    }
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -465,6 +525,37 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_AUTHOR && strcmp(name, "dc:creator") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  // AO3 support
+  if (self->state == IN_DC_IDENTIFIER && strcmp(name, "dc:identifier") == 0) {
+    const std::string workId = extractAo3WorkId(self->identifierBuffer);
+    if (!workId.empty()) {
+      self->ao3WorkId = workId;
+    }
+    self->identifierBuffer.clear();
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_PUBLISHER && strcmp(name, "dc:publisher") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_SUBJECT && strcmp(name, "dc:subject") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_SOURCE && strcmp(name, "dc:source") == 0) {
+    const std::string workId = extractAo3WorkId(self->identifierBuffer);
+    if (!workId.empty()) {
+      self->ao3WorkId = workId;
+    }
+    self->identifierBuffer.clear();
     self->state = IN_METADATA;
     return;
   }

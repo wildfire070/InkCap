@@ -10,6 +10,7 @@
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
+#include "activities/home/Ao3LibraryActivity.h"
 #include "components/CompactHeader.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -54,6 +55,10 @@ void CalibreConnectActivity::onEnter() {
 
 void CalibreConnectActivity::onExit() {
   Activity::onExit();
+
+  // AO3 library: books sent over Calibre wireless may be new fics — flag a rescan
+  // so the AO3 library re-indexes them next time it opens.
+  Ao3LibraryActivity::pendingTransferScan = true;
 
   MDNS.end();
 

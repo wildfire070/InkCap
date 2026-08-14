@@ -1,0 +1,106 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "Ao3CompactIndexRecord.h"
+#include "Ao3LibraryMetadata.h"
+#include "BookStatus.h"
+
+class Epub;
+
+/**
+ * @brief Utility class to scrape AO3 metadata from an EPUB file.
+ * Handles FanFicFare-exported AO3 EPUBs and AO3-download (Calibre-style) EPUBs.
+ */
+class Ao3Librarian {
+ public:
+  /**
+   * @brief True if spine 0 looks like an AO3-download preface (no ao3WorkId in OPF).
+   */
+  static bool sniffNativeAo3Preface(const Epub& epub);
+
+  /**
+   * @brief Scrapes metadata from the given EPUB and saves it to the sidecar.
+   * @param epub The EPUB object (must be loaded).
+   * @param force If true, overwrites existing library info.
+   * @return true if successful or if info already exists.
+   */
+  static bool scrape(const Epub& epub, bool force = false);
+
+  /**
+   * @brief Reads the library info sidecar if it exists.
+   * @param epub The EPUB object.
+   * @param meta Out parameter for metadata.
+   * @return true if metadata was found and is valid.
+   */
+  static bool getLibraryInfo(const Epub& epub, Ao3LibraryMetadata& meta);
+
+  /**
+   * @brief Scans the device cache for all identified AO3 fics.
+   * @param out Vector to populate with metadata.
+   */
+  static void scanGlobalLibrary(std::vector<Ao3LibraryMetadata>& out);
+
+  /**
+   * @brief Quick check to see if any AO3 library info exists.
+   */
+  static bool hasAnyAo3Fics();
+
+  /**
+   * @brief Helper to map AO3 string ratings to our char codes.
+   */
+  static char mapRating(const char* ratingStr);
+
+  /**
+   * @brief Helper to map AO3 warning strings to our codes.
+   */
+  static char mapWarning(const char* warningStr);
+
+  /**
+   * @brief Writes a compact record into the unified index file.
+   */
+  static bool writeIndexRecord(const CompactIndexRecord& rec);
+
+  /**
+   * @brief Marks a record as tombstoned (deleted) in the index.
+   */
+  static bool tombstoneRecord(const std::string& epubPath);
+  static bool setRecordFinished(const std::string& epubPath, bool finished);
+
+  /**
+   * @brief Reads/writes the reading-status sidecar (Unread/Reading/Finished/...).
+   * Independent of progress.bin, whose layout is unrelated to this feature.
+   * @param cachePath The book's `/.crosspoint/epub_<hash>` cache directory.
+   */
+  static BookStatus getBookStatus(const std::string& cachePath);
+  static void saveBookStatus(const std::string& cachePath, BookStatus status);
+
+  /**
+   * @brief Tombstones any index record whose epub file or ao3_library_info
+   *        sidecar no longer exists on disk (e.g. book was moved/renamed).
+   * @return Number of records tombstoned, or -1 on index open failure.
+   */
+  static int sanitizeIndex();
+
+ private:
+  /**
+   * @brief Internal parser that handles the HTML streaming and anchor searching.
+   */
+  static bool parseTitlePage(const Epub& epub, Ao3LibraryMetadata& meta, std::string& scrapedWorkId,
+                             std::string& scrapedDate, char* scrapedFandom, char* scrapedRel1, char* scrapedRel2);
+
+  /**
+   * @brief Estimates a book's word count by counting whitespace-delimited
+   *        tokens across its actual chapter content, skipping known
+   *        non-chapter spine items (cover, title/log pages, toc, nav). Used
+   *        as a fallback when no page exposed a real word count (e.g. an
+   *        FFF title page with no separate log page). This walks every
+   *        chapter via the zip reader, so it costs noticeably more time
+   *        than a normal metadata scrape — only call it once per book and
+   *        cache the result.
+   * @param epub The EPUB object (must be loaded).
+   * @return Estimated word count, or 0 if nothing could be counted.
+   */
+  static uint32_t estimateWordCount(const Epub& epub);
+};
