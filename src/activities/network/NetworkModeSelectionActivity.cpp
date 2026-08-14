@@ -173,6 +173,7 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.labelText.bold = true;
   props.subtitleText = screen.theme().smallText;
   props.subtitleText.bold = false;
+  props.subtitleText.maxLines = 2;
   props.headerText = screen.theme().bodyText;
   props.headerText.bold = true;
   props.rowGap = 10;
