@@ -406,6 +406,15 @@ void ActivityManager::goToNearbyStatsSync() {
 }
 
 void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
+  preferredHomeBookPath.clear();
+  returningHomeThroughSettings = false;
+  if (currentActivity && currentActivity->isHomeActivity()) {
+    preferredHomeBookPath = currentActivity->getCurrentBookPath();
+    returningHomeThroughSettings = true;
+  } else if (!stackActivities.empty() && stackActivities.back()->isHomeActivity()) {
+    preferredHomeBookPath = stackActivities.back()->getCurrentBookPath();
+    returningHomeThroughSettings = true;
+  }
   replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe));
 }
 
@@ -485,6 +494,13 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFullRefresh) {
+  std::string initialBookPath;
+  if (returningHomeThroughSettings) {
+    initialBookPath = std::move(preferredHomeBookPath);
+  }
+  preferredHomeBookPath.clear();
+  returningHomeThroughSettings = false;
+
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
@@ -501,7 +517,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFul
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
   }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, initialFullRefresh));
+  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, initialFullRefresh,
+                                                 std::move(initialBookPath)));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 

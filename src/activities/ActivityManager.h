@@ -61,6 +61,11 @@ class ActivityManager {
   // reader's menu. It must wait until the reader is current again.
   bool openReaderMenuAfterPop = false;
 
+  // A one-shot Home selection to restore after Settings replaces Home. This
+  // is intentionally not persisted as recent-book order.
+  std::string preferredHomeBookPath;
+  bool returningHomeThroughSettings = false;
+
   // Task to render and display the activity
   TaskHandle_t renderTaskHandle = nullptr;
   static void renderTaskTrampoline(void* param);

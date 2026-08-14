@@ -876,9 +876,13 @@ void HomeActivity::onEnter() {
   RECENT_BOOKS.ensureLoaded();
   loadRecentBooks(recentBooksToLoad);
 
-  if (!APP_STATE.openEpubPath.empty()) {
+  const auto selectInitialBook = [this, &metrics](const std::string& path) {
+    if (path.empty()) {
+      return false;
+    }
+
     for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
-      if (recentBooks[i].path == APP_STATE.openEpubPath) {
+      if (recentBooks[i].path == path) {
         if (metrics.homeRecentBooksCount == 1 && i > 0) {
           std::rotate(recentBooks.begin(), recentBooks.begin() + i, recentBooks.end());
           selectorIndex = 0;
@@ -887,9 +891,14 @@ void HomeActivity::onEnter() {
           selectorIndex = i;
           lastCarouselBookIndex = i;
         }
-        break;
+        return true;
       }
     }
+    return false;
+  };
+
+  if (!selectInitialBook(initialBookPath)) {
+    selectInitialBook(APP_STATE.openEpubPath);
   }
 
   globalStats = GlobalReadingStats::load();
