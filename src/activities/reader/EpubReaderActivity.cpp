@@ -1434,6 +1434,14 @@ void EpubReaderActivity::resumeReadingPaceTimer(const char*) {
   }
 }
 
+void EpubReaderActivity::onInputLockChanged(const bool locked) {
+  if (locked) {
+    pauseReadingPaceTimer("quick_lock");
+  } else {
+    resumeReadingPaceTimer("quick_lock");
+  }
+}
+
 void EpubReaderActivity::armReadingPaceWarmup(const char*) { paceSampleWarmupPending = true; }
 
 bool EpubReaderActivity::forwardPageReadElapsed(uint32_t& seconds, const char*) const {
@@ -4060,7 +4068,8 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   initializeCompletionPromptTrigger();
 }
 
-void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action) {
+void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action,
+                                                  const bool dictionaryLookupFramebufferContainsPage) {
   switch (action) {
     case CrossPointSettings::LONG_MENU_SLEEP:
       enterDeepSleep();
@@ -4158,7 +4167,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       break;
     case CrossPointSettings::LONG_MENU_LOOKUP_WORD:
       if (epub && Dictionary::exists(epub->getCachePath().c_str())) {
-        openWordSelect(/*framebufferContainsPage=*/true);
+        openWordSelect(dictionaryLookupFramebufferContainsPage);
       } else {
         drawToast(renderer, tr(STR_DICT_NO_DICT_SET));
         delay(1000);
@@ -4167,6 +4176,9 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       break;
     case CrossPointSettings::LONG_MENU_QUICK_ACTIONS:
       openQuickActionsPopup();
+      break;
+    case CrossPointSettings::LONG_MENU_QUICK_LOCK:
+      handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK);
       break;
     case CrossPointSettings::LONG_MENU_OFF:
     default:
@@ -4245,6 +4257,7 @@ bool EpubReaderActivity::handleShortcutAction(const uint8_t rawAction) {
     case CrossPointSettings::SHORT_PWRBTN::QUICK_ACTIONS:
       openQuickActionsPopup();
       return true;
+    case CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
       return handleGlobalPowerButtonAction(action);
@@ -4333,7 +4346,18 @@ bool EpubReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PW
 }
 
 void EpubReaderActivity::openQuickActionsPopup() {
-  QuickActions::showConfiguredPopup(quickActionsPopup, [this] { requestUpdate(); });
+  QuickActions::showConfiguredPopup(
+      quickActionsPopup, [this] { requestUpdate(); },
+      [this](const auto action) {
+        if (action == CrossPointSettings::SHORT_PWRBTN::LOOKUP_WORD) {
+          // The popup was the most recent render, so word selection must redraw
+          // the reader page instead of reusing the popup framebuffer.
+          executeReaderQuickAction(CrossPointSettings::LONG_MENU_LOOKUP_WORD,
+                                   /*dictionaryLookupFramebufferContainsPage=*/false);
+          return;
+        }
+        dispatchShortcutAction(action);
+      });
 }
 
 bool EpubReaderActivity::quickActionUsesConfirmRelease(const CrossPointSettings::LONG_PRESS_MENU_ACTION action) const {
@@ -5769,6 +5793,13 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   }
 
   releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent next-chapter indexing");
+  // FrameBufferLoan restores the storage as a blank frame. Rebuild the visible
+  // page in RAM without refreshing the panel; the panel still holds the page.
+  if (!restoreCurrentPageBufferAfterSilentIndex()) {
+    renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_PAGE_LOAD_ERROR),
+                              ReaderUtils::readerForegroundBlack(), EpdFontFamily::BOLD);
+  }
 
   if (prefetchCancelled) {
     return;
@@ -5801,6 +5832,27 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   preparedNextSpineIndex = nextSpineIndex;
   preparedNextViewportWidth = viewportWidth;
   preparedNextViewportHeight = viewportHeight;
+}
+
+bool EpubReaderActivity::restoreCurrentPageBufferAfterSilentIndex() {
+  if (!section || section->pageCount == 0 || section->currentPage < 0 ||
+      section->currentPage >= static_cast<int>(section->pageCount)) {
+    LOG_ERR("ERS", "Cannot restore reader frame after silent indexing: invalid current page");
+    return false;
+  }
+
+  auto page = section->loadPage(section->currentPage);
+  if (!page) {
+    LOG_ERR("ERS", "Failed to load current page for silent-index framebuffer restore");
+    return false;
+  }
+
+  const ReaderViewportLayout layout = computeReaderViewportLayout(renderer, automaticPageTurnActive);
+  renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+  const int renderFontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
+  renderContents(std::move(page), renderFontId, layout.marginTop, layout.marginRight, layout.marginBottom,
+                 layout.marginLeft, /*updatePanel=*/false);
+  return true;
 }
 
 bool EpubReaderActivity::isRelayoutCatchUpComplete() const {
@@ -6731,15 +6783,15 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
   // be tapped. A destination declared in the book TOC is a chapter jump,
   // though: it must replace the current chapter instead of opening a preview.
   const bool chapterDestination = isTocChapterDestination(targetSpineIndex, anchor);
-  const bool saveFootnotePosition = savePosition && !chapterDestination;
-  if (saveFootnotePosition && section && footnoteDepth < MAX_FOOTNOTE_DEPTH) {
+  const bool saveReturnPosition = savePosition;
+  if (saveReturnPosition && section && footnoteDepth < MAX_FOOTNOTE_DEPTH) {
     savedPositions[footnoteDepth] = {currentSpineIndex, section->currentPage};
     footnoteDepth++;
   }
 
   {
     RenderLock lock(*this);
-    const bool useFootnotePreview = saveFootnotePosition && !anchor.empty() &&
+    const bool useFootnotePreview = saveReturnPosition && !chapterDestination && !anchor.empty() &&
                                     (preferFootnotePreview || shouldUseFootnotePreview(targetSpineIndex, anchor));
     pendingAnchor = anchor;
     pendingFootnotePreviewAnchor = useFootnotePreview ? anchor : std::string{};
@@ -6748,7 +6800,7 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
     nextPageNumber = 0;
     section.reset();
   }
-  armReadingPaceWarmup(saveFootnotePosition ? "href_navigation" : "chapter_link_navigation");
+  armReadingPaceWarmup(saveReturnPosition ? "href_navigation" : "chapter_link_navigation");
   requestUpdate();
 }
 

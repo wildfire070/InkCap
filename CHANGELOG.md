@@ -1,14 +1,21 @@
-## [Unreleased]
+## [v1.5.1] - 2026-08-12
 
 ### Added
 
 - BookFusion cloud sync: sign in with your BookFusion account via OAuth device-code pairing (a short code and QR code), browse and download from your BookFusion library by category, and sync reading progress between BookFusion and this device.
+- Full Xteink X4 Pro support, including USB Drive access to its SD card and direct USB file transfers.
+- New "Quick Lock" shortcut that locks the device without putting it to sleep. It can be assigned to Power + Up, long-press Back, or long-press Menu shortcuts and uses the regular sleep timeout.
+- New Quick Actions menu
+- Quick Actions can now be assigned to Power + Up and, on X4 Pro, tap, long-press, or double-tap Home.
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
 - On one-cover Lyra, Dashboard, and Minimal Home screens, swipe left to switch between the two most recent books.
 
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- Font settings now label the downloadable-font manager as “Download Fonts”.
+- Shortcut action pickers now use a consistent option order while hiding actions unsupported by the selected trigger or device.
+- Wi-Fi passwords are now shown while entering them, making corrections easier on-device.
 - EPUB progress calculations now reuse a bounded in-memory spine-size index while reading, reducing repeated SD-card seeks.
 - Waking from deep sleep now keeps the selected sleep screen visible until Home or the reader is ready, removing the boot-up splash screen.
 - Reader menu settings now group Controls and Mark as Finished with the gear-tab actions in a consistent order.
@@ -16,11 +23,15 @@
 
 ### Fixed
 
+- Touch readers can now cancel a font download from the progress screen or its header Back button.
+- Sleep screens now reuse a compact SD-card index for custom wallpaper folders, avoiding a full folder scan on every sleep while rebuilding safely after file changes.
+- Touch taps and on-screen keyboard presses now route reliably while UI screens redraw.
 - Long-pressing Up or Down in long popup lists now advances by a full page.
 - EPUB table fixes now preserve final-column widths, give dense tables enough space for leading labels, and split oversized words instead of clipping them.
 - Nearby Position Sync now leaves the sending device with a single Back action after sharing a position and tolerates repeated packets while the receiving reader prepares the location.
 - Clearing an EPUB's reading cache now returns Home so the book can rebuild its cache safely when reopened.
 - Large EPUB tables now use a bounded row-streaming grid on low-memory devices, preserving readable styled cells and falling back explicitly for unsupported table structures.
+- Large EPUBs with thousands of chapters can now finish indexing on X3/X4 without running out of memory.
 - Dictionary definition popups no longer leave an empty white button-hint block over the reader page.
 - Recent Books and KOReader Sync settings now remain intact after returning from lightweight network screens.
 - XTCH cover and thumbnail generation now stays within the available memory on X3/X4 after its cache is cleared.
@@ -198,6 +209,7 @@
 
 ### Fixed
 
+- Quick Resume no longer shows a blank page after EPUB next-chapter indexing.
 - Calibre Wireless transfer status no longer stacks the last received-file message on top of the upload percentage.
 - X3 Tilt Direction now labels left/right choices as `Left-Right` and `Right-Left`, with existing left/right preferences migrated to keep the same physical tilt behavior.
 - EPUB layout now honors publisher page-break CSS, avoids stretching justified spaces before closing punctuation, and keeps large CSS rule sets in a smaller disk-backed lookup cache.

@@ -235,7 +235,46 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_ACTIONS = 27,
     TOGGLE_FRONTLIGHT = 28,
     TOGGLE_TOUCHSCREEN = 29,
+    // Appended after the X4 Pro and Quick Actions values so existing settings
+    // files continue to mean exactly the same thing.
+    QUICK_LOCK = 30,
     SHORT_PWRBTN_COUNT
+  };
+
+  // Power + Up side-button chord actions. Keep this order aligned with
+  // ButtonShortcutController::ChordAction because the runtime casts the
+  // persisted value to that enum.
+  enum POWER_CHORD_ACTION {
+    CHORD_SCREENSHOT = 0,
+    CHORD_QUICK_LOCK = 1,
+    // Values 2 and 3 were removed Next Page and Previous Page actions. Keep
+    // them unused so an interim settings file cannot remap them to another action.
+    CHORD_DISABLED = 4,
+    CHORD_SLEEP = 5,
+    CHORD_PAGE_TURN = 6,
+    CHORD_TOGGLE_BOOKMARK = 7,
+    CHORD_READING_STATS = 8,
+    CHORD_MARK_FINISHED = 9,
+    CHORD_FORCE_REFRESH = 10,
+    CHORD_TOGGLE_FONT = 11,
+    CHORD_TOGGLE_GUIDE_DOTS = 12,
+    CHORD_TOGGLE_BIONIC_READING = 13,
+    CHORD_CYCLE_PAGE_TURN = 14,
+    CHORD_SYNC_PROGRESS = 15,
+    CHORD_FILE_TRANSFER = 16,
+    CHORD_CALIBRE_WIRELESS = 17,
+    CHORD_JOIN_NETWORK = 18,
+    CHORD_CREATE_HOTSPOT = 19,
+    CHORD_TOGGLE_DARK_MODE = 20,
+    CHORD_FOOTNOTES = 21,
+    CHORD_FILE_BROWSER = 22,
+    CHORD_CREATE_CLIPPING = 23,
+    CHORD_LOOKUP_WORD = 24,
+    CHORD_TOGGLE_HOME_BUTTON = 25,
+    CHORD_QUICK_ACTIONS = 26,
+    CHORD_TOGGLE_FRONTLIGHT = 27,
+    CHORD_TOGGLE_TOUCHSCREEN = 28,
+    POWER_CHORD_ACTION_COUNT
   };
 
   // Home-key shortcuts reuse power-button actions where possible. Keep the
@@ -315,6 +354,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_MENU_LOOKUP_WORD = 21,
     // Appended: values are persisted in settings.bin.
     LONG_MENU_QUICK_ACTIONS = 22,
+    LONG_MENU_QUICK_LOCK = 23,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
@@ -384,6 +424,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
   uint8_t longPwrBtn = SLEEP;
+  // Power + Up shortcut action. Disabled by default so the established
+  // Power + Down screenshot chord remains screenshot-only.
+  uint8_t powerChordAction = CHORD_DISABLED;
   // X4 Pro capacitive Home-key actions. Values below SHORT_PWRBTN_COUNT map
   // directly to the matching power-button shortcut action.
   uint8_t homeButtonTapAction = HOME_BUTTON_BACK_HOME;

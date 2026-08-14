@@ -141,21 +141,13 @@ class OptionPopup {
       if (touchDownTarget == TouchTarget::Option && touchDownOptionIndex >= 0) {
         selectedIndex = touchDownOptionIndex;
         touchDownOptionIndex = -1;
-        if (confirmationMode) {
-          activateSelection(input, requestUpdate, false);
-          return true;
-        }
-        save(input, requestUpdate, false);
+        selectTouchOption(input, requestUpdate);
         return true;
       }
       for (int i = 0; i < static_cast<int>(hitLayout.options.size()); i++) {
         if (contains(hitLayout.options[i], tx, ty)) {
           selectedIndex = hitLayout.firstOptionIndex + i;
-          if (confirmationMode) {
-            activateSelection(input, requestUpdate, false);
-            return true;
-          }
-          save(input, requestUpdate, false);
+          selectTouchOption(input, requestUpdate);
           return true;
         }
       }
@@ -222,8 +214,10 @@ class OptionPopup {
         save(input, requestUpdate, true);
       }
       return true;
-    } else if (input.wasPressed(MappedInputManager::Button::Back)) {
-      cancel(input, requestUpdate, true);
+    } else if (input.wasReleased(MappedInputManager::Button::Back)) {
+      // Consume the release that closes the popup so a reader does not also
+      // treat it as its Back-to-Home action on the following frame.
+      cancel(input, requestUpdate, false);
       return true;
     }
     return true;
@@ -430,6 +424,17 @@ class OptionPopup {
     if (suppressRelease) input.suppressNextConfirmRelease();
     if (onSelectCallback) onSelectCallback(selectedIndex);
     requestUpdate();
+  }
+
+  void selectTouchOption(MappedInputManager& input, const std::function<void()>& requestUpdate) {
+    // A popup action can push a new activity before this tap release disappears
+    // from the input queue. Do not let that activity receive the popup's tap.
+    input.suppressNextTouchTap();
+    if (confirmationMode) {
+      activateSelection(input, requestUpdate, false);
+    } else {
+      save(input, requestUpdate, false);
+    }
   }
 
   void cancel(MappedInputManager& input, const std::function<void()>& requestUpdate, const bool suppressRelease) {

@@ -139,8 +139,10 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
 // Reader menu opens on its board-specific vertical swipe anywhere on the open
 // page, or a long press of the capacitive home key (a short home tap still goes home).
 inline bool isTouchMenuGesture(const MappedInputManager& input) {
-  return SETTINGS.touchReaderControls && input.hasTouch() &&
-         (input.wasReaderMenuGesture() || input.wasReaderMenuHold());
+  // The capacitive Home key is independent from screen touch. Its configured
+  // long-press reader-menu action must still work when screen touch is disabled.
+  return input.wasReaderMenuHold() ||
+         (SETTINGS.touchReaderControls && input.hasTouch() && input.wasReaderMenuGesture());
 }
 
 // X4 Pro opens the reader menu with an upward swipe. Its top-edge downward
