@@ -19,7 +19,7 @@ namespace {
 // English hyphenation patterns (3/3 minimum prefix/suffix length)
 LanguageHyphenator englishHyphenator(en_patterns, isLatinLetter, toLowerLatin, 3, 3);
 LanguageHyphenator frenchHyphenator(fr_patterns, isLatinLetter, toLowerLatin);
-// German hyphenation intentionally omitted in InkCap: its Liang trie is ~206 KB
+// German hyphenation intentionally omitted in InxAO3: its Liang trie is ~206 KB
 // (6x the next language) and was dropped to reclaim flash on the C3 (X3/X4).
 // German-tagged EPUBs simply render without hyphenation; no other language is
 // affected (hyphenation is selected per book by dc:language). Per-user request.

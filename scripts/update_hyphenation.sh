@@ -18,7 +18,7 @@ process() {
 
 process en
 process fr
-# German (de) intentionally omitted in InkCap: its ~206 KB trie was dropped to
+# German (de) intentionally omitted in InxAO3: its ~206 KB trie was dropped to
 # reclaim C3 (X3/X4) flash. Re-enable this line if German hyphenation is wanted.
 # process de
 process es
