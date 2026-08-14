@@ -17,6 +17,7 @@
 #include "../../CrossPointState.h"
 #include "../../MappedInputManager.h"
 #include "../../RecentBooksStore.h"
+#include "../../components/TouchHeaderBackButton.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
 #include "Ao3IndexActivity.h"
@@ -225,6 +226,61 @@ void Ao3LibraryActivity::loop() {
 
   // --- STATE: LIBRARY ---
   if (screenState == ScreenState::LIBRARY) {
+    // Touch (X4 Pro): tappable back, filter, row-open, and swipe paging.
+    // Every touch query below is a constexpr no-op on button-only builds
+    // (CROSSINK_APP_CAP_TOUCH=0), so default/sticky stay button-only.
+    if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+      if (skipNextBackRelease) {
+        skipNextBackRelease = false;
+      } else {
+        activityManager.popActivity();
+      }
+      return;
+    }
+    if (mappedInput.wasTapInRect(renderer.getScreenWidth() - 44, 6, 44, 44)) {
+      // Header filter triangle → open the filter panel (mirrors the Down button).
+      screenState = ScreenState::FILTER_PANEL;
+      pendingState = activeState;
+      overlayRowIndex = 0;
+      requestUpdate(true);
+      return;
+    }
+    if (!viewEntries.empty()) {
+      const int total = static_cast<int>(viewEntries.size());
+      const auto swipe = mappedInput.wasSwipe();
+      if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+        selectorIndex = swipe == MappedInputManager::SwipeDir::Up
+                            ? ButtonNavigator::nextPageIndex(selectorIndex, total, 3)
+                            : ButtonNavigator::previousPageIndex(selectorIndex, total, 3);
+        requestUpdate();
+        return;
+      }
+      // Tap a fic row to open it. Row geometry mirrors renderLibrary().
+      const int startIdx = (static_cast<int>(selectorIndex) / 3) * 3;
+      const int rowsOnPage = std::min(3, total - startIdx);
+      const auto& metrics = UITheme::getInstance().getMetrics();
+      const int topPad = 18;
+      const int contentEnd = renderer.getScreenHeight() - metrics.buttonHintsHeight;
+      const int entrySlot = (contentEnd - (42 + topPad)) / 3;
+      const int contentStart = 48 + topPad;
+      int touchedRow = -1;
+      const auto rowTap =
+          mappedInput.rowTouch(touchedRow, contentStart, entrySlot, rowsOnPage, 0, INT32_MAX, entrySlot);
+      if (rowTap == MappedInputManager::RowTouch::Down) return;
+      if (rowTap == MappedInputManager::RowTouch::Tap && touchedRow >= 0 && touchedRow < rowsOnPage) {
+        selectorIndex = static_cast<size_t>(startIdx + touchedRow);
+        const int selPage = static_cast<int>(selectorIndex) / 3;
+        if (selPage != cachedPage) loadPageCache(selPage);
+        const int slot = static_cast<int>(selectorIndex) % 3;
+        const std::string epubPath(pageCache[slot].filepath);
+        if (!epubPath.empty()) {
+          APP_STATE.ao3LibraryReturnIndex = static_cast<int>(selectorIndex);
+          activityManager.goToReader(epubPath);
+        }
+        return;
+      }
+    }
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
       screenState = ScreenState::MANAGE_PANEL;
       managePanelRowIndex = 0;
