@@ -153,10 +153,6 @@ bool HalStorage::beginUsbDrive() {
 }
 
 void HalStorage::endUsbDrive() {
-  // Local build-fix (InxAO3): UsbMassStorage::end() only exists when FREEINK_CAP_USB_MSC
-  // is enabled (x4-pro); the stub used on default/sticky has no end(), so upstream's
-  // unguarded call fails to compile there. Guard it to match how upstream itself gates
-  // the sibling beginUsbDrive()/usbDriveState(). Drop this once upstream guards it.
 #if FREEINK_CAP_USB_MSC
   if (usbDriveContext) usbDriveContext->massStorage.end();
 #endif

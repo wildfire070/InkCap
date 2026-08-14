@@ -508,13 +508,16 @@ inline void appendShortcutOptions(SettingInfo& setting, const ShortcutOptionCata
   if (catalog == ShortcutOptionCatalog::HomeButton) {
     setting.enumValues.push_back(StrId::STR_BACK_HOME);
     setting.enumRawValues.push_back(CrossPointSettings::HOME_BUTTON_BACK_HOME);
-    setting.enumValues.push_back(StrId::STR_TOGGLE_FRONTLIGHT);
-    setting.enumRawValues.push_back(CrossPointSettings::HOME_BUTTON_TOGGLE_FRONTLIGHT);
+    if (Frontlight.present()) {
+      setting.enumValues.push_back(StrId::STR_TOGGLE_FRONTLIGHT);
+      setting.enumRawValues.push_back(CrossPointSettings::HOME_BUTTON_TOGGLE_FRONTLIGHT);
+    }
     setting.enumValues.push_back(StrId::STR_READER_MENU);
     setting.enumRawValues.push_back(CrossPointSettings::HOME_BUTTON_READER_MENU);
   }
 
   for (const auto action : QuickActions::shortcutActionOrder) {
+    if (!QuickActions::isActionAvailable(static_cast<uint8_t>(action))) continue;
     const uint8_t rawValue = shortcutRawValue(catalog, action);
     if (rawValue == SHORTCUT_OPTION_UNAVAILABLE) continue;
     setting.enumValues.push_back(QuickActions::actionLabel(static_cast<uint8_t>(action)));
@@ -1072,9 +1075,8 @@ inline std::vector<SettingInfo> buildReaderPageLayoutSettingsList(const std::vec
 
 inline void addSettingByKey(std::vector<SettingInfo>& target, const std::vector<SettingInfo>& allSettings,
                             const char* key) {
-  const auto it = std::find_if(allSettings.begin(), allSettings.end(), [key](const auto& setting) {
-    return settingKeyIs(setting, key);
-  });
+  const auto it = std::find_if(allSettings.begin(), allSettings.end(),
+                               [key](const auto& setting) { return settingKeyIs(setting, key); });
   if (it != allSettings.end()) {
     target.push_back(*it);
   }
