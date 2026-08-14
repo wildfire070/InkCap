@@ -1259,18 +1259,16 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
 
   if (showConfirmationFooter) {
     const int footerY = dialogY + dialogH - footerHeight;
+#if CROSSINK_APP_CAP_TOUCH
     const char* leftLabel = cancelLabel ? cancelLabel : "";
+#endif
     const char* rightLabel = saveLabel ? saveLabel : "";
     // Button devices already map Back to cancel, so the on-screen action can
     // use the full footer width for Save.
-    const bool showCancelButton = gpio.hasTouch();
     renderer.drawLine(dialogX, footerY, dialogX + dialogW, footerY, true);
     const int labelY = footerY + (footerHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    // cppcheck-suppress knownConditionTrueFalse
-    // gpio.hasTouch() folds to a compile-time constant per build; cppcheck's
-    // default (non-touch) analysis target sees showCancelButton as always
-    // false, but it's true on touch-capable builds (Sticky, X4 Pro).
-    if (showCancelButton) {
+#if CROSSINK_APP_CAP_TOUCH
+    if (gpio.hasTouch()) {
       const int dividerX = dialogX + dialogW / 2;
       renderer.drawLine(dividerX, footerY, dividerX, dialogY + dialogH, true);
       if (saveFocused) renderer.fillRect(dividerX, footerY + 1, dialogX + dialogW - dividerX, footerHeight - 1, true);
@@ -1279,9 +1277,12 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
       renderer.drawText(UI_12_FONT_ID, dividerX + (dialogW / 2 - renderer.getTextWidth(UI_12_FONT_ID, rightLabel)) / 2,
                         labelY, rightLabel, !saveFocused, EpdFontFamily::BOLD);
     } else {
+#endif
       if (saveFocused) renderer.fillRect(dialogX, footerY + 1, dialogW, footerHeight - 1, true);
       renderer.drawText(UI_12_FONT_ID, dialogX + (dialogW - renderer.getTextWidth(UI_12_FONT_ID, rightLabel)) / 2,
                         labelY, rightLabel, !saveFocused, EpdFontFamily::BOLD);
+#if CROSSINK_APP_CAP_TOUCH
     }
+#endif
   }
 }

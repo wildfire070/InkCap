@@ -35,6 +35,7 @@
 namespace {
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
 constexpr uint16_t MIN_TIME_LEFT_PACE_SAMPLE_COUNT = 3;
+constexpr unsigned long LONG_PRESS_MENU_MS = 600UL;
 
 std::string confirmationHeading(const StrId actionLabelId) {
   return std::string(tr(STR_CONFIRM)) + ": " + std::string(I18N.get(actionLabelId));
@@ -237,6 +238,30 @@ void XtcReaderActivity::loop() {
       return;
     case EndOfBookOptions::Action::None:
       break;
+  }
+
+  if (longPressMenuHandled) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+        !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      longPressMenuHandled = false;
+    }
+    return;
+  }
+
+  const auto longPressMenuAction =
+      static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressMenuAction);
+  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
+    longPressMenuHandled = true;
+    mappedInput.suppressNextConfirmRelease();
+    handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK);
+    return;
+  }
+  if (longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
+      mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
+    mappedInput.suppressNextConfirmRelease();
+    handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK);
+    return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
@@ -475,6 +500,14 @@ void XtcReaderActivity::resumeReadingStatsTimer(const char*) {
     pageShownAtMs = millis();
   } else {
     pageShownAtMs = 0UL;
+  }
+}
+
+void XtcReaderActivity::onInputLockChanged(const bool locked) {
+  if (locked) {
+    pauseReadingStatsTimer("quick_lock");
+  } else {
+    resumeReadingStatsTimer("quick_lock");
   }
 }
 
@@ -852,6 +885,8 @@ bool XtcReaderActivity::executeLongPressBackAction() {
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_CLIPPING:
       return false;
+    case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_QUICK_LOCK:
+      return handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK);
     default:
       return false;
   }

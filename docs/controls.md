@@ -13,6 +13,7 @@ The Controls menu lets you customize front buttons, side buttons, and reader sho
 
 - Short-press action
 - Long-press action
+- Power + Up action
 
 ### Front Buttons
 
@@ -77,6 +78,45 @@ Available actions include:
 - Browse Files
 - Create Clipping
 - Look Up Word
+- Quick Lock
+- Quick Actions
+- Toggle Frontlight (on supported devices)
+- Toggle Touchscreen (on supported devices)
+
+## Power + Up Shortcut
+
+The **Power + Up** shortcut runs the action selected in **Settings > Controls >
+Power + Up**. It is disabled by default. Press the **Power** and **Volume Up**
+buttons together to trigger it, then release both buttons before using another
+shortcut.
+
+The shortcut can run many of the same actions available for the Power button,
+including **Quick Lock**. The existing **Power + Volume Down** screenshot
+shortcut is unchanged.
+
+## Quick Actions Triggers
+
+In **Settings > Quick Actions**, assign the menu to one shortcut. Available
+triggers include short- or long-press Power, **Power + Up**, and on X4 Pro,
+**Tap Home**, **Long-Press Home**, or **Double Tap Home**. Selecting a trigger
+there replaces any previous Quick Actions trigger; it does not change the five
+actions in the menu.
+
+## Quick Lock
+
+**Quick Lock** temporarily disables normal button and touchscreen input while
+leaving the current screen visible. A lock badge appears on the display while
+the device is locked. It is useful when carrying the reader or setting it down
+while reading.
+
+Quick Lock can be assigned to **Power + Up**, short- or long-press **Power**,
+or long-press **Back** or **Menu**. Trigger the assigned action to toggle the
+lock. While locked, a short press and release of **Power** also unlocks the
+device.
+
+Quick Lock still follows the regular **Time to Sleep** setting. If the timeout
+expires, the device sleeps and restores the lock when it wakes. Reading timers
+pause while Quick Lock is active.
 
 ## Footnote Shortcut
 

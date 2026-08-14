@@ -27,6 +27,7 @@
 #include "network/CrossPointWebServerActivity.h"
 #include "network/NearbyBookTransferActivity.h"
 #include "network/NearbyStatsSyncActivity.h"
+#include "network/UsbDriveActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
@@ -93,6 +94,18 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
+    currentActivity->loop();
+    // USB Drive normally restarts the device rather than replacing itself. The
+    // pending-action fallthrough keeps the simulator's stub lifecycle usable.
+    if (pendingAction == PendingAction::None) {
+      if (requestedUpdate.exchange(false) && renderTaskHandle) {
+        xTaskNotify(renderTaskHandle, 1, eIncrement);
+      }
+      return;
+    }
+  }
+
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
 
@@ -223,8 +236,10 @@ bool ActivityManager::handleGlobalHomeGesture() {
     return false;
   }
 
-  const bool homeGesture = currentActivity->usesFullScreenReaderVerticalSwipes() ? mappedInput.wasReaderHomeGesture()
-                                                                                 : mappedInput.wasHomeGesture();
+  const bool homeGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
+                               ? mappedInput.wasReaderHomeGesture()
+                               : (currentActivity->allowGlobalHomeSwipeGesture() || mappedInput.hasHomeKey()) &&
+                                     mappedInput.wasHomeGesture();
   if (!homeGesture) {
     return false;
   }
@@ -262,6 +277,13 @@ bool ActivityManager::openReaderMenuAfterClosingOverlay() {
 
 bool ActivityManager::handleShortcutAction(const uint8_t action) {
   return currentActivity && pendingAction == PendingAction::None && currentActivity->handleShortcutAction(action);
+}
+
+void ActivityManager::notifyInputLockChanged(const bool locked) {
+  if (currentActivity) currentActivity->onInputLockChanged(locked);
+  for (const auto& activity : stackActivities) {
+    activity->onInputLockChanged(locked);
+  }
 }
 
 bool ActivityManager::handleReaderPowerButtonSettingsOverride() {
@@ -340,6 +362,14 @@ void ActivityManager::goToJoinNetworkFileTransfer(const std::string& returnBookP
 
 void ActivityManager::goToHotspotFileTransfer(const std::string& returnBookPath) {
   restartToFileTransfer(NetworkMode::CREATE_HOTSPOT, returnBookPath);
+}
+
+void ActivityManager::goToUsbDrive() {
+#if CROSSINK_APP_CAP_USB_DRIVE
+  replaceActivity(std::make_unique<UsbDriveActivity>(renderer, mappedInput));
+#else
+  LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
+#endif
 }
 
 bool ActivityManager::resumeFileTransferFromNetworkBoot(const uint32_t payload) {
@@ -502,6 +532,10 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+bool ActivityManager::requiresExclusiveStorageLoop() const {
+  return currentActivity && currentActivity->requiresExclusiveStorageLoop();
+}
 
 bool ActivityManager::isHomeActivity() const { return currentActivity && currentActivity->name == "Home"; }
 

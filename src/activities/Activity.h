@@ -52,6 +52,12 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // While true, main-loop global controls and activity replacement are
+  // suspended so an exclusive storage owner cannot race the filesystem.
+  virtual bool requiresExclusiveStorageLoop() const { return false; }
+  // Called by the app-wide Quick Lock. Reader activities use it to exclude
+  // locked time from reading statistics; other activities have no state to change.
+  virtual void onInputLockChanged(bool) {}
   virtual bool isReaderActivity() const { return false; }
   virtual bool isHomeActivity() const { return false; }
   // The open book uses its vertical swipe actions across the entire page;
@@ -61,6 +67,9 @@ class Activity {
   virtual bool allowFrontlightPanelGesture() const { return true; }
   virtual bool allowPowerAsConfirmInReaderMode() const { return false; }
   virtual bool allowGlobalHomeGesture() const { return true; }
+  // Lists that own vertical swipes can opt out of the global bottom-edge
+  // Home gesture while retaining the capacitive Home key on X4 Pro.
+  virtual bool allowGlobalHomeSwipeGesture() const { return true; }
   // Let overlays consume the global Home gesture as a dismiss action.
   virtual bool handleHomeGesture() { return false; }
   virtual bool canSnapshotForSleepOverlay() const { return false; }
