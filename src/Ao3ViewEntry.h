@@ -22,12 +22,12 @@ inline uint32_t fnv1a(const char* str) {
  * @brief In-RAM sort/filter key struct — one per live book, loaded sequentially
  *        from ao3_library_index.bin at library startup.
  *
- * 38 bytes packed (pragma pack 1).
- * 38 × 1000 books = 38 KB peak RAM.
+ * 42 bytes packed (pragma pack 1).
+ * 42 × 1000 books = 42 KB peak RAM.
  */
 #pragma pack(push, 1)
 struct ViewEntry {
-  uint32_t cacheHash;      // same as CompactIndexRecord.cacheHash
+  uint64_t cacheHash;      // same as CompactIndexRecord.cacheHash
   uint32_t wordCount;      // word count sort
   uint32_t seriesHash;     // fnv1a(seriesName), 0 if no series
   uint16_t addedSequence;  // date-added sort (monotonic, higher = newer), max 65535

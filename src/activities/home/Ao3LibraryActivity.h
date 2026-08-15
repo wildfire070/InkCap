@@ -68,7 +68,7 @@ class Ao3LibraryActivity final : public Activity {
   SortFilterState pendingState;
   FilterMode filterMode = FilterMode::AUTOMATIC;
   std::string ao3Folder;
-  std::vector<uint32_t> allowedHashes;
+  std::vector<uint64_t> allowedHashes;
   int overlayRowIndex = 0;      // 0=Fandom, 1=Relationship, 2=Sort By, 3=Order, 4=Confirm
   int managePanelRowIndex = 0;  // 0=Index New Books, 1=AO3 Library Settings
 
@@ -85,7 +85,7 @@ class Ao3LibraryActivity final : public Activity {
 
   void loadViewEntries();
   void loadPageCache(int page);
-  BookStatus getBookStatus(uint32_t cacheHash);
+  BookStatus getBookStatus(uint64_t cacheHash);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
   void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,

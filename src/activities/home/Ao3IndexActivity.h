@@ -49,7 +49,7 @@ class Ao3IndexActivity final : public Activity {
     int depth;
   };
   std::vector<QueueEntry> dirQueue;
-  std::vector<uint32_t> indexedHashes;
+  std::vector<uint64_t> indexedHashes;
   std::vector<std::string> pendingBooks;
 
   // Progress variables
@@ -59,7 +59,8 @@ class Ao3IndexActivity final : public Activity {
   size_t successCount = 0;
   size_t failureCount = 0;
   size_t unindexedCount = 0;
-  std::vector<std::string> failedBooks;
+  std::vector<std::string> failedBooks;            // capped at 10, for the failed-list UI
+  std::vector<uint64_t> failedHashes;               // uncapped, excludes failures from re-processing
   std::string currentBookTitle;
 
   int batchSize = 10;

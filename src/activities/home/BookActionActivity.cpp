@@ -17,7 +17,7 @@ void BookActionActivity::onEnter() {
   Activity::onEnter();
 
   // Load current status
-  std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(filePath));
+  std::string cachePath = Epub::cachePathForFilePath(filePath, "/.crosspoint");
   currentStatus = Ao3Librarian::getBookStatus(cachePath);
   initialStatus = currentStatus;
 
@@ -122,7 +122,7 @@ void BookActionActivity::loop() {
 }
 
 void BookActionActivity::saveStatus() {
-  std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(filePath));
+  std::string cachePath = Epub::cachePathForFilePath(filePath, "/.crosspoint");
   Ao3Librarian::saveBookStatus(cachePath, currentStatus);
 
   // Sync finished flag to AO3 index (only on boundary crossing)

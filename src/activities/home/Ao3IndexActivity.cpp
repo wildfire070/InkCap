@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <Epub.h>
+#include <ZipFile.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -55,7 +56,7 @@ void Ao3IndexActivity::runHeapCheck() {
     if (isLibraryFull()) {
       // Build index hashes to check if this specific file is already indexed
       buildIndexedHashes();
-      uint32_t hash = static_cast<uint32_t>(std::hash<std::string>{}(targetPath));
+      const uint64_t hash = ZipFile::fnvHash64(targetPath.c_str(), targetPath.size());
       bool isExistingBook = std::binary_search(indexedHashes.begin(), indexedHashes.end(), hash);
 
       if (!isExistingBook) {
@@ -106,7 +107,11 @@ void Ao3IndexActivity::buildIndexedHashes() {
   char magic[4];
   uint8_t version;
   uint16_t recordCount;
-  if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2) {
+  if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
+      memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
+    // Reject the pre-fnvHash64 index format (version < 3): its records are a
+    // different size, so reading them here would misalign. Leaving the hash set
+    // empty makes every fic look new, so re-indexing rebuilds the library.
     f.seek(12);  // Seek past header
     CompactIndexRecord rec;
     for (uint16_t i = 0; i < recordCount; i++) {
@@ -128,6 +133,19 @@ bool Ao3IndexActivity::isExcluded(const std::string& path) const {
 }
 
 void Ao3IndexActivity::loop() {
+  // Touch (X4 Pro): a screen tap acts as Confirm so the index prompts are
+  // reachable without a Confirm button. Back stays on the left-edge gesture.
+  // Constexpr no-op on button-only builds.
+  bool tapConfirm = false;
+  {
+    int tapX = 0;
+    int tapY = 0;
+    if (mappedInput.wasScreenTapped(tapX, tapY)) {
+      mappedInput.suppressCurrentTouchContact();
+      tapConfirm = true;
+    }
+  }
+
   // Common error or completion back/confirm navigation
   if (state == State::ERROR) {
     if (headless_) {
@@ -135,13 +153,13 @@ void Ao3IndexActivity::loop() {
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
       finish();
     }
     return;
   }
   if (state == State::DIR_COMPLETE) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
       if (!failedBooks.empty()) {
         state = State::DIR_FAILED_LIST;
         requestUpdate(true);
@@ -152,14 +170,14 @@ void Ao3IndexActivity::loop() {
     return;
   }
   if (state == State::DIR_FAILED_LIST) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
       finish();
     }
     return;
   }
   if (state == State::SINGLE_COMPLETE) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
       Ao3IndexResult res;
       res.indexingCompleted = true;
       res.successfullyIndexed = true;
@@ -201,10 +219,11 @@ void Ao3IndexActivity::loop() {
       break;
 
     case State::DIR_DISCOVERY_CONFIRM:
-      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
         successCount = 0;
         failureCount = 0;
         failedBooks.clear();
+        failedHashes.clear();
         startDirIndexing();
       } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
         finish();  // user declined; return to library
@@ -216,7 +235,7 @@ void Ao3IndexActivity::loop() {
       break;
 
     case State::DIR_BATCH_COMPLETE:
-      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
         startDirIndexing();
       } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
         finish();  // user stopped early; still triggers result handler
@@ -342,7 +361,7 @@ void Ao3IndexActivity::tickDirDiscovery() {
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
       }
       if (ext == "epub") {
-        uint32_t hash = static_cast<uint32_t>(std::hash<std::string>{}(fullChildPath));
+        const uint64_t hash = ZipFile::fnvHash64(fullChildPath.c_str(), fullChildPath.size());
         if (!std::binary_search(indexedHashes.begin(), indexedHashes.end(), hash)) {
           unindexedCount++;
         }
@@ -360,8 +379,7 @@ void Ao3IndexActivity::startDirIndexing() {
   // Merge in any books that failed this session so subsequent batch walks
   // don't retry them endlessly. failedBooks paths are preserved for the
   // failed list screen — only their hashes are inserted here, in memory only.
-  for (const auto& path : failedBooks) {
-    uint32_t hash = static_cast<uint32_t>(std::hash<std::string>{}(path));
+  for (const uint64_t hash : failedHashes) {
     auto it = std::lower_bound(indexedHashes.begin(), indexedHashes.end(), hash);
     if (it == indexedHashes.end() || *it != hash) {
       indexedHashes.insert(it, hash);
@@ -417,7 +435,7 @@ void Ao3IndexActivity::startDirIndexing() {
           std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         }
         if (ext == "epub") {
-          uint32_t hash = static_cast<uint32_t>(std::hash<std::string>{}(fullChildPath));
+          const uint64_t hash = ZipFile::fnvHash64(fullChildPath.c_str(), fullChildPath.size());
           if (!std::binary_search(indexedHashes.begin(), indexedHashes.end(), hash)) {
             pendingBooks.push_back(fullChildPath);
           }
@@ -482,10 +500,12 @@ void Ao3IndexActivity::tickDirIndexing() {
       successCount++;
     } else {
       failureCount++;
+      failedHashes.push_back(ZipFile::fnvHash64(filePath.c_str(), filePath.size()));
       if (failedBooks.size() < 10) failedBooks.push_back(filePath);
     }
   } else {
     failureCount++;
+    failedHashes.push_back(ZipFile::fnvHash64(filePath.c_str(), filePath.size()));
     if (failedBooks.size() < 10) failedBooks.push_back(filePath);
   }
 
