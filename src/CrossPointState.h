@@ -29,6 +29,8 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   bool showBootScreen = true;
   // One-shot marker set only when Quick Lock puts the device to sleep.
   bool quickLockResumePending = false;
+  // Serialized raw QuickLockTrigger value for the one permitted post-wake unlock.
+  uint8_t quickLockResumeTrigger = 0;
 
   // AO3 library: selector index to restore when returning to the library screen.
   // Not persisted; -1 means no return index is pending.

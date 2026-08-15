@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "QuickLockState.h"
+#include "QuickLockTrigger.h"
 
 // Owns the Power + side-button chord latch.  Once a chord fires, both buttons
 // must be released before another shortcut can fire from the same hold.
@@ -55,12 +56,15 @@ class ButtonShortcutController {
 
     if (powerPressed && chordButtonPressed && action != ChordAction::Disabled) {
       chordActive_ = true;
-      if (quickLockState_.isLocked() && action != ChordAction::QuickLock) return {Event::None, true};
+      if (quickLockState_.isLocked() &&
+          (action != ChordAction::QuickLock || quickLockTrigger_ != QuickLockTrigger::PowerUp)) {
+        return {Event::None, true};
+      }
       switch (action) {
         case ChordAction::Screenshot:
           return {Event::Screenshot, true};
         case ChordAction::QuickLock:
-          (void)quickLockState_.toggle(nowMs);
+          toggleQuickLock(nowMs, QuickLockTrigger::PowerUp);
           return {Event::QuickLockChanged, true};
         case ChordAction::PageTurn:
           return {Event::PageTurn, true};
@@ -71,18 +75,41 @@ class ButtonShortcutController {
       }
     }
 
-    if (shortPowerRelease && (quickLockState_.isLocked() || quickLockOnShortPower)) {
-      (void)quickLockState_.toggle(nowMs);
-      return {Event::QuickLockChanged, true};
+    if (shortPowerRelease) {
+      if ((quickLockState_.isLocked() && quickLockTrigger_ == QuickLockTrigger::ShortPower) ||
+          (!quickLockState_.isLocked() && quickLockOnShortPower)) {
+        toggleQuickLock(nowMs, QuickLockTrigger::ShortPower);
+        return {Event::QuickLockChanged, true};
+      }
     }
     return {Event::None, quickLockState_.isLocked()};
   }
 
   bool isQuickLocked() const { return quickLockState_.isLocked(); }
+  QuickLockTrigger quickLockTrigger() const { return quickLockTrigger_; }
   bool isChordActive() const { return chordActive_; }
-  void toggleQuickLock(uint32_t nowMs) { (void)quickLockState_.toggle(nowMs); }
-  void restoreQuickLock(uint32_t nowMs) {
-    if (!quickLockState_.isLocked()) (void)quickLockState_.toggle(nowMs);
+  void toggleQuickLock(uint32_t nowMs, QuickLockTrigger trigger, bool requireRelease = false) {
+    const bool locked = quickLockState_.toggle(nowMs);
+    quickLockTrigger_ = locked ? trigger : QuickLockTrigger::None;
+    unlockTriggerReleased_ = !locked || !requireRelease;
+  }
+  bool tryUnlockLongPower(uint32_t nowMs, bool longPowerPressed) {
+    if (!quickLockState_.isLocked() || quickLockTrigger_ != QuickLockTrigger::LongPower) return false;
+    if (!unlockTriggerReleased_) {
+      unlockTriggerReleased_ = !longPowerPressed;
+      return false;
+    }
+    if (!longPowerPressed) return false;
+    toggleQuickLock(nowMs, QuickLockTrigger::LongPower, true);
+    return true;
+  }
+  void restoreQuickLock(uint32_t nowMs, QuickLockTrigger trigger) {
+    if (!quickLockState_.isLocked()) {
+      // Older state files did not retain the activating shortcut. Keep their
+      // established Power-release escape route for this one migration wake.
+      toggleQuickLock(nowMs, trigger == QuickLockTrigger::None ? QuickLockTrigger::ShortPower : trigger,
+                      trigger == QuickLockTrigger::LongPower);
+    }
   }
   bool shouldQuickLockSleep(uint32_t nowMs, uint32_t timeoutMs) const {
     return quickLockState_.shouldSleep(nowMs, timeoutMs);
@@ -90,5 +117,7 @@ class ButtonShortcutController {
 
  private:
   QuickLockState quickLockState_;
+  QuickLockTrigger quickLockTrigger_ = QuickLockTrigger::None;
   bool chordActive_ = false;
+  bool unlockTriggerReleased_ = true;
 };

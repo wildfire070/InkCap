@@ -2,10 +2,12 @@
 
 ### Added
 
+- Touchscreen readers can choose tap, swipe, inverted tap, or disabled page-turn gestures from Settings > Controls.
 - Full Xteink X4 Pro support, including USB Drive access to its SD card and direct USB file transfers.
 - New "Quick Lock" shortcut that locks the device without putting it to sleep. It can be assigned to Power + Up, long-press Back, or long-press Menu shortcuts and uses the regular sleep timeout.
 - New Quick Actions menu
 - Quick Actions can now be assigned to Power + Up and, on X4 Pro, tap, long-press, or double-tap Home.
+
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
 - On one-cover Lyra, Dashboard, and Minimal Home screens, swipe left to switch between the two most recent books.
 
@@ -21,6 +23,8 @@
 
 ### Fixed
 
+- Long-pressing Power to toggle Reader Dark Mode now changes it once and keeps the selected state after release.
+- Dictionary word selection is now visible when Reader Dark Mode is enabled.
 - Touch readers can now cancel a font download from the progress screen or its header Back button.
 - Sleep screens now reuse a compact SD-card index for custom wallpaper folders, avoiding a full folder scan on every sleep while rebuilding safely after file changes.
 - Touch taps and on-screen keyboard presses now route reliably while UI screens redraw.

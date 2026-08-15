@@ -31,7 +31,7 @@ TEST(ButtonShortcutController, QuickLockChordFiresOnceUntilFullRelease) {
   EXPECT_FALSE(controller.isQuickLocked());
 }
 
-TEST(ButtonShortcutController, LockedStateBlocksConfiguredChordButShortPowerUnlocks) {
+TEST(ButtonShortcutController, LockedStateBlocksOtherChordsAndShortPower) {
   ButtonShortcutController controller;
   using Action = ButtonShortcutController::ChordAction;
   using Event = ButtonShortcutController::Event;
@@ -42,7 +42,33 @@ TEST(ButtonShortcutController, LockedStateBlocksConfiguredChordButShortPowerUnlo
   EXPECT_EQ(blocked.event, Event::None);
   EXPECT_TRUE(blocked.consumeInput);
   controller.update(13U, false, false, false, false, Action::Screenshot);
-  EXPECT_EQ(controller.update(14U, false, false, true, false, Action::Screenshot).event, Event::QuickLockChanged);
+  EXPECT_EQ(controller.update(14U, false, false, true, false, Action::Screenshot).event, Event::None);
+  EXPECT_TRUE(controller.isQuickLocked());
+  EXPECT_EQ(controller.update(15U, true, true, false, false, Action::QuickLock).event, Event::QuickLockChanged);
+  EXPECT_FALSE(controller.isQuickLocked());
+}
+
+TEST(ButtonShortcutController, ShortPowerQuickLockOnlyUnlocksOnShortPowerRelease) {
+  ButtonShortcutController controller;
+  using Action = ButtonShortcutController::ChordAction;
+  using Event = ButtonShortcutController::Event;
+
+  EXPECT_EQ(controller.update(10U, false, false, true, true, Action::Disabled).event, Event::QuickLockChanged);
+  EXPECT_EQ(controller.quickLockTrigger(), QuickLockTrigger::ShortPower);
+  EXPECT_EQ(controller.update(11U, true, true, false, false, Action::Screenshot).event, Event::None);
+  controller.update(12U, false, false, false, false, Action::Screenshot);
+  EXPECT_EQ(controller.update(13U, false, false, true, false, Action::Disabled).event, Event::QuickLockChanged);
+  EXPECT_FALSE(controller.isQuickLocked());
+}
+
+TEST(ButtonShortcutController, LongPowerRequiresReleaseBeforeItCanUnlock) {
+  ButtonShortcutController controller;
+
+  controller.toggleQuickLock(10U, QuickLockTrigger::LongPower, true);
+  EXPECT_TRUE(controller.isQuickLocked());
+  EXPECT_FALSE(controller.tryUnlockLongPower(11U, true));
+  EXPECT_FALSE(controller.tryUnlockLongPower(12U, false));
+  EXPECT_TRUE(controller.tryUnlockLongPower(13U, true));
   EXPECT_FALSE(controller.isQuickLocked());
 }
 
