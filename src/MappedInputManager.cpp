@@ -537,6 +537,11 @@ MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {
 
 bool MappedInputManager::wasBackGesture() const {
   if (!touchInputEnabled()) return false;
+  // Tap-only page-turn mode must not let a right swipe from the left edge
+  // become the reader's Back/Home action.
+  if (readerMode && SETTINGS.pageTurnGesture == CrossPointSettings::TAP_ONLY) {
+    return false;
+  }
   // Back = left-to-right swipe starting near the left edge. Edge-anchored so that
   // mid-screen horizontal swipes stay available to activities that consume
   // SwipeDir::Left/Right (e.g. percent selection, image viewer).
@@ -610,7 +615,10 @@ bool MappedInputManager::wasReaderHomeGesture() const {
   // X4 Pro's capacitive Home key remains the reader's Home action. Only the
   // touch gesture changes in reader mode: other touch boards use an upward
   // swipe across the page.
-  return hasHomeKeyHardware() ? wasHomeGesture() : wasSwipe() == SwipeDir::Up;
+  if (hasHomeKeyHardware()) {
+    return wasHomeGesture();
+  }
+  return wasSwipe() == SwipeDir::Up;
 }
 
 bool MappedInputManager::wasReaderLightPanelGesture() const {

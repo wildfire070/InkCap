@@ -384,7 +384,8 @@ class EpubReaderActivity final : public Activity {
   void reindexCurrentSection();
   void prepareCurrentSectionForRelayout();
   void executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action,
-                                bool dictionaryLookupFramebufferContainsPage = true);
+                                bool dictionaryLookupFramebufferContainsPage = true,
+                                QuickLockTrigger quickLockTrigger = QuickLockTrigger::LongMenu);
   void openQuickActionsPopup();
   bool quickActionUsesConfirmRelease(CrossPointSettings::LONG_PRESS_MENU_ACTION action) const;
   bool quickActionUsesPowerRelease(CrossPointSettings::LONG_PRESS_MENU_ACTION action) const;
@@ -467,6 +468,7 @@ class EpubReaderActivity final : public Activity {
   }
   bool isReaderActivity() const override { return true; }
   void onInputLockChanged(bool locked) override;
+  bool handleQuickLockUnlock(QuickLockTrigger trigger) override;
   bool canSnapshotForSleepOverlay() const override { return true; }
   bool handlesReaderPowerSettingsOverride() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return quickActionsPopup.isActive(); }

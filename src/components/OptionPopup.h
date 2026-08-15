@@ -83,6 +83,10 @@ class OptionPopup {
 
   void setDismissOnOutsideTouchDown(bool enabled) { dismissOnOutsideTouchDown = enabled; }
 
+  // Actions that repaint synchronously can suppress the redundant update queued
+  // after their selection callback returns.
+  void skipPostSelectionUpdate() { skipPostSelectionUpdate_ = true; }
+
   bool handleInput(MappedInputManager& input, const std::function<void()>& requestUpdate) {
     if (!active) return false;
 
@@ -368,6 +372,7 @@ class OptionPopup {
   std::function<void(int)> onSelectCallback;
   std::function<void()> onSaveCallback;
   std::function<void()> onCancelCallback;
+  bool skipPostSelectionUpdate_ = false;
   int primaryOptionIndex = -1;
   ButtonNavigator buttonNavigator;
   mutable Layout layout;
@@ -378,6 +383,7 @@ class OptionPopup {
     touchDownOptionIndex = -1;
     touchDownTarget = TouchTarget::None;
     footerFocused = false;
+    skipPostSelectionUpdate_ = false;
     if (ownedStrings.empty()) {
       active = false;
       onSelectCallback = nullptr;
@@ -423,7 +429,9 @@ class OptionPopup {
     active = false;
     if (suppressRelease) input.suppressNextConfirmRelease();
     if (onSelectCallback) onSelectCallback(selectedIndex);
-    requestUpdate();
+    const bool skipUpdate = skipPostSelectionUpdate_;
+    skipPostSelectionUpdate_ = false;
+    if (!skipUpdate) requestUpdate();
   }
 
   void selectTouchOption(MappedInputManager& input, const std::function<void()>& requestUpdate) {

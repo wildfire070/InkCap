@@ -1442,6 +1442,47 @@ void EpubReaderActivity::onInputLockChanged(const bool locked) {
   }
 }
 
+bool EpubReaderActivity::handleQuickLockUnlock(const QuickLockTrigger trigger) {
+  if (trigger == QuickLockTrigger::LongMenu) {
+    if (longPressMenuHandled) {
+      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+          !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+        longPressMenuHandled = false;
+      }
+      return true;
+    }
+    if (SETTINGS.longPressMenuAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
+        mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= longPressMenuMs) {
+      longPressMenuHandled = true;
+      suppressConfirmShortcutRelease(CrossPointSettings::LONG_MENU_QUICK_LOCK);
+      handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
+      return true;
+    }
+    return false;
+  }
+
+  if (trigger == QuickLockTrigger::LongBack) {
+    if (longPressBackHandled) {
+      if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+          !mappedInput.isPressed(MappedInputManager::Button::Back)) {
+        longPressBackHandled = false;
+      }
+      return true;
+    }
+    if (SETTINGS.longPressBackAction == CrossPointSettings::LONG_MENU_QUICK_LOCK &&
+        mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
+      longPressBackHandled = true;
+      mappedInput.suppressNextBackRelease();
+      handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongBack);
+      return true;
+    }
+    return false;
+  }
+
+  return false;
+}
+
 void EpubReaderActivity::armReadingPaceWarmup(const char*) { paceSampleWarmupPending = true; }
 
 bool EpubReaderActivity::forwardPageReadElapsed(uint32_t& seconds, const char*) const {
@@ -2710,7 +2751,8 @@ void EpubReaderActivity::loop() {
       mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
     longPressBackHandled = true;
     mappedInput.suppressNextBackRelease();
-    executeReaderQuickAction(static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressBackAction));
+    executeReaderQuickAction(static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressBackAction),
+                             true, QuickLockTrigger::LongBack);
     return;
   }
 
@@ -3097,21 +3139,22 @@ void EpubReaderActivity::renderDictionaryLookupBackground() {
   auto backgroundPage = reloadDictionaryLookupPage();
   if (!backgroundPage) {
     LOG_ERR("DICT", "Failed to reload reader page for dictionary modal background");
-    renderer.clearScreen();
+    renderer.clearScreen(ReaderUtils::readerBackgroundColor());
     return;
   }
 
   const ReaderViewportLayout layout = computeReaderViewportLayout(renderer, automaticPageTurnActive);
-  renderer.clearScreen();
+  renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+  const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
   auto* fcm = renderer.getFontCacheManager();
   if (!fcm) {
-    backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop);
+    backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop, foregroundBlack);
     return;
   }
   auto scope = fcm->createPrewarmScope();
-  backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop);
+  backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop, foregroundBlack);
   scope.endScanAndPrewarm();
-  backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop);
+  backgroundPage->render(renderer, SETTINGS.getReaderFontId(), layout.marginLeft, layout.marginTop, foregroundBlack);
 }
 
 void EpubReaderActivity::renderDictionaryLookupBackgroundCallback(void* context) {
@@ -4069,7 +4112,8 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
 }
 
 void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action,
-                                                  const bool dictionaryLookupFramebufferContainsPage) {
+                                                  const bool dictionaryLookupFramebufferContainsPage,
+                                                  const QuickLockTrigger quickLockTrigger) {
   switch (action) {
     case CrossPointSettings::LONG_MENU_SLEEP:
       enterDeepSleep();
@@ -4178,7 +4222,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       openQuickActionsPopup();
       break;
     case CrossPointSettings::LONG_MENU_QUICK_LOCK:
-      handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK);
+      handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, quickLockTrigger);
       break;
     case CrossPointSettings::LONG_MENU_OFF:
     default:
@@ -4578,6 +4622,7 @@ bool EpubReaderActivity::executeLongPowerButtonAction() {
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_DARK_MODE:
+      mappedInput.suppressNextPowerRelease();
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_DARK_MODE);
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FOOTNOTES:

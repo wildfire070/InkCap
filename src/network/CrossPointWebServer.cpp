@@ -75,6 +75,10 @@ uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayI
 }
 
 bool isWebSettingAvailable(const SettingInfo& setting) {
+  if (setting.nameId == StrId::STR_PAGE_TURN_GESTURE && !gpio.hasTouch()) {
+    return false;
+  }
+
 #if !CROSSINK_APP_CAP_TOUCH
   if (setting.nameId == StrId::STR_TOUCH_READER_CONTROLS || setting.nameId == StrId::STR_DISABLE_TOUCHSCREEN) {
     return false;

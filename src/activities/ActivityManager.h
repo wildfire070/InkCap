@@ -13,6 +13,7 @@
 #include "CrossPointSettings.h"
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "util/QuickLockTrigger.h"
 #include "util/ScreenshotInfo.h"
 
 #ifndef portMUX_INITIALIZER_UNLOCKED
@@ -147,6 +148,7 @@ class ActivityManager {
   bool canSnapshotForSleepOverlay() const;
   bool requestManualReaderRefresh();
   bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN action);
+  bool handleQuickLockUnlock(QuickLockTrigger trigger);
   void notifyInputLockChanged(bool locked);
   bool skipLoopDelay() const;
   std::string getCurrentBookPath() const;

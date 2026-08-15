@@ -93,6 +93,7 @@ class XtcReaderActivity final : public Activity {
   }
   bool isReaderActivity() const override { return true; }
   void onInputLockChanged(bool locked) override;
+  bool handleQuickLockUnlock(QuickLockTrigger trigger) override;
   bool canSnapshotForSleepOverlay() const override { return true; }
   bool handlesReaderPowerSettingsOverride() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return quickActionsPopup.isActive(); }

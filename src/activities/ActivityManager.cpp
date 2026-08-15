@@ -278,6 +278,10 @@ bool ActivityManager::handleShortcutAction(const uint8_t action) {
   return currentActivity && pendingAction == PendingAction::None && currentActivity->handleShortcutAction(action);
 }
 
+bool ActivityManager::handleQuickLockUnlock(const QuickLockTrigger trigger) {
+  return currentActivity && pendingAction == PendingAction::None && currentActivity->handleQuickLockUnlock(trigger);
+}
+
 void ActivityManager::notifyInputLockChanged(const bool locked) {
   if (currentActivity) currentActivity->onInputLockChanged(locked);
   for (const auto& activity : stackActivities) {
