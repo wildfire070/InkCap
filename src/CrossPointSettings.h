@@ -147,6 +147,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FRONT_ORIENTATION_AWARE_COUNT
   };
 
+  enum FRONTLIGHT_SWIPE_BINDING {
+    FRONTLIGHT_SWIPE_OFF = 0,
+    FRONTLIGHT_SWIPE_2_VERTICAL = 1,
+    FRONTLIGHT_SWIPE_2_HORIZONTAL = 2,
+    FRONTLIGHT_SWIPE_3_VERTICAL = 3,
+    FRONTLIGHT_SWIPE_3_HORIZONTAL = 4,
+    FRONTLIGHT_SWIPE_4_VERTICAL = 5,
+    FRONTLIGHT_SWIPE_4_HORIZONTAL = 6,
+    FRONTLIGHT_SWIPE_BINDING_COUNT,
+  };
+
   // Side button long-press action options
   enum SIDE_LONG_PRESS {
     SIDE_LONG_CHAPTER_SKIP = 0,
@@ -434,6 +445,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t disableReaderTouchscreen = 0;
   // Available only on multi-touch hardware; defaults on for pinch font resizing.
   uint8_t pinchFontResizeEnabled = 1;
+  // Opt-in multi-touch bindings. Only one scalar may own a non-Off gesture.
+  uint8_t frontlightBrightnessSwipe = FRONTLIGHT_SWIPE_OFF;
+  uint8_t frontlightWarmthSwipe = FRONTLIGHT_SWIPE_OFF;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
@@ -683,6 +697,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
+  static bool normalizeFrontlightSwipeBindings(CrossPointSettings& settings, bool brightnessWasEdited);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
   static uint8_t sleepScreenStorageToMode(uint8_t storedValue);
   static uint8_t sleepScreenModeToStorage(uint8_t mode);

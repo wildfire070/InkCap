@@ -170,6 +170,11 @@ void ControlsOptionsActivity::openEnumOptionPicker(const SettingInfo& setting) {
     if (selectedSetting.valuePtr != nullptr) {
       SETTINGS.*(selectedSetting.valuePtr) =
           enumRawValueForDisplayIndex(selectedSetting, static_cast<uint8_t>(selectedIndex));
+      if (selectedSetting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe ||
+          selectedSetting.valuePtr == &CrossPointSettings::frontlightWarmthSwipe) {
+        CrossPointSettings::normalizeFrontlightSwipeBindings(
+            SETTINGS, selectedSetting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe);
+      }
       QuickActions::settingChanged(SETTINGS, selectedSetting.valuePtr);
       SETTINGS.saveToFile();
     }
@@ -196,6 +201,11 @@ void ControlsOptionsActivity::toggleCurrentSetting() {
     if (optionCount == 0) return;
     const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(optionCount);
     SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
+    if (setting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe ||
+        setting.valuePtr == &CrossPointSettings::frontlightWarmthSwipe) {
+      CrossPointSettings::normalizeFrontlightSwipeBindings(
+          SETTINGS, setting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe);
+    }
     QuickActions::settingChanged(SETTINGS, setting.valuePtr);
     SETTINGS.saveToFile();
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {

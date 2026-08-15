@@ -225,6 +225,12 @@ HalGPIO::TouchSnapshot HalGPIO::getTouchSnapshot() const {
   return result;
 }
 
+bool HalGPIO::wasCompletedMultiTouchSwipe(CompletedMultiTouchSwipe& swipe) const {
+  if (!supportsMultiTouch()) return false;
+  return inputMgr.wasMultiTouchSwipe(swipe.contactCount, swipe.nxStart, swipe.nyStart, swipe.nxEnd, swipe.nyEnd,
+                                     swipe.durationMs);
+}
+
 bool HalGPIO::hasHomeKey() const { return BoardConfig::hasHomeKey(); }
 
 bool HalGPIO::wasHomeKeyPressed() const { return inputMgr.wasHomeKeyPressed(); }

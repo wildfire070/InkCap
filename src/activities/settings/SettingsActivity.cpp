@@ -287,19 +287,27 @@ void SettingsActivity::rebuildSettingsLists() {
 
   const bool hasTouch = gpio.hasTouch();
   const bool hasHomeKey = gpio.hasHomeKey();
-  const size_t expectedControlsCount = controlsParentBaseCount - (hasTouch ? 1u : 0u) + (hasHomeKey ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE) ? 1u : 0u);
+  const size_t expectedControlsCount =
+      controlsParentBaseCount - (hasTouch ? 1u : 0u) + (hasHomeKey ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE) ? 1u : 0u);
   const size_t expectedFrontButtonCount = hasTouch ? 0u : controlsFrontButtonCount;
 #else
   controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
   controlsSideButtonSettings = buildControlsSideButtonSettingsList(allSettings);
 
-  const size_t expectedControlsCount = controlsParentBaseCount + (gpio.hasHomeKey() ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE) ? 1u : 0u);
+  const size_t expectedControlsCount =
+      controlsParentBaseCount + (gpio.hasHomeKey() ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE) ? 1u : 0u) +
+      (hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE) ? 1u : 0u);
   constexpr size_t expectedFrontButtonCount = controlsFrontButtonCount;
 #endif
   if (controlsSettings.size() != expectedControlsCount ||
@@ -464,6 +472,11 @@ void SettingsActivity::openEnumOptionPicker(const SettingInfo& setting) {
     if (selectedSetting.valuePtr != nullptr) {
       SETTINGS.*(selectedSetting.valuePtr) =
           enumRawValueForDisplayIndex(selectedSetting, static_cast<uint8_t>(selectedIndex));
+      if (selectedSetting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe ||
+          selectedSetting.valuePtr == &CrossPointSettings::frontlightWarmthSwipe) {
+        CrossPointSettings::normalizeFrontlightSwipeBindings(
+            SETTINGS, selectedSetting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe);
+      }
       QuickActions::settingChanged(SETTINGS, selectedSetting.valuePtr);
     } else if (selectedSetting.valueSetter) {
       selectedSetting.valueSetter(static_cast<uint8_t>(selectedIndex));
@@ -913,6 +926,11 @@ void SettingsActivity::toggleCurrentSetting() {
     if (optionCount == 0) return;
     const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(optionCount);
     SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
+    if (setting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe ||
+        setting.valuePtr == &CrossPointSettings::frontlightWarmthSwipe) {
+      CrossPointSettings::normalizeFrontlightSwipeBindings(
+          SETTINGS, setting.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe);
+    }
     QuickActions::settingChanged(SETTINGS, setting.valuePtr);
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {

@@ -3123,13 +3123,7 @@ bool EpubReaderActivity::handlePinchFontResize() {
     return false;
   }
 
-  const bool wasActive = pinchFontGesture.isActive();
   const auto action = pinchFontGesture.update(x1, y1, x2, y2);
-  if (!wasActive) {
-    // The SDK latch holds through the complete contact, including a final
-    // single-finger frame, so this gesture cannot fall through as a tap/swipe.
-    mappedInput.suppressCurrentTouchContact();
-  }
 
   if (action == ReaderPinchGesture::Action::Increase) {
     if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();

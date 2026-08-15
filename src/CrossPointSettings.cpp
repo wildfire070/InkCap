@@ -20,6 +20,7 @@
 #include "QuickActions.h"
 #include "SettingsList.h"
 #include "fontIds.h"
+#include "util/SwipeAdjustment.h"
 
 void readAndValidate(FsFile& file, uint8_t& member, const uint8_t maxValue) {
   uint8_t tempValue;
@@ -262,6 +263,19 @@ void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings
       }
     }
   }
+}
+
+bool CrossPointSettings::normalizeFrontlightSwipeBindings(CrossPointSettings& settings,
+                                                          const bool brightnessWasEdited) {
+  if (!SwipeAdjustment::bindingsConflict(settings.frontlightBrightnessSwipe, settings.frontlightWarmthSwipe)) {
+    return false;
+  }
+  if (brightnessWasEdited) {
+    settings.frontlightWarmthSwipe = FRONTLIGHT_SWIPE_OFF;
+  } else {
+    settings.frontlightBrightnessSwipe = FRONTLIGHT_SWIPE_OFF;
+  }
+  return true;
 }
 
 void CrossPointSettings::validateReaderFrontButtonMapping(CrossPointSettings& settings) {
@@ -513,6 +527,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     }
     this->*(info.valuePtr) = value;
   }
+
+  if (normalizeFrontlightSwipeBindings(*this, /*brightnessWasEdited=*/true)) needsResave = true;
 
   // The web API shares the base catalog so it can receive raw value 26 even
   // on boards without a Home key. Never retain that reader-only action there.

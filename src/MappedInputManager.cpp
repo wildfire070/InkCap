@@ -226,6 +226,26 @@ bool MappedInputManager::getTwoFingerTouch(int& x1, int& y1, int& x2, int& y2) c
   return true;
 }
 
+bool MappedInputManager::wasCompletedMultiTouchSwipe(CompletedSwipe& swipe) const {
+  if (!touchInputEnabled()) return false;
+
+  HalGPIO::CompletedMultiTouchSwipe source;
+  if (!gpio.wasCompletedMultiTouchSwipe(source)) return false;
+
+  swipe.contactCount = source.contactCount;
+  swipe.durationMs = source.durationMs;
+  renderer.tapToLogical(source.nxStart, source.nyStart, swipe.startX, swipe.startY);
+  renderer.tapToLogical(source.nxEnd, source.nyEnd, swipe.endX, swipe.endY);
+  const int dx = swipe.endX - swipe.startX;
+  const int dy = swipe.endY - swipe.startY;
+  if (std::abs(dx) >= std::abs(dy)) {
+    swipe.direction = dx < 0 ? SwipeDir::Left : SwipeDir::Right;
+  } else {
+    swipe.direction = dy < 0 ? SwipeDir::Up : SwipeDir::Down;
+  }
+  return true;
+}
+
 bool MappedInputManager::isHomeButtonLockedInReader() const {
   return readerMode && hasHomeKeyHardware() && !SETTINGS.homeButtonInReaderEnabled && !readerTouchscreenOverride;
 }

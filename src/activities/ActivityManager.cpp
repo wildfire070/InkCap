@@ -32,6 +32,7 @@
 #include "settings/SettingsActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/SwipeAdjustment.h"
 
 namespace {
 constexpr uint32_t FILE_TRANSFER_MODE_MASK = 0xFF;
@@ -43,6 +44,50 @@ uint32_t fileTransferBootPayload(const NetworkMode mode, const bool returnToRead
 
 void restartToFileTransfer(const NetworkMode mode, const std::string& returnBookPath) {
   silentRestartToNetwork(NetworkBootTarget::FILE_TRANSFER, fileTransferBootPayload(mode, !returnBookPath.empty()));
+}
+
+bool applyFrontlightSwipeAdjustment(MappedInputManager& mappedInput, GfxRenderer& renderer) {
+  if (!SwipeAdjustment::targetAvailable(SwipeAdjustment::Target::Brightness, Frontlight.present(),
+                                        Frontlight.hasColorTemperature()) ||
+      (SETTINGS.frontlightBrightnessSwipe == CrossPointSettings::FRONTLIGHT_SWIPE_OFF &&
+       SETTINGS.frontlightWarmthSwipe == CrossPointSettings::FRONTLIGHT_SWIPE_OFF)) {
+    return false;
+  }
+
+  MappedInputManager::CompletedSwipe completed;
+  if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
+
+  const SwipeAdjustment::Swipe swipe = {completed.contactCount, completed.startX, completed.startY,
+                                        completed.endX,         completed.endY,   completed.durationMs};
+  int delta = 0;
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  if (SwipeAdjustment::evaluate(SETTINGS.frontlightBrightnessSwipe, swipe, width, height, delta)) {
+    const uint8_t previousBrightness = Frontlight.brightness();
+    const bool previousOn = Frontlight.isOn();
+    uint8_t brightness = Frontlight.brightness();
+    SwipeAdjustment::applyDelta(brightness, delta);
+    Frontlight.setBrightness(brightness);
+    Frontlight.setOn(true);
+    SETTINGS.frontlightBrightness = brightness;
+    SETTINGS.frontlightOn = 1;
+    if (brightness != previousBrightness || !previousOn) SETTINGS.saveToFile();
+    return true;
+  }
+  if (SwipeAdjustment::targetAvailable(SwipeAdjustment::Target::Warmth, Frontlight.present(),
+                                       Frontlight.hasColorTemperature()) &&
+      SwipeAdjustment::evaluate(SETTINGS.frontlightWarmthSwipe, swipe, width, height, delta)) {
+    const uint8_t previousWarmth = Frontlight.warmth();
+    const bool previousOn = Frontlight.isOn();
+    uint8_t warmth = Frontlight.warmth();
+    SwipeAdjustment::applyDelta(warmth, delta);
+    Frontlight.setWarmth(warmth);
+    SETTINGS.frontlightWarmth = warmth;
+    SETTINGS.frontlightOn = Frontlight.isOn() ? 1 : 0;
+    if (warmth != previousWarmth || Frontlight.isOn() != previousOn) SETTINGS.saveToFile();
+    return true;
+  }
+  return false;
 }
 }  // namespace
 
@@ -107,6 +152,12 @@ void ActivityManager::loop() {
 
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
+
+    // Completed multi-touch swipes are recognized before the normal single-touch
+    // frontlight panel and activity gesture routes. The panel owns its own sliders.
+    if (currentActivity->name != "FrontlightPanel" && applyFrontlightSwipeAdjustment(mappedInput, renderer)) {
+      return;
+    }
 
     // Frontlight quick panel: top-edge down-swipe on home-key boards, except
     // that the open EPUB reader exposes the same action across the whole page.

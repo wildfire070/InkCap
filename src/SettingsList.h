@@ -659,6 +659,16 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     // --- Controls ---
     add(SettingInfo::Toggle(StrId::STR_PINCH_FONT_RESIZE, &CrossPointSettings::pinchFontResizeEnabled,
                             "pinchFontResizeEnabled", StrId::STR_CAT_CONTROLS));
+    add(SettingInfo::Enum(StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE, &CrossPointSettings::frontlightBrightnessSwipe,
+                          {StrId::STR_OFF, StrId::STR_TWO_FINGER_VERTICAL, StrId::STR_TWO_FINGER_HORIZONTAL,
+                           StrId::STR_THREE_FINGER_VERTICAL, StrId::STR_THREE_FINGER_HORIZONTAL,
+                           StrId::STR_FOUR_FINGER_VERTICAL, StrId::STR_FOUR_FINGER_HORIZONTAL},
+                          "frontlightBrightnessSwipe", StrId::STR_CAT_CONTROLS));
+    add(SettingInfo::Enum(StrId::STR_FRONTLIGHT_WARMTH_SWIPE, &CrossPointSettings::frontlightWarmthSwipe,
+                          {StrId::STR_OFF, StrId::STR_TWO_FINGER_VERTICAL, StrId::STR_TWO_FINGER_HORIZONTAL,
+                           StrId::STR_THREE_FINGER_VERTICAL, StrId::STR_THREE_FINGER_HORIZONTAL,
+                           StrId::STR_FOUR_FINGER_VERTICAL, StrId::STR_FOUR_FINGER_HORIZONTAL},
+                          "frontlightWarmthSwipe", StrId::STR_CAT_CONTROLS));
     add(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_DISABLED, StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_NEXT_NEXT},
                           "sideButtonLayout", StrId::STR_CAT_CONTROLS)
@@ -899,13 +909,31 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                              return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
                                     s.nameId == StrId::STR_DISABLE_TOUCHSCREEN ||
                                     s.nameId == StrId::STR_PAGE_TURN_GESTURE ||
-                                    s.nameId == StrId::STR_PINCH_FONT_RESIZE;
+                                    s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
+                                    s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
+                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
                            }),
             v.end());
   }
   if (!gpio.supportsMultiTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) { return s.nameId == StrId::STR_PINCH_FONT_RESIZE; }),
+                           [](const SettingInfo& s) {
+                             return s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
+                                    s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
+                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
+                           }),
+            v.end());
+  }
+  if (!Frontlight.present()) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) {
+                             return s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
+                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
+                           }),
+            v.end());
+  } else if (!Frontlight.hasColorTemperature()) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE; }),
             v.end());
   }
   if (hasTouch) {
@@ -1105,13 +1133,15 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
   const bool hasPageTurnGestureSetting = hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE);
   const bool hasPinchFontResize = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  const bool hasBrightnessSwipe = hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE);
+  const bool hasWarmthSwipe = hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE);
   const bool hasFrontButtons = !gpio.hasTouch();
   const bool hasHomeKey = gpio.hasHomeKey();
 
   std::vector<SettingInfo> settings;
   settings.reserve(3 + (hasHomeKey ? 1u : 0u) + (hasFrontButtons ? 1u : 0u) + (hasTiltPageTurnSetting ? 1u : 0u) +
                    (hasTiltPageTurnDirectionSetting ? 1u : 0u) + (hasPageTurnGestureSetting ? 1u : 0u) +
-                   (hasPinchFontResize ? 1u : 0u));
+                   (hasPinchFontResize ? 1u : 0u) + (hasBrightnessSwipe ? 1u : 0u) + (hasWarmthSwipe ? 1u : 0u));
   if (hasHomeKey) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_HOME_BUTTON, SettingAction::ControlsHomeButton));
   }
@@ -1122,6 +1152,8 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   settings.push_back(SettingInfo::Submenu(StrId::STR_SIDE_BUTTONS, SettingAction::ControlsSideButtons));
   settings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
   if (hasPinchFontResize) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  if (hasBrightnessSwipe) addSettingByName(settings, allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE);
+  if (hasWarmthSwipe) addSettingByName(settings, allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE);
   if (hasTiltPageTurnSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN);
   if (hasTiltPageTurnDirectionSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
   if (hasPageTurnGestureSetting) addSettingByName(settings, allSettings, StrId::STR_PAGE_TURN_GESTURE);

@@ -1411,6 +1411,8 @@ void CrossPointWebServer::handlePostSettings() {
   sdFontSystem.refreshIfDirty();
   const auto& settings = getSettingsList(&sdFontSystem.registry());
   int applied = 0;
+  bool brightnessSwipeEdited = false;
+  bool warmthSwipeEdited = false;
 
   for (const auto& s : settings) {
     if (!s.key || !isWebSettingAvailable(s)) continue;
@@ -1433,6 +1435,11 @@ void CrossPointWebServer::handlePostSettings() {
           if (s.valuePtr) {
             SETTINGS.*(s.valuePtr) = enumRawValueForDisplayIndex(s, static_cast<uint8_t>(val));
             QuickActions::settingChanged(SETTINGS, s.valuePtr);
+            if (s.valuePtr == &CrossPointSettings::frontlightBrightnessSwipe) {
+              brightnessSwipeEdited = true;
+            } else if (s.valuePtr == &CrossPointSettings::frontlightWarmthSwipe) {
+              warmthSwipeEdited = true;
+            }
           } else if (s.valueSetter) {
             s.valueSetter(static_cast<uint8_t>(val));
           }
@@ -1471,6 +1478,9 @@ void CrossPointWebServer::handlePostSettings() {
     }
   }
 
+  if (brightnessSwipeEdited || warmthSwipeEdited) {
+    CrossPointSettings::normalizeFrontlightSwipeBindings(SETTINGS, brightnessSwipeEdited);
+  }
   SETTINGS.saveToFile();
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
