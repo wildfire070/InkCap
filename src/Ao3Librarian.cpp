@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -1465,12 +1466,12 @@ int Ao3Librarian::sanitizeIndex() {
     return -1;
   }
 
-  // Byte offset of the filepath field inside Ao3LibraryMetadata:
-  // magic[4] + version[1] + rating[1] + warning[1] + isCompleted[1]
-  // + wordCount[4] + chapterCount[2] + seriesPart[2]
-  // + seriesName[128] + summary[512] + tags[4][16] = 720
-  static constexpr size_t kFilepathOffset = 720;
-  static constexpr size_t kFilepathLen = 256;
+  // Byte offset of the filepath field inside Ao3LibraryMetadata. Computed via
+  // offsetof() rather than a hand-maintained constant: a prior hardcoded value
+  // (720) went stale when wordCountIsEstimate/totalChapters were added to the
+  // struct without updating it, silently misaligning every partial read here.
+  static constexpr size_t kFilepathOffset = offsetof(Ao3LibraryMetadata, filepath);
+  static constexpr size_t kFilepathLen = sizeof(Ao3LibraryMetadata::filepath);
 
   int tombstoned = 0;
   CompactIndexRecord rec;
@@ -1488,7 +1489,7 @@ int Ao3Librarian::sanitizeIndex() {
 
     bool valid = false;
     if (Storage.exists(sidecarPath.c_str())) {
-      // Read only the filepath field — avoids a full 1232-byte struct on the stack.
+      // Read only the filepath field — avoids a full sizeof(Ao3LibraryMetadata) on the stack.
       HalFile sf;
       if (Storage.openFileForRead("AO3L", sidecarPath, sf)) {
         if (sf.seek(kFilepathOffset)) {
