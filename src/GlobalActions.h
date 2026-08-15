@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CrossPointSettings.h"
+#include "util/QuickLockTrigger.h"
 
 inline bool isPowerButtonActionAvailableOutsideReader(const CrossPointSettings::SHORT_PWRBTN action) {
   switch (action) {
@@ -40,5 +41,6 @@ inline bool isPowerButtonActionAvailableOutsideReader(const CrossPointSettings::
 }
 
 void enterDeepSleep(bool fromTimeout = false);
-bool handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN action);
+bool handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN action,
+                                   QuickLockTrigger quickLockTrigger = QuickLockTrigger::None);
 bool dispatchShortcutAction(CrossPointSettings::SHORT_PWRBTN action);

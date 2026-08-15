@@ -105,8 +105,15 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
     return result;
   }
 
+  const auto pageTurnGesture = static_cast<CrossPointSettings::PAGE_TURN_GESTURE>(SETTINGS.pageTurnGesture);
+  const bool allowsSwipe =
+      pageTurnGesture == CrossPointSettings::TAP_AND_SWIPE || pageTurnGesture == CrossPointSettings::SWIPE_ONLY;
+  const bool allowsTap = pageTurnGesture == CrossPointSettings::TAP_AND_SWIPE ||
+                         pageTurnGesture == CrossPointSettings::TAP_ONLY ||
+                         pageTurnGesture == CrossPointSettings::INVERTED_TAP;
+
   const auto swipe = input.wasSwipe();
-  if (swipe != MappedInputManager::SwipeDir::None) {
+  if (allowsSwipe && swipe != MappedInputManager::SwipeDir::None) {
     // A horizontal reader swipe turns pages wherever it starts. Edge-only
     // navigation remains handled by the activities that explicitly use it.
     result.prev = swipe == MappedInputManager::SwipeDir::Right;
@@ -122,16 +129,23 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   result.tapped = true;
   result.x = x;
   result.y = y;
+  result.heldMs = input.getHeldTime();
   // Reserve the top/bottom gesture bands for vertical edge swipes. If the touch
   // controller loses part of a short edge swipe, do not reinterpret it as a page tap.
-  if (input.isInVerticalEdgeGestureZone(y)) {
+  if (!allowsTap || input.isInVerticalEdgeGestureZone(y)) {
+    return result;
+  }
+
+  if (pageTurnGesture == CrossPointSettings::INVERTED_TAP) {
+    const int nextZoneWidth = (width * 2) / 3;
+    result.next = x < nextZoneWidth;
+    result.prev = x >= nextZoneWidth;
     return result;
   }
 
   const int previousZoneWidth = width / 3;
   result.prev = x < previousZoneWidth;
   result.next = x >= previousZoneWidth;
-  result.heldMs = input.getHeldTime();
   return result;
 #endif
 }

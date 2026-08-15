@@ -41,7 +41,7 @@ std::vector<uint8_t> availableActions() {
   actions.reserve(QuickActions::shortcutActionOrder.size());
   for (const auto action : QuickActions::shortcutActionOrder) {
     const auto rawAction = static_cast<uint8_t>(action);
-    if (QuickActions::isActionAvailable(rawAction)) actions.push_back(rawAction);
+    if (QuickActions::isQuickActionSlotActionAvailable(rawAction)) actions.push_back(rawAction);
   }
   return actions;
 }
@@ -67,7 +67,8 @@ void QuickActionsActivity::showOverview() {
                     I18N.get(triggerLabels[static_cast<uint8_t>(draftTrigger)]));
   for (uint8_t i = 0; i < 5; ++i) {
     const uint8_t action = draftSlots[i];
-    const char* label = QuickActions::isActionAvailable(action) ? I18N.get(QuickActions::actionLabel(action)) : "-";
+    const char* label =
+        QuickActions::isQuickActionSlotActionAvailable(action) ? I18N.get(QuickActions::actionLabel(action)) : "-";
     rows.emplace_back(std::to_string(i + 1) + ". " + label);
   }
   popup.showConfirmed(

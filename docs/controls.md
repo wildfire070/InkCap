@@ -32,6 +32,17 @@ Note: Even though some actions assigned to the front buttons could be used globa
 - Orientation aware
 - Long-press action
 
+### Page Turn Gesture
+
+On touchscreen devices, **Page Turn Gesture** is the last option in
+**Settings > Controls**. It changes page-turn gestures while reading.
+
+- **Tap & Swipe** (default): Tap the left third to go back and the rest of the screen to go forward, or swipe right and left.
+- **Tap Only**: Use the normal tap zones; horizontal swipes do not turn pages or go Back/Home.
+- **Swipe Only**: Swipe right or left; taps do not turn pages.
+- **Inverted Tap**: Tap the left two-thirds to go forward and the right third to go back.
+- **Disabled**: Do not turn pages with taps or horizontal swipes.
+
 ## Side Button Long-press Action
 
 When set to `Change Font Size`, hold a side button for about 2 seconds:
@@ -111,8 +122,9 @@ while reading.
 
 Quick Lock can be assigned to **Power + Up**, short- or long-press **Power**,
 or long-press **Back** or **Menu**. Trigger the assigned action to toggle the
-lock. While locked, a short press and release of **Power** also unlocks the
-device.
+lock. While locked, repeat that same shortcut to unlock; all other buttons,
+including **Power + Volume Down** screenshots, and touchscreen input stay
+locked.
 
 Quick Lock still follows the regular **Time to Sleep** setting. If the timeout
 expires, the device sleeps and restores the lock when it wakes. Reading timers
