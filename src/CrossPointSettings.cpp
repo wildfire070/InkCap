@@ -1016,28 +1016,13 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
 
 uint8_t CrossPointSettings::getSdFontTargetPointSize() const { return readerFontPointSize; }
 
-bool CrossPointSettings::changeReaderFontSize(const bool larger) {
-  const FONT_SIZE currentSize = getEffectiveReaderFontSize();
-  int currentIndex = 0;
-  constexpr size_t sizeCount = sizeof(READER_FONT_SIZE_CYCLE_ORDER) / sizeof(READER_FONT_SIZE_CYCLE_ORDER[0]);
-  for (size_t i = 0; i < sizeCount; i++) {
-    if (READER_FONT_SIZE_CYCLE_ORDER[i] == currentSize) {
-      currentIndex = static_cast<int>(i);
-      break;
-    }
+bool CrossPointSettings::changeReaderFontSize(const bool larger, const FontSizeStepMode mode) {
+  uint8_t sizes[FONT_SIZE_COUNT] = {};
+  size_t count = 0;
+  for (const FONT_SIZE size : READER_FONT_SIZE_CYCLE_ORDER) {
+    if (isReaderFontSizeAvailable(size)) sizes[count++] = getReaderFontPointSize(size);
   }
-
-  for (size_t step = 1; step < sizeCount; step++) {
-    const int direction = larger ? 1 : -1;
-    const size_t nextIndex =
-        (currentIndex + direction * static_cast<int>(step) + static_cast<int>(sizeCount)) % sizeCount;
-    const uint8_t stored = getStoredReaderFontSize(READER_FONT_SIZE_CYCLE_ORDER[nextIndex]);
-    if (stored != INVALID_READER_FONT_SIZE) {
-      readerFontPointSize = getReaderFontPointSize(READER_FONT_SIZE_CYCLE_ORDER[nextIndex]);
-      return true;
-    }
-  }
-  return false;
+  return changeReaderFontSizeStep(sizes, count, readerFontPointSize, larger, mode);
 }
 
 int CrossPointSettings::getReaderFontId() const {

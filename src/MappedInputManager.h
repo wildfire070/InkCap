@@ -47,6 +47,10 @@ class MappedInputManager {
 #if CROSSINK_APP_CAP_TOUCH
   bool hasTouch() const;
   bool hasTouchHardware() const;
+  // Multi-touch follows the same reader touch gate as all other screen input,
+  // so it cannot bypass the Disable Touchscreen setting.
+  bool supportsMultiTouch() const;
+  bool getTwoFingerTouch(int& x1, int& y1, int& x2, int& y2) const;
   // True on boards with a capacitive home key (X4 Pro), where the bottom-edge
   // up-swipe is the reader-menu gesture rather than the exit-to-home gesture.
   // The Home key has its own reader lock setting, so it remains available when

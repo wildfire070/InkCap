@@ -9,6 +9,8 @@
 #include <iosfwd>
 #include <mutex>
 
+#include "ReaderFontSizeStep.h"
+
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   mutable std::mutex _mutex;
@@ -430,6 +432,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t pageTurnGesture = TAP_AND_SWIPE;
   // Disables all touchscreen input while a reader is active. Reader menus temporarily override this.
   uint8_t disableReaderTouchscreen = 0;
+  // Available only on multi-touch hardware; defaults on for pinch font resizing.
+  uint8_t pinchFontResizeEnabled = 1;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
@@ -639,7 +643,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static bool isSdFontPointSizeAllowedForRange(uint8_t pointSize, uint8_t range);
   FONT_SIZE getEffectiveReaderFontSize() const;
   uint8_t getSdFontTargetPointSize() const;
-  bool changeReaderFontSize(bool larger);
+  bool changeReaderFontSize(bool larger, FontSizeStepMode mode = FontSizeStepMode::Wrap);
   int getReaderFontId() const;
   int getBuiltInReaderFontId() const;
 

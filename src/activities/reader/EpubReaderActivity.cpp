@@ -2426,6 +2426,15 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+#if CROSSINK_APP_CAP_TOUCH
+  if (handlePinchFontResize()) {
+    // A live two-finger gesture is reader input, so background indexing yields
+    // just as it does for a page turn or normal tap.
+    backgroundBuildYieldForInput.store(true, std::memory_order_relaxed);
+    return;
+  }
+#endif
+
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
   // A popup selection suppresses the Confirm release that follows its press.
   // Read it once: wasReleased() consumes that suppression, and a second read
@@ -3097,6 +3106,41 @@ void EpubReaderActivity::handleClippingJump(const ClippingJumpResult& clipping) 
   armReadingPaceWarmup("clipping_jump");
   pauseReadingPaceTimer("clipping_jump");
 }
+
+#if CROSSINK_APP_CAP_TOUCH
+bool EpubReaderActivity::handlePinchFontResize() {
+  if (!SETTINGS.pinchFontResizeEnabled || !SETTINGS.touchReaderControls || !mappedInput.supportsMultiTouch()) {
+    resetPinchFontGesture();
+    return false;
+  }
+
+  int x1 = 0;
+  int y1 = 0;
+  int x2 = 0;
+  int y2 = 0;
+  if (!mappedInput.getTwoFingerTouch(x1, y1, x2, y2)) {
+    resetPinchFontGesture();
+    return false;
+  }
+
+  const bool wasActive = pinchFontGesture.isActive();
+  const auto action = pinchFontGesture.update(x1, y1, x2, y2);
+  if (!wasActive) {
+    // The SDK latch holds through the complete contact, including a final
+    // single-finger frame, so this gesture cannot fall through as a tap/swipe.
+    mappedInput.suppressCurrentTouchContact();
+  }
+
+  if (action == ReaderPinchGesture::Action::Increase) {
+    if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+  } else if (action == ReaderPinchGesture::Action::Decrease) {
+    if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+  }
+  return true;
+}
+
+void EpubReaderActivity::resetPinchFontGesture() { pinchFontGesture.reset(); }
+#endif
 
 bool EpubReaderActivity::handleTouchDictionaryLookup() {
   if (!SETTINGS.touchReaderControls || !mappedInput.hasTouch() || RenderLock::peek() || activeFootnotePreview ||

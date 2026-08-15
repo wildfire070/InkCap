@@ -213,6 +213,19 @@ bool MappedInputManager::hasTouch() const { return touchInputEnabled(); }
 
 bool MappedInputManager::hasTouchHardware() const { return gpio.hasTouch(); }
 
+bool MappedInputManager::supportsMultiTouch() const { return touchInputEnabled() && gpio.supportsMultiTouch(); }
+
+bool MappedInputManager::getTwoFingerTouch(int& x1, int& y1, int& x2, int& y2) const {
+  if (!supportsMultiTouch()) return false;
+
+  const auto touch = gpio.getTouchSnapshot();
+  if (touch.count != 2 || touch.reportedCount != 2) return false;
+
+  renderer.tapToLogical(touch.contacts[0].nx, touch.contacts[0].ny, x1, y1);
+  renderer.tapToLogical(touch.contacts[1].nx, touch.contacts[1].ny, x2, y2);
+  return true;
+}
+
 bool MappedInputManager::isHomeButtonLockedInReader() const {
   return readerMode && hasHomeKeyHardware() && !SETTINGS.homeButtonInReaderEnabled && !readerTouchscreenOverride;
 }

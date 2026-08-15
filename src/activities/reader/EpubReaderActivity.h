@@ -20,6 +20,9 @@
 #include "ReaderProgressSaveDebouncer.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#if CROSSINK_APP_CAP_TOUCH
+#include "activities/reader/ReaderPinchGesture.h"
+#endif
 
 struct ToastRect {
   int x = 0;
@@ -227,6 +230,7 @@ class EpubReaderActivity final : public Activity {
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
 #if CROSSINK_APP_CAP_TOUCH
+  ReaderPinchGesture pinchFontGesture;
   struct FootnoteTouchTarget {
     int16_t x = 0;
     int16_t y = 0;
@@ -392,6 +396,8 @@ class EpubReaderActivity final : public Activity {
   void suppressConfirmShortcutRelease(CrossPointSettings::LONG_PRESS_MENU_ACTION action);
   void executeFootnoteQuickAction(bool suppressInitialPowerRelease = false);
 #if CROSSINK_APP_CAP_TOUCH
+  bool handlePinchFontResize();
+  void resetPinchFontGesture();
   void buildFootnoteTouchTargets(const Page& page, int fontId, int orientedMarginTop, int orientedMarginLeft);
   bool handleTouchFootnoteLink(int touchX, int touchY);
 #endif

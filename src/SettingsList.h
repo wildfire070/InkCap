@@ -548,7 +548,7 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
-    v.reserve(73);
+    v.reserve(74);
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
 
     // --- Display ---
@@ -657,6 +657,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                           StrId::STR_CAT_READER));
 
     // --- Controls ---
+    add(SettingInfo::Toggle(StrId::STR_PINCH_FONT_RESIZE, &CrossPointSettings::pinchFontResizeEnabled,
+                            "pinchFontResizeEnabled", StrId::STR_CAT_CONTROLS));
     add(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_DISABLED, StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_NEXT_NEXT},
                           "sideButtonLayout", StrId::STR_CAT_CONTROLS)
@@ -896,8 +898,14 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
                                     s.nameId == StrId::STR_DISABLE_TOUCHSCREEN ||
-                                    s.nameId == StrId::STR_PAGE_TURN_GESTURE;
+                                    s.nameId == StrId::STR_PAGE_TURN_GESTURE ||
+                                    s.nameId == StrId::STR_PINCH_FONT_RESIZE;
                            }),
+            v.end());
+  }
+  if (!gpio.supportsMultiTouch()) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_PINCH_FONT_RESIZE; }),
             v.end());
   }
   if (hasTouch) {
@@ -1096,12 +1104,14 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   const bool hasTiltPageTurnSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN);
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
   const bool hasPageTurnGestureSetting = hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE);
+  const bool hasPinchFontResize = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
   const bool hasFrontButtons = !gpio.hasTouch();
   const bool hasHomeKey = gpio.hasHomeKey();
 
   std::vector<SettingInfo> settings;
   settings.reserve(3 + (hasHomeKey ? 1u : 0u) + (hasFrontButtons ? 1u : 0u) + (hasTiltPageTurnSetting ? 1u : 0u) +
-                   (hasTiltPageTurnDirectionSetting ? 1u : 0u) + (hasPageTurnGestureSetting ? 1u : 0u));
+                   (hasTiltPageTurnDirectionSetting ? 1u : 0u) + (hasPageTurnGestureSetting ? 1u : 0u) +
+                   (hasPinchFontResize ? 1u : 0u));
   if (hasHomeKey) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_HOME_BUTTON, SettingAction::ControlsHomeButton));
   }
@@ -1111,6 +1121,7 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   }
   settings.push_back(SettingInfo::Submenu(StrId::STR_SIDE_BUTTONS, SettingAction::ControlsSideButtons));
   settings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
+  if (hasPinchFontResize) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
   if (hasTiltPageTurnSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN);
   if (hasTiltPageTurnDirectionSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
   if (hasPageTurnGestureSetting) addSettingByName(settings, allSettings, StrId::STR_PAGE_TURN_GESTURE);

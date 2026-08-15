@@ -6,6 +6,7 @@
 - Full Xteink X4 Pro support, including USB Drive access to its SD card and direct USB file transfers.
 - New "Quick Lock" shortcut that locks the device without putting it to sleep. It can be assigned to Power + Up, long-press Back, or long-press Menu shortcuts and uses the regular sleep timeout.
 - New Quick Actions menu
+- On supported touch readers, pinch-to-resize with two fingers now changes the EPUB reader font size by one step.
 - Quick Actions can now be assigned to Power + Up and, on X4 Pro, tap, long-press, or double-tap Home.
 
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
