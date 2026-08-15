@@ -2,7 +2,6 @@ _language_name: "Русский"
 _language_code: "RU"
 _order: "6"
 
-STR_PAGE_TURN_GESTURE: "Жест перелистывания страниц"
 STR_TAP_AND_SWIPE: "Нажатие и свайп"
 STR_TAP_ONLY: "Только нажатие"
 STR_SWIPE_ONLY: "Только свайп"

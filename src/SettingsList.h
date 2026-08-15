@@ -659,16 +659,34 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     // --- Controls ---
     add(SettingInfo::Toggle(StrId::STR_PINCH_FONT_RESIZE, &CrossPointSettings::pinchFontResizeEnabled,
                             "pinchFontResizeEnabled", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE, &CrossPointSettings::frontlightBrightnessSwipe,
-                          {StrId::STR_OFF, StrId::STR_TWO_FINGER_VERTICAL, StrId::STR_TWO_FINGER_HORIZONTAL,
-                           StrId::STR_THREE_FINGER_VERTICAL, StrId::STR_THREE_FINGER_HORIZONTAL,
-                           StrId::STR_FOUR_FINGER_VERTICAL, StrId::STR_FOUR_FINGER_HORIZONTAL},
-                          "frontlightBrightnessSwipe", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_FRONTLIGHT_WARMTH_SWIPE, &CrossPointSettings::frontlightWarmthSwipe,
-                          {StrId::STR_OFF, StrId::STR_TWO_FINGER_VERTICAL, StrId::STR_TWO_FINGER_HORIZONTAL,
-                           StrId::STR_THREE_FINGER_VERTICAL, StrId::STR_THREE_FINGER_HORIZONTAL,
-                           StrId::STR_FOUR_FINGER_VERTICAL, StrId::STR_FOUR_FINGER_HORIZONTAL},
-                          "frontlightWarmthSwipe", StrId::STR_CAT_CONTROLS));
+    const std::vector<StrId> twoFingerSwipeActions = {
+        StrId::STR_NOT_SET,          StrId::STR_INCREASE_BRIGHTNESS, StrId::STR_DECREASE_BRIGHTNESS,
+        StrId::STR_INCREASE_WARMTH,  StrId::STR_DECREASE_WARMTH,     StrId::STR_NEXT_CHAPTER,
+        StrId::STR_PREVIOUS_CHAPTER, StrId::STR_INCREASE_FONT_SIZE,  StrId::STR_DECREASE_FONT_SIZE,
+    };
+    const std::vector<uint8_t> twoFingerSwipeActionValues = {
+        CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET,
+        CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS,
+        CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS,
+        CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH,
+        CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_WARMTH,
+        CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER,
+        CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER,
+        CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE,
+        CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE,
+    };
+    add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_UP, &CrossPointSettings::twoFingerSwipeUp, twoFingerSwipeActions,
+                          "twoFingerSwipeUp", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_DOWN, &CrossPointSettings::twoFingerSwipeDown,
+                          twoFingerSwipeActions, "twoFingerSwipeDown", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_LEFT, &CrossPointSettings::twoFingerSwipeLeft,
+                          twoFingerSwipeActions, "twoFingerSwipeLeft", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_RIGHT, &CrossPointSettings::twoFingerSwipeRight,
+                          twoFingerSwipeActions, "twoFingerSwipeRight", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
     add(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_DISABLED, StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_NEXT_NEXT},
                           "sideButtonLayout", StrId::STR_CAT_CONTROLS)
@@ -714,7 +732,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                              "longPressBackAction", ShortcutOptionCatalog::LongPress));
     add(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                             "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_PAGE_TURN_GESTURE, &CrossPointSettings::pageTurnGesture,
+    add(SettingInfo::Enum(StrId::STR_PAGE_TURN, &CrossPointSettings::pageTurnGesture,
                           {StrId::STR_TAP_AND_SWIPE, StrId::STR_TAP_ONLY, StrId::STR_SWIPE_ONLY,
                            StrId::STR_INVERTED_TAP, StrId::STR_DISABLED},
                           "pageTurnGesture", StrId::STR_CAT_CONTROLS));
@@ -907,11 +925,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
-                                    s.nameId == StrId::STR_DISABLE_TOUCHSCREEN ||
-                                    s.nameId == StrId::STR_PAGE_TURN_GESTURE ||
+                                    s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_PAGE_TURN ||
                                     s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
-                                    s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
-                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
                            }),
             v.end());
   }
@@ -919,22 +938,27 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
-                                    s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
-                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
                            }),
             v.end());
   }
-  if (!Frontlight.present()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE ||
-                                    s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE;
-                           }),
-            v.end());
-  } else if (!Frontlight.hasColorTemperature()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) { return s.nameId == StrId::STR_FRONTLIGHT_WARMTH_SWIPE; }),
-            v.end());
+  for (auto& setting : v) {
+    const bool isTwoFingerSwipe =
+        setting.nameId == StrId::STR_TWO_FINGER_SWIPE_UP || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
+        setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
+    if (!isTwoFingerSwipe) continue;
+    if (!Frontlight.present()) {
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS);
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS);
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH);
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_WARMTH);
+    } else if (!Frontlight.hasColorTemperature()) {
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH);
+      removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_WARMTH);
+    }
   }
   if (hasTouch) {
     v.erase(std::remove_if(v.begin(), v.end(),
@@ -1131,17 +1155,13 @@ inline bool hasSettingByName(const std::vector<SettingInfo>& allSettings, StrId 
 inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   const bool hasTiltPageTurnSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN);
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
-  const bool hasPageTurnGestureSetting = hasSettingByName(allSettings, StrId::STR_PAGE_TURN_GESTURE);
-  const bool hasPinchFontResize = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
-  const bool hasBrightnessSwipe = hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE);
-  const bool hasWarmthSwipe = hasSettingByName(allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE);
+  const bool hasTapsGestures = hasSettingByName(allSettings, StrId::STR_PAGE_TURN);
   const bool hasFrontButtons = !gpio.hasTouch();
   const bool hasHomeKey = gpio.hasHomeKey();
 
   std::vector<SettingInfo> settings;
   settings.reserve(3 + (hasHomeKey ? 1u : 0u) + (hasFrontButtons ? 1u : 0u) + (hasTiltPageTurnSetting ? 1u : 0u) +
-                   (hasTiltPageTurnDirectionSetting ? 1u : 0u) + (hasPageTurnGestureSetting ? 1u : 0u) +
-                   (hasPinchFontResize ? 1u : 0u) + (hasBrightnessSwipe ? 1u : 0u) + (hasWarmthSwipe ? 1u : 0u));
+                   (hasTiltPageTurnDirectionSetting ? 1u : 0u) + (hasTapsGestures ? 1u : 0u));
   if (hasHomeKey) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_HOME_BUTTON, SettingAction::ControlsHomeButton));
   }
@@ -1151,12 +1171,34 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   }
   settings.push_back(SettingInfo::Submenu(StrId::STR_SIDE_BUTTONS, SettingAction::ControlsSideButtons));
   settings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
-  if (hasPinchFontResize) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
-  if (hasBrightnessSwipe) addSettingByName(settings, allSettings, StrId::STR_FRONTLIGHT_BRIGHTNESS_SWIPE);
-  if (hasWarmthSwipe) addSettingByName(settings, allSettings, StrId::STR_FRONTLIGHT_WARMTH_SWIPE);
+  if (hasTapsGestures) {
+    settings.push_back(SettingInfo::Submenu(StrId::STR_TAPS_AND_GESTURES, SettingAction::ControlsTapsGestures));
+  }
   if (hasTiltPageTurnSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN);
   if (hasTiltPageTurnDirectionSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
-  if (hasPageTurnGestureSetting) addSettingByName(settings, allSettings, StrId::STR_PAGE_TURN_GESTURE);
+  return settings;
+}
+
+inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std::vector<SettingInfo>& allSettings) {
+  std::vector<SettingInfo> settings;
+  const bool hasPinch = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  const bool hasTwoFingerSwipe = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
+  settings.reserve(1 + (hasPinch ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
+  addSettingByName(settings, allSettings, StrId::STR_PAGE_TURN);
+  if (hasPinch) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  if (hasTwoFingerSwipe) {
+    settings.push_back(SettingInfo::Submenu(StrId::STR_TWO_FINGER_SWIPE, SettingAction::ControlsTwoFingerSwipe));
+  }
+  return settings;
+}
+
+inline std::vector<SettingInfo> buildControlsTwoFingerSwipeSettingsList(const std::vector<SettingInfo>& allSettings) {
+  std::vector<SettingInfo> settings;
+  settings.reserve(4);
+  addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
+  addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_DOWN);
+  addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_LEFT);
+  addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_RIGHT);
   return settings;
 }
 

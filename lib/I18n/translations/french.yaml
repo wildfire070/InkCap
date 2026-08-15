@@ -2,7 +2,6 @@ _language_name: "Français"
 _language_code: "FR"
 _order: "2"
 
-STR_PAGE_TURN_GESTURE: "Geste de changement de page"
 STR_TAP_AND_SWIPE: "Appuyer et balayer"
 STR_TAP_ONLY: "Appuyer uniquement"
 STR_SWIPE_ONLY: "Balayer uniquement"

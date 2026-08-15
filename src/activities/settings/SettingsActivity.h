@@ -32,6 +32,8 @@ enum class SettingAction {
   ControlsHomeButton,
   ControlsFrontButtons,
   ControlsSideButtons,
+  ControlsTapsGestures,
+  ControlsTwoFingerSwipe,
   SystemDevice,
   SystemFilesCache,
   SystemReadingStats,
@@ -242,6 +244,8 @@ class SettingsActivity final : public Activity {
   std::vector<SettingInfo> controlsHomeButtonSettings;
   std::vector<SettingInfo> controlsFrontButtonSettings;
   std::vector<SettingInfo> controlsSideButtonSettings;
+  std::vector<SettingInfo> controlsTapsGesturesSettings;
+  std::vector<SettingInfo> controlsTwoFingerSwipeSettings;
   std::vector<SettingInfo> systemSettings;
   std::vector<SettingInfo> systemDeviceSettings;
   std::vector<SettingInfo> systemFilesCacheSettings;

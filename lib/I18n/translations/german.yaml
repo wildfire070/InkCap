@@ -2,7 +2,6 @@ _language_name: "Deutsch"
 _language_code: "DE"
 _order: "3"
 
-STR_PAGE_TURN_GESTURE: "Geste zum Umblättern"
 STR_TAP_AND_SWIPE: "Tippen und Wischen"
 STR_TAP_ONLY: "Nur Tippen"
 STR_SWIPE_ONLY: "Nur Wischen"

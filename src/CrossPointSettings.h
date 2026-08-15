@@ -147,15 +147,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FRONT_ORIENTATION_AWARE_COUNT
   };
 
-  enum FRONTLIGHT_SWIPE_BINDING {
-    FRONTLIGHT_SWIPE_OFF = 0,
-    FRONTLIGHT_SWIPE_2_VERTICAL = 1,
-    FRONTLIGHT_SWIPE_2_HORIZONTAL = 2,
-    FRONTLIGHT_SWIPE_3_VERTICAL = 3,
-    FRONTLIGHT_SWIPE_3_HORIZONTAL = 4,
-    FRONTLIGHT_SWIPE_4_VERTICAL = 5,
-    FRONTLIGHT_SWIPE_4_HORIZONTAL = 6,
-    FRONTLIGHT_SWIPE_BINDING_COUNT,
+  enum TWO_FINGER_SWIPE_ACTION {
+    TWO_FINGER_SWIPE_NOT_SET = 0,
+    TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS,
+    TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS,
+    TWO_FINGER_SWIPE_INCREASE_WARMTH,
+    TWO_FINGER_SWIPE_DECREASE_WARMTH,
+    TWO_FINGER_SWIPE_NEXT_CHAPTER,
+    TWO_FINGER_SWIPE_PREVIOUS_CHAPTER,
+    TWO_FINGER_SWIPE_INCREASE_FONT_SIZE,
+    TWO_FINGER_SWIPE_DECREASE_FONT_SIZE,
+    TWO_FINGER_SWIPE_ACTION_COUNT,
   };
 
   // Side button long-press action options
@@ -445,9 +447,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t disableReaderTouchscreen = 0;
   // Available only on multi-touch hardware; defaults on for pinch font resizing.
   uint8_t pinchFontResizeEnabled = 1;
-  // Opt-in multi-touch bindings. Only one scalar may own a non-Off gesture.
-  uint8_t frontlightBrightnessSwipe = FRONTLIGHT_SWIPE_OFF;
-  uint8_t frontlightWarmthSwipe = FRONTLIGHT_SWIPE_OFF;
+  // Configurable two-finger swipes. A non-empty action may be assigned to one direction only.
+  uint8_t twoFingerSwipeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeDown = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeLeft = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeRight = TWO_FINGER_SWIPE_NOT_SET;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
@@ -697,7 +701,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
-  static bool normalizeFrontlightSwipeBindings(CrossPointSettings& settings, bool brightnessWasEdited);
+  static bool isTwoFingerSwipeActionAvailable(uint8_t action, bool frontlightPresent, bool hasColorTemperature);
+  static bool normalizeTwoFingerSwipeActions(CrossPointSettings& settings,
+                                             uint8_t CrossPointSettings::* editedField = nullptr);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
   static uint8_t sleepScreenStorageToMode(uint8_t storedValue);
   static uint8_t sleepScreenModeToStorage(uint8_t mode);

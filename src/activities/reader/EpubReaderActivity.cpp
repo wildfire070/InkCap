@@ -3014,6 +3014,37 @@ void EpubReaderActivity::loop() {
   }
 }
 
+bool EpubReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) {
+  if (!epub) return false;
+
+  switch (action) {
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+      if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER: {
+      const int direction = action == CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER ? 1 : -1;
+      const int targetSpine = currentSpineIndex + direction;
+      if (activeFootnotePreview || targetSpine < 0 || targetSpine >= epub->getSpineItemsCount()) return true;
+      {
+        RenderLock lock(*this);
+        nextPageNumber = 0;
+        if (direction < 0) pendingPageJump = std::numeric_limits<uint16_t>::max();
+        currentSpineIndex = targetSpine;
+        section.reset();
+      }
+      armReadingPaceWarmup("two_finger_chapter");
+      requestUpdate();
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 // Translate an absolute percent into a spine index plus a normalized position
 // within that spine so we can jump after the section is loaded.
 void EpubReaderActivity::jumpToPercent(int percent) {

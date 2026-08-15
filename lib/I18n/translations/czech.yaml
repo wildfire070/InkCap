@@ -2,7 +2,6 @@ _language_name: "Čeština"
 _language_code: "CS"
 _order: "4"
 
-STR_PAGE_TURN_GESTURE: "Gesto otáčení stránek"
 STR_TAP_AND_SWIPE: "Klepnutí a přejetí"
 STR_TAP_ONLY: "Pouze klepnutí"
 STR_SWIPE_ONLY: "Pouze přejetí"

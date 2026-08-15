@@ -30,3 +30,7 @@ pointer-off = pointer-off
 chevron-up = chevron-up
 chevron-down = chevron-down
 sliders-horizontal = sliders-horizontal
+arrows-up = chevrons-up
+arrows-down = chevrons-down
+arrows-left = chevrons-left
+arrows-right = chevrons-right

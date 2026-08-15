@@ -1,6 +1,7 @@
 #include "CrossPointSettings.h"
 
 #include <BoardConfig.h>
+#include <CrossInkHalFrontlight.h>
 #include <HalClock.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -20,7 +21,7 @@
 #include "QuickActions.h"
 #include "SettingsList.h"
 #include "fontIds.h"
-#include "util/SwipeAdjustment.h"
+#include "util/TwoFingerSwipe.h"
 
 void readAndValidate(FsFile& file, uint8_t& member, const uint8_t maxValue) {
   uint8_t tempValue;
@@ -265,17 +266,56 @@ void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings
   }
 }
 
-bool CrossPointSettings::normalizeFrontlightSwipeBindings(CrossPointSettings& settings,
-                                                          const bool brightnessWasEdited) {
-  if (!SwipeAdjustment::bindingsConflict(settings.frontlightBrightnessSwipe, settings.frontlightWarmthSwipe)) {
-    return false;
+bool CrossPointSettings::isTwoFingerSwipeActionAvailable(const uint8_t action, const bool frontlightPresent,
+                                                         const bool hasColorTemperature) {
+  switch (static_cast<TWO_FINGER_SWIPE_ACTION>(action)) {
+    case TWO_FINGER_SWIPE_NOT_SET:
+    case TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case TWO_FINGER_SWIPE_PREVIOUS_CHAPTER:
+    case TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+    case TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      return true;
+    case TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS:
+    case TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS:
+      return frontlightPresent;
+    case TWO_FINGER_SWIPE_INCREASE_WARMTH:
+    case TWO_FINGER_SWIPE_DECREASE_WARMTH:
+      return frontlightPresent && hasColorTemperature;
+    case TWO_FINGER_SWIPE_ACTION_COUNT:
+      return false;
   }
-  if (brightnessWasEdited) {
-    settings.frontlightWarmthSwipe = FRONTLIGHT_SWIPE_OFF;
-  } else {
-    settings.frontlightBrightnessSwipe = FRONTLIGHT_SWIPE_OFF;
+  return false;
+}
+
+bool CrossPointSettings::normalizeTwoFingerSwipeActions(CrossPointSettings& settings,
+                                                        uint8_t CrossPointSettings::* const editedField) {
+  uint8_t CrossPointSettings::* const fields[] = {
+      &CrossPointSettings::twoFingerSwipeUp, &CrossPointSettings::twoFingerSwipeDown,
+      &CrossPointSettings::twoFingerSwipeLeft, &CrossPointSettings::twoFingerSwipeRight};
+  bool changed = false;
+  const bool frontlightPresent = Frontlight.present();
+  const bool hasColorTemperature = Frontlight.hasColorTemperature();
+
+  for (const auto field : fields) {
+    uint8_t& action = settings.*field;
+    if (!isTwoFingerSwipeActionAvailable(action, frontlightPresent, hasColorTemperature)) {
+      action = TWO_FINGER_SWIPE_NOT_SET;
+      changed = true;
+    }
   }
-  return true;
+
+  uint8_t actions[] = {settings.twoFingerSwipeUp, settings.twoFingerSwipeDown, settings.twoFingerSwipeLeft,
+                       settings.twoFingerSwipeRight};
+  int editedIndex = -1;
+  for (int i = 0; i < 4; i++) {
+    if (fields[i] == editedField) editedIndex = i;
+  }
+  changed = TwoFingerSwipe::clearDuplicateActions(actions, TWO_FINGER_SWIPE_NOT_SET, editedIndex) || changed;
+  settings.twoFingerSwipeUp = actions[0];
+  settings.twoFingerSwipeDown = actions[1];
+  settings.twoFingerSwipeLeft = actions[2];
+  settings.twoFingerSwipeRight = actions[3];
+  return changed;
 }
 
 void CrossPointSettings::validateReaderFrontButtonMapping(CrossPointSettings& settings) {
@@ -528,7 +568,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     this->*(info.valuePtr) = value;
   }
 
-  if (normalizeFrontlightSwipeBindings(*this, /*brightnessWasEdited=*/true)) needsResave = true;
+  if (normalizeTwoFingerSwipeActions(*this)) needsResave = true;
 
   // The web API shares the base catalog so it can receive raw value 26 even
   // on boards without a Home key. Never retain that reader-only action there.
