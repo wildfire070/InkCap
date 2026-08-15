@@ -12,7 +12,7 @@
 class Ao3EndOfBookSeriesActivity final : public Activity {
  public:
   Ao3EndOfBookSeriesActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string seriesName,
-                             uint32_t seriesHash, uint32_t originCacheHash, std::string originEpubPath)
+                             uint32_t seriesHash, uint64_t originCacheHash, std::string originEpubPath)
       : Activity("Ao3EndOfBookSeries", renderer, mappedInput),
         seriesName_(std::move(seriesName)),
         seriesHash_(seriesHash),
@@ -26,7 +26,7 @@ class Ao3EndOfBookSeriesActivity final : public Activity {
  private:
   std::string seriesName_;
   uint32_t seriesHash_;
-  uint32_t originCacheHash_;
+  uint64_t originCacheHash_;
   std::string originEpubPath_;
 
   std::vector<ViewEntry> viewEntries;
@@ -41,7 +41,7 @@ class Ao3EndOfBookSeriesActivity final : public Activity {
 
   void loadViewEntries();
   void loadPageCache(int page);
-  BookStatus getBookStatus(uint32_t cacheHash);
+  BookStatus getBookStatus(uint64_t cacheHash);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
   void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,

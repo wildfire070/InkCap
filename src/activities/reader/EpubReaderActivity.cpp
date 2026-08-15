@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Epub/Page.h>
 #include <Epub/PageCountEstimator.h>
+#include <ZipFile.h>  // ZipFile::fnvHash64 for the AO3 origin cache hash
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
@@ -7075,7 +7076,7 @@ void EpubReaderActivity::launchAo3SeriesActivity() {
   }
 
   const std::string originPath = epub->getPath();
-  const uint32_t originHash = static_cast<uint32_t>(std::hash<std::string>{}(originPath));
+  const uint64_t originHash = ZipFile::fnvHash64(originPath.c_str(), originPath.size());
 
   // CompactIndexRecord.seriesName is truncated to 31 chars on write, so the hash
   // must be computed from the same truncated string to match index records.

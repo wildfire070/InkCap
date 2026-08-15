@@ -46,7 +46,7 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
   const bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
                       f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(&reserved, 1) == 1;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 1 || recordCount > MAX_LIBRARY_BOOKS) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
     f.close();
     return;
   }
@@ -78,7 +78,7 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
 //  getBookStatus — reads the ao3-status.bin sidecar for the given cache hash
 // ---------------------------------------------------------------------------
 
-BookStatus Ao3EndOfBookSeriesActivity::getBookStatus(uint32_t cacheHash) {
+BookStatus Ao3EndOfBookSeriesActivity::getBookStatus(uint64_t cacheHash) {
   return Ao3Librarian::getBookStatus("/.crosspoint/epub_" + std::to_string(cacheHash));
 }
 

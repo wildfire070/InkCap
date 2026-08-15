@@ -7,6 +7,7 @@
 
 #include "../ActivityResult.h"
 #include "Ao3FolderPickerActivity.h"
+#include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -94,11 +95,36 @@ void Ao3LibrarySettingsActivity::onEnter() {
 }
 
 void Ao3LibrarySettingsActivity::loop() {
+  // Touch (X4 Pro): tap a menu row (registered via GUI.drawList) to select it,
+  // and a screen tap acts as Confirm on the cleanup prompts. Back stays on the
+  // left-edge gesture / tappable header. No-op on button-only builds.
+  bool tapConfirm = false;
+  int menuTapped = -1;
+  if (showingCleanupConfirm || showingCleanupResult || cleaningUpIndex) {
+    int tx = 0;
+    int ty = 0;
+    if (mappedInput.wasScreenTapped(tx, ty)) {
+      mappedInput.suppressCurrentTouchContact();
+      tapConfirm = true;
+    }
+  } else {
+    if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+      mappedInput.suppressCurrentTouchContact();
+      saveSettings();
+      finish();
+      return;
+    }
+    if (mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < 8) {
+      mappedInput.suppressCurrentTouchContact();
+      selectorIndex = menuTapped;
+    }
+  }
+
   if (showingCleanupConfirm) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       showingCleanupConfirm = false;
       requestUpdate(true);
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm) {
       showingCleanupConfirm = false;
       cleaningUpIndex = true;
       requestUpdate(true);
@@ -113,7 +139,7 @@ void Ao3LibrarySettingsActivity::loop() {
 
   if (showingCleanupResult) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm) {
       showingCleanupResult = false;
       requestUpdate(true);
     }
@@ -126,7 +152,7 @@ void Ao3LibrarySettingsActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || menuTapped >= 0) {
     if (selectorIndex == 0) {
       auto handler = [this](const ActivityResult& res) {
         if (!res.isCancelled) {

@@ -1,6 +1,7 @@
 #include "Ao3Librarian.h"
 
 #include <Epub.h>
+#include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 #include <HalStorage.h>
 #include <Logging.h>
 
@@ -1050,7 +1051,7 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
     rec.seriesPart = meta->seriesPart;
     rec.rating = meta->rating;
     rec.isCompleted = meta->isCompleted;
-    rec.cacheHash = static_cast<uint32_t>(std::hash<std::string>{}(epub.getPath()));
+    rec.cacheHash = ZipFile::fnvHash64(epub.getPath().c_str(), epub.getPath().size());
 
     if (!writeIndexRecord(rec)) {
       return false;
@@ -1255,7 +1256,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
       bool readOk =
           check.read(magic, 4) == 4 && check.read(&version, 1) == 1 && check.read((uint8_t*)&recordCountCheck, 2) == 2;
       check.close();
-      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 2 || recordCountCheck > MAX_LIBRARY_BOOKS) {
+      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCountCheck > MAX_LIBRARY_BOOKS) {
         Storage.remove(indexPath);
         needsCreate = true;
       }
@@ -1268,7 +1269,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   if (needsCreate) {
     HalFile f;
     if (!Storage.openFileForWrite("AO3L", indexPath, f)) return false;
-    uint8_t v = 2, r = 0;
+    uint8_t v = 3, r = 0;
     uint16_t c = 0;
     uint32_t s = 0;
     f.write((uint8_t*)"AO3X", 4);
@@ -1361,12 +1362,12 @@ bool Ao3Librarian::tombstoneRecord(const std::string& epubPath) {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 2) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
     f.close();
     return false;
   }
 
-  uint32_t targetHash = static_cast<uint32_t>(std::hash<std::string>{}(epubPath));
+  const uint64_t targetHash = ZipFile::fnvHash64(epubPath.c_str(), epubPath.size());
 
   CompactIndexRecord rec;
   for (uint16_t i = 0; i < recordCount; i++) {
@@ -1398,12 +1399,12 @@ bool Ao3Librarian::setRecordFinished(const std::string& epubPath, bool finished)
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 2) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
     f.close();
     return false;
   }
 
-  uint32_t targetHash = static_cast<uint32_t>(std::hash<std::string>{}(epubPath));
+  const uint64_t targetHash = ZipFile::fnvHash64(epubPath.c_str(), epubPath.size());
 
   CompactIndexRecord rec;
   for (uint16_t i = 0; i < recordCount; i++) {
@@ -1459,7 +1460,7 @@ int Ao3Librarian::sanitizeIndex() {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 2 || recordCount > MAX_LIBRARY_BOOKS) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
     f.close();
     return -1;
   }
@@ -1507,7 +1508,7 @@ int Ao3Librarian::sanitizeIndex() {
       f.seek(offsetOf(i));
       f.write((uint8_t*)&rec, sizeof(rec));
       tombstoned++;
-      LOG_DBG("AO3L", "sanitizeIndex: tombstoned ghost record (hash %u)", rec.cacheHash);
+      LOG_DBG("AO3L", "sanitizeIndex: tombstoned ghost record (hash %llu)", (unsigned long long)rec.cacheHash);
     }
 
     yield();

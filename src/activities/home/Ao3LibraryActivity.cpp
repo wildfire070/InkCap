@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <Epub.h>
+#include <ZipFile.h>
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalStorage.h>
@@ -18,6 +19,7 @@
 #include "../../MappedInputManager.h"
 #include "../../RecentBooksStore.h"
 #include "../../components/TouchHeaderBackButton.h"
+#include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
 #include "Ao3IndexActivity.h"
@@ -96,7 +98,7 @@ void Ao3LibraryActivity::buildAllowedHashes(const std::string& scanPath, int max
             std::string fullPath = dirPath;
             if (fullPath.back() != '/') fullPath += "/";
             fullPath += nameStr;
-            uint32_t h = static_cast<uint32_t>(std::hash<std::string>{}(fullPath));
+            const uint64_t h = ZipFile::fnvHash64(fullPath.c_str(), fullPath.size());
             allowedHashes.push_back(h);
           }
         }
@@ -126,7 +128,7 @@ void Ao3LibraryActivity::loadViewEntries() {
 //  getBookStatus — reads the ao3-status.bin sidecar for the given cache hash
 // ---------------------------------------------------------------------------
 
-BookStatus Ao3LibraryActivity::getBookStatus(uint32_t cacheHash) {
+BookStatus Ao3LibraryActivity::getBookStatus(uint64_t cacheHash) {
   return Ao3Librarian::getBookStatus("/.crosspoint/epub_" + std::to_string(cacheHash));
 }
 
@@ -224,12 +226,19 @@ void Ao3LibraryActivity::loop() {
     return;
   }
 
+  // A touch on a registered row sets this per-frame flag, which the mode's
+  // existing Confirm handler honors. This avoids injectRelease(), which the main
+  // loop only clears on the button-shortcut path (not the normal activity
+  // dispatch), so an injected release would latch and fire Confirm every frame.
+  bool confirmViaTap = false;
+
   // --- STATE: LIBRARY ---
   if (screenState == ScreenState::LIBRARY) {
-    // Touch (X4 Pro): tappable back, filter, row-open, and swipe paging.
-    // Every touch query below is a constexpr no-op on button-only builds
+    // Touch (X4 Pro): tappable back/filter/manage, tap-to-open, swipe paging.
+    // Every touch query is a constexpr no-op on button-only builds
     // (CROSSINK_APP_CAP_TOUCH=0), so default/sticky stay button-only.
     if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+      mappedInput.suppressCurrentTouchContact();
       if (skipNextBackRelease) {
         skipNextBackRelease = false;
       } else {
@@ -237,13 +246,49 @@ void Ao3LibraryActivity::loop() {
       }
       return;
     }
-    if (mappedInput.wasTapInRect(renderer.getScreenWidth() - 44, 6, 44, 44)) {
-      // Header filter triangle → open the filter panel (mirrors the Down button).
-      screenState = ScreenState::FILTER_PANEL;
-      pendingState = activeState;
-      overlayRowIndex = 0;
-      requestUpdate(true);
-      return;
+    // Tap a fic row (registered in renderLibrary) → open it directly. Consume the
+    // touch contact so the tap can't re-fire or leak into the reader.
+    {
+      int tappedItem = -1;
+      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 &&
+          tappedItem < static_cast<int>(viewEntries.size())) {
+        mappedInput.suppressCurrentTouchContact();
+        selectorIndex = static_cast<size_t>(tappedItem);
+        const int selPage = tappedItem / 3;
+        if (selPage != cachedPage) loadPageCache(selPage);
+        const std::string epubPath(pageCache[tappedItem % 3].filepath);
+        if (!epubPath.empty()) {
+          APP_STATE.ao3LibraryReturnIndex = tappedItem;
+          activityManager.goToReader(epubPath);
+        }
+        return;
+      }
+    }
+    {
+      const auto& metrics = UITheme::getInstance().getMetrics();
+      const int screenW = renderer.getScreenWidth();
+      const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
+      int tapX = 0;
+      int tapY = 0;
+      if (mappedInput.wasScreenTapped(tapX, tapY)) {
+        // Header filter triangle (top-right) → open the filter panel.
+        if (tapY < 48 && tapX >= screenW - 52) {
+          mappedInput.suppressCurrentTouchContact();
+          screenState = ScreenState::FILTER_PANEL;
+          pendingState = activeState;
+          overlayRowIndex = 0;
+          requestUpdate(true);
+          return;
+        }
+        // Bottom-right triangle in the hints bar → open the manage panel.
+        if (tapY >= hintsY && tapX >= screenW - 52) {
+          mappedInput.suppressCurrentTouchContact();
+          screenState = ScreenState::MANAGE_PANEL;
+          managePanelRowIndex = 0;
+          requestUpdate(true);
+          return;
+        }
+      }
     }
     if (!viewEntries.empty()) {
       const int total = static_cast<int>(viewEntries.size());
@@ -253,30 +298,6 @@ void Ao3LibraryActivity::loop() {
                             ? ButtonNavigator::nextPageIndex(selectorIndex, total, 3)
                             : ButtonNavigator::previousPageIndex(selectorIndex, total, 3);
         requestUpdate();
-        return;
-      }
-      // Tap a fic row to open it. Row geometry mirrors renderLibrary().
-      const int startIdx = (static_cast<int>(selectorIndex) / 3) * 3;
-      const int rowsOnPage = std::min(3, total - startIdx);
-      const auto& metrics = UITheme::getInstance().getMetrics();
-      const int topPad = 18;
-      const int contentEnd = renderer.getScreenHeight() - metrics.buttonHintsHeight;
-      const int entrySlot = (contentEnd - (42 + topPad)) / 3;
-      const int contentStart = 48 + topPad;
-      int touchedRow = -1;
-      const auto rowTap =
-          mappedInput.rowTouch(touchedRow, contentStart, entrySlot, rowsOnPage, 0, INT32_MAX, entrySlot);
-      if (rowTap == MappedInputManager::RowTouch::Down) return;
-      if (rowTap == MappedInputManager::RowTouch::Tap && touchedRow >= 0 && touchedRow < rowsOnPage) {
-        selectorIndex = static_cast<size_t>(startIdx + touchedRow);
-        const int selPage = static_cast<int>(selectorIndex) / 3;
-        if (selPage != cachedPage) loadPageCache(selPage);
-        const int slot = static_cast<int>(selectorIndex) % 3;
-        const std::string epubPath(pageCache[slot].filepath);
-        if (!epubPath.empty()) {
-          APP_STATE.ao3LibraryReturnIndex = static_cast<int>(selectorIndex);
-          activityManager.goToReader(epubPath);
-        }
         return;
       }
     }
@@ -335,7 +356,7 @@ void Ao3LibraryActivity::loop() {
       // Full epub path and title live in the ao3_library_info sidecar (page cache)
       const std::string epubPath(pageCache[slot].filepath);
       const std::string epubTitle(pageCache[slot].title[0] ? pageCache[slot].title : viewEntries[selectorIndex].title);
-      const uint32_t hash = viewEntries[selectorIndex].cacheHash;
+      const uint64_t hash = viewEntries[selectorIndex].cacheHash;
 
       if (mappedInput.getHeldTime() >= 1000 && !epubPath.empty()) {
         // Long-press → BookAction menu
@@ -386,6 +407,29 @@ void Ao3LibraryActivity::loop() {
 
   // --- STATE: FILTER_PANEL ---
   else if (screenState == ScreenState::FILTER_PANEL) {
+    // Touch (X4 Pro): tap a registered row / Confirm button; tap outside to close.
+    {
+      int tappedItem = -1;
+      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 && tappedItem <= 4) {
+        mappedInput.suppressCurrentTouchContact();
+        overlayRowIndex = tappedItem;  // rows 0..3, Confirm = 4
+        confirmViaTap = true;
+        // fall through to the Confirm handler below.
+      } else {
+        int tapX = 0;
+        int tapY = 0;
+        if (mappedInput.wasScreenTapped(tapX, tapY)) {
+          const int startY = 48;
+          const int overlayH = 320;
+          if (tapY < startY || tapY >= startY + overlayH) {
+            mappedInput.suppressCurrentTouchContact();
+            screenState = ScreenState::LIBRARY;  // tap outside the overlay closes it
+            requestUpdate(true);
+            return;
+          }
+        }
+      }
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       screenState = ScreenState::LIBRARY;
       requestUpdate(true);
@@ -427,7 +471,7 @@ void Ao3LibraryActivity::loop() {
       return;
     }
 
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
       if (overlayRowIndex == 0 && filterMode == FilterMode::FOLDER_TREE) {
         // Fandom row: cycle if <= 3, open picker if >= 4
         std::vector<std::string> fandoms;
@@ -565,6 +609,23 @@ void Ao3LibraryActivity::loop() {
 
   // --- STATE: PICKERS ---
   else if (screenState == ScreenState::FANDOM_PICKER || screenState == ScreenState::RELATIONSHIP_PICKER) {
+    // Touch (X4 Pro): tap top-left header to go back; tap a list row to select it.
+    if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+      mappedInput.suppressCurrentTouchContact();
+      screenState = ScreenState::FILTER_PANEL;
+      requestUpdate(true);
+      return;
+    }
+    {
+      int tappedItem = -1;
+      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 &&
+          tappedItem < static_cast<int>(pickerItems.size())) {
+        mappedInput.suppressCurrentTouchContact();
+        pickerSelectedIndex = tappedItem;
+        confirmViaTap = true;
+        // fall through to the Confirm handler below.
+      }
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       screenState = ScreenState::FILTER_PANEL;
       requestUpdate(true);
@@ -594,7 +655,7 @@ void Ao3LibraryActivity::loop() {
       });
     }
 
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
       if (screenState == ScreenState::FANDOM_PICKER) {
         if (pickerSelectedIndex == 0) {
           pendingState.fandom[0] = '\0';
@@ -627,6 +688,28 @@ void Ao3LibraryActivity::loop() {
 
   // --- STATE: MANAGE_PANEL ---
   else if (screenState == ScreenState::MANAGE_PANEL) {
+    // Touch (X4 Pro): tap a registered row to activate it; tap above the panel to close.
+    {
+      int tappedItem = -1;
+      if (mappedInput.wasItemTapped(tappedItem) && (tappedItem == 0 || tappedItem == 1)) {
+        mappedInput.suppressCurrentTouchContact();
+        managePanelRowIndex = tappedItem;
+        confirmViaTap = true;
+        // fall through to the Confirm handler below.
+      } else {
+        const auto& metrics = UITheme::getInstance().getMetrics();
+        const int panelH = 216;
+        const int panelY = renderer.getScreenHeight() - panelH - metrics.buttonHintsHeight;
+        int tapX = 0;
+        int tapY = 0;
+        if (mappedInput.wasScreenTapped(tapX, tapY) && tapY < panelY) {
+          mappedInput.suppressCurrentTouchContact();
+          screenState = ScreenState::LIBRARY;  // tap above the panel closes it
+          requestUpdate(true);
+          return;
+        }
+      }
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       screenState = ScreenState::LIBRARY;
       requestUpdate(true);
@@ -654,7 +737,7 @@ void Ao3LibraryActivity::loop() {
       return;
     }
 
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
       if (managePanelRowIndex == 0) {
         // "Index New Books" — check if ao3 folder is configured first
         const char* settingsPath = "/.crosspoint/ao3_settings.json";
@@ -820,6 +903,12 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
     for (int i = startIdx; i < endIdx; i++) {
       const bool selected = (i == static_cast<int>(selectorIndex)) && (screenState == ScreenState::LIBRARY);
       renderEntry(lock, y, viewEntries[i], i - startIdx, selected);
+      // Register the row as a tappable item (X4 Pro); no-op on button-only builds.
+      // Only when LIBRARY is the active screen — when a panel overlays the list,
+      // the library is a non-interactive background and must not register taps.
+      if (screenState == ScreenState::LIBRARY) {
+        TouchRegistry::getInstance().add(Rect{0, y, renderer.getScreenWidth(), entrySlot}, i, TouchRegistry::Item);
+      }
       y += entrySlot;
       if (i < endIdx - 1) {
         renderer.drawLine(15, y - topPad, renderer.getScreenWidth() - 15, y - topPad);
@@ -895,6 +984,9 @@ void Ao3LibraryActivity::renderManagePanel() {
 
     renderer.drawText(UI_10_FONT_ID, margin + 12, rowY + 4, rowLabels[i], true);
     renderer.drawText(SMALL_FONT_ID, margin + 12, rowY + 26, rowDescs[i]);
+
+    // Register the row as a tappable item (X4 Pro); no-op on button-only builds.
+    TouchRegistry::getInstance().add(Rect{margin, rowY, screenWidth - 2 * margin, rowHeight}, i, TouchRegistry::Item);
   }
 
   // Button hints override for the panel
@@ -960,6 +1052,12 @@ void Ao3LibraryActivity::renderFilterOverlay() {
       // Plain right-aligned value text
       int valW = renderer.getTextWidth(UI_10_FONT_ID, val);
       renderer.drawText(UI_10_FONT_ID, screenWidth - margin - valW - 12, rowY, val, !disabled);
+    }
+
+    // Register the row as a tappable item (X4 Pro); no-op on button-only builds.
+    if (!disabled) {
+      TouchRegistry::getInstance().add(Rect{margin, rowY - 6, screenWidth - 2 * margin, 34}, rowIndex,
+                                       TouchRegistry::Item);
     }
   };
 
@@ -1054,6 +1152,8 @@ void Ao3LibraryActivity::renderFilterOverlay() {
     renderer.drawRoundedRect(margin, btnY, btnW, btnH, 1, 8, true);
     renderer.drawCenteredText(UI_12_FONT_ID, btnY + 2, "Confirm", true, EpdFontFamily::BOLD);
   }
+  // Register the Confirm button as tappable item 4 (X4 Pro); no-op on button-only builds.
+  TouchRegistry::getInstance().add(Rect{margin, btnY, btnW, btnH}, 4, TouchRegistry::Item);
 }
 
 // ---------------------------------------------------------------------------
@@ -1475,7 +1575,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   const bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
                       f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(&reserved, 1) == 1;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 2) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
     f.close();
     indexState = IndexState::CORRUPT;
     return;

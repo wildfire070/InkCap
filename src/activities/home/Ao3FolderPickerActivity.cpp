@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
 #include "../ActivityResult.h"
@@ -67,7 +68,32 @@ void Ao3FolderPickerActivity::onExit() {
 void Ao3FolderPickerActivity::loop() {
   int listSize = static_cast<int>(directories.size());
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  // Touch (X4 Pro): tap a row to act on it. A long-press navigates into the
+  // folder (matching hold-Confirm); a short tap selects it (short-Confirm).
+  // No-op on button-only builds.
+  bool tapSelect = false;
+  bool tapNavigateInto = false;
+  {
+    int lpX = 0;
+    int lpY = 0;
+    if (mappedInput.wasScreenLongPress(lpX, lpY)) {
+      int rowId = -1;
+      if (TouchRegistry::getInstance().hitTest(lpX, lpY, TouchRegistry::Item, rowId) && rowId >= 0 &&
+          rowId < listSize) {
+        mappedInput.suppressCurrentTouchContact();
+        selectorIndex = static_cast<size_t>(rowId);
+        tapNavigateInto = true;
+      }
+    }
+    int rowId = -1;
+    if (!tapNavigateInto && mappedInput.wasItemTapped(rowId) && rowId >= 0 && rowId < listSize) {
+      mappedInput.suppressCurrentTouchContact();
+      selectorIndex = static_cast<size_t>(rowId);
+      tapSelect = true;
+    }
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapSelect || tapNavigateInto) {
     if (listSize > 0 && selectorIndex < directories.size()) {
       std::string nextDir = directories[selectorIndex];
       const bool isRootSentinel = (currentPath == "/" && selectorIndex == 0 && mode == PickerMode::SINGLE);
@@ -78,7 +104,7 @@ void Ao3FolderPickerActivity::loop() {
         fullPath += nextDir;
       }
 
-      if (mappedInput.getHeldTime() >= 1000) {
+      if (tapNavigateInto || (!tapSelect && mappedInput.getHeldTime() >= 1000)) {
         // Hold Confirm -> Navigate into
         currentPath = fullPath;
         loadDirectories();
