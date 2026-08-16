@@ -23,6 +23,7 @@
 #include "../reader/BookReadingStats.h"
 #include "../reader/BookStatsActivity.h"
 #include "../reader/EpubReaderUtils.h"
+#include "../settings/BookFusionSettingsActivity.h"
 #include "Ao3LibraryActivity.h"
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
@@ -44,7 +45,7 @@ namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
 // Cached frames include all Home visuals, including the menu icons. Bump this
 // whenever their rendering changes so stale snapshots are rebuilt after OTA.
-constexpr uint16_t CAROUSEL_CACHE_VERSION = 6;  // v6: added AO3 Library menu item to the icon row
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 7;  // v7: added BookFusion menu item to the icon row
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 constexpr uint32_t CAROUSEL_FRAME_MIN_FREE_AFTER_ALLOC = 64U * 1024U;
@@ -58,6 +59,7 @@ enum class HomeMenuAction {
   RecentBooks,
   OpdsBrowser,
   Ao3Library,
+  BookFusion,
   ReadingStats,
   Bookmarks,
   FileTransfer,
@@ -71,7 +73,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  static constexpr int kCapacity = 9;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -262,8 +264,8 @@ const char* savedItemsLabel(bool hasBookmarks, bool hasClippings) {
   return tr(STR_BOOKMARKS);
 }
 
-void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats,
-                         bool hasBookmarks, bool hasClippings) {
+void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo3Library, bool hasBookFusion,
+                         bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
@@ -272,6 +274,9 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo
   }
   if (hasAo3Library) {
     items.push({tr(STR_AO3_LIBRARY), Book, HomeMenuAction::Ao3Library});
+  }
+  if (hasBookFusion) {
+    items.push({tr(STR_BF_SYNC), BookFusion, HomeMenuAction::BookFusion});
   }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
@@ -284,15 +289,16 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo
   items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
 }
 
-HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats, bool hasBookmarks,
-                                   bool hasClippings) {
+HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasBookFusion, bool hasReadingStats,
+                                   bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
-  appendHomeMenuItems(items, hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+  appendHomeMenuItems(items, hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks,
+                      hasClippings);
   return items;
 }
 
-HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats, bool hasBookmarks,
-                                      bool hasClippings) {
+HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasBookFusion,
+                                      bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
@@ -301,6 +307,9 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, b
   }
   if (hasAo3Library) {
     items.push({tr(STR_AO3_LIBRARY), Book, HomeMenuAction::Ao3Library});
+  }
+  if (hasBookFusion) {
+    items.push({tr(STR_BF_SYNC), BookFusion, HomeMenuAction::BookFusion});
   }
   if (hasBookmarks || hasClippings) {
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
@@ -313,13 +322,15 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, b
   return items;
 }
 
-HomeMenuEntries buildSelectableHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats,
-                                             bool hasBookmarks, bool hasClippings, bool includeContinueReading) {
+HomeMenuEntries buildSelectableHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasBookFusion,
+                                             bool hasReadingStats, bool hasBookmarks, bool hasClippings,
+                                             bool includeContinueReading) {
   HomeMenuEntries items;
   if (includeContinueReading) {
     items.push({tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
   }
-  appendHomeMenuItems(items, hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+  appendHomeMenuItems(items, hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks,
+                      hasClippings);
   return items;
 }
 
@@ -479,10 +490,13 @@ void appendSyncedStatsStateToKey(std::string& key) {
 }
 
 void appendCarouselMenuStateToKey(std::string& key, const bool hasOpdsServers, const bool hasAo3Library,
-                                  const bool hasReadingStats, const bool hasBookmarks, const bool hasClippings) {
+                                  const bool hasBookFusion, const bool hasReadingStats, const bool hasBookmarks,
+                                  const bool hasClippings) {
   key += hasOpdsServers ? "opds:1" : "opds:0";
   key += '\0';
   key += hasAo3Library ? "ao3:1" : "ao3:0";
+  key += '\0';
+  key += hasBookFusion ? "bf:1" : "bf:0";
   key += '\0';
   key += hasReadingStats ? "stats:1" : "stats:0";
   key += '\0';
@@ -493,13 +507,14 @@ void appendCarouselMenuStateToKey(std::string& key, const bool hasOpdsServers, c
 }
 
 void buildCarouselCacheKey(const std::vector<RecentBook>& recentBooks, const bool hasOpdsServers,
-                           const bool hasAo3Library, const bool hasReadingStats, const bool hasBookmarks,
-                           const bool hasClippings, std::string& key, uint64_t& keyHash) {
+                           const bool hasAo3Library, const bool hasBookFusion, const bool hasReadingStats,
+                           const bool hasBookmarks, const bool hasClippings, std::string& key, uint64_t& keyHash) {
   key.clear();
   key.reserve(512);
   // The carousel cache stores the bottom icon row too, so menu visibility must
   // be part of the key alongside book covers/progress.
-  appendCarouselMenuStateToKey(key, hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+  appendCarouselMenuStateToKey(key, hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks,
+                               hasClippings);
   for (const auto& book : recentBooks) {
     appendCarouselCoverStateToKey(key, book);
   }
@@ -528,15 +543,15 @@ bool readCarouselCacheHeader(FsFile& file, CarouselCacheHeader& header) {
 }
 
 bool hasValidCarouselDiskCache(const std::vector<RecentBook>& recentBooks, const GfxRenderer& renderer,
-                               const bool hasOpdsServers, const bool hasAo3Library, const bool hasReadingStats,
-                               const bool hasBookmarks, const bool hasClippings) {
+                               const bool hasOpdsServers, const bool hasAo3Library, const bool hasBookFusion,
+                               const bool hasReadingStats, const bool hasBookmarks, const bool hasClippings) {
   const int bookCount = static_cast<int>(recentBooks.size());
   if (bookCount <= 0) return false;
 
   std::string cacheKey;
   uint64_t cacheKeyHash = 0;
-  buildCarouselCacheKey(recentBooks, hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings,
-                        cacheKey, cacheKeyHash);
+  buildCarouselCacheKey(recentBooks, hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks,
+                        hasClippings, cacheKey, cacheKeyHash);
 
   FsFile cacheFile;
   if (!Storage.openFileForRead("HOME", CAROUSEL_CACHE_PATH, cacheFile)) {
@@ -616,6 +631,9 @@ int HomeActivity::getMenuItemCount() const {
     count++;
   }
   if (hasAo3Library) {
+    count++;
+  }
+  if (hasBookFusion) {
     count++;
   }
   if (hasReadingStats) {
@@ -867,6 +885,7 @@ void HomeActivity::onEnter() {
 
   hasOpdsServers = OPDS_STORE.hasServers();
   hasAo3Library = true;
+  hasBookFusion = true;
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
 
@@ -927,8 +946,8 @@ void HomeActivity::onEnter() {
 
   if (initialMenuItem != HomeMenuItem::NONE) {
     const bool includeContinueReading = metrics.homeContinueReadingInMenu && !recentBooks.empty();
-    const auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks,
-                                                        hasClippings, includeContinueReading);
+    const auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats,
+                                                        hasBookmarks, hasClippings, includeContinueReading);
     const int menuIndex = findMenuActionIndex(menuItems, homeActionForInitialMenuItem(initialMenuItem));
     if (menuIndex >= 0) {
       selectorIndex = getHomeMenuSelectionOffset(recentBooks) + menuIndex;
@@ -936,7 +955,7 @@ void HomeActivity::onEnter() {
   }
 
   if (isCarouselTheme && hasValidCarouselDiskCache(recentBooks, renderer, hasOpdsServers, hasAo3Library,
-                                                   hasReadingStats, hasBookmarks, hasClippings)) {
+                                                   hasBookFusion, hasReadingStats, hasBookmarks, hasClippings)) {
     preRenderCarouselFrames(false);
   }
 
@@ -1157,7 +1176,8 @@ void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingSt
   const bool frameHasReadingStats = hasAnyBookStats(frameStats) || hasAnyGlobalStats(globalStats) ||
                                     (showAllDevicesStats && hasAnyGlobalStats(allDevicesGlobalStats));
   const auto menuItems =
-      buildHomeMenuItems(hasOpdsServers, hasAo3Library, frameHasReadingStats, hasBookmarks, hasClippings);
+      buildHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, frameHasReadingStats, hasBookmarks,
+                        hasClippings);
   GUI.drawButtonMenu(
       renderer,
       Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.verticalSpacing, pageWidth,
@@ -1343,7 +1363,7 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   // reuse a stale snapshot built before carousel-sized thumbs existed.
   std::string newKey;
   uint64_t newKeyHash = 0;
-  buildCarouselCacheKey(recentBooks, hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings, newKey,
+  buildCarouselCacheKey(recentBooks, hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings, newKey,
                         newKeyHash);
 
   // Cache hit: same books in same order — reuse without any SD reads
@@ -1462,7 +1482,7 @@ void HomeActivity::loop() {
 
     if (minimalMenuOpen) {
       const auto menuItems =
-          buildMinimalMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+          buildMinimalMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings);
       const int menuCount = static_cast<int>(menuItems.size());
       if (menuCount <= 0) {
         minimalMenuOpen = false;
@@ -1488,6 +1508,9 @@ void HomeActivity::loop() {
             break;
           case HomeMenuAction::Ao3Library:
             onAo3LibraryOpen();
+            break;
+          case HomeMenuAction::BookFusion:
+            onBookFusionOpen();
             break;
           case HomeMenuAction::ReadingStats:
             onReadingStatsOpen();
@@ -1680,7 +1703,7 @@ void HomeActivity::loop() {
   const int carouselMenuItemCount =
       isCarousel
           ? static_cast<int>(
-                buildHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings).size())
+                buildHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings).size())
           : 0;
 
   MappedInputManager::SwipeDir carouselSwipe = MappedInputManager::SwipeDir::None;
@@ -1728,6 +1751,9 @@ void HomeActivity::loop() {
       case HomeMenuAction::Ao3Library:
         onAo3LibraryOpen();
         break;
+      case HomeMenuAction::BookFusion:
+        onBookFusionOpen();
+        break;
       case HomeMenuAction::ReadingStats:
         onReadingStatsOpen();
         break;
@@ -1751,7 +1777,7 @@ void HomeActivity::loop() {
     }
 
     auto menuItems =
-        buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings,
+        buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings,
                                      metrics.homeContinueReadingInMenu && !recentBooks.empty());
     const int menuSelectedIndex = selectorIndex - getHomeMenuSelectionOffset(recentBooks);
     if (menuSelectedIndex < 0 || menuSelectedIndex >= static_cast<int>(menuItems.size())) {
@@ -1930,7 +1956,7 @@ void HomeActivity::loop() {
   } else {
     const auto& metrics = UITheme::getInstance().getMetrics();
     const auto menuItems =
-        buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings,
+        buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings,
                                      metrics.homeContinueReadingInMenu && !recentBooks.empty());
     auto handleTouch = [&](const bool activate) {
       int touchedBookIndex = -1;
@@ -2042,7 +2068,7 @@ void HomeActivity::render(RenderLock&&) {
     if (minimalMenuOpen) {
       GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding}, nullptr);
       const auto menuItems =
-          buildMinimalMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+          buildMinimalMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings);
       GUI.drawButtonMenu(
           renderer, Rect{0, metrics.homeTopPadding, pageWidth, pageHeight - metrics.homeTopPadding},
           static_cast<int>(menuItems.size()), minimalMenuIndex,
@@ -2120,7 +2146,7 @@ void HomeActivity::render(RenderLock&&) {
       GUI.drawCarouselBorder(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                              recentBooks, centerIdx, inCarouselRow);
       const auto menuItems =
-          buildHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings);
+          buildHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings);
       if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL) {
         static_cast<const LyraCarouselTheme&>(GUI).registerButtonMenuTouchTargets(renderer,
                                                                                   static_cast<int>(menuItems.size()));
@@ -2155,7 +2181,7 @@ void HomeActivity::render(RenderLock&&) {
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
 
   auto menuItems =
-      buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasReadingStats, hasBookmarks, hasClippings,
+      buildSelectableHomeMenuItems(hasOpdsServers, hasAo3Library, hasBookFusion, hasReadingStats, hasBookmarks, hasClippings,
                                    metrics.homeContinueReadingInMenu && !recentBooks.empty());
   int homeCoverTileHeight = metrics.homeCoverTileHeight;
   if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CLASSIC) {
@@ -2279,6 +2305,11 @@ void HomeActivity::onAo3LibraryOpen() {
       APP_STATE.ao3LibraryReturnIndex >= 0 ? static_cast<size_t>(APP_STATE.ao3LibraryReturnIndex) : 0;
   APP_STATE.ao3LibraryReturnIndex = -1;
   startActivityForResult(std::make_unique<Ao3LibraryActivity>(renderer, mappedInput, initialIndex),
+                         [this](const ActivityResult&) { requestUpdate(); });
+}
+
+void HomeActivity::onBookFusionOpen() {
+  startActivityForResult(std::make_unique<BookFusionSettingsActivity>(renderer, mappedInput),
                          [this](const ActivityResult&) { requestUpdate(); });
 }
 

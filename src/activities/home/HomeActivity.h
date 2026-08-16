@@ -42,6 +42,7 @@ class HomeActivity final : public Activity {
   bool hasClippings = false;
   bool hasOpdsServers = false;
   bool hasAo3Library = false;
+  bool hasBookFusion = false;
   bool minimalMenuOpen = false;
   bool minimalSuppressInitialFrontRelease = false;
   bool homeBookSwapLongPressHandled = false;
@@ -91,6 +92,7 @@ class HomeActivity final : public Activity {
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
   void onAo3LibraryOpen();
+  void onBookFusionOpen();
   void onReadingStatsOpen();
   void onSavedItemsOpen();
 
