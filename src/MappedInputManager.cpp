@@ -246,6 +246,18 @@ bool MappedInputManager::wasCompletedMultiTouchSwipe(CompletedSwipe& swipe) cons
   return true;
 }
 
+bool MappedInputManager::wasCompletedMultiTouchRotation(CompletedRotation& rotation) const {
+  if (!touchInputEnabled()) return false;
+
+  HalGPIO::CompletedMultiTouchRotation source;
+  if (!gpio.wasCompletedMultiTouchRotation(source)) return false;
+
+  rotation.degrees = source.degrees;
+  rotation.durationMs = source.durationMs;
+  renderer.tapToLogical(source.nxCenter, source.nyCenter, rotation.centerX, rotation.centerY);
+  return true;
+}
+
 bool MappedInputManager::isHomeButtonLockedInReader() const {
   return readerMode && hasHomeKeyHardware() && !SETTINGS.homeButtonInReaderEnabled && !readerTouchscreenOverride;
 }

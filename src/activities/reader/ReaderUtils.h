@@ -10,6 +10,7 @@
 
 #include "GlobalActions.h"
 #include "MappedInputManager.h"
+#include "ReaderStatusBarTapTarget.h"
 #include "components/UITheme.h"
 
 namespace ReaderUtils {
@@ -20,8 +21,8 @@ constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
 // Gap between the top clock status bar band and the first line of book text.
 // Signed so negative values pull the text up toward the clock (unsigned would wrap
 // a negative to a huge positive). Note the book-text top margin is
-// std::max(screenMargin, reservedClockHeight + TOP_CLOCK_TEXT_PADDING), so this only
-// bites once reservedClockHeight + padding drops below the screen-margin setting.
+// std::max(screenMarginVertical, reservedClockHeight + TOP_CLOCK_TEXT_PADDING), so this only
+// bites once reservedClockHeight + padding drops below the vertical-margin setting.
 constexpr int8_t TOP_CLOCK_TEXT_PADDING = 0;
 
 inline GfxRenderer::Orientation toRendererOrientation(const uint8_t orientation) {
@@ -149,6 +150,20 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   result.next = x >= previousZoneWidth;
   return result;
 #endif
+}
+
+inline bool isBottomStatusBarTap(const GfxRenderer& renderer, const int y, const int statusBarHeight) {
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  return ReaderStatusBarTapTarget::containsBottom(y, renderer.getScreenHeight(), orientedMarginBottom, statusBarHeight);
+}
+
+inline bool isTopStatusBarTap(const GfxRenderer& renderer, const int y, const int statusBarHeight) {
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  return ReaderStatusBarTapTarget::containsTop(y, renderer.getScreenHeight(), orientedMarginTop, statusBarHeight);
 }
 
 // Reader menu opens on its board-specific vertical swipe anywhere on the open

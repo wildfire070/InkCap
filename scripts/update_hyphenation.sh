@@ -17,7 +17,7 @@ process() {
 }
 
 process en
-# Non-English languages intentionally omitted: InkCapO3 is English-only, so
+# Non-English languages intentionally omitted: this build is English-only, so
 # every other language's trie was dropped to reclaim flash. Re-enable any of
 # these lines if that language's hyphenation is wanted again.
 # process fr

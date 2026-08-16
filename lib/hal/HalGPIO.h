@@ -56,6 +56,13 @@ class HalGPIO {
     unsigned long durationMs = 0;
   };
 
+  struct CompletedMultiTouchRotation {
+    float degrees = 0.0f;
+    float nxCenter = 0.0f;
+    float nyCenter = 0.0f;
+    unsigned long durationMs = 0;
+  };
+
   enum class DeviceType : uint8_t { X4, X3 };
 
  private:
@@ -93,6 +100,7 @@ class HalGPIO {
   bool supportsMultiTouch() const;
   TouchSnapshot getTouchSnapshot() const;
   bool wasCompletedMultiTouchSwipe(CompletedMultiTouchSwipe& swipe) const;
+  bool wasCompletedMultiTouchRotation(CompletedMultiTouchRotation& rotation) const;
   // Capacitive home key under the bezel, reported by the touch controller
   // (e.g. X4 Pro's GT911 key). Tap = short press (fires on release, the primary
   // "home" action); LongPress = held ~700ms (a hold shortcut, e.g. reader menu).
@@ -118,6 +126,7 @@ class HalGPIO {
   constexpr bool supportsMultiTouch() const { return false; }
   constexpr TouchSnapshot getTouchSnapshot() const { return {}; }
   constexpr bool wasCompletedMultiTouchSwipe(CompletedMultiTouchSwipe&) const { return false; }
+  constexpr bool wasCompletedMultiTouchRotation(CompletedMultiTouchRotation&) const { return false; }
   constexpr bool hasHomeKey() const { return false; }
   constexpr bool wasHomeKeyPressed() const { return false; }
   constexpr bool wasHomeKeyTapped() const { return false; }

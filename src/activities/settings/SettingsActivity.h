@@ -28,6 +28,7 @@ enum class SettingAction {
   DisplaySleepScreen,
   ReaderFontOptions,
   ReaderPageLayout,
+  ScreenMargin,
   QuickActions,
   ControlsPowerButton,
   ControlsHomeButton,
@@ -240,6 +241,7 @@ class SettingsActivity final : public Activity {
   std::vector<SettingInfo> readerSettings;
   std::vector<SettingInfo> readerFontSettings;
   std::vector<SettingInfo> readerPageLayoutSettings;
+  std::vector<SettingInfo> readerScreenMarginSettings;
   std::vector<SettingInfo> controlsSettings;
   std::vector<SettingInfo> controlsPowerSettings;
   std::vector<SettingInfo> controlsHomeButtonSettings;

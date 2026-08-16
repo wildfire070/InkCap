@@ -8,7 +8,7 @@
 
 namespace {
 
-// Non-English hyphenation intentionally omitted: InkCapO3 is English-only,
+// Non-English hyphenation intentionally omitted: this build is English-only,
 // so every other language's Liang trie (~140 KB combined) was dropped to
 // reclaim flash. Non-English-tagged EPUBs simply render without
 // hyphenation (hyphenation is selected per book by dc:language). Per-user

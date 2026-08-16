@@ -194,6 +194,18 @@ void XtcReaderActivity::loop() {
   if (quickActionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
+  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  const auto statusBarMode = static_cast<CrossPointSettings::XTC_STATUS_BAR_MODE>(SETTINGS.xtcStatusBarMode);
+  const bool tappedStatusBar =
+      touch.tapped && ((statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP &&
+                        ReaderUtils::isTopStatusBarTap(renderer, touch.y, statusBarHeight)) ||
+                       (statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_BOTTOM &&
+                        ReaderUtils::isBottomStatusBarTap(renderer, touch.y, statusBarHeight)));
+  if (tappedStatusBar) {
+    statusBarVisible = !statusBarVisible;
+    requestUpdate();
+    return;
+  }
 
   // Paged back into the book: release the end screen app and its theme tokens.
   {
@@ -1045,6 +1057,12 @@ void XtcReaderActivity::renderStatusBarOverlay(const StatusBarOverlayPosition po
     renderer.fillRect(0, clearY, renderer.getScreenWidth(), clearHeight, false);
   }
 
+  // XTC pages already contain a status strip in their bitmap. Clear that same
+  // overlay area before returning so hiding it does not leave stale pixels.
+  if (!statusBarVisible) {
+    return;
+  }
+
   const int pageCount = static_cast<int>(xtc->getPageCount());
   const int displayPage = static_cast<int>(pageToRender) + 1;
   const float progress = pageCount > 0 ? (static_cast<float>(displayPage) * 100.0f) / pageCount : 0.0f;
@@ -1069,6 +1087,16 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
       renderer.displayBuffer();
     };
+    const auto clearHiddenStatusBar = [this, pageToRender] {
+      if (statusBarVisible) {
+        return;
+      }
+      if (SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP) {
+        renderStatusBarOverlay(StatusBarOverlayPosition::Top, pageToRender);
+      } else {
+        renderStatusBarOverlay(StatusBarOverlayPosition::Bottom, pageToRender);
+      }
+    };
 
     // XTCH stores two 48 KB planes. Stream each rendering pass through a 1 KB
     // scratch chunk so fragmented C3 heaps never need one contiguous 96 KB block.
@@ -1077,6 +1105,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
+    clearHiddenStatusBar();
 
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
@@ -1092,6 +1121,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
+    clearHiddenStatusBar();
     renderer.copyGrayscaleLsbBuffers();
 
     renderer.clearScreen(0x00);
@@ -1099,6 +1129,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
+    clearHiddenStatusBar();
     renderer.copyGrayscaleMsbBuffers();
     renderer.displayGrayBuffer();
 
@@ -1107,6 +1138,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
+    clearHiddenStatusBar();
     renderer.cleanupGrayscaleWithFrameBuffer();
     return;
   }

@@ -224,7 +224,7 @@ void runLanguageEval(const char* langName, const char* primaryTag, const char* r
 
 }  // namespace
 
-// Only English is registered in LanguageRegistry.cpp (InkCapO3 is
+// Only English is registered in LanguageRegistry.cpp (this build is
 // English-only); the other languages' resource files are kept in case
 // hyphenation for them is re-enabled later.
 TEST(HyphenationEval, English) { runLanguageEval("english", "en", "english_hyphenation_tests.txt", 98.10); }
