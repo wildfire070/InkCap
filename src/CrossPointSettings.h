@@ -510,8 +510,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t refreshFrequency = REFRESH_15;
   uint8_t hyphenationEnabled = 0;
 
-  // Reader screen margin settings
-  uint8_t screenMargin = 5;
+  // Reader screen margins. Legacy single-axis settings initialize both values.
+  uint8_t screenMarginVertical = 5;
+  uint8_t screenMarginHorizontal = 5;
   // Show EPUB publisher pagebreak labels in the reader margin when present.
   uint8_t publisherPageNumbers = 0;
   // OPDS browser settings
@@ -614,6 +615,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t MIN_LINE_HEIGHT_PERCENT = 70;
   static constexpr uint8_t MAX_LINE_HEIGHT_PERCENT = 200;
   static constexpr uint8_t LINE_HEIGHT_PERCENT_STEP = 1;
+  static constexpr uint8_t MIN_SCREEN_MARGIN = 5;
+  static constexpr uint8_t MAX_SCREEN_MARGIN = 150;
+  static constexpr uint8_t SCREEN_MARGIN_SMALL_STEP = 5;
+  static constexpr uint8_t SCREEN_MARGIN_LARGE_STEP = 10;
   static constexpr uint8_t MAX_WORD_SPACING = 4;
   static constexpr uint16_t DEFAULT_READING_IDLE_TIME_THRESHOLD_SECONDS = 5 * 60;
   static constexpr uint16_t MIN_READING_IDLE_TIME_THRESHOLD_SECONDS = 30;

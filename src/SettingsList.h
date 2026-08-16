@@ -621,8 +621,15 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
             "orientation", StrId::STR_CAT_READER)
             .withEnumRawValues({CrossPointSettings::PORTRAIT, CrossPointSettings::LANDSCAPE_CW,
                                 CrossPointSettings::LANDSCAPE_CCW, CrossPointSettings::INVERTED}));
-    add(SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin, {5, 40, 5}, "screenMargin",
-                           StrId::STR_CAT_READER));
+    add(SettingInfo::Submenu(StrId::STR_SCREEN_MARGIN, SettingAction::ScreenMargin));
+    add(SettingInfo::Value(StrId::STR_TOP_BOTTOM, &CrossPointSettings::screenMarginVertical,
+                           {CrossPointSettings::MIN_SCREEN_MARGIN, CrossPointSettings::MAX_SCREEN_MARGIN,
+                            CrossPointSettings::SCREEN_MARGIN_SMALL_STEP},
+                           "screenMarginVertical", StrId::STR_CAT_READER));
+    add(SettingInfo::Value(StrId::STR_LEFT_RIGHT, &CrossPointSettings::screenMarginHorizontal,
+                           {CrossPointSettings::MIN_SCREEN_MARGIN, CrossPointSettings::MAX_SCREEN_MARGIN,
+                            CrossPointSettings::SCREEN_MARGIN_SMALL_STEP},
+                           "screenMarginHorizontal", StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_PUBLISHER_PAGE_NUMBERS, &CrossPointSettings::publisherPageNumbers,
                             "publisherPageNumbers", StrId::STR_CAT_READER));
     add(SettingInfo::Enum(
@@ -1135,6 +1142,14 @@ inline std::vector<SettingInfo> buildReaderPageLayoutSettingsList(const std::vec
   addSettingByName(settings, allSettings, StrId::STR_HYPHENATION);
   addSettingByName(settings, allSettings, StrId::STR_EXTRA_SPACING);
   addSettingByName(settings, allSettings, StrId::STR_FORCE_PARAGRAPH_INDENTS);
+  return settings;
+}
+
+inline std::vector<SettingInfo> buildReaderScreenMarginSettingsList(const std::vector<SettingInfo>& allSettings) {
+  std::vector<SettingInfo> settings;
+  settings.reserve(2);
+  addSettingByName(settings, allSettings, StrId::STR_TOP_BOTTOM);
+  addSettingByName(settings, allSettings, StrId::STR_LEFT_RIGHT);
   return settings;
 }
 

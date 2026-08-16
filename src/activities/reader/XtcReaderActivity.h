@@ -34,6 +34,8 @@ class XtcReaderActivity final : public Activity {
   ReadingStatsDateTime sessionStartLocalDateTime;
   bool hasSessionStartLocalDateTime = false;
   bool longPowerPageTurnHandled = false;
+  // Session-only display toggle; fixed-layout XTC pages are never regenerated.
+  bool statusBarVisible = true;
   bool longPressMenuHandled = false;
   bool frontButtonLongPressHandled = false;
   bool longPressBackHandled = false;

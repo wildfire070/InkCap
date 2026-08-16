@@ -66,7 +66,8 @@ struct ReaderLayoutSettingsSnapshot {
   uint8_t lineHeightPercent;
   uint8_t wordSpacing;
   uint8_t orientation;
-  uint8_t screenMargin;
+  uint8_t screenMarginVertical;
+  uint8_t screenMarginHorizontal;
   uint8_t publisherPageNumbers;
   uint8_t paragraphAlignment;
   uint8_t embeddedStyle;
@@ -86,7 +87,8 @@ struct ReaderLayoutSettingsSnapshot {
   bool operator==(const ReaderLayoutSettingsSnapshot& other) const {
     return fontFamily == other.fontFamily && readerFontPointSize == other.readerFontPointSize &&
            lineHeightPercent == other.lineHeightPercent && wordSpacing == other.wordSpacing &&
-           orientation == other.orientation && screenMargin == other.screenMargin &&
+           orientation == other.orientation && screenMarginVertical == other.screenMarginVertical &&
+           screenMarginHorizontal == other.screenMarginHorizontal &&
            publisherPageNumbers == other.publisherPageNumbers && paragraphAlignment == other.paragraphAlignment &&
            embeddedStyle == other.embeddedStyle && hyphenationEnabled == other.hyphenationEnabled &&
            textAntiAliasing == other.textAntiAliasing && readerDarkMode == other.readerDarkMode &&
@@ -100,12 +102,25 @@ struct ReaderLayoutSettingsSnapshot {
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
   ReaderLayoutSettingsSnapshot snapshot{
-      SETTINGS.fontFamily,           SETTINGS.readerFontPointSize,   SETTINGS.lineHeightPercent,
-      SETTINGS.wordSpacing,          SETTINGS.orientation,           SETTINGS.screenMargin,
-      SETTINGS.publisherPageNumbers, SETTINGS.paragraphAlignment,    SETTINGS.embeddedStyle,
-      SETTINGS.hyphenationEnabled,   SETTINGS.textAntiAliasing,      SETTINGS.readerDarkMode,
-      SETTINGS.imageRendering,       SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
-      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled,   SETTINGS.epubRenderMode,
+      SETTINGS.fontFamily,
+      SETTINGS.readerFontPointSize,
+      SETTINGS.lineHeightPercent,
+      SETTINGS.wordSpacing,
+      SETTINGS.orientation,
+      SETTINGS.screenMarginVertical,
+      SETTINGS.screenMarginHorizontal,
+      SETTINGS.publisherPageNumbers,
+      SETTINGS.paragraphAlignment,
+      SETTINGS.embeddedStyle,
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.textAntiAliasing,
+      SETTINGS.readerDarkMode,
+      SETTINGS.imageRendering,
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.forceParagraphIndents,
+      SETTINGS.bionicReadingEnabled,
+      SETTINGS.guideReadingEnabled,
+      SETTINGS.epubRenderMode,
   };
   std::strncpy(snapshot.sdFontFamilyName, SETTINGS.sdFontFamilyName, sizeof(snapshot.sdFontFamilyName) - 1);
   snapshot.sdFontFamilyName[sizeof(snapshot.sdFontFamilyName) - 1] = '\0';
