@@ -41,6 +41,7 @@ class HomeActivity final : public Activity {
   bool hasBookmarks = false;
   bool hasClippings = false;
   bool hasOpdsServers = false;
+  bool hasBookFusion = false;
   bool minimalMenuOpen = false;
   bool minimalSuppressInitialFrontRelease = false;
   bool homeBookSwapLongPressHandled = false;
@@ -89,6 +90,7 @@ class HomeActivity final : public Activity {
   void onSettingsOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
+  void onBookFusionOpen();
   void onReadingStatsOpen();
   void onSavedItemsOpen();
 
