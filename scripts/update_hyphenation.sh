@@ -17,14 +17,15 @@ process() {
 }
 
 process en
-process fr
-# German (de) intentionally omitted in InxAO3: its ~206 KB trie was dropped to
-# reclaim C3 (X3/X4) flash. Re-enable this line if German hyphenation is wanted.
+# Non-English languages intentionally omitted: this build is English-only, so
+# every other language's trie was dropped to reclaim flash. Re-enable any of
+# these lines if that language's hyphenation is wanted again.
+# process fr
 # process de
-process es
-process ru
-process it
-process uk
-process pl
-process sv
-process pt
+# process es
+# process ru
+# process it
+# process uk
+# process pl
+# process sv
+# process pt
