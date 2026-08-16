@@ -184,8 +184,8 @@ std::string getPanicInfo(bool full) {
   } else {
     std::string info;
 
-    info += "InkCap version: " CROSSINK_VERSION;
-    info += "\nInkCap device type: " CROSSINK_FIRMWARE_DEVICE_TYPE;
+    info += "InkCapO3 version: " CROSSINK_VERSION;
+    info += "\nInkCapO3 device type: " CROSSINK_FIRMWARE_DEVICE_TYPE;
     info += "\n\nPanic reason: " + std::string(panicMessage);
     info += "\n\nLast logs:\n" + getLastLogs();
     auto toHex = [](uint32_t value) {

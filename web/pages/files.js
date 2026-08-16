@@ -3,7 +3,7 @@ const currentPath = decodeURIComponent(new URLSearchParams(window.location.searc
 
 if (currentPath !== "/") {
   const leaf = currentPath.split("/").filter(Boolean).pop();
-  if (leaf) document.title = leaf + " - Files - InkCap Reader";
+  if (leaf) document.title = leaf + " - Files - InkCapO3 Reader";
 }
 
 // Network status monitoring
@@ -1961,7 +1961,7 @@ function exportLogToFile(filename = null, isBatch = false) {
   }
   // Extract text from log entries
   const entries = logContainer.querySelectorAll(".log-entry");
-  let logText = `InkCap Reader ${crosspointVersion} - EPUB Conversion Log\n`;
+  let logText = `InkCapO3 Reader ${crosspointVersion} - EPUB Conversion Log\n`;
   logText += `Generated: ${new Date().toLocaleString()}\n`;
   logText += `${"=".repeat(60)}\n\n`;
 

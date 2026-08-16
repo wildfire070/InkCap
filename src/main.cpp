@@ -1185,7 +1185,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting InkCap version " CROSSINK_VERSION);
+  LOG_DBG("MAIN", "Starting InkCapO3 version " CROSSINK_VERSION);
   logMemoryStats("Boot");
 
   // Resolve the single boot-presentation decision. Skipping the splash also
