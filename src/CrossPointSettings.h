@@ -9,6 +9,8 @@
 #include <iosfwd>
 #include <mutex>
 
+#include "ReaderFontSizeStep.h"
+
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   mutable std::mutex _mutex;
@@ -143,6 +145,19 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FRONT_ORIENTATION_AWARE_NAV_BUTTONS = 1,
     FRONT_ORIENTATION_AWARE_ALL_BUTTONS = 2,
     FRONT_ORIENTATION_AWARE_COUNT
+  };
+
+  enum TWO_FINGER_SWIPE_ACTION {
+    TWO_FINGER_SWIPE_NOT_SET = 0,
+    TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS,
+    TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS,
+    TWO_FINGER_SWIPE_INCREASE_WARMTH,
+    TWO_FINGER_SWIPE_DECREASE_WARMTH,
+    TWO_FINGER_SWIPE_NEXT_CHAPTER,
+    TWO_FINGER_SWIPE_PREVIOUS_CHAPTER,
+    TWO_FINGER_SWIPE_INCREASE_FONT_SIZE,
+    TWO_FINGER_SWIPE_DECREASE_FONT_SIZE,
+    TWO_FINGER_SWIPE_ACTION_COUNT,
   };
 
   // Side button long-press action options
@@ -430,6 +445,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t pageTurnGesture = TAP_AND_SWIPE;
   // Disables all touchscreen input while a reader is active. Reader menus temporarily override this.
   uint8_t disableReaderTouchscreen = 0;
+  // Available only on multi-touch hardware; defaults on for pinch font resizing.
+  uint8_t pinchFontResizeEnabled = 1;
+  // Configurable two-finger swipes. A non-empty action may be assigned to one direction only.
+  uint8_t twoFingerSwipeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeDown = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeLeft = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t twoFingerSwipeRight = TWO_FINGER_SWIPE_NOT_SET;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
@@ -639,7 +661,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static bool isSdFontPointSizeAllowedForRange(uint8_t pointSize, uint8_t range);
   FONT_SIZE getEffectiveReaderFontSize() const;
   uint8_t getSdFontTargetPointSize() const;
-  bool changeReaderFontSize(bool larger);
+  bool changeReaderFontSize(bool larger, FontSizeStepMode mode = FontSizeStepMode::Wrap);
   int getReaderFontId() const;
   int getBuiltInReaderFontId() const;
 
@@ -679,6 +701,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
+  static bool isTwoFingerSwipeActionAvailable(uint8_t action, bool frontlightPresent, bool hasColorTemperature);
+  static bool normalizeTwoFingerSwipeActions(CrossPointSettings& settings,
+                                             uint8_t CrossPointSettings::* editedField = nullptr);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
   static uint8_t sleepScreenStorageToMode(uint8_t storedValue);
   static uint8_t sleepScreenModeToStorage(uint8_t mode);

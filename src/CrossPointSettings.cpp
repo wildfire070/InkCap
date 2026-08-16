@@ -1,6 +1,7 @@
 #include "CrossPointSettings.h"
 
 #include <BoardConfig.h>
+#include <CrossInkHalFrontlight.h>
 #include <HalClock.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -20,6 +21,7 @@
 #include "QuickActions.h"
 #include "SettingsList.h"
 #include "fontIds.h"
+#include "util/TwoFingerSwipe.h"
 
 void readAndValidate(FsFile& file, uint8_t& member, const uint8_t maxValue) {
   uint8_t tempValue;
@@ -262,6 +264,58 @@ void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings
       }
     }
   }
+}
+
+bool CrossPointSettings::isTwoFingerSwipeActionAvailable(const uint8_t action, const bool frontlightPresent,
+                                                         const bool hasColorTemperature) {
+  switch (static_cast<TWO_FINGER_SWIPE_ACTION>(action)) {
+    case TWO_FINGER_SWIPE_NOT_SET:
+    case TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case TWO_FINGER_SWIPE_PREVIOUS_CHAPTER:
+    case TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+    case TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      return true;
+    case TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS:
+    case TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS:
+      return frontlightPresent;
+    case TWO_FINGER_SWIPE_INCREASE_WARMTH:
+    case TWO_FINGER_SWIPE_DECREASE_WARMTH:
+      return frontlightPresent && hasColorTemperature;
+    case TWO_FINGER_SWIPE_ACTION_COUNT:
+      return false;
+  }
+  return false;
+}
+
+bool CrossPointSettings::normalizeTwoFingerSwipeActions(CrossPointSettings& settings,
+                                                        uint8_t CrossPointSettings::* const editedField) {
+  uint8_t CrossPointSettings::* const fields[] = {
+      &CrossPointSettings::twoFingerSwipeUp, &CrossPointSettings::twoFingerSwipeDown,
+      &CrossPointSettings::twoFingerSwipeLeft, &CrossPointSettings::twoFingerSwipeRight};
+  bool changed = false;
+  const bool frontlightPresent = Frontlight.present();
+  const bool hasColorTemperature = Frontlight.hasColorTemperature();
+
+  for (const auto field : fields) {
+    uint8_t& action = settings.*field;
+    if (!isTwoFingerSwipeActionAvailable(action, frontlightPresent, hasColorTemperature)) {
+      action = TWO_FINGER_SWIPE_NOT_SET;
+      changed = true;
+    }
+  }
+
+  uint8_t actions[] = {settings.twoFingerSwipeUp, settings.twoFingerSwipeDown, settings.twoFingerSwipeLeft,
+                       settings.twoFingerSwipeRight};
+  int editedIndex = -1;
+  for (int i = 0; i < 4; i++) {
+    if (fields[i] == editedField) editedIndex = i;
+  }
+  changed = TwoFingerSwipe::clearDuplicateActions(actions, TWO_FINGER_SWIPE_NOT_SET, editedIndex) || changed;
+  settings.twoFingerSwipeUp = actions[0];
+  settings.twoFingerSwipeDown = actions[1];
+  settings.twoFingerSwipeLeft = actions[2];
+  settings.twoFingerSwipeRight = actions[3];
+  return changed;
 }
 
 void CrossPointSettings::validateReaderFrontButtonMapping(CrossPointSettings& settings) {
@@ -513,6 +567,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     }
     this->*(info.valuePtr) = value;
   }
+
+  if (normalizeTwoFingerSwipeActions(*this)) needsResave = true;
 
   // The web API shares the base catalog so it can receive raw value 26 even
   // on boards without a Home key. Never retain that reader-only action there.
@@ -1016,28 +1072,13 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
 
 uint8_t CrossPointSettings::getSdFontTargetPointSize() const { return readerFontPointSize; }
 
-bool CrossPointSettings::changeReaderFontSize(const bool larger) {
-  const FONT_SIZE currentSize = getEffectiveReaderFontSize();
-  int currentIndex = 0;
-  constexpr size_t sizeCount = sizeof(READER_FONT_SIZE_CYCLE_ORDER) / sizeof(READER_FONT_SIZE_CYCLE_ORDER[0]);
-  for (size_t i = 0; i < sizeCount; i++) {
-    if (READER_FONT_SIZE_CYCLE_ORDER[i] == currentSize) {
-      currentIndex = static_cast<int>(i);
-      break;
-    }
+bool CrossPointSettings::changeReaderFontSize(const bool larger, const FontSizeStepMode mode) {
+  uint8_t sizes[FONT_SIZE_COUNT] = {};
+  size_t count = 0;
+  for (const FONT_SIZE size : READER_FONT_SIZE_CYCLE_ORDER) {
+    if (isReaderFontSizeAvailable(size)) sizes[count++] = getReaderFontPointSize(size);
   }
-
-  for (size_t step = 1; step < sizeCount; step++) {
-    const int direction = larger ? 1 : -1;
-    const size_t nextIndex =
-        (currentIndex + direction * static_cast<int>(step) + static_cast<int>(sizeCount)) % sizeCount;
-    const uint8_t stored = getStoredReaderFontSize(READER_FONT_SIZE_CYCLE_ORDER[nextIndex]);
-    if (stored != INVALID_READER_FONT_SIZE) {
-      readerFontPointSize = getReaderFontPointSize(READER_FONT_SIZE_CYCLE_ORDER[nextIndex]);
-      return true;
-    }
-  }
-  return false;
+  return changeReaderFontSizeStep(sizes, count, readerFontPointSize, larger, mode);
 }
 
 int CrossPointSettings::getReaderFontId() const {

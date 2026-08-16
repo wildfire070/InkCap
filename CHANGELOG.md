@@ -7,6 +7,8 @@
 - Full Xteink X4 Pro support, including USB Drive access to its SD card and direct USB file transfers.
 - New "Quick Lock" shortcut that locks the device without putting it to sleep. It can be assigned to Power + Up, long-press Back, or long-press Menu shortcuts and uses the regular sleep timeout.
 - New Quick Actions menu
+- On supported touch readers, pinch-to-resize with two fingers now changes the EPUB reader font size by one step.
+- Touch readers can now assign two-finger swipe directions to frontlight, chapter, or font-size actions from Settings > Controls > Taps & Gestures.
 - Quick Actions can now be assigned to Power + Up and, on X4 Pro, tap, long-press, or double-tap Home.
 
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
@@ -23,8 +25,13 @@
 - Reader menu settings now group Controls and Mark as Finished with the gear-tab actions in a consistent order.
 - Font Family choices now identify built-in and SD-card fonts by their available point-size ranges.
 
+### Removed
+
+- The undocumented X4 Pro power-button double-click frontlight toggle.
+
 ### Fixed
 
+- The Refresh Screen shortcut on X4 now uses its less disruptive clean refresh waveform.
 - Long-pressing Power to toggle Reader Dark Mode now changes it once and keeps the selected state after release.
 - Dictionary word selection is now visible when Reader Dark Mode is enabled.
 - Touch readers can now cancel a font download from the progress screen or its header Back button.

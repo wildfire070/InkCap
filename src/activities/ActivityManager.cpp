@@ -32,6 +32,7 @@
 #include "settings/SettingsActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/TwoFingerSwipe.h"
 
 namespace {
 constexpr uint32_t FILE_TRANSFER_MODE_MASK = 0xFF;
@@ -43,6 +44,74 @@ uint32_t fileTransferBootPayload(const NetworkMode mode, const bool returnToRead
 
 void restartToFileTransfer(const NetworkMode mode, const std::string& returnBookPath) {
   silentRestartToNetwork(NetworkBootTarget::FILE_TRANSFER, fileTransferBootPayload(mode, !returnBookPath.empty()));
+}
+
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer) {
+  MappedInputManager::CompletedSwipe completed;
+  if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
+
+  const TwoFingerSwipe::CompletedSwipe swipe = {completed.contactCount, completed.startX, completed.startY,
+                                                completed.endX,         completed.endY,   completed.durationMs};
+  const auto direction = TwoFingerSwipe::directionFor(swipe, renderer.getScreenWidth(), renderer.getScreenHeight());
+  uint8_t action = CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET;
+  switch (direction) {
+    case TwoFingerSwipe::Direction::Up:
+      action = SETTINGS.twoFingerSwipeUp;
+      break;
+    case TwoFingerSwipe::Direction::Down:
+      action = SETTINGS.twoFingerSwipeDown;
+      break;
+    case TwoFingerSwipe::Direction::Left:
+      action = SETTINGS.twoFingerSwipeLeft;
+      break;
+    case TwoFingerSwipe::Direction::Right:
+      action = SETTINGS.twoFingerSwipeRight;
+      break;
+    case TwoFingerSwipe::Direction::None:
+      return false;
+  }
+  if (action == CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET) return false;
+
+  switch (static_cast<CrossPointSettings::TWO_FINGER_SWIPE_ACTION>(action)) {
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS: {
+      if (!Frontlight.present()) return true;
+      const uint8_t previousBrightness = Frontlight.brightness();
+      const bool previousOn = Frontlight.isOn();
+      const int delta = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS ? 5 : -5;
+      const uint8_t brightness =
+          static_cast<uint8_t>(std::clamp(static_cast<int>(Frontlight.brightness()) + delta, 0, 100));
+      Frontlight.setBrightness(brightness);
+      Frontlight.setOn(true);
+      SETTINGS.frontlightBrightness = brightness;
+      SETTINGS.frontlightOn = 1;
+      if (brightness != previousBrightness || !previousOn) SETTINGS.saveToFile();
+      return true;
+    }
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_WARMTH: {
+      if (!Frontlight.present() || !Frontlight.hasColorTemperature()) return true;
+      const uint8_t previousWarmth = Frontlight.warmth();
+      const bool previousOn = Frontlight.isOn();
+      const int delta = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH ? 5 : -5;
+      const uint8_t warmth = static_cast<uint8_t>(std::clamp(static_cast<int>(Frontlight.warmth()) + delta, 0, 100));
+      Frontlight.setWarmth(warmth);
+      SETTINGS.frontlightWarmth = warmth;
+      SETTINGS.frontlightOn = Frontlight.isOn() ? 1 : 0;
+      if (warmth != previousWarmth || Frontlight.isOn() != previousOn) SETTINGS.saveToFile();
+      return true;
+    }
+    case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      activity.handleTwoFingerSwipeAction(static_cast<CrossPointSettings::TWO_FINGER_SWIPE_ACTION>(action));
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET:
+    case CrossPointSettings::TWO_FINGER_SWIPE_ACTION_COUNT:
+      return false;
+  }
+  return true;
 }
 }  // namespace
 
@@ -107,6 +176,13 @@ void ActivityManager::loop() {
 
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
+
+    // Completed two-finger swipes are recognized before normal one-finger
+    // activity gestures. The frontlight panel owns its own sliders.
+    if (currentActivity->name != "FrontlightPanel" &&
+        applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
+      return;
+    }
 
     // Frontlight quick panel: top-edge down-swipe on home-key boards, except
     // that the open EPUB reader exposes the same action across the whole page.
