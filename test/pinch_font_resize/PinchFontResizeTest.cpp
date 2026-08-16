@@ -16,10 +16,30 @@ TEST(ReaderPinchGesture, RequiresRelativeAndAbsoluteMovement) {
   ReaderPinchGesture gesture;
   gesture.update(0, 0, 100, 0);
   EXPECT_EQ(gesture.update(0, 0, 105, 0), ReaderPinchGesture::Action::None);
+  EXPECT_EQ(gesture.update(0, 0, 110, 0), ReaderPinchGesture::Action::None);
+  EXPECT_EQ(gesture.update(0, 0, 120, 0), ReaderPinchGesture::Action::Increase);
 
   gesture.reset();
   gesture.update(0, 0, 10, 0);
   EXPECT_EQ(gesture.update(0, 0, 19, 0), ReaderPinchGesture::Action::None);
+}
+
+TEST(ReaderPinchGesture, ParallelTranslationLocksOutPinchUntilContactsEnd) {
+  ReaderPinchGesture gesture;
+  gesture.update(0, 0, 200, 0);
+
+  EXPECT_EQ(gesture.update(30, 0, 230, 0), ReaderPinchGesture::Action::None);
+  EXPECT_EQ(gesture.update(60, 0, 285, 0), ReaderPinchGesture::Action::None);
+
+  gesture.reset();
+  gesture.update(0, 0, 200, 0);
+  EXPECT_EQ(gesture.update(60, 0, 240, 0), ReaderPinchGesture::Action::None);
+}
+
+TEST(ReaderPinchGesture, PinchWithStableMidpointStillResizes) {
+  ReaderPinchGesture gesture;
+  gesture.update(0, 0, 100, 0);
+  EXPECT_EQ(gesture.update(-10, 0, 110, 0), ReaderPinchGesture::Action::Increase);
 }
 
 TEST(ReaderPinchGesture, SpreadFiresOnceUntilContactsEnd) {

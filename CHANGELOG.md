@@ -29,7 +29,6 @@
 
 ### Fixed
 
-- Selecting a Quick Action with the X4's front buttons now returns to the EPUB reader instead of opening its menu.
 - The Refresh Screen shortcut on X4 now uses its less disruptive clean refresh waveform.
 - Long-pressing Power to toggle Reader Dark Mode now changes it once and keeps the selected state after release.
 - Dictionary word selection is now visible when Reader Dark Mode is enabled.
