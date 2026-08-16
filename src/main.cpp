@@ -119,7 +119,6 @@ DictionaryRegistry dictionaryRegistry;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 static unsigned long allowSleepAt = 0;
 static ButtonShortcutController buttonShortcutController;
-static unsigned long lastX4ProPowerClickAt = 0;
 static unsigned long lastX4ProHomeKeyTapAt = 0;
 static bool x4ProHomeKeyTapPending = false;
 // A held power button can span deep-sleep wake and the first main-loop frame.
@@ -130,9 +129,7 @@ static bool powerButtonReleasedSinceWake = false;
 static bool wakePowerReleasePending = false;
 
 namespace {
-constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_HOME_KEY_DOUBLE_TAP_MS = 300;
-constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
 }  // namespace
 
 static void logBootHeap(const char* stage) {
@@ -552,7 +549,7 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
         return true;
       }
       RenderLock lock;
-      renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+      renderer.displayBuffer(manualScreenRefreshMode());
       return true;
     }
     case CrossPointSettings::SHORT_PWRBTN::SCREENSHOT: {
@@ -730,42 +727,6 @@ void putTiltSensorToSleepForDeepSleep() {
     delay(TILT_SLEEP_RETRY_DELAY_MS);
   }
   LOG_ERR("MAIN", "Tilt sensor did not confirm sleep before deep sleep");
-}
-
-bool handleX4ProFrontlightDoubleClick() {
-#ifdef SIMULATOR
-  return false;
-#else
-  if (mappedInputManager.isPowerReleaseSuppressed()) {
-    // A modal consumed this Power press as Confirm. Do not pair its release
-    // with the click that opened the modal.
-    lastX4ProPowerClickAt = 0;
-    return false;
-  }
-
-  if (!BoardConfig::isX4Pro() || !gpio.wasReleased(HalGPIO::BTN_POWER)) {
-    return false;
-  }
-
-  const unsigned long now = millis();
-  if (gpio.getPowerButtonHeldTime() > X4PRO_POWER_CLICK_MAX_HOLD_MS) {
-    lastX4ProPowerClickAt = 0;
-    return false;
-  }
-
-  if (lastX4ProPowerClickAt == 0 || now - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS) {
-    lastX4ProPowerClickAt = now;
-    return false;
-  }
-
-  lastX4ProPowerClickAt = 0;
-  const bool lightOn = !Frontlight.isOn();
-  Frontlight.setOn(lightOn);
-  SETTINGS.frontlightOn = lightOn ? 1 : 0;
-  SETTINGS.saveToFile();
-  LOG_INF("LIGHT", "Frontlight toggled %s by power-button double-click", lightOn ? "on" : "off");
-  return true;
-#endif
 }
 
 bool executeX4ProHomeButtonAction(const uint8_t action) {
@@ -1544,9 +1505,9 @@ void loop() {
     return;
   }
 #endif
-  // X4 Pro-only button shortcuts. Home-key taps are consumed until their
-  // single- or double-tap action is known.
-  if (handleX4ProFrontlightDoubleClick() || handleX4ProHomeKeyShortcuts()) {
+  // Home-key taps are consumed until their single- or double-tap action is
+  // known.
+  if (handleX4ProHomeKeyShortcuts()) {
     return;
   }
 
