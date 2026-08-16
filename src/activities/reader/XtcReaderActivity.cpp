@@ -478,6 +478,13 @@ void XtcReaderActivity::loop() {
   }
 }
 
+bool XtcReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TWO_FINGER_SWIPE_ACTION) {
+  // XTC pages are pre-rendered images: they cannot be reflowed for font-size
+  // changes, and the reader does not expose stable chapter jumps. Consume the
+  // configured command without letting it turn into a regular page swipe.
+  return true;
+}
+
 void XtcReaderActivity::toggleHomeButtonInReader() {
   if (!mappedInput.hasHomeKey()) return;
   SETTINGS.homeButtonInReaderEnabled = SETTINGS.homeButtonInReaderEnabled ? 0 : 1;
@@ -1072,7 +1079,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
     }
 
     if (pagesUntilFullRefresh <= 1) {
-      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH);
+      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
       pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     } else {

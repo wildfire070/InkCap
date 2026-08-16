@@ -2438,7 +2438,20 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+#if CROSSINK_APP_CAP_TOUCH
+  if (handlePinchFontResize()) {
+    // A live two-finger gesture is reader input, so background indexing yields
+    // just as it does for a page turn or normal tap.
+    backgroundBuildYieldForInput.store(true, std::memory_order_relaxed);
+    return;
+  }
+#endif
+
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
+  // A popup selection suppresses the Confirm release that follows its press.
+  // Read it once: wasReleased() consumes that suppression, and a second read
+  // in this loop would otherwise turn the same release into a reader-menu open.
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool userInputPending = mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased() || touch.tapped ||
                                 touch.prev || touch.next || mappedInput.wasScreenTouchReleased();
   if (userInputPending) {
@@ -2669,8 +2682,7 @@ void EpubReaderActivity::loop() {
   }
 
   if (automaticPageTurnActive) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        (!touch.prev && !touch.next && mappedInput.wasReleased(MappedInputManager::Button::Back)) ||
+    if (confirmReleased || (!touch.prev && !touch.next && mappedInput.wasReleased(MappedInputManager::Button::Back)) ||
         ReaderUtils::isTouchMenuGesture(mappedInput)) {
       automaticPageTurnActive = false;
       // updates chapter title space to indicate page turn disabled
@@ -2703,14 +2715,13 @@ void EpubReaderActivity::loop() {
 
   // Long-press Confirm: execute the configured reader action without opening the menu
   if (longPressMenuHandled) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmReleased || !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
       longPressMenuHandled = false;
     }
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (confirmReleased) {
     if (SETTINGS.longPressMenuAction != CrossPointSettings::LONG_MENU_OFF &&
         mappedInput.getHeldTime() >= longPressMenuMs) {
       const auto action = static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressMenuAction);
@@ -2761,7 +2772,7 @@ void EpubReaderActivity::loop() {
   }
 
   // Enter reader menu activity.
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
+  if (confirmReleased || ReaderUtils::isTouchMenuGesture(mappedInput)) {
     openReaderMenu();
   }
 
@@ -3034,6 +3045,37 @@ void EpubReaderActivity::loop() {
   }
 }
 
+bool EpubReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) {
+  if (!epub) return false;
+
+  switch (action) {
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+      if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER: {
+      const int direction = action == CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER ? 1 : -1;
+      const int targetSpine = currentSpineIndex + direction;
+      if (activeFootnotePreview || targetSpine < 0 || targetSpine >= epub->getSpineItemsCount()) return true;
+      {
+        RenderLock lock(*this);
+        nextPageNumber = 0;
+        if (direction < 0) pendingPageJump = std::numeric_limits<uint16_t>::max();
+        currentSpineIndex = targetSpine;
+        section.reset();
+      }
+      armReadingPaceWarmup("two_finger_chapter");
+      requestUpdate();
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 // Translate an absolute percent into a spine index plus a normalized position
 // within that spine so we can jump after the section is loaded.
 void EpubReaderActivity::jumpToPercent(int percent) {
@@ -3126,6 +3168,35 @@ void EpubReaderActivity::handleClippingJump(const ClippingJumpResult& clipping) 
   armReadingPaceWarmup("clipping_jump");
   pauseReadingPaceTimer("clipping_jump");
 }
+
+#if CROSSINK_APP_CAP_TOUCH
+bool EpubReaderActivity::handlePinchFontResize() {
+  if (!SETTINGS.pinchFontResizeEnabled || !SETTINGS.touchReaderControls || !mappedInput.supportsMultiTouch()) {
+    resetPinchFontGesture();
+    return false;
+  }
+
+  int x1 = 0;
+  int y1 = 0;
+  int x2 = 0;
+  int y2 = 0;
+  if (!mappedInput.getTwoFingerTouch(x1, y1, x2, y2)) {
+    resetPinchFontGesture();
+    return false;
+  }
+
+  const auto action = pinchFontGesture.update(x1, y1, x2, y2);
+
+  if (action == ReaderPinchGesture::Action::Increase) {
+    if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+  } else if (action == ReaderPinchGesture::Action::Decrease) {
+    if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+  }
+  return true;
+}
+
+void EpubReaderActivity::resetPinchFontGesture() { pinchFontGesture.reset(); }
+#endif
 
 bool EpubReaderActivity::handleTouchDictionaryLookup() {
   if (!SETTINGS.touchReaderControls || !mappedInput.hasTouch() || RenderLock::peek() || activeFootnotePreview ||
@@ -6355,7 +6426,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       // Image pages intentionally bypass the regular refresh cadence. Preserve
       // a pending clean base before their double-FAST grayscale pipeline.
       if (cleanImageBasePending) {
-        renderer.displayBuffer(pagesUntilFullRefresh < 0 ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH);
+        renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
         cleanImageBasePending = false;
       }
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -6368,7 +6439,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       // text-only grayscale turns; other panels keep the FAST fallback behavior.
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
     } else {
-      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH);
+      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
     }
     // The image's own page is handled above and doesn't count toward the full
     // refresh cadence. But the grayscale pass below leaves gray charge in the
@@ -6382,7 +6453,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       // Cleanup turns still need the stronger HALF pass, but X3 grayscale
       // overlays settle better if the OEM precondition step runs before the
       // gray planes are written.
-      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH);
+      renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
       pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     } else if (overlapRefresh) {

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "GlobalActions.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 
@@ -198,9 +199,9 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
 // before the next page turn (the tiled grayscale cleanup does).
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh, bool async = false) {
   // A negative countdown is reserved for the explicit Refresh Screen shortcut.
-  // Regular cadence cleanup remains a HALF refresh at 1, while the manual command
-  // uses the panel's visibly complete waveform.
-  const auto mode = pagesUntilFullRefresh < 0    ? HalDisplay::FULL_REFRESH
+  // Regular cadence cleanup remains a HALF refresh at 1. The X4 retains its
+  // prior clean HALF waveform; other panels use their full waveform.
+  const auto mode = pagesUntilFullRefresh < 0    ? manualScreenRefreshMode()
                     : pagesUntilFullRefresh <= 1 ? HalDisplay::HALF_REFRESH
                                                  : HalDisplay::FAST_REFRESH;
   if (async) {

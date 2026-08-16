@@ -154,8 +154,8 @@ bool FrontlightPanelActivity::handleHomeGesture() {
 }
 
 void FrontlightPanelActivity::loop() {
-  // The X4 Pro power-button double-click can change the light globally while
-  // this panel is open. Keep the panel's state and eventual persistence in sync.
+  // A power-button shortcut can change the light globally while this panel is
+  // open. Keep the panel's state and eventual persistence in sync.
   if (lightOn != Frontlight.isOn()) {
     lightOn = Frontlight.isOn();
     requestUpdate();

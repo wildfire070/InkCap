@@ -312,6 +312,29 @@ void TxtReaderActivity::loop() {
   }
 }
 
+bool TxtReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) {
+  if (action != CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE &&
+      action != CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE) {
+    // TXT has no chapter model; ActivityManager still consumes configured
+    // chapter swipes so they cannot fall through as one-finger navigation.
+    return true;
+  }
+
+  const bool larger = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE;
+  if (!sdFontSystem.changeReaderFontSize(larger, FontSizeStepMode::Clamp)) return true;
+
+  SETTINGS.saveToFile();
+  sdFontSystem.ensureLoaded(renderer);
+  {
+    RenderLock lock(*this);
+    pageOffsets.clear();
+    currentPageLines.clear();
+    initialized = false;
+  }
+  requestUpdate();
+  return true;
+}
+
 void TxtReaderActivity::toggleDarkMode() {
   SETTINGS.readerDarkMode = !SETTINGS.readerDarkMode;
   SETTINGS.saveToFile();
