@@ -189,8 +189,11 @@ void Ao3LibraryActivity::loop() {
           char magic[4];
           uint8_t version;
           uint16_t recordCount;
+          // Reject the pre-fnvHash64 index format (version < 3): its records are a
+          // different size, so reading them here would misalign (matches the same
+          // guard in Ao3IndexActivity::buildIndexedHashes).
           if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-              memcmp(magic, "AO3X", 4) == 0) {
+              memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
             f.seek(12);  // skip rest of header
             uint16_t liveCount = 0;
             CompactIndexRecord rec;
