@@ -113,6 +113,14 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
   }
   return true;
 }
+
+bool applyTwoFingerRotation(Activity& activity, MappedInputManager& mappedInput) {
+  MappedInputManager::CompletedRotation completed;
+  if (!mappedInput.wasCompletedMultiTouchRotation(completed)) return false;
+  // Rotate the content opposite the physical gesture so it feels like the
+  // reader is turning the page under the user's fingers.
+  return activity.handleTwoFingerRotation(completed.degrees < 0.0f);
+}
 }  // namespace
 
 void ActivityManager::begin(const uint32_t renderTaskStackBytes) {
@@ -177,8 +185,14 @@ void ActivityManager::loop() {
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
 
-    // Completed two-finger swipes are recognized before normal one-finger
-    // activity gestures. The frontlight panel owns its own sliders.
+    // Completed two-finger gestures are recognized before normal one-finger
+    // activity gestures. A rotation has priority over translation in the SDK,
+    // so a contact sequence can trigger at most one action here.
+    if (applyTwoFingerRotation(*currentActivity, mappedInput)) {
+      return;
+    }
+
+    // The frontlight panel owns its own sliders.
     if (currentActivity->name != "FrontlightPanel" &&
         applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
       return;

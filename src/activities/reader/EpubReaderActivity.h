@@ -41,7 +41,8 @@ class EpubReaderActivity final : public Activity {
     uint8_t lineHeightPercent = 100;
     uint8_t wordSpacing = 0;
     uint8_t orientation = 0;
-    uint8_t screenMargin = 5;
+    uint8_t screenMarginVertical = 5;
+    uint8_t screenMarginHorizontal = 5;
     uint8_t publisherPageNumbers = 0;
     uint8_t paragraphAlignment = 0;
     uint8_t embeddedStyle = 1;
@@ -177,6 +178,9 @@ class EpubReaderActivity final : public Activity {
   bool pendingSyncSaveError = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
+  // Session-only display toggle. Layout continues to reserve the same status
+  // lane, so switching it never changes the EPUB's page breaks.
+  bool statusBarVisible = true;
   bool longPressMenuHandled = false;
   bool longPressBackHandled = false;
   bool longPowerButtonHandled = false;
@@ -452,6 +456,7 @@ class EpubReaderActivity final : public Activity {
   void loop() override;
   void render(RenderLock&& lock) override;
   bool handleTwoFingerSwipeAction(CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) override;
+  bool handleTwoFingerRotation(bool clockwise) override;
   bool prepareManualRefresh() override {
     pagesUntilFullRefresh = -1;
     cleanImageBasePending = true;

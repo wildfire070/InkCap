@@ -693,6 +693,13 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     lineHeightPercent = legacyLineSpacingToPercent(legacySpacing, fontFamily, sdFontFamilyName[0] != '\0');
     needsResave = true;
   }
+  if (doc["screenMarginVertical"].isNull() || doc["screenMarginHorizontal"].isNull()) {
+    const uint8_t legacyScreenMargin =
+        std::clamp(doc["screenMargin"] | static_cast<uint8_t>(MIN_SCREEN_MARGIN), MIN_SCREEN_MARGIN, MAX_SCREEN_MARGIN);
+    if (doc["screenMarginVertical"].isNull()) screenMarginVertical = legacyScreenMargin;
+    if (doc["screenMarginHorizontal"].isNull()) screenMarginHorizontal = legacyScreenMargin;
+    needsResave = true;
+  }
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
@@ -854,7 +861,10 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, refreshFrequency, REFRESH_FREQUENCY_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    serialization::readPod(inputFile, screenMargin);
+    uint8_t legacyScreenMargin = MIN_SCREEN_MARGIN;
+    serialization::readPod(inputFile, legacyScreenMargin);
+    screenMarginVertical = std::clamp(legacyScreenMargin, MIN_SCREEN_MARGIN, MAX_SCREEN_MARGIN);
+    screenMarginHorizontal = screenMarginVertical;
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, sleepScreenCoverMode, SLEEP_SCREEN_COVER_MODE_COUNT);
     if (++settingsRead >= fileSettingsCount) break;

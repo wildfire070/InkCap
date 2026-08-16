@@ -3,12 +3,14 @@
 ### Added
 
 - BookFusion cloud sync: sign in with your BookFusion account via OAuth device-code pairing (a short code and QR code), browse and download from your BookFusion library by category, and sync reading progress between BookFusion and this device.
+- Tapping the reader status bar on touch devices now toggles it for the current reading session without changing the page layout.
 - Touchscreen readers can choose tap, swipe, inverted tap, or disabled page-turn gestures from Settings > Controls.
 - Full Xteink X4 Pro support, including USB Drive access to its SD card and direct USB file transfers.
 - New "Quick Lock" shortcut that locks the device without putting it to sleep. It can be assigned to Power + Up, long-press Back, or long-press Menu shortcuts and uses the regular sleep timeout.
 - New Quick Actions menu
 - On supported touch readers, pinch-to-resize with two fingers now changes the EPUB reader font size by one step.
 - Touch readers can now assign two-finger swipe directions to frontlight, chapter, or font-size actions from Settings > Controls > Taps & Gestures.
+- Rotating two fingers clockwise or counterclockwise now turns supported reader layouts in the same direction.
 - Quick Actions can now be assigned to Power + Up and, on X4 Pro, tap, long-press, or double-tap Home.
 
 - Power-button shortcuts and Quick Actions can now toggle the frontlight or reader touchscreen when supported.
@@ -17,6 +19,7 @@
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- Screen Margin now has separate Top/Bottom and Left/Right controls, each adjustable in 5- and 10-pixel steps up to 200 pixels.
 - Font settings now label the downloadable-font manager as “Download Fonts”.
 - Shortcut action pickers now use a consistent option order while hiding actions unsupported by the selected trigger or device.
 - Wi-Fi passwords are now shown while entering them, making corrections easier on-device.

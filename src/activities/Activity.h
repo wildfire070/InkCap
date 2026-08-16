@@ -81,6 +81,9 @@ class Activity {
   // Activity-specific two-finger actions (chapter and font commands). Global
   // frontlight commands are handled by ActivityManager before this callback.
   virtual bool handleTwoFingerSwipeAction(CrossPointSettings::TWO_FINGER_SWIPE_ACTION) { return false; }
+  // Completed two-finger rotations are routed only to activities that can
+  // safely rebuild their content for a new screen orientation.
+  virtual bool handleTwoFingerRotation(bool clockwise) { return false; }
   virtual bool openReaderSettingsMenu() { return false; }
   virtual bool handleShortcutAction(uint8_t) { return false; }
   virtual bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN) { return false; }

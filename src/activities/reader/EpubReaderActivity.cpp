@@ -81,7 +81,8 @@ constexpr uint8_t PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION = 3;
 constexpr uint8_t PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION = 4;
 constexpr uint8_t PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION = 5;
 constexpr uint8_t PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION = 6;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 7;
+constexpr uint8_t PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION = 7;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 8;
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
 constexpr uint8_t READER_SETTINGS_FLAG_RENDER_MODE = 1 << 2;
@@ -947,8 +948,9 @@ void drawPublisherPageMarkers(const GfxRenderer& renderer, const Page& page, con
 }
 
 uint8_t effectiveReaderLeftMargin() {
-  return SETTINGS.publisherPageNumbers ? std::max<uint8_t>(SETTINGS.screenMargin, PUBLISHER_PAGE_NUMBER_LEFT_MARGIN_MIN)
-                                       : SETTINGS.screenMargin;
+  return SETTINGS.publisherPageNumbers
+             ? std::max<uint8_t>(SETTINGS.screenMarginHorizontal, PUBLISHER_PAGE_NUMBER_LEFT_MARGIN_MIN)
+             : SETTINGS.screenMarginHorizontal;
 }
 
 struct ReaderViewportLayout {
@@ -965,21 +967,22 @@ ReaderViewportLayout computeReaderViewportLayout(GfxRenderer& renderer, const bo
   ReaderViewportLayout layout{};
   renderer.getOrientedViewableTRBL(&layout.marginTop, &layout.marginRight, &layout.marginBottom, &layout.marginLeft);
   layout.marginLeft += effectiveReaderLeftMargin();
-  layout.marginRight += SETTINGS.screenMargin;
+  layout.marginRight += SETTINGS.screenMarginHorizontal;
 
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
   const int topStatusBarReservedHeight = ReaderUtils::getTopClockStatusBarReservedHeight(renderer);
   if (topStatusBarReservedHeight > 0) {
-    layout.marginTop += std::max(static_cast<int>(SETTINGS.screenMargin),
+    layout.marginTop += std::max(static_cast<int>(SETTINGS.screenMarginVertical),
                                  topStatusBarReservedHeight + ReaderUtils::TOP_CLOCK_TEXT_PADDING);
   } else {
-    layout.marginTop += SETTINGS.screenMargin;
+    layout.marginTop += SETTINGS.screenMarginVertical;
   }
 
 #if CROSSINK_APP_CAP_TOUCH
   if (showFootnoteHeader) {
     const Rect header = TouchHeaderBackButton::compactHeaderRect(renderer);
-    layout.marginTop = std::max(layout.marginTop, header.y + header.height + static_cast<int>(SETTINGS.screenMargin));
+    layout.marginTop =
+        std::max(layout.marginTop, header.y + header.height + static_cast<int>(SETTINGS.screenMarginVertical));
   }
 #else
   (void)showFootnoteHeader;
@@ -988,12 +991,12 @@ ReaderViewportLayout computeReaderViewportLayout(GfxRenderer& renderer, const bo
   if (automaticPageTurnActive &&
       (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight())) {
     layout.marginBottom +=
-        std::max(SETTINGS.screenMargin,
+        std::max(SETTINGS.screenMarginVertical,
                  static_cast<uint8_t>(statusBarHeight + UITheme::getInstance().getMetrics().statusBarVerticalMargin +
                                       ReaderUtils::STATUS_BAR_TEXT_PADDING));
   } else {
-    layout.marginBottom +=
-        std::max(SETTINGS.screenMargin, static_cast<uint8_t>(statusBarHeight + ReaderUtils::STATUS_BAR_TEXT_PADDING));
+    layout.marginBottom += std::max(SETTINGS.screenMarginVertical,
+                                    static_cast<uint8_t>(statusBarHeight + ReaderUtils::STATUS_BAR_TEXT_PADDING));
   }
 
   layout.viewportWidth = renderer.getScreenWidth() - layout.marginLeft - layout.marginRight;
@@ -1095,7 +1098,8 @@ void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.lineHeightPercent = SETTINGS.lineHeightPercent;
   out.wordSpacing = SETTINGS.wordSpacing;
   out.orientation = SETTINGS.orientation;
-  out.screenMargin = SETTINGS.screenMargin;
+  out.screenMarginVertical = SETTINGS.screenMarginVertical;
+  out.screenMarginHorizontal = SETTINGS.screenMarginHorizontal;
   out.publisherPageNumbers = SETTINGS.publisherPageNumbers;
   out.paragraphAlignment = SETTINGS.paragraphAlignment;
   out.embeddedStyle = SETTINGS.embeddedStyle;
@@ -1130,7 +1134,10 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   SETTINGS.lineHeightPercent = CrossPointSettings::clampedLineHeightPercent(in.lineHeightPercent);
   SETTINGS.wordSpacing = std::min<uint8_t>(in.wordSpacing, CrossPointSettings::MAX_WORD_SPACING);
   SETTINGS.orientation = in.orientation < CrossPointSettings::ORIENTATION_COUNT ? in.orientation : SETTINGS.orientation;
-  SETTINGS.screenMargin = std::clamp<uint8_t>(in.screenMargin, 5, 40);
+  SETTINGS.screenMarginVertical = std::clamp<uint8_t>(in.screenMarginVertical, CrossPointSettings::MIN_SCREEN_MARGIN,
+                                                      CrossPointSettings::MAX_SCREEN_MARGIN);
+  SETTINGS.screenMarginHorizontal = std::clamp<uint8_t>(
+      in.screenMarginHorizontal, CrossPointSettings::MIN_SCREEN_MARGIN, CrossPointSettings::MAX_SCREEN_MARGIN);
   SETTINGS.publisherPageNumbers = in.publisherPageNumbers ? 1 : 0;
   SETTINGS.paragraphAlignment = in.paragraphAlignment < CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT
                                     ? in.paragraphAlignment
@@ -1154,12 +1161,23 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
 using BookReaderSettingsData = EpubReaderActivity::BookReaderSettingsData;
 
 bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettingsSnapshot& out,
-                                const bool includesWordSpacing, const bool includesIndexingMethod) {
+                                const bool includesWordSpacing, const bool includesIndexingMethod,
+                                const bool includesSplitScreenMargins) {
   if (!(readU8(file, out.fontFamily) && readU8(file, out.readerFontPointSize) && readU8(file, out.lineHeightPercent) &&
-        (!includesWordSpacing || readU8(file, out.wordSpacing)) && readU8(file, out.orientation) &&
-        readU8(file, out.screenMargin) && readU8(file, out.publisherPageNumbers) &&
-        readU8(file, out.paragraphAlignment) && readU8(file, out.embeddedStyle) &&
-        readU8(file, out.hyphenationEnabled) && readU8(file, out.textAntiAliasing) &&
+        (!includesWordSpacing || readU8(file, out.wordSpacing)) && readU8(file, out.orientation))) {
+    return false;
+  }
+
+  uint8_t legacyScreenMargin = CrossPointSettings::MIN_SCREEN_MARGIN;
+  const bool marginsRead = includesSplitScreenMargins
+                               ? readU8(file, out.screenMarginVertical) && readU8(file, out.screenMarginHorizontal)
+                               : readU8(file, legacyScreenMargin);
+  if (!includesSplitScreenMargins) {
+    out.screenMarginVertical = legacyScreenMargin;
+    out.screenMarginHorizontal = legacyScreenMargin;
+  }
+  if (!(marginsRead && readU8(file, out.publisherPageNumbers) && readU8(file, out.paragraphAlignment) &&
+        readU8(file, out.embeddedStyle) && readU8(file, out.hyphenationEnabled) && readU8(file, out.textAntiAliasing) &&
         readU8(file, out.readerDarkMode) && readU8(file, out.imageRendering) &&
         readU8(file, out.extraParagraphSpacing) && readU8(file, out.forceParagraphIndents) &&
         readU8(file, out.bionicReadingEnabled) && readU8(file, out.guideReadingEnabled))) {
@@ -1178,7 +1196,8 @@ bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettings
 bool writeReaderSettingsSnapshot(FsFile& file, const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   return writeU8(file, in.fontFamily) && writeU8(file, in.readerFontPointSize) && writeU8(file, in.lineHeightPercent) &&
          writeU8(file, std::min<uint8_t>(in.wordSpacing, CrossPointSettings::MAX_WORD_SPACING)) &&
-         writeU8(file, in.orientation) && writeU8(file, in.screenMargin) && writeU8(file, in.publisherPageNumbers) &&
+         writeU8(file, in.orientation) && writeU8(file, in.screenMarginVertical) &&
+         writeU8(file, in.screenMarginHorizontal) && writeU8(file, in.publisherPageNumbers) &&
          writeU8(file, in.paragraphAlignment) && writeU8(file, in.embeddedStyle) &&
          writeU8(file, in.hyphenationEnabled) && writeU8(file, in.textAntiAliasing) &&
          writeU8(file, in.readerDarkMode) && writeU8(file, in.imageRendering) &&
@@ -1225,7 +1244,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
       version != PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION &&
       version != PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION &&
       version != PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -1244,12 +1264,13 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
   }
   if (ok) {
     ok = readReaderSettingsSnapshot(file, snapshot, version >= PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION,
-                                    version >= PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION);
+                                    version >= PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION,
+                                    version >= READER_SETTINGS_FILE_VERSION);
   }
   if (ok && version >= PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION) {
     ok = readExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName));
   }
-  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+  if (ok && version >= PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, data.dictionaryFontPointSize);
   }
   file.close();
@@ -2437,6 +2458,12 @@ void EpubReaderActivity::loop() {
 #endif
 
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
+  if (touch.tapped &&
+      ReaderUtils::isBottomStatusBarTap(renderer, touch.y, UITheme::getInstance().getStatusBarHeight())) {
+    statusBarVisible = !statusBarVisible;
+    requestUpdate();
+    return;
+  }
   // A popup selection suppresses the Confirm release that follows its press.
   // Read it once: wasReleased() consumes that suppression, and a second read
   // in this loop would otherwise turn the same release into a reader-menu open.
@@ -3158,8 +3185,10 @@ bool EpubReaderActivity::handlePinchFontResize() {
   const auto action = pinchFontGesture.update(x1, y1, x2, y2);
 
   if (action == ReaderPinchGesture::Action::Increase) {
+    mappedInput.suppressCurrentTouchContact();
     if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
   } else if (action == ReaderPinchGesture::Action::Decrease) {
+    mappedInput.suppressCurrentTouchContact();
     if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
   }
   return true;
@@ -3167,6 +3196,12 @@ bool EpubReaderActivity::handlePinchFontResize() {
 
 void EpubReaderActivity::resetPinchFontGesture() { pinchFontGesture.reset(); }
 #endif
+
+bool EpubReaderActivity::handleTwoFingerRotation(const bool clockwise) {
+  applyOrientation(ReaderUtils::rotatedOrientation(SETTINGS.orientation, clockwise));
+  requestUpdate();
+  return true;
+}
 
 bool EpubReaderActivity::handleTouchDictionaryLookup() {
   if (!SETTINGS.touchReaderControls || !mappedInput.hasTouch() || RenderLock::peek() || activeFootnotePreview ||
@@ -6609,6 +6644,10 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
 }
 
 void EpubReaderActivity::renderStatusBar() const {
+  if (!statusBarVisible) {
+    return;
+  }
+
   const int estimatedPageCount = section->estimatedTotalPages();
   int currentPage = section->currentPage + 1;
   int pageCount = estimatedPageCount;
