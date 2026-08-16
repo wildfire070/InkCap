@@ -112,13 +112,9 @@ const fui::KeyboardLayout URL_SHIFT_LAYOUT{URL_SHIFT_ROWS, 5};
 const fui::KeyboardLayout URL_SNIPPET_LAYOUT{URL_SNIP_ROWS, 4};
 
 fui::KeyboardLayoutId layoutForLanguage(const Language language) {
+  // Only EN is built in (InkCapO3 is English-only); other layouts (AzertyFr,
+  // QwertzDe, SpanishEs, ...) can be re-added here if those languages return.
   switch (language) {
-    case Language::FR:
-      return fui::KeyboardLayoutId::AzertyFr;
-    case Language::DE:
-      return fui::KeyboardLayoutId::QwertzDe;
-    case Language::ES:
-      return fui::KeyboardLayoutId::SpanishEs;
     default:
       return fui::KeyboardLayoutId::QwertyEn;
   }
