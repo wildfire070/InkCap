@@ -1,9 +1,11 @@
 """
 PlatformIO pre-build script: inject git info into version defines.
 
-  default:       1.1.0-InkCap+<4-char-hash>  (local development builds)
+  default/sticky/x4-pro: 1.1.0+<4-char-hash>  (local development builds --
+                                        product name is a separate literal
+                                        prefix in source, not baked in here)
   production:    1.1.0               (when $CROSSINK_RELEASE_VERSION is set)
-  default RC:    1.1.0-rc+<hash>       (when $CROSSINK_RC_HASH is set)
+  RC (any of the three above): 1.1.0-rc+<hash>  (when $CROSSINK_RC_HASH is set)
   test & debug:          1.2.6-<branch>+<5-char-hash>
   gh_release_rc: 1.1.0-rc+<hash>       (hash from $CROSSINK_RC_HASH in CI,
                                         or from git locally)
@@ -131,7 +133,7 @@ def inject_version(env):
     project_dir = env['PROJECT_DIR']
     pioenv = env['PIOENV']
 
-    if pioenv == 'default':
+    if pioenv in ('default', 'sticky', 'x4-pro'):
         if os.environ.get('CROSSINK_RC_HASH'):
             version_string = get_release_candidate_version(project_dir)
             print(f'CrossInk RC build version: {version_string}')
@@ -139,10 +141,15 @@ def inject_version(env):
             version_string = get_production_version(project_dir)
             print(f'CrossInk production build version: {version_string}')
         else:
+            # No product name or env suffix here -- each branch's own source
+            # prefixes CROSSINK_VERSION with its product name where displayed
+            # (e.g. "InkCap " CROSSINK_VERSION), and CROSSINK_FIRMWARE_DEVICE_TYPE
+            # (set separately per env in platformio.ini) already carries the
+            # device/env distinction, so this stays identical across branches.
             base_version = get_crossink_version(project_dir)
             short_hash = get_git_short_hash(project_dir, length=4)
-            version_string = f'{base_version}-InkCap+{short_hash}'
-            print(f'InkCap build version: {version_string}')
+            version_string = f'{base_version}+{short_hash}'
+            print(f'{pioenv} build version: {version_string}')
         env.Append(CPPDEFINES=[('CROSSINK_VERSION', f'\\"{version_string}\\"')])
 
     elif pioenv == 'debug':
