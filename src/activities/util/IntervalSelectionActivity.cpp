@@ -256,7 +256,9 @@ void IntervalSelectionActivity::render(RenderLock&&) {
   }
 
   char formattedValue[32];
-  if (maxBoundaryLabelId != StrId::STR_NONE_OPT && value == maxValue) {
+  if (valueFormatter != nullptr) {
+    valueFormatter(value, formattedValue, sizeof(formattedValue));
+  } else if (maxBoundaryLabelId != StrId::STR_NONE_OPT && value == maxValue) {
     snprintf(formattedValue, sizeof(formattedValue), "%s", I18N.get(maxBoundaryLabelId));
   } else if (showPercentValue) {
     snprintf(formattedValue, sizeof(formattedValue), "%d%%", value);

@@ -144,6 +144,7 @@ void TxtReaderActivity::onEnter() {
 }
 
 void TxtReaderActivity::onExit() {
+  mappedInput.setReaderTouchscreenOverride(false);
   Activity::onExit();
 
   // Deactivate reader-specific front button mapping.
@@ -505,8 +506,16 @@ bool TxtReaderActivity::executeLongPressBackAction() {
 bool TxtReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
   if (action == CrossPointSettings::SHORT_PWRBTN::QUICK_ACTIONS) {
     QuickActions::showConfiguredPopup(
-        quickActionsPopup, [this] { requestUpdate(); }, {},
+        quickActionsPopup, [this] { requestUpdate(); },
+        [this](const auto quickAction) {
+          mappedInput.setReaderTouchscreenOverride(false);
+          dispatchShortcutAction(quickAction);
+        },
         [](const auto quickAction) { return supportsQuickAction(quickAction); });
+    if (quickActionsPopup.isActive()) {
+      mappedInput.setReaderTouchscreenOverride(true);
+      quickActionsPopup.setCancelCallback([this] { mappedInput.setReaderTouchscreenOverride(false); });
+    }
     return true;
   }
   return executeReaderShortcutAction(action);

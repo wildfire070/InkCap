@@ -1824,11 +1824,7 @@ void HomeActivity::loop() {
         if (selectorIndex != previousSelectorIndex) {
           invalidateCoverCache();
         }
-        if (activate) {
-          activateSelectedHomeItem();
-        } else if (selectorIndex != previousSelectorIndex) {
-          requestUpdate();
-        }
+        activateSelectedHomeItem();
         return true;
       }
 

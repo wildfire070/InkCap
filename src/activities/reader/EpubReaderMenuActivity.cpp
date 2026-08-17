@@ -18,6 +18,7 @@
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/touchscreenStateIcons.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
@@ -493,7 +494,8 @@ void EpubReaderMenuActivity::drawIconTabBar(const Rect rect, const bool drawBott
     }
 #if CROSSINK_APP_CAP_TOUCH
     else {
-      drawSdkIcon(uiTarget, SETTINGS.disableReaderTouchscreen ? icon_pointer_off_24 : icon_pointer_24, iconX, iconY);
+      drawSdkIcon(uiTarget, SETTINGS.disableReaderTouchscreen ? icon_device_tablet_off_24 : icon_device_tablet_24,
+                  iconX, iconY);
     }
 #endif
   }
