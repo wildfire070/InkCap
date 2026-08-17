@@ -2218,6 +2218,8 @@ void EpubReaderActivity::onEnter() {
 }
 
 void EpubReaderActivity::onExit() {
+  mappedInput.setReaderTouchscreenOverride(false);
+
   // The extraction callback holds the Epub as a raw context pointer.
   ImageBlock::setExtractor(nullptr, nullptr);
   releaseGrayscaleStripScratch(true);
@@ -3327,7 +3329,12 @@ void EpubReaderActivity::openWordSelect(bool framebufferContainsPage, int initia
     requestUpdate();
     return;
   }
-  startActivityForResult(std::move(wordSelect), [this](const ActivityResult&) {
+  startActivityForResult(std::move(wordSelect), [this](const ActivityResult& result) {
+    if (const auto* request = std::get_if<DictionaryClippingRequest>(&result.data)) {
+      resumeReadingPaceTimer("dictionary_lookup_to_clip");
+      startClipSelection(request);
+      return;
+    }
     resumeReadingPaceTimer("dictionary_lookup_return");
     MemoryBudget::logHeapShape("dict.child_destroyed");
     // Dictionary lookup warms multiple SD-font styles and large definition glyph
@@ -3902,7 +3909,7 @@ void EpubReaderActivity::openAutoPageTurnIntervalPicker(const bool ignoreInitial
       });
 }
 
-void EpubReaderActivity::startClipSelection() {
+void EpubReaderActivity::startClipSelection(const DictionaryClippingRequest* dictionaryRequest) {
   if (!section || !epub) {
     requestUpdate();
     return;
@@ -4129,7 +4136,7 @@ void EpubReaderActivity::startClipSelection() {
   pauseReadingPaceTimer("clip_selection");
   auto clipSelection =
       makeUniqueNoThrow<ClipSelectionActivity>(renderer, mappedInput, std::move(wordStore), readerFontId, *section,
-                                               startPage, layout.marginTop, layout.marginLeft);
+                                               startPage, layout.marginTop, layout.marginLeft, dictionaryRequest);
   if (!clipSelection) {
     LOG_ERR("CLIP", "OOM: failed to allocate clip selection activity");
     resumeReadingPaceTimer("clip_selection_alloc_failed");
@@ -4499,6 +4506,7 @@ void EpubReaderActivity::openQuickActionsPopup() {
   QuickActions::showConfiguredPopup(
       quickActionsPopup, [this] { requestUpdate(); },
       [this](const auto action) {
+        mappedInput.setReaderTouchscreenOverride(false);
         if (action == CrossPointSettings::SHORT_PWRBTN::LOOKUP_WORD) {
           // The popup was the most recent render, so word selection must redraw
           // the reader page instead of reusing the popup framebuffer.
@@ -4508,6 +4516,10 @@ void EpubReaderActivity::openQuickActionsPopup() {
         }
         dispatchShortcutAction(action);
       });
+  if (quickActionsPopup.isActive()) {
+    mappedInput.setReaderTouchscreenOverride(true);
+    quickActionsPopup.setCancelCallback([this] { mappedInput.setReaderTouchscreenOverride(false); });
+  }
 }
 
 bool EpubReaderActivity::quickActionUsesConfirmRelease(const CrossPointSettings::LONG_PRESS_MENU_ACTION action) const {
@@ -6547,9 +6559,13 @@ bool EpubReaderActivity::handleTouchFootnoteLink(const int touchX, const int tou
 
 void EpubReaderActivity::drawClippingHighlights(const Page& page, const int fontId, const int orientedMarginTop,
                                                 const int orientedMarginLeft) const {
-  if (!section || !CLIPPINGS.hasClippings()) {
+  if (!section || !CLIPPINGS.hasClippings() || renderer.getRenderMode() != GfxRenderer::BW) {
     return;
   }
+
+  // The BW frame owns the dithered marker and its redrawn black text. Repeating
+  // that marker in the grayscale anti-aliasing planes overlays gray pixels on
+  // the glyphs and makes a saved clipping look washed out.
 
   std::array<ClippingPageMatch, CLIPPING_MAX_PAGE_MATCHES> matches;
   uint16_t matchCount = 0;

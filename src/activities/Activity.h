@@ -71,6 +71,8 @@ class Activity {
   virtual bool allowFrontlightPanelGesture() const { return true; }
   virtual bool allowPowerAsConfirmInReaderMode() const { return false; }
   virtual bool allowGlobalHomeGesture() const { return true; }
+  // Activities with a modal can keep global gestures from acting behind it.
+  virtual bool blocksGlobalInput() const { return false; }
   // Lists that own vertical swipes can opt out of the global bottom-edge
   // Home gesture while retaining the capacitive Home key on X4 Pro.
   virtual bool allowGlobalHomeSwipeGesture() const { return true; }

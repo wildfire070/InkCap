@@ -185,33 +185,37 @@ void ActivityManager::loop() {
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
 
-    // Completed two-finger gestures are recognized before normal one-finger
-    // activity gestures. A rotation has priority over translation in the SDK,
-    // so a contact sequence can trigger at most one action here.
-    if (applyTwoFingerRotation(*currentActivity, mappedInput)) {
-      return;
-    }
-
-    // The frontlight panel owns its own sliders.
-    if (currentActivity->name != "FrontlightPanel" &&
-        applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
-      return;
-    }
-
-    // Frontlight quick panel: top-edge down-swipe on home-key boards, except
-    // that the open EPUB reader exposes the same action across the whole page.
-    // Pushed, so it returns to whatever was underneath — including mid-book.
-    const bool lightPanelGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
-                                       ? mappedInput.wasReaderLightPanelGesture()
-                                       : mappedInput.wasLightPanelGesture();
-    if (Frontlight.present() && currentActivity->name != "FrontlightPanel" &&
-        currentActivity->allowFrontlightPanelGesture() && lightPanelGesture) {
-      pushActivity(std::make_unique<FrontlightPanelActivity>(renderer, mappedInput));
-      return;
-    }
-    // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
-    if (!handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
+    if (currentActivity->blocksGlobalInput()) {
       currentActivity->loop();
+    } else {
+      // Completed two-finger gestures are recognized before normal one-finger
+      // activity gestures. A rotation has priority over translation in the SDK,
+      // so a contact sequence can trigger at most one action here.
+      if (applyTwoFingerRotation(*currentActivity, mappedInput)) {
+        return;
+      }
+
+      // The frontlight panel owns its own sliders.
+      if (currentActivity->name != "FrontlightPanel" &&
+          applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
+        return;
+      }
+
+      // Frontlight quick panel: top-edge down-swipe on home-key boards, except
+      // that the open EPUB reader exposes the same action across the whole page.
+      // Pushed, so it returns to whatever was underneath — including mid-book.
+      const bool lightPanelGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
+                                         ? mappedInput.wasReaderLightPanelGesture()
+                                         : mappedInput.wasLightPanelGesture();
+      if (Frontlight.present() && currentActivity->name != "FrontlightPanel" &&
+          currentActivity->allowFrontlightPanelGesture() && lightPanelGesture) {
+        pushActivity(std::make_unique<FrontlightPanelActivity>(renderer, mappedInput));
+        return;
+      }
+      // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
+      if (!handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
+        currentActivity->loop();
+      }
     }
   } else {
     mappedInput.setPowerAsConfirmInReaderMode(false);
