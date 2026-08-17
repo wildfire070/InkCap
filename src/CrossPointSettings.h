@@ -587,10 +587,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontlightBrightness = 60;
   uint8_t frontlightWarmth = 50;  // 0 = cool .. 100 = warm
   uint8_t frontlightOn = 0;
-  // When 0 (default), the frontlight always comes up OFF after a wake/boot (brightness
-  // and warmth are still remembered for when it's switched on). When 1, the on/off
-  // state from before sleep is restored too. Shown in Display settings on frontlight boards.
-  uint8_t frontlightRestoreOnWake = 0;
+  // When enabled, restore a previously-on light after sleep. A previous off
+  // state falls through to a complete schedule.
+  uint8_t frontlightRestoreOnWake = 1;
+  // Daily wake-only schedule, in local minutes since midnight.
+  // An unset endpoint keeps the schedule inactive; its value is retained while
+  // the schedule toggle is off so it can be re-enabled without re-entry.
+  uint8_t frontlightScheduleEnabled = 0;
+  uint16_t frontlightScheduleStart = 0xFFFF;
+  uint16_t frontlightScheduleEnd = 0xFFFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
   // Custom KOReader sync device display name. Empty means use the hardware default.

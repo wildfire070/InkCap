@@ -9,7 +9,7 @@
 
 namespace {
 
-void drawPageIndicators(GfxRenderer& renderer, const int currentPage, const int totalPages) {
+void drawPageIndicators(const GfxRenderer& renderer, const int currentPage, const int totalPages) {
   if (totalPages <= 1) {
     return;
   }

@@ -63,13 +63,9 @@ void onCdcEvent(void*, esp_event_base_t, int32_t eventId, void* eventData) {
 }
 #endif
 
-uint32_t rxOverflowCount() {
+// Only native USB exposes the CDC overflow event used to reject incomplete uploads.
 #if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
-  return rxDroppedBytes.load(std::memory_order_relaxed);
-#else
-  return 0;
-#endif
-}
+uint32_t rxOverflowCount() { return rxDroppedBytes.load(std::memory_order_relaxed); }
 
 bool rxOverflowedSince(const uint32_t snapshot, uint32_t& dropped) {
   const uint32_t current = rxOverflowCount();
@@ -83,6 +79,7 @@ void writeRxOverflowError(const uint32_t snapshot) {
   (void)rxOverflowedSince(snapshot, dropped);
   logSerial.printf("ERR:rx_overflow:dropped=%lu\n", static_cast<unsigned long>(dropped));
 }
+#endif
 
 void writeLine(const char* line) { logSerial.print(line); }
 
@@ -371,13 +368,17 @@ void handleMkdir() {
 }
 
 void handleWrite() {
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
   const uint32_t rxOverflowAtStart = rxOverflowCount();
+#endif
   char path[PATH_BUFFER_SIZE];
   if (!readNormalizedPath(path, sizeof(path))) return;
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
   if (rxOverflowCount() != rxOverflowAtStart) {
     writeRxOverflowError(rxOverflowAtStart);
     return;
   }
+#endif
 
   uint8_t sizeBytes[4];
   if (!readExact(sizeBytes, sizeof(sizeBytes), HEADER_TIMEOUT_MS)) {
@@ -386,10 +387,12 @@ void handleWrite() {
   }
   const uint32_t expectedSize = readLe32(sizeBytes);
 
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
   if (rxOverflowCount() != rxOverflowAtStart) {
     writeRxOverflowError(rxOverflowAtStart);
     return;
   }
+#endif
 
   if (!ensureFileTransferAllowed()) return;
   if (strcmp(path, "/") == 0 || isProtectedPath(path)) {
@@ -456,12 +459,14 @@ void handleWrite() {
       return;
     }
 
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
     if (rxOverflowCount() != rxOverflowAtStart) {
       file.close();
       Storage.remove(TEMP_UPLOAD_PATH);
       writeRxOverflowError(rxOverflowAtStart);
       return;
     }
+#endif
 
     crc = esp_rom_crc32_le(crc, transferBuffer, static_cast<uint32_t>(want));
     if (fileBufferPos + want > FILE_BUFFER_SIZE && !flushFileBuffer()) {
@@ -495,11 +500,13 @@ void handleWrite() {
   }
   file.close();
 
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
   if (rxOverflowCount() != rxOverflowAtStart) {
     Storage.remove(TEMP_UPLOAD_PATH);
     writeRxOverflowError(rxOverflowAtStart);
     return;
   }
+#endif
 
   if (expectedSize > 0) {
     // Tell the host the file is saved and ready for its separately written CRC.

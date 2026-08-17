@@ -3,6 +3,7 @@
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
+#include <I18n.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "FontSelectionActivity.h"
+#include "FrontlightTimePickerActivity.h"
 #include "KOReaderSettingsActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
@@ -41,8 +43,10 @@
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/frontlightHeaderIcons.h"
 #include "fontIds.h"
 #include "util/DictionaryRegistry.h"
+#include "util/FrontlightSchedule.h"
 
 namespace fui = freeink::ui;
 
@@ -63,6 +67,12 @@ constexpr size_t controlsPowerMinCount = 2;
 constexpr size_t controlsPowerMaxCount = 3;
 constexpr size_t controlsFrontButtonCount = 6;
 constexpr size_t controlsSideButtonCount = 3;
+
+void formatFrontlightScheduleTime(const uint16_t timeOfDay, char* const buf, const size_t len) {
+  const FrontlightSchedule::TimeOfDay time = FrontlightSchedule::timeOfDayFromMinutes(timeOfDay);
+  snprintf(buf, len, "%u:%02u %s", static_cast<unsigned>(time.hour12), static_cast<unsigned>(time.minute),
+           I18N.get(time.isPm ? StrId::STR_PM : StrId::STR_AM));
+}
 
 int settingsTabBarTop(const ThemeMetrics& metrics) { return CompactHeader::headerBottomY(metrics); }
 
@@ -174,6 +184,14 @@ void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, c
 }
 
 std::string formatSettingValue(const SettingInfo& setting) {
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart ||
+      setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    const uint16_t timeOfDay = SETTINGS.*(setting.value16Ptr);
+    if (SETTINGS.frontlightScheduleEnabled == 0 || !FrontlightSchedule::isTimeOfDayValid(timeOfDay)) return "--";
+    char valueBuffer[16];
+    formatFrontlightScheduleTime(timeOfDay, valueBuffer, sizeof(valueBuffer));
+    return valueBuffer;
+  }
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     if (SETTINGS.sleepTimeoutMinutes >= CrossPointSettings::SLEEP_TIMEOUT_NEVER_MINUTES) {
       return tr(STR_SLEEP_NEVER);
@@ -210,6 +228,16 @@ fui::BitmapRef twoFingerSwipeIcon(const StrId nameId) {
   }
 }
 
+fui::BitmapRef frontlightScheduleEndpointIcon(const SettingInfo& setting) {
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart) {
+    return fui::bitmapFromIcon(icon_lightbulb_28);
+  }
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    return fui::bitmapFromIcon(icon_lightbulb_off_28);
+  }
+  return {};
+}
+
 bool isTwoFingerSwipeSetting(const uint8_t CrossPointSettings::* const valuePtr) {
   return valuePtr == &CrossPointSettings::twoFingerSwipeUp || valuePtr == &CrossPointSettings::twoFingerSwipeDown ||
          valuePtr == &CrossPointSettings::twoFingerSwipeLeft || valuePtr == &CrossPointSettings::twoFingerSwipeRight;
@@ -238,6 +266,7 @@ SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& ma
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
   displaySleepSettings.clear();
+  displayFrontlightSettings.clear();
   readerSettings.clear();
   readerFontSettings.clear();
   readerPageLayoutSettings.clear();
@@ -270,6 +299,7 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 #endif
   displaySleepSettings = buildDisplaySleepSettingsList(allSettings);
+  displayFrontlightSettings = buildDisplayFrontlightSettingsList(allSettings);
   readerSettings = buildReaderSettingsParentList(allSettings);
   readerFontSettings = buildReaderFontSettingsList(allSettings);
   readerPageLayoutSettings = buildReaderPageLayoutSettingsList(allSettings);
@@ -326,7 +356,13 @@ void SettingsActivity::rebuildSettingsLists() {
 void SettingsActivity::setCurrentSettingsForCategory() {
   switch (selectedCategoryIndex) {
     case 0:
-      currentSettings = activeSubmenu == SettingAction::DisplaySleepScreen ? &displaySleepSettings : &displaySettings;
+      if (activeSubmenu == SettingAction::DisplaySleepScreen) {
+        currentSettings = &displaySleepSettings;
+      } else if (activeSubmenu == SettingAction::DisplayFrontlight) {
+        currentSettings = &displayFrontlightSettings;
+      } else {
+        currentSettings = &displaySettings;
+      }
       break;
     case 1:
       switch (activeSubmenu) {
@@ -404,6 +440,8 @@ StrId SettingsActivity::activeSubmenuTitleId() const {
   switch (activeSubmenu) {
     case SettingAction::DisplaySleepScreen:
       return StrId::STR_DISPLAY_SLEEP_SCREEN;
+    case SettingAction::DisplayFrontlight:
+      return StrId::STR_FRONTLIGHT;
     case SettingAction::ReaderFontOptions:
       return StrId::STR_READER_FONT_OPTIONS;
     case SettingAction::ReaderPageLayout:
@@ -879,6 +917,11 @@ void SettingsActivity::toggleCurrentSetting() {
     openSleepTimeoutPicker();
     return;
   }
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart ||
+      setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    openFrontlightScheduleTimePicker(setting.value16Ptr, setting.nameId);
+    return;
+  }
   if (setting.valuePtr == &CrossPointSettings::lineHeightPercent) {
     openLineHeightPicker();
     return;
@@ -1020,6 +1063,7 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::SystemReadingStats:
       case SettingAction::SystemGlobalStats:
       case SettingAction::DisplaySleepScreen:
+      case SettingAction::DisplayFrontlight:
       case SettingAction::None:
         // Do nothing
         break;
@@ -1104,6 +1148,19 @@ void SettingsActivity::openLineHeightPicker() {
       });
 }
 
+void SettingsActivity::openFrontlightScheduleTimePicker(uint16_t CrossPointSettings::* const valuePtr,
+                                                        const StrId titleId) {
+  const uint16_t storedValue = SETTINGS.*valuePtr;
+  startActivityForResult(std::make_unique<FrontlightTimePickerActivity>(renderer, mappedInput, titleId, storedValue),
+                         [this, valuePtr](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             SETTINGS.*valuePtr = static_cast<uint16_t>(std::get<IntervalResult>(result.data).value);
+                             SETTINGS.saveToFile();
+                           }
+                           requestUpdate();
+                         });
+}
+
 void SettingsActivity::openIdleTimeThresholdPicker() {
   startActivityForResult(
       std::make_unique<IntervalSelectionActivity>(
@@ -1136,7 +1193,7 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::ENUM && setting.valueGetter) {
     return settingEnumOptionLabel(setting, setting.valueGetter());
   }
-  if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
+  if (setting.type == SettingType::VALUE && (setting.valuePtr != nullptr || setting.value16Ptr != nullptr)) {
     return formatSettingValue(setting);
   }
   if (setting.type == SettingType::ACTION && setting.action == SettingAction::Language) {
@@ -1286,9 +1343,11 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     const bool isSectionHeader = settings[i].type == SettingType::SECTION_HEADER;
     fui::ListItem item;
     const fui::BitmapRef directionIcon = twoFingerSwipeIcon(settings[i].nameId);
+    const fui::BitmapRef endpointIcon = frontlightScheduleEndpointIcon(settings[i]);
+    const fui::BitmapRef itemIcon = directionIcon ? directionIcon : endpointIcon;
     item.label = isSectionHeader ? uiListSectionHeaderLabel(values[i], I18N.get(settings[i].nameId))
                                  : (directionIcon ? "" : I18N.get(settings[i].nameId));
-    item.icon = directionIcon;
+    item.icon = itemIcon;
     if (!isSectionHeader && !values[i].empty()) item.value = values[i].c_str();
     item.isHeader = isSectionHeader;
     item.actionValue = static_cast<int16_t>(i);
@@ -1353,7 +1412,11 @@ void SettingsActivity::render(RenderLock&&) {
                       (*currentSettings)[selectedSettingIndex - 1].valuePtr ==
                           &CrossPointSettings::screenMarginVertical ||
                       (*currentSettings)[selectedSettingIndex - 1].valuePtr ==
-                          &CrossPointSettings::screenMarginHorizontal)
+                          &CrossPointSettings::screenMarginHorizontal ||
+                      (*currentSettings)[selectedSettingIndex - 1].value16Ptr ==
+                          &CrossPointSettings::frontlightScheduleStart ||
+                      (*currentSettings)[selectedSettingIndex - 1].value16Ptr ==
+                          &CrossPointSettings::frontlightScheduleEnd)
                  ? tr(STR_SELECT)
                  : tr(STR_TOGGLE));
 

@@ -1,3 +1,25 @@
+## [Unreleased]
+
+### Added
+
+- Dictionary lookups can now save the selected word or phrase directly as a clipping.
+
+### Changed
+
+- On-screen keyboard keys are taller on every theme, giving touch readers larger tap targets.
+- Touch-screen header Back buttons now use a heavier chevron for improved visibility.
+- Frontlight schedules can now use one-minute start and end times.
+- The reader menu now uses tablet icons to show whether its touchscreen is enabled or disabled.
+
+### Fixed
+
+- OPDS book lists now use the standard Back header without obscuring its divider, while keeping Search available.
+- Opening Select Chapter no longer restarts X3/X4 readers for EPUBs with thousands of chapters.
+- X4 now clears the retained sleep screen with one half refresh on wake, reducing ghosting before the next screen appears.
+- Saved EPUB clipping highlights no longer wash out their text when reader text anti-aliasing is enabled.
+- Dismissing a dictionary definition with Back or an outside tap now returns directly to the reader instead of reopening word selection.
+- The web Settings page now loads reliably when KOReader Sync has an older saved password.
+
 ## [v1.5.1] - 2026-08-12
 
 ### Added

@@ -55,11 +55,9 @@ std::string addBmpSuffix(const std::string& path, const char* suffix) {
 
 UITheme UITheme::instance;
 
-UITheme::UITheme() {
+UITheme::UITheme() : currentMetrics(&LyraMetrics::values), currentTheme(std::make_unique<LyraTheme>()) {
   // Static construction must not log or depend on cross-TU serial initialization;
   // main.cpp reloads the saved theme after setup.
-  currentTheme = std::make_unique<LyraTheme>();
-  currentMetrics = &LyraMetrics::values;
 }
 
 void UITheme::reload() {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <CrossInkHalFrontlight.h>
 #include <HalClock.h>
 #include <HalGPIO.h>
 #include <HalTiltSensor.h>
@@ -20,6 +21,7 @@
 #include "util/Dictionary.h"
 #include "util/DictionaryRegistry.h"
 #include "util/FontFamilyLabel.h"
+#include "util/FrontlightSchedule.h"
 
 inline std::string fontSizePointLabel(const uint8_t pointSize) { return std::to_string(pointSize) + " pt"; }
 
@@ -548,7 +550,7 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
-    v.reserve(74);
+    v.reserve(77);
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
 
     // --- Display ---
@@ -590,10 +592,18 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                           {StrId::STR_LIST_VIEW, StrId::STR_GRID_VIEW}, "recentBooksView", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY));
-#if FREEINK_CAP_FRONTLIGHT && !FREEINK_DEVICE_X4PRO && !defined(SIMULATOR_DEVICE_X4_PRO)
     add(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
                             "frontlightRestoreOnWake", StrId::STR_CAT_DISPLAY));
-#endif
+    // Kept in the shared catalog for persistence and the web API. On-device,
+    // these values are presented only by Display > Frontlight.
+    add(SettingInfo::Toggle(StrId::STR_FRONTLIGHT_SCHEDULE, &CrossPointSettings::frontlightScheduleEnabled,
+                            "frontlightScheduleEnabled", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Value16(StrId::STR_START, &CrossPointSettings::frontlightScheduleStart,
+                             {0, FrontlightSchedule::kUnsetTimeOfDay, 1}, "frontlightScheduleStart",
+                             StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Value16(StrId::STR_END, &CrossPointSettings::frontlightScheduleEnd,
+                             {0, FrontlightSchedule::kUnsetTimeOfDay, 1}, "frontlightScheduleEnd",
+                             StrId::STR_CAT_DISPLAY));
 
     // --- Reader ---
     // Built-in font-family entry. Replaced per-call with a registry-aware
@@ -1266,7 +1276,7 @@ inline std::vector<SettingInfo> buildControlsSideButtonSettingsList(const std::v
 
 inline std::vector<SettingInfo> buildGroupedDisplaySettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> displaySettings;
-  displaySettings.reserve(8);
+  displaySettings.reserve(9);
 
   auto addDisplaySetting = [&](StrId nameId) {
     const auto it = std::find_if(allSettings.begin(), allSettings.end(),
@@ -1277,6 +1287,9 @@ inline std::vector<SettingInfo> buildGroupedDisplaySettingsList(const std::vecto
   };
 
   displaySettings.push_back(SettingInfo::Submenu(StrId::STR_DISPLAY_SLEEP_SCREEN, SettingAction::DisplaySleepScreen));
+  if (Frontlight.present()) {
+    displaySettings.push_back(SettingInfo::Submenu(StrId::STR_FRONTLIGHT, SettingAction::DisplayFrontlight));
+  }
   addDisplaySetting(StrId::STR_HIDE_BATTERY);
   if (halClock.isAvailable()) {
     addDisplaySetting(StrId::STR_HIDE_CLOCK);
@@ -1288,6 +1301,25 @@ inline std::vector<SettingInfo> buildGroupedDisplaySettingsList(const std::vecto
   addDisplaySetting(StrId::STR_SUNLIGHT_FADING_FIX);
 
   return displaySettings;
+}
+
+inline std::vector<SettingInfo> buildDisplayFrontlightSettingsList(const std::vector<SettingInfo>& allSettings) {
+  std::vector<SettingInfo> settings;
+  settings.reserve(4);
+
+  auto addDisplaySetting = [&](const StrId nameId) {
+    const auto it = std::find_if(allSettings.begin(), allSettings.end(),
+                                 [nameId](const auto& setting) { return setting.nameId == nameId; });
+    if (it != allSettings.end()) settings.push_back(*it);
+  };
+
+  addDisplaySetting(StrId::STR_RESTORE_LIGHT_ON_WAKE);
+  if (halClock.isAvailable()) {
+    addDisplaySetting(StrId::STR_FRONTLIGHT_SCHEDULE);
+    addDisplaySetting(StrId::STR_START);
+    addDisplaySetting(StrId::STR_END);
+  }
+  return settings;
 }
 
 inline std::vector<SettingInfo> buildDisplaySleepSettingsList(const std::vector<SettingInfo>& allSettings) {
