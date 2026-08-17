@@ -111,12 +111,15 @@ void AO3SyncActivity::performSearch() {
 
     while (max_retries > 0) {
       auto* secureClient = new NetworkClientSecure();
-      secureClient->setInsecure();   // Skip strict cert validation
+      secureClient->setInsecure();  // Skip strict cert validation
+#ifndef SIMULATOR
       secureClient->setTimeout(20);  // 20s network read timeout
 
       // Set ALPN to http/1.1 to help Cloudflare routing
       const char* alpn_protos[] = {"http/1.1", nullptr};
       secureClient->setAlpnProtocols(alpn_protos);
+#endif  // crossink-simulator's NetworkClientSecure has no read-timeout/ALPN knobs; the
+        // simulator's plain TCP transport doesn't need Cloudflare TLS routing hints.
 
       netClient.reset(secureClient);
 
@@ -180,7 +183,14 @@ void AO3SyncActivity::performSearch() {
       return;
     }
 
+    // crossink-simulator's HTTPClient::getStreamPtr() returns the base Stream* (its
+    // response body is not backed by a WiFiClient); real hardware returns WiFiClient*,
+    // which is itself a Stream, so the rest of this loop only needs Stream's interface.
+#ifdef SIMULATOR
+    Stream* stream = http.getStreamPtr();
+#else
     WiFiClient* stream = http.getStreamPtr();
+#endif
     if (!stream) {
       errorMessage = "Stream Failed";
       http.end();
@@ -214,7 +224,14 @@ void AO3SyncActivity::performSearch() {
       size_t available = stream->available();
       if (available > 0) {
         int toRead = std::min(available, (size_t)1024);
+        // crossink-simulator's Stream::read() is the single-byte overload only; use the
+        // buffered readBytes() helper there instead of the multi-arg Client::read() used
+        // on real hardware.
+#ifdef SIMULATOR
+        int read = stream->readBytes((uint8_t*)buffer, toRead);
+#else
         int read = stream->read((uint8_t*)buffer, toRead);
+#endif
         if (read > 0) {
           bytesProcessed += read;
           std::string chunk(buffer, read);

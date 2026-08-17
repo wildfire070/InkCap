@@ -6,15 +6,9 @@
 #include <cstdio>
 #include <string>
 
-#ifdef SIMULATOR
-#include <Arduino.h>
-
-MySerialImpl MySerialImpl::instance;
-
-size_t MySerialImpl::write(uint8_t b) { return logSerial.write(b); }
-size_t MySerialImpl::write(const uint8_t* buffer, size_t size) { return logSerial.write(buffer, size); }
-void MySerialImpl::flush() { logSerial.flush(); }
-#endif
+// MySerialImpl::instance/write/flush for SIMULATOR are defined in
+// crossink-simulator's firmware_link_stubs.cpp, not here — defining them in
+// both places is a link-time duplicate symbol error.
 
 #define MAX_ENTRY_LEN 256
 #define MAX_LOG_LINES 16
