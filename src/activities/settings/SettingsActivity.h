@@ -23,7 +23,6 @@ enum class SettingAction {
   RemapFrontButtonsReader,
   CustomiseStatusBar,
   KOReaderSync,
-  BookFusionSync,
   OPDSBrowser,
   DisplaySleepScreen,
   ReaderFontOptions,
