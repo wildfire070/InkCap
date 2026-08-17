@@ -13,6 +13,7 @@ The local manifests in `src/components/icons/` can use either source:
 
 - **Lucide:** `freeink-sdk/libs/assets/Icons/lucide/icons`
 - **Tabler outline:** `assets/tabler-icons/icons/outline`
+- **Tabler filled:** `assets/tabler-icons/icons/filled`
 
 Tabler is a CrossInk submodule pinned to a release commit. Clone it with the
 other dependencies before generating icons:
@@ -43,6 +44,8 @@ clang-format -i src/components/icons/tablerIcons.h
 Use `--library lucide` for existing Lucide manifests. The generated `Icon`
 objects are library-neutral FreeInk assets, so use them with
 `freeink::ui::bitmapFromIcon()` exactly like the existing Lucide icons:
+
+Use `--library tabler-filled` for filled Tabler icons:
 
 ```cpp
 target.bitmap(rect, freeink::ui::bitmapFromIcon(icon_tabler_settings_28));

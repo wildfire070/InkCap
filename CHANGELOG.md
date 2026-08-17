@@ -13,10 +13,13 @@
 
 ### Fixed
 
+- Power-button shortcuts now continue to work while the reader touchscreen is disabled.
 - OPDS book lists now use the standard Back header without obscuring its divider, while keeping Search available.
 - Opening Select Chapter no longer restarts X3/X4 readers for EPUBs with thousands of chapters.
 - X4 now clears the retained sleep screen with one half refresh on wake, reducing ghosting before the next screen appears.
 - Saved EPUB clipping highlights no longer wash out their text when reader text anti-aliasing is enabled.
+- Saved EPUB clipping highlights now continue through ellipses and other adjacent display fragments.
+- EPUB clipping previews now retain complete multi-paragraph selections.
 - Dismissing a dictionary definition with Back or an outside tap now returns directly to the reader instead of reopening word selection.
 - The web Settings page now loads reliably when KOReader Sync has an older saved password.
 
