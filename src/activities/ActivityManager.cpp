@@ -213,7 +213,7 @@ void ActivityManager::loop() {
         return;
       }
       // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
-      if (!handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
+      if (!handleGlobalHomeGesture()) {
         currentActivity->loop();
       }
     }
@@ -381,23 +381,6 @@ void ActivityManager::notifyInputLockChanged(const bool locked) {
   for (const auto& activity : stackActivities) {
     activity->onInputLockChanged(locked);
   }
-}
-
-bool ActivityManager::handleReaderPowerButtonSettingsOverride() {
-  if (!readerPowerButtonOpensSettings()) {
-    return false;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Power)) {
-    if (!currentActivity->openReaderSettingsMenu()) {
-      goToSettings();
-    }
-    return true;
-  }
-
-  // Do not let reader activities run configured short/long Power actions while
-  // the button is held. Its release is reserved for restoring Settings access.
-  return mappedInput.isPressed(MappedInputManager::Button::Power);
 }
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
@@ -656,11 +639,6 @@ bool ActivityManager::isReaderActivity() const {
 
   return std::any_of(stackActivities.begin(), stackActivities.end(),
                      [](const auto& activity) { return activity && activity->isReaderActivity(); });
-}
-
-bool ActivityManager::readerPowerButtonOpensSettings() const {
-  return mappedInput.hasTouchHardware() && SETTINGS.disableReaderTouchscreen && currentActivity &&
-         currentActivity->handlesReaderPowerSettingsOverride();
 }
 
 bool ActivityManager::hasActivityNamed(const char* activityName) const {
