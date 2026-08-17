@@ -98,7 +98,6 @@ class XtcReaderActivity final : public Activity {
   void onInputLockChanged(bool locked) override;
   bool handleQuickLockUnlock(QuickLockTrigger trigger) override;
   bool canSnapshotForSleepOverlay() const override { return true; }
-  bool handlesReaderPowerSettingsOverride() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return quickActionsPopup.isActive(); }
   bool blocksGlobalInput() const override { return quickActionsPopup.isActive(); }
   bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN action) override;

@@ -3,6 +3,8 @@
 #include <CrossInkHalFrontlight.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
+#include <FreeInkUIGfxRenderer.h>
+#include <FreeInkUIIcon.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -95,6 +97,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
+#include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
 #include "network/UsbSerialFileTransfer.h"
 #ifdef SIMULATOR
@@ -462,14 +465,6 @@ bool startGlobalSyncProgress(const bool networkBootReady = false) {
 CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
   static bool longPowerButtonHandled = false;
 
-  if (activityManager.readerPowerButtonOpensSettings()) {
-    if (mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
-      longPowerButtonHandled = false;
-      screenshotComboHandled = false;
-    }
-    return CrossPointSettings::SHORT_PWRBTN::IGNORE;
-  }
-
   if (mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
     if (longPowerButtonHandled) {
       longPowerButtonHandled = false;
@@ -519,9 +514,12 @@ void notifyQuickLockChanged() {
     const bool foreground = !background;
     RenderLock lock;
     renderer.fillRect(x, y, badgeSize, badgeSize, background);
-    renderer.drawRoundedRect(x + 12, y + 4, 16, 22, 4, 8, foreground);
-    renderer.fillRect(x + 7, y + 19, 26, 16, foreground);
-    renderer.fillRect(x + 18, y + 25, 4, 6, background);
+    freeink::ui::GfxRendererTarget target(renderer);
+    target.bitmap(
+        freeink::ui::Rect{x + (badgeSize - icon_tabler_lock_28.w) / 2, y + (badgeSize - icon_tabler_lock_28.h) / 2,
+                          icon_tabler_lock_28.w, icon_tabler_lock_28.h},
+        freeink::ui::bitmapFromIcon(icon_tabler_lock_28), freeink::ui::BitmapMode::Center,
+        freeink::ui::Paint::solid(foreground ? freeink::ui::Color::Black : freeink::ui::Color::White));
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   } else {
     (void)activityManager.requestUpdateAndWait();
@@ -1463,8 +1461,8 @@ void loop() {
     screenshotComboActive = false;
     return;
   }
-  if (!buttonShortcutController.isQuickLocked() && !activityManager.readerPowerButtonOpensSettings() &&
-      gpio.isPressed(HalGPIO::BTN_POWER) && gpio.isPressed(HalGPIO::BTN_DOWN)) {
+  if (!buttonShortcutController.isQuickLocked() && gpio.isPressed(HalGPIO::BTN_POWER) &&
+      gpio.isPressed(HalGPIO::BTN_DOWN)) {
     screenshotComboActive = true;
     if (screenshotButtonsReleased) {
       screenshotButtonsReleased = false;

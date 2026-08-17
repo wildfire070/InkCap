@@ -519,7 +519,8 @@ bool matchClipRunFromPageWord(const Page& page, const std::string& clippingText,
     if (fragmentMatch == ClippingTextMatcher::TokenFragmentMatch::CONTINUES_TOKEN) {
       const char* word = block.wordText(static_cast<uint16_t>(i));
       const char* visibleWord = word + (hasEmSpacePrefix(word) ? 3 : 0);
-      tokenOffset += std::strlen(visibleWord) - 1;
+      const size_t visibleWordLength = std::strlen(visibleWord);
+      tokenOffset += visibleWordLength - (block.wordEndsWithInsertedHyphen(static_cast<uint16_t>(i)) ? 1 : 0);
       return true;
     }
 
