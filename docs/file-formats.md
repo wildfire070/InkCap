@@ -225,10 +225,16 @@ Binary layout:
   - version 3 only: reader layout signature (`uint32_t` LE; font, spacing,
     viewport, and other section-layout inputs)
   - `chapterTitle` (`char[48]`, null-terminated/truncated)
-  - version 1: selected text (`String`, truncated to `512` bytes for the
-    in-app store)
+  - version 1: selected text (`String`; legacy files were written with a
+    `512`-byte in-app limit)
   - versions 2-3: selected-text length (`uint16_t` LE) followed by that many
-    UTF-8 bytes (maximum `512`)
+    UTF-8 bytes (the current in-app limit is `4096` bytes, defined by
+    `CLIPPING_TEXT_MAX`)
+
+The clipping selector has a separate navigation bound: it exposes at most
+`240` visible words from at most three pages. This is a bounded in-memory
+selection window for low-memory devices, not a character-count limit. The
+selected text is still stored separately and is limited to `4096` UTF-8 bytes.
 
 CrossInk uses the stored spine/page/paragraph fields as anchors, then searches
 near that location for the stored clipping text after relayout. This is similar

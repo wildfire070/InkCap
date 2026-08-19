@@ -218,7 +218,9 @@ void WifiSelectionActivity::onEnter() {
   Activity::onEnter();
   LOG_INF("WIFI", "selection enter free=%u maxAlloc=%u stack=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
-  sdFontSystem.releaseLoadedFont(renderer);
+  // WiFi startup needs several contiguous driver buffers. Release the SD-font
+  // catalog as well as the active font before the radio allocates them.
+  sdFontSystem.releaseForNetwork(renderer);
   ensureWifiEventLoggingRegistered();
   LOG_INF("WIFI", "event logging registered free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 

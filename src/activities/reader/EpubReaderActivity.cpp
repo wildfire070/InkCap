@@ -2807,25 +2807,57 @@ void EpubReaderActivity::loop() {
 
   // Side button long-press actions use raw Up/Down so the direction stays
   // physical regardless of the Prev/Next side layout setting.
+  const bool sideLongPressSkipsChapter =
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_CHAPTER_SKIP;
   const bool sideLongPressChangesFont =
       SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_FONT_SIZE;
   const bool sideLongPressChangesOrientation =
       SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_ORIENTATION_CHANGE;
-  if (sideLongPressChangesFont || sideLongPressChangesOrientation) {
+  if (sideLongPressSkipsChapter || sideLongPressChangesFont || sideLongPressChangesOrientation) {
     const bool topReleased = mappedInput.wasReleased(MappedInputManager::Button::Up);
     const bool bottomReleased = mappedInput.wasReleased(MappedInputManager::Button::Down);
-    if (sideButtonLongPressHandled && (topReleased || bottomReleased)) {
+    const bool sidePrevReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack);
+    const bool sideNextReleased = mappedInput.wasReleased(MappedInputManager::Button::PageForward);
+    const bool sideLongPressReleased =
+        sideLongPressSkipsChapter ? (sidePrevReleased || sideNextReleased) : (topReleased || bottomReleased);
+    if (sideButtonLongPressHandled && sideLongPressReleased) {
       sideButtonLongPressHandled = false;
       return;
     }
 
     const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool prevLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::PageBack);
+    const bool nextLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::PageForward);
     const bool topLongPressed =
         longPressReady && (mappedInput.isPressed(MappedInputManager::Button::Up) || topReleased);
     const bool bottomLongPressed =
         longPressReady && (mappedInput.isPressed(MappedInputManager::Button::Down) || bottomReleased);
 
-    if (!sideButtonLongPressHandled && topLongPressed) {
+    if (sideLongPressSkipsChapter && !sideButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
+      sideButtonLongPressHandled = true;
+      if (!nextLongPressed && section && section->currentPage > 0) {
+        section->currentPage = 0;
+        requestUpdate();
+        return;
+      }
+
+      // We don't want to delete the section mid-render, so grab the semaphore.
+      {
+        RenderLock lock(*this);
+        nextPageNumber = 0;
+        if (nextLongPressed) {
+          currentSpineIndex++;
+        } else if (currentSpineIndex > 0) {
+          currentSpineIndex--;
+        }
+        section.reset();
+      }
+      requestUpdate();
+      return;
+    }
+
+    if ((sideLongPressChangesFont || sideLongPressChangesOrientation) && !sideButtonLongPressHandled &&
+        topLongPressed) {
       sideButtonLongPressHandled = !topReleased;
       if (sideLongPressChangesFont) {
         if (sdFontSystem.changeReaderFontSize(/*larger=*/true)) {
@@ -2837,7 +2869,8 @@ void EpubReaderActivity::loop() {
       }
       return;
     }
-    if (!sideButtonLongPressHandled && bottomLongPressed) {
+    if ((sideLongPressChangesFont || sideLongPressChangesOrientation) && !sideButtonLongPressHandled &&
+        bottomLongPressed) {
       sideButtonLongPressHandled = !bottomReleased;
       if (sideLongPressChangesFont) {
         if (sdFontSystem.changeReaderFontSize(/*larger=*/false)) {

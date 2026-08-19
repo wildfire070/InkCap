@@ -226,6 +226,10 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
       state = LookupState::Idle;
       return LookupEvent::CreateClipping;
     }
+    if (state == LookupState::NotFound && touchAction == ACTION_SWITCH_DICTIONARY) {
+      state = LookupState::Idle;
+      return LookupEvent::SwitchDictionary;
+    }
     if (state == LookupState::ReadError) {
       int touchX = 0;
       int touchY = 0;
@@ -271,11 +275,13 @@ void DictionaryLookupController::buildAltFormPromptScreen(AltFormUiApp::ScreenTy
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& theme = screen.theme();
   const bool isAltForm = state == LookupState::AltFormPrompt;
-  const uint8_t actionCount = isAltForm ? (allowCreateClipping_ ? 3 : 2) : 1;
+  const uint8_t actionCount = isAltForm ? (allowCreateClipping_ ? 3 : 2) : (allowCreateClipping_ ? 2 : 0);
   const int16_t actionHeight = std::max<int16_t>(theme.rowHeight, kDictionarySwitchTouchHeight);
   const int16_t actionGap = theme.spaceMd;
   const int16_t actionBandHeight =
-      static_cast<int16_t>(actionHeight * actionCount + actionGap * static_cast<int16_t>(actionCount - 1));
+      actionCount == 0
+          ? 0
+          : static_cast<int16_t>(actionHeight * actionCount + actionGap * static_cast<int16_t>(actionCount - 1));
   // Keep the final action clear of the e-ink panel's bottom edge. The visible
   // button-hint strip is not enough margin on every touch device.
   screen.setContentMargin(
@@ -302,8 +308,9 @@ void DictionaryLookupController::buildAltFormPromptScreen(AltFormUiApp::ScreenTy
     addButton(tr(STR_YES), ACTION_ALT_FORM_YES, false, 0);
     addButton(tr(STR_NO), ACTION_ALT_FORM_NO, false, 1);
     if (allowCreateClipping_) addButton(tr(STR_SAVE_CLIPPING), ACTION_CREATE_CLIPPING, true, 2);
-  } else {
-    addButton(tr(STR_SAVE_CLIPPING), ACTION_CREATE_CLIPPING, true, 0);
+  } else if (allowCreateClipping_) {
+    addButton(tr(STR_SWITCH_DICTIONARY), ACTION_SWITCH_DICTIONARY, false, 0);
+    addButton(tr(STR_SAVE_CLIPPING), ACTION_CREATE_CLIPPING, false, 1);
   }
 }
 #endif
@@ -386,7 +393,7 @@ bool DictionaryLookupController::render() {
       const int y = metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + metrics.verticalSpacing;
       const auto& theme = altFormUiApp.theme();
       const int actionHeight = std::max<int>(theme.rowHeight, kDictionarySwitchTouchHeight);
-      const int actionBandHeight = allowCreateClipping_ ? actionHeight : 0;
+      const int actionBandHeight = allowCreateClipping_ ? actionHeight * 2 + theme.spaceMd : 0;
       const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - theme.spaceLg - actionBandHeight -
                          (allowCreateClipping_ ? theme.spaceLg : 0);
       freeink::ui::TextStyle phraseStyle = altFormUiApp.theme().bodyText;
