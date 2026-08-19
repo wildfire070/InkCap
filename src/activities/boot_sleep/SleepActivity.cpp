@@ -325,8 +325,13 @@ bool resolvePreferredSleepDirectory(std::string& sleepDir) {
     LOG_INF("SLP", "Preferred sleep folder missing, falling back: %s", APP_STATE.preferredSleepFolderPath.c_str());
   }
 
-  if (folderExists("/.sleep")) return true;
-  return folderExists("/sleep");
+  char defaultSleepDir[16];
+  if (FsHelpers::resolveRootDirectoryIgnoreCase("/.sleep", defaultSleepDir, sizeof(defaultSleepDir)) &&
+      folderExists(defaultSleepDir)) {
+    return true;
+  }
+  return FsHelpers::resolveRootDirectoryIgnoreCase("/sleep", defaultSleepDir, sizeof(defaultSleepDir)) &&
+         folderExists(defaultSleepDir);
 }
 
 bool openPreferredSleepDirectory(FsFile& dir, std::string& sleepDir) {
