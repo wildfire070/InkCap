@@ -1,80 +1,38 @@
-name: Feature Request
-description: Propose a new feature, enhancement, or change to CrossPoint
-title: "Short, descriptive title of the request"
-labels: ["enhancement", "needs-scope-review"]
+name: Idea or request
+description: Suggest an improvement, a new companion, or new lines for an existing one
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to propose a change to CrossPoint!
+        This is version 1 — the shape of it is still very much open. Ideas welcome.
 
-        **Before you continue, please read [SCOPE.md](../blob/master/SCOPE.md) and [ROADMAP.md](../blob/master/ROADMAP.md).**
-
-        CrossPoint is intentionally narrow. Most rejected proposals are rejected for scope reasons that are already
-        documented. The checklist below exists to save both of us time.
-
-        If you are not sure whether your idea fits, open a [Discussion](../../discussions) first instead of filing
-        this issue.
-
-  - type: checkboxes
-    id: scope-check
+  - type: dropdown
+    id: kind
     attributes:
-      label: Scope Self-Check (required)
-      description: Please confirm each of the following. If any are unchecked, your issue will likely be closed.
+      label: What kind of idea is this?
       options:
-        - label: I have read SCOPE.md and ROADMAP.md.
-          required: true
-        - label: This is **not** a new theme or theming change (themes are temporarily closed pending the move to SD-loaded themes).
-          required: true
-        - label: This is **not** a new external network connector (sync engine, cloud storage, remote file access, OPDS extensions beyond what exists, or any new "talk to a server" feature).
-          required: true
-        - label: This is **not** an interactive app (game, calculator, notepad), writing/authoring tool, RSS/news/browser feature, media playback feature, or PDF rendering.
-          required: true
-        - label: The stock firmware does **not** already handle this well.
-          required: true
-        - label: No other popular CrossPoint fork already handles this well (or, if one does, I explain below why CrossPoint still needs it).
-          required: true
-
-  - type: textarea
-    id: problem
-    attributes:
-      label: Problem this solves
-      description: What user-facing problem or reading-experience gap does this address? Be concrete.
-      placeholder: e.g., "When reading in landscape, paragraph breaks are inconsistent because..."
+        - A new companion character
+        - New lines for an existing companion
+        - A change to how moods or thresholds work
+        - Something about how it looks on screen
+        - Support for another device
+        - Something else
     validations:
       required: true
 
   - type: textarea
-    id: stock-gap
+    id: idea
     attributes:
-      label: Why the stock firmware (and other forks) do not already solve this
-      description: Explain which existing solutions you checked and why they fall short. This is the core scope filter.
+      label: The idea
+      description: What would you like, and what would it be good for?
     validations:
       required: true
 
-  - type: textarea
-    id: proposal
+  - type: markdown
     attributes:
-      label: Proposed change
-      description: A short description of what you would build or change. Focus on user impact; implementation details can come later.
-    validations:
-      required: true
-
-  - type: textarea
-    id: tradeoffs
-    attributes:
-      label: Memory / flash / complexity cost
-      description: |
-        CrossPoint runs on 380KB of RAM. Roughly how much DRAM, flash, or code complexity does this add?
-        "Don't know" is a valid answer, but please attempt an estimate.
-      placeholder: e.g., "Adds ~2KB flash for the new font tables, no DRAM impact at runtime."
-    validations:
-      required: false
-
-  - type: textarea
-    id: additional-context
-    attributes:
-      label: Additional context
-      description: Anything else relevant (links, screenshots, related discussions).
-    validations:
-      required: false
+      value: |
+        **Adding a character or writing lines is genuinely approachable.** Each companion is a
+        single plain-text file in `src/companion/sprites/` holding both its artwork and its
+        dialogue — no image editor, no binary assets. See the README for the format. Pull
+        requests very welcome.

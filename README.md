@@ -308,6 +308,28 @@ its shading, and they are resolved at build time so the render path stays trivia
 
 ---
 
+## This is version 1 — tell me what is wrong with it
+
+It works, it has been used on a real device, and it is also the first version of something that
+was built in a few days. There will be rough edges I have not hit yet, and choices that seemed
+sensible to me and will annoy you.
+
+**Please open an issue.** Anything is fair game:
+
+- **Bugs** — [report one](../../issues/new?template=bug_report.yml). Reports from an **X4** or
+  **X4 Pro** are especially valuable, since neither has ever run this
+- **Ideas and requests** — [suggest one](../../issues/new?template=feature_request.yml). New
+  characters, better lines, different thresholds, a different place on screen
+- **Lines that are not funny enough.** Genuinely. The writing is half of this, and it is easy to
+  change — each character's dialogue is plain text sitting next to its artwork
+
+Things I already know are unfinished: there is no stats screen, the status bar has no companion
+glyph, and the milestone line for beating your best streak has never been seen by anyone because
+it takes days of reading to earn.
+
+If you build a character of your own, please send a pull request. One text file is the whole
+contribution.
+
 ## Scope
 
 This is a fork, not a proposed upstream feature. CrossPoint's [SCOPE.md](SCOPE.md) explicitly

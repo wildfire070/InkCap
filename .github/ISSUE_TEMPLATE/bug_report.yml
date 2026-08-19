@@ -1,54 +1,79 @@
-name: Bug Report
-description: Report an issue or unexpected behavior
-title: "Short, descriptive title of the issue"
-labels: ["bug", "triage"]
+name: Bug report
+description: Something in the companion is not working
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this bug! Please fill out the details below.
+        Thanks for trying this. It is version 1 and has only ever run on an Xteink X3, so
+        reports from other devices are especially useful.
+
+        If the problem still happens with the companion turned **off** in Settings, it is a
+        CrossPoint bug rather than a companion one — please report it upstream instead.
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Which device?
+      description: This matters more than usual — the X4 has no clock, and the X4 Pro is a different chip entirely.
+      options:
+        - Xteink X3
+        - Xteink X4
+        - Xteink X4 Pro
+        - Other (say which below)
+    validations:
+      required: true
 
   - type: input
     id: version
     attributes:
-      label: Affected Version
-      description: What version of the project/library are you using? (e.g., v1.2.3, master branch commit SHA)
-      placeholder: Ex. v1.2.3
+      label: Version
+      description: From the release you flashed, or the commit you built.
+      placeholder: v1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: companion
+    attributes:
+      label: Which companion was active?
+      options:
+        - Sophocles (fox)
+        - Vellum (ghost)
+        - Octavo (robot)
+        - Lumen (moth)
+        - Sprig (sprout)
+        - Not relevant / not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead. A photo of the screen is worth a lot here.
     validations:
       required: true
 
   - type: textarea
-    id: bug-description
+    id: repro
     attributes:
-      label: Describe the Bug
-      description: A clear and concise description of what the bug is.
-      placeholder:
-    validations:
-      required: true
-
-  - type: textarea
-    id: steps-to-reproduce
-    attributes:
-      label: Steps to Reproduce
-      description: Clearly list the steps necessary to reproduce the unexpected behavior.
+      label: How can it be reproduced?
       placeholder: |
-        1. Go to '...'
-        2. Select '...'
-        3. Crash
+        1. Enable the companion in Settings
+        2. Read for about ten minutes
+        3. Go back to Home
+        4. ...
     validations:
-      required: true
+      required: false
 
   - type: textarea
-    id: expected-behavior
+    id: serial
     attributes:
-      label: Expected Behavior
-      description: A clear and concise description of what you expected to happen.
-    validations:
-      required: true
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Relevant Log Output/Screenshots
-      description: If applicable, error messages, or log output to help explain your problem. You can drag and drop images here.
+      label: Serial log, if you have one
+      description: |
+        Optional, but it turns guesswork into a fix. Connect over USB and run
+        `pio device monitor -b 115200`, or `python3 scripts/debugging_monitor.py`.
       render: shell
+    validations:
+      required: false
