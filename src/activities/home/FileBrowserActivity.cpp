@@ -44,17 +44,6 @@ bool usesTwoLineFileBrowserRows() {
   return SETTINGS.fileBrowserDisplay == CrossPointSettings::FILE_BROWSER_DISPLAY_2_LINES;
 }
 
-bool isDefaultSleepFolderPath(const std::string& path) { return path == "/sleep" || path == "/.sleep"; }
-
-bool isSleepImageFile(const std::string& path) {
-  return FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path);
-}
-
-bool isMacOSMetadataEntry(std::string_view filename) {
-  return filename.rfind("._", 0) == 0 || filename == ".DS_Store" || filename == ".Spotlight-V100" ||
-         filename == ".Trashes" || filename == ".fseventsd";
-}
-
 bool equalsIgnoreCase(std::string_view a, std::string_view b) {
   if (a.length() != b.length()) return false;
   for (size_t i = 0; i < a.length(); ++i) {
@@ -63,6 +52,19 @@ bool equalsIgnoreCase(std::string_view a, std::string_view b) {
     }
   }
   return true;
+}
+
+bool isDefaultSleepFolderPath(const std::string& path) {
+  return equalsIgnoreCase(path, "/sleep") || equalsIgnoreCase(path, "/.sleep");
+}
+
+bool isSleepImageFile(const std::string& path) {
+  return FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path);
+}
+
+bool isMacOSMetadataEntry(std::string_view filename) {
+  return filename.rfind("._", 0) == 0 || filename == ".DS_Store" || filename == ".Spotlight-V100" ||
+         filename == ".Trashes" || filename == ".fseventsd";
 }
 
 bool isWindowsMetadataEntry(std::string_view filename) {
