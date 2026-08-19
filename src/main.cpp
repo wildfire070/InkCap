@@ -628,6 +628,14 @@ ButtonShortcutController::ChordAction configuredChordAction() {
   return static_cast<ButtonShortcutController::ChordAction>(rawAction);
 }
 
+ButtonShortcutController::ChordAction configuredSideButtonChordAction() {
+  const auto rawAction = SETTINGS.sideButtonChordAction;
+  if (rawAction >= CrossPointSettings::POWER_CHORD_ACTION_COUNT) {
+    return ButtonShortcutController::ChordAction::Disabled;
+  }
+  return static_cast<ButtonShortcutController::ChordAction>(rawAction);
+}
+
 CrossPointSettings::SHORT_PWRBTN chordPowerAction(const ButtonShortcutController::ChordAction action) {
   using Chord = ButtonShortcutController::ChordAction;
   using Power = CrossPointSettings::SHORT_PWRBTN;
@@ -702,6 +710,8 @@ bool dispatchButtonShortcut(const ButtonShortcutController::Result& result) {
       break;
     case ButtonShortcutController::Event::ConfiguredAction:
       return dispatchShortcutAction(chordPowerAction(result.action));
+    case ButtonShortcutController::Event::TouchscreenEscapeHatch:
+      return activityManager.openReaderSettingsForTouchscreenEscapeHatch();
   }
 
   activityManager.loop();
@@ -1480,6 +1490,16 @@ void loop() {
       RenderLock lock;
       ScreenshotUtil::takeScreenshot(renderer);
     }
+    return;
+  }
+
+  const bool touchscreenEscapeHatch =
+      gpio.hasTouch() && SETTINGS.disableReaderTouchscreen && activityManager.isReaderActivity();
+  const auto sideButtonShortcutResult = buttonShortcutController.updateUpDown(
+      millis(), gpio.isPressed(HalGPIO::BTN_UP), gpio.isPressed(HalGPIO::BTN_DOWN), configuredSideButtonChordAction(),
+      touchscreenEscapeHatch);
+  if (dispatchButtonShortcut(sideButtonShortcutResult) || sideButtonShortcutResult.consumeInput) {
+    lastActivityTime = millis();
     return;
   }
 

@@ -3,6 +3,7 @@
 ### Added
 
 - Dictionary lookups can now save the selected word or phrase directly as a clipping.
+- Readers can configure an Up + Down side-button shortcut; on touchscreen devices, while the reader touchscreen is disabled, the same chord always opens Settings so it can be restored.
 
 ### Changed
 
@@ -13,6 +14,8 @@
 
 ### Fixed
 
+- Treat empty KOReader sync responses as no remote reading position.
+- Holding a side button for a chapter skip now skips immediately instead of waiting for release.
 - XTC book covers now appear consistently across all Home screen layouts.
 - Choosing Sleep from Quick Actions now reliably shows the selected cover or sleep screen.
 - TXT readers now font size changes should work more reliably on touch devices and via shortcuts.
@@ -28,6 +31,7 @@
 - EPUB clipping previews now retain complete multi-paragraph selections.
 - Dismissing a dictionary definition with Back or an outside tap now returns directly to the reader instead of reopening word selection.
 - The web Settings page now loads reliably when KOReader Sync has an older saved password.
+- Nearby Stats Sync now shows Sync and Cancel buttons on touch readers.
 
 ## [v1.5.1] - 2026-08-12
 

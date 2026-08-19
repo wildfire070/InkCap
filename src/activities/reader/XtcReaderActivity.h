@@ -40,6 +40,7 @@ class XtcReaderActivity final : public Activity {
   // Session-only display toggle; fixed-layout XTC pages are never regenerated.
   bool statusBarVisible = true;
   bool longPressMenuHandled = false;
+  bool sideButtonLongPressHandled = false;
   bool frontButtonLongPressHandled = false;
   bool longPressBackHandled = false;
   ReaderProgressSaveDebouncer progressSaveDebouncer;
