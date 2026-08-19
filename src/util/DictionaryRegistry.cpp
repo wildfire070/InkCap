@@ -1,5 +1,6 @@
 #include "DictionaryRegistry.h"
 
+#include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
 
@@ -23,14 +24,12 @@ bool DictionaryRegistry::discover() {
   entries_.reserve(16);
   root_.clear();
 
+  char resolvedRoot[32];
   for (const auto* candidate : DICT_ROOT_CANDIDATES) {
-    auto dir = Storage.open(candidate);
-    if (dir && dir.isDirectory()) {
-      root_ = candidate;
-      dir.close();
+    if (FsHelpers::resolveRootDirectoryIgnoreCase(candidate, resolvedRoot, sizeof(resolvedRoot))) {
+      root_ = resolvedRoot;
       break;
     }
-    if (dir) dir.close();
   }
 
   if (root_.empty()) {

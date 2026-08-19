@@ -194,6 +194,9 @@ void XtcReaderActivity::loop() {
   }
   if (quickActionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
+  const bool shortcutPageTurn = shortcutPageTurnPending;
+  shortcutPageTurnPending = false;
+
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
   const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
   const auto statusBarMode = static_cast<CrossPointSettings::XTC_STATUS_BAR_MODE>(SETTINGS.xtcStatusBarMode);
@@ -411,7 +414,7 @@ void XtcReaderActivity::loop() {
   bool prevTriggered = tiltPrev || sidePrev || frontPrev;
   bool nextTriggered = tiltNext || sideNext || frontNext;
   prevTriggered = prevTriggered || touch.prev;
-  nextTriggered = nextTriggered || touch.next;
+  nextTriggered = nextTriggered || touch.next || shortcutPageTurn;
 
   if (!prevTriggered && !nextTriggered) {
     return;
@@ -894,6 +897,9 @@ bool XtcReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
 
 bool XtcReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
   switch (action) {
+    case CrossPointSettings::SHORT_PWRBTN::PAGE_TURN:
+      shortcutPageTurnPending = true;
+      return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;

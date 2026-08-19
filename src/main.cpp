@@ -1268,11 +1268,20 @@ void setup() {
           allowFastInitialReaderRefresh = true;
         } else {
           renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+          if (shouldClearX4WakeGhosting()) {
+            // The X4's explicit wake refresh has already cleaned the retained
+            // frame, so the reader can use its fast initial cycle as well.
+            allowFastInitialReaderRefresh = true;
+          }
         }
-      } else if (shouldClearX4WakeGhosting()) {
+      } else if (shouldClearX4WakeGhosting() && SETTINGS.fadingFix != 0) {
         LOG_INF("BOOT", "X4 wake: clearing retained sleep image with half refresh");
         renderer.clearScreen();
         renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+        // The explicit HALF refresh above has already established a clean panel
+        // baseline, so the reader's first page can use its fast initial cycle
+        // instead of repeating the cleanup waveform.
+        allowFastInitialReaderRefresh = true;
       }
       break;
     case BootResume::Splash:

@@ -5,12 +5,12 @@ PlatformIO pre-build script: inject git info into version defines.
                                         product name is a separate literal
                                         prefix in source, not baked in here)
   production:    1.1.0               (when $CROSSINK_RELEASE_VERSION is set)
-  RC (any of the three above): 1.1.0-rc+<hash>  (when $CROSSINK_RC_HASH is set)
+  RC (any of the three above): 1.1.0-<hash>-RC  (when $CROSSINK_RC_HASH is set)
   test & debug:          1.2.6-<branch>+<5-char-hash>
-  gh_release_rc: 1.1.0-rc+<hash>       (hash from $CROSSINK_RC_HASH in CI,
+  gh_release_rc: 1.1.0-<hash>-RC       (hash from $CROSSINK_RC_HASH in CI,
                                         or from git locally)
 
-All other environments set CROSSINK_VERSION directly in platformio.ini.
+Simulator environments set CROSSINK_VERSION directly in platformio.ini.
 """
 
 import configparser
@@ -119,7 +119,8 @@ def get_crossink_version(project_dir):
 
 def get_release_candidate_version(project_dir):
     short_hash = os.environ.get('CROSSINK_RC_HASH') or get_git_short_hash(project_dir)
-    return f'{get_crossink_version(project_dir)}-rc+{sanitize_version_component(short_hash)}'
+    base_version = re.sub(r'-RC$', '', get_crossink_version(project_dir), flags=re.IGNORECASE)
+    return f'{base_version}-{sanitize_version_component(short_hash)}-RC'
 
 
 def get_production_version(project_dir):

@@ -9,6 +9,17 @@
 #include "components/OptionPopup.h"
 
 namespace QuickActions {
+namespace {
+
+bool sleepScreenNeedsUnderlyingFrame() {
+  // These modes deliberately keep some or all of the currently displayed
+  // framebuffer. All other sleep screens paint an opaque replacement.
+  return SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY ||
+         SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME;
+}
+
+}  // namespace
+
 void showConfiguredPopup(OptionPopup& popup, const std::function<void()>& requestUpdate, ActionHandler actionHandler,
                          ActionFilter actionFilter) {
   std::vector<std::string> labels;
@@ -34,7 +45,7 @@ void showConfiguredPopup(OptionPopup& popup, const std::function<void()>& reques
                  // them captures or paints over the stale modal image. Other actions
                  // already schedule their own redraw and should not pay for an extra
                  // full-page render here.
-                 if (action == CrossPointSettings::SHORT_PWRBTN::SLEEP ||
+                 if ((action == CrossPointSettings::SHORT_PWRBTN::SLEEP && sleepScreenNeedsUnderlyingFrame()) ||
                      action == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK ||
                      (action == CrossPointSettings::SHORT_PWRBTN::SCREENSHOT &&
                       !activityManager.canSnapshotForSleepOverlay())) {

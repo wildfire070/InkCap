@@ -13,12 +13,18 @@
 
 ### Fixed
 
+- XTC book covers now appear consistently across all Home screen layouts.
+- Choosing Sleep from Quick Actions now reliably shows the selected cover or sleep screen.
+- TXT readers now font size changes should work more reliably on touch devices and via shortcuts.
+- Sleep-image, dictionary, and SD-font folders now work regardless of capitalization, including `/Sleep`, `/Dictionaries`, and `/Fonts`.
+- X4 Pro's Home button shortcut for page turns now work in XTC and XTCH readers.
+- The Previous Chapter two-finger swipe now opens the previous chapter at its first page.
 - Power-button shortcuts now continue to work while the reader touchscreen is disabled.
 - OPDS book lists now use the standard Back header without obscuring its divider, while keeping Search available.
 - Opening Select Chapter no longer restarts X3/X4 readers for EPUBs with thousands of chapters.
-- X4 now clears the retained sleep screen with one half refresh on wake, reducing ghosting before the next screen appears.
+- X4 now clears the retained sleep screen with one half refresh on wake when Sunlight Fading Fix is enabled, reducing ghosting before the next screen appears.
 - Saved EPUB clipping highlights no longer wash out their text when reader text anti-aliasing is enabled.
-- Saved EPUB clipping highlights now continue through ellipses and other adjacent display fragments.
+- Saved EPUB clipping highlights now continue through ellipses, including non-breaking-space separators.
 - EPUB clipping previews now retain complete multi-paragraph selections.
 - Dismissing a dictionary definition with Back or an outside tap now returns directly to the reader instead of reopening word selection.
 - The web Settings page now loads reliably when KOReader Sync has an older saved password.
