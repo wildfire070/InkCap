@@ -177,7 +177,7 @@ CrossPoint build back on — but you will lose your settings and saved networks.
 
 **No toolchain needed:**
 
-1. Download `firmware.bin` from the [latest release](../../releases/latest)
+1. Download `firmware.bin` from the [latest release](https://github.com/JoshuaMillerCode/crosspoint-reader-companion/releases/latest)
 2. Connect your device by USB-C and wake it
 3. Go to [crosspointreader.com/#flash-tools](https://crosspointreader.com/#flash-tools)
 4. Pick your device (**X3** or **X4**), choose **Custom .bin**, and upload the file
@@ -316,10 +316,10 @@ sensible to me and will annoy you.
 
 **Please open an issue.** Anything is fair game:
 
-- **Bugs** — [report one](../../issues/new?template=bug_report.yml). Reports from an **X4** or
-  **X4 Pro** are especially valuable, since neither has ever run this
-- **Ideas and requests** — [suggest one](../../issues/new?template=feature_request.yml). New
-  characters, better lines, different thresholds, a different place on screen
+- **Bugs** — [report one](https://github.com/JoshuaMillerCode/crosspoint-reader-companion/issues/new?template=bug_report.yml).
+  Reports from an **X4** or **X4 Pro** are especially valuable, since neither has ever run this
+- **Ideas and requests** — [suggest one](https://github.com/JoshuaMillerCode/crosspoint-reader-companion/issues/new?template=feature_request.yml).
+  New characters, better lines, different thresholds, a different place on screen
 - **Lines that are not funny enough.** Genuinely. The writing is half of this, and it is easy to
   change — each character's dialogue is plain text sitting next to its artwork
 
