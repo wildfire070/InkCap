@@ -9,9 +9,14 @@ mood depends on how much you actually read.
 Everything CrossPoint already does is untouched. The companion is **off by default** and adds
 around **16 KB of flash and 80 bytes of RAM** when you turn it on.
 
-<!-- TODO: replace with a real photo of the home screen on your device -->
-<!-- ![Companion on the home screen](docs/companion/photos/home-screen.jpg) -->
-> **📸 Photo goes here** — the home screen with a companion and its speech bubble.
+<p align="center">
+  <img src="docs/companion/photos/home-screen.jpg" width="380"
+       alt="An Xteink X3 showing the home screen, with Sophocles the pixel fox and a speech bubble reading 'Fine. This is fine. I am a fine boy.'">
+</p>
+
+<p align="center">
+  <em>Sophocles on an Xteink X3, twelve minutes short of Thriving.</em>
+</p>
 
 ---
 
@@ -76,8 +81,14 @@ A potted thing that grows a leaf per finished chapter. Passive-aggressive about 
 > *"I am the best damn plant on this device."*
 > *"I am ninety percent stick at this point."*
 
-<!-- TODO: replace with a real photo showing a couple of different characters -->
-> **📸 Photo goes here** — a different character on the device, for contrast.
+<p align="center">
+  <img src="docs/companion/photos/character-vellum.jpg" width="380"
+       alt="The same home screen with Vellum the pixel ghost, saying 'A quiet day. I approve of quiet.'">
+</p>
+
+<p align="center">
+  <em>Same screen, different tenant. Switching character takes two button presses.</em>
+</p>
 
 ---
 
