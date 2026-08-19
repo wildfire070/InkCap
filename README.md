@@ -9,6 +9,21 @@ mood depends on how much you actually read.
 Everything CrossPoint already does is untouched. The companion is **off by default** and adds
 around **16 KB of flash and 80 bytes of RAM** when you turn it on.
 
+> ### ⚠️ Device support
+>
+> **Developed and tested only on the Xteink X3.** That is the only device this has actually run on.
+>
+> | Device | Status |
+> | --- | --- |
+> | **Xteink X3** | ✅ Developed and tested here |
+> | **Xteink X4** | ⚠️ Untested. Should run — same chip, and the release binary includes it — but the X4 has **no RTC**, so streaks and day-based decay are unavailable (see below) |
+> | **Xteink X4 Pro** | ❌ **Do not flash the release binary** — the X4 Pro is ESP32-**S3** and X3/X4 are ESP32-**C3**, so it will not boot. Needs its own `x4pro` build, which has **not been verified to compile** here (see [Building from source](#building-from-source)) |
+> | Anything else | Untested |
+>
+> **Back up your current firmware before flashing.** Instructions are in
+> [Install](#install) below. It takes two minutes and means you can always get back to exactly
+> what you have now.
+
 <p align="center">
   <img src="docs/companion/photos/home-screen.jpg" width="380"
        alt="An Xteink X3 showing the home screen, with Sophocles the pixel fox and a speech bubble reading 'Fine. This is fine. I am a fine boy.'">
@@ -108,10 +123,21 @@ five minutes. A reader left open on one page earns nothing. Page-flipping withou
 time but still has to clear a real threshold, so it will not jump you a tier.
 
 **Days are your days.** The rollover uses your device's clock in your own timezone, so a
-late-evening session does not land on tomorrow and break a streak. If the clock was never set,
-day-based decay pauses instead of guessing, and the mood simply reflects the current session.
+late-evening session does not land on tomorrow and break a streak.
 
 There is no death state. However long you neglect it, one good session brings it straight back.
+
+### Devices without a clock
+
+Day counting needs a real-time clock. The **X3** and **X4 Pro** have one; the **X4 does not**.
+
+Without a clock, elapsed days are genuinely unknowable, so rather than guess, day-based decay
+switches off entirely: the mood reflects only the current reading session and never drops below
+Content. In practice that means **no streaks, and no Peckish or Neglected** — you get Content and
+Thriving.
+
+The clock also needs setting once, over Wi-Fi, before day counting works. Until then the same
+fallback applies.
 
 <!-- TODO: replace with a real photo of a neglected companion -->
 > **📸 Photo goes here** — a Peckish or Neglected companion, if you can bear to earn one.
@@ -120,37 +146,50 @@ There is no death state. However long you neglect it, one good session brings it
 
 ## Install
 
-### Easiest — no toolchain needed
+The release binary is for **X3 and X4 only** (both ESP32-C3). **X4 Pro owners must build from
+source** — a C3 binary will not boot on its S3 chip.
+
+### Step 1 — back up your current firmware (please do this)
+
+Flashing replaces what is on the device. A full backup lets you return to exactly your current
+setup, Wi-Fi credentials and settings included, rather than merely a clean reinstall.
+
+```bash
+pip install esptool
+esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  read-flash 0 0x1000000 crosspoint-backup.bin
+```
+
+Find your port with `ls /dev/cu.*` on macOS, or `dmesg | grep tty` on Linux. The file should come
+out at exactly 16,777,216 bytes. Keep a copy somewhere other than the machine you flash from.
+
+Restore any time with:
+
+```bash
+esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  write-flash 0 crosspoint-backup.bin
+```
+
+If you skip the backup you can still recover — the web flasher below will put an official
+CrossPoint build back on — but you will lose your settings and saved networks.
+
+### Step 2 — flash
+
+**No toolchain needed:**
 
 1. Download `firmware.bin` from the [latest release](../../releases/latest)
 2. Connect your device by USB-C and wake it
 3. Go to [crosspointreader.com/#flash-tools](https://crosspointreader.com/#flash-tools)
 4. Pick your device (**X3** or **X4**), choose **Custom .bin**, and upload the file
 
-Your books, reading progress, and settings live on the SD card and are not touched by flashing.
-
-### Command line
+**Or from a terminal:**
 
 ```bash
-pip install esptool
 esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
   write-flash 0x10000 firmware.bin
 ```
 
-Find your port with `ls /dev/cu.*` on macOS or `dmesg | grep tty` on Linux.
-
-### Back up first (recommended)
-
-Flashing replaces the firmware. To be able to return to exactly what you have now — including
-your Wi-Fi credentials and settings — save a full image first:
-
-```bash
-esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
-  read-flash 0 0x1000000 crosspoint-backup.bin
-```
-
-Restore it with `write-flash 0 crosspoint-backup.bin`. You can also always reflash an official
-build from the web flasher above.
+Your books and reading progress live on the SD card and are not touched by flashing.
 
 > **Note on locked devices.** Some units bought from third-party sellers ship with USB flashing
 > locked. If the browser's serial picker cannot see your device, check
@@ -179,6 +218,28 @@ cd crosspoint-reader-companion
 pio run -e default            # build
 pio run -e default -t upload  # build and flash
 ```
+
+Pick the environment for your device:
+
+| Device | Environment | Chip |
+| --- | --- | --- |
+| X3 / X4 | `default` or `gh_release` | ESP32-C3 |
+| **X4 Pro** | **`x4pro`** | ESP32-**S3** |
+
+```bash
+pio run -e x4pro -t upload    # X4 Pro
+```
+
+The chip differs, so the binaries are not interchangeable.
+
+**On the X4 Pro specifically:** the `x4pro` environment has not been built successfully here. The
+attempt failed while ESP-IDF configured its S3 toolchain, before reaching any companion code, so
+whether this compiles for S3 is simply unknown rather than known-broken. Nothing in the companion
+is chip-specific — no assembly, no C3 registers, and all layout comes from runtime screen
+dimensions — so there is reason to expect it works. But nobody has demonstrated it.
+
+If you have an X4 Pro and get it building, please open an issue. That, and a photo, is all it
+would take to move it into the tested column.
 
 Needs [pioarduino](https://github.com/pioarduino/pioarduino) and Python 3.8+. The `--recursive`
 matters: the FreeInk SDK is a submodule. If you forget it, run
