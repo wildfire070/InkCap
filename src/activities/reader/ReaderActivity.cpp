@@ -14,6 +14,7 @@
 #include "SdCardFontSystem.h"
 #include "TxtReaderActivity.h"
 #include "XtcReaderActivity.h"
+#include "companion/CompanionTracker.h"
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
                                std::string bookPath, const bool allowFastInitialRefresh)
@@ -58,6 +59,10 @@ void ReaderActivity::onEnter() {
   sdFontSystem.ensureLoaded(renderer);
   applyInitialOrientation();
 
+  // Reading session starts here so every format (EPUB/TXT/XTC) is covered by
+  // one hook. No-op unless the companion is enabled.
+  COMPANION.beginSession();
+
   if (!loadBook()) {
     finish();
     return;
@@ -72,12 +77,24 @@ void ReaderActivity::onEnter() {
 void ReaderActivity::onExit() {
   Activity::onExit();
 
+  // Banks credited time and persists it. Runs before deep sleep too, because
+  // ActivityManager::goToSleep() drives the outgoing activity's onExit().
+  COMPANION.endSession();
+
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
 
   endOfBookOptions.reset();
   endOfBookOptionsReady.store(false, std::memory_order_release);
+}
+
+bool ReaderActivity::pageTurnTracked(const bool isForward) {
+  const bool turned = pageTurn(isForward);
+  // Only a page that actually moved counts: a turn refused at the end of the
+  // book must not keep the reading session looking active.
+  if (turned) COMPANION.onPageTurn();
+  return turned;
 }
 
 bool ReaderActivity::handleBackNavigation() {
@@ -157,13 +174,13 @@ void ReaderActivity::loop() {
     if (skip) {
       skipPages(-10);
     } else {
-      pageTurn(false);
+      pageTurnTracked(false);
     }
   } else {
     if (skip) {
       skipPages(10);
     } else {
-      pageTurn(true);
+      pageTurnTracked(true);
     }
   }
   requestUpdate();

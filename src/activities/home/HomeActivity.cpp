@@ -8,6 +8,7 @@
 #include <I18n.h>
 #include <Utf8.h>
 #include <Xtc.h>
+#include <esp_random.h>
 
 #include <algorithm>
 #include <cstring>
@@ -18,6 +19,9 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "companion/CompanionRenderer.h"
+#include "companion/CompanionState.h"
+#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -113,6 +117,25 @@ void HomeActivity::onEnter() {
   Activity::onEnter();
 
   hasOpdsServers = OPDS_STORE.hasServers();
+  // Resolve the calendar day once here rather than per render: the companion's
+  // mood has to reflect days elapsed since the last reading session, and this
+  // is the only screen that shows it outside one.
+  COMPANION.refreshForDisplay();
+  // Pick the line once per visit, not per render, so it stays put while the
+  // menu cursor moves but is fresh every time you come back. Drawn at random
+  // rather than in rotation, and never the same one twice running -- a repeat
+  // reads as a bug even when it is chance. Not persisted: an SD write is not
+  // worth it for flavour text, and a reshuffle after a reboot is harmless.
+  static uint32_t lastQuote = UINT32_MAX;
+  const uint8_t quoteCount = companion::quoteCountFor(CompanionTracker::activeId(), COMPANION.currentMood());
+  if (quoteCount > 1) {
+    uint32_t pick = lastQuote;
+    while (pick == lastQuote) pick = esp_random() % quoteCount;
+    lastQuote = pick;
+    companionQuoteIndex = pick;
+  } else {
+    companionQuoteIndex = 0;
+  }
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
@@ -126,6 +149,14 @@ void HomeActivity::onEnter() {
 
 void HomeActivity::onExit() {
   Activity::onExit();
+
+  // Consume the milestone once the user has actually been on the screen that
+  // shows it. Clearing at render time instead would lose it to the very first
+  // repaint, before it had been read.
+  if (SETTINGS.companionEnabled && COMPANION_STATE.milestonePending) {
+    COMPANION_STATE.milestonePending = false;
+    COMPANION_STATE.saveToFile();
+  }
 
   // Free the stored cover buffer if any
   freeCoverBuffer();
@@ -151,6 +182,132 @@ bool HomeActivity::storeCoverBuffer() {
     return false;
   }
   return true;
+}
+
+void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, const int pageWidth) const {
+  if (!SETTINGS.companionEnabled || !SETTINGS.companionOnHome) return;
+
+  constexpr int SIDE_MARGIN = 10;
+  constexpr int GAP = 4;          // between the tail tip and the character
+  constexpr int BUBBLE_PAD = 10;  // inside the bubble, clear of the rounded corners
+  constexpr int TAIL_LENGTH = 12;
+  constexpr int MIN_BUBBLE_W = 90;
+  constexpr int LABEL_GAP = 2;            // between the character's feet and its status label
+  constexpr int SUBLABEL_GAP = 0;         // between the mood label and the streak/progress line
+  constexpr int DESCENDER_ALLOWANCE = 3;  // getTextHeight() omits descenders
+  constexpr int BOTTOM_MARGIN = 2;        // keeps the last line clear of the button hints
+  // Walk cycle. Advanced by redraws rather than a timer: a timer would keep the
+  // panel refreshing, block the low-power idle, and accumulate e-ink ghosting.
+  // Driving it from input means the character only moves when the screen was
+  // going to be repainted anyway, so the motion is free.
+  constexpr int WALK_STEPS = 6;
+  // Kept to roughly the tail's reach: the bubble has to sit clear of the
+  // character's furthest step, so every pixel of pacing pushes the bubble right.
+  constexpr int WALK_TRAVEL = 14;
+  constexpr int BOB_HEIGHT = 3;
+
+  const int available = stripBottom - stripTop - BOTTOM_MARGIN;
+  if (available < companion::poseHeight(1)) return;  // theme leaves no room
+
+  // getTextHeight() reports the ascender only, but drawText() takes y as the
+  // top and descenders hang below it. Without this allowance the bottom line
+  // overruns into the button hints.
+  const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int labelBlock = LABEL_GAP + labelH + SUBLABEL_GAP + subH;
+
+  // Largest whole-pixel scale where the character and its labels both fit.
+  // Fractional scaling would smear the baked dither, so it grows in whole
+  // pixels only.
+  int scale = 4;
+  while (scale > 1 && companion::poseHeight(scale) + BOB_HEIGHT + labelBlock > available) scale--;
+
+  const int spriteW = companion::poseWidth(scale);
+  const int spriteH = companion::poseHeight(scale);
+  const bool showLabel = spriteH + BOB_HEIGHT + labelBlock <= available;
+
+  // Character and labels are centred as one block, so the status sits directly
+  // under the feet instead of drifting to the bottom of the strip.
+  const int blockH = spriteH + BOB_HEIGHT + (showLabel ? labelBlock : 0);
+  const int blockTop = stripTop + std::max(0, (available - blockH) / 2);
+  const int artHeight = spriteH + BOB_HEIGHT;
+
+  // Ping-pong across WALK_TRAVEL, facing the direction of travel.
+  const uint32_t phase = companionFrame % (WALK_STEPS * 2);
+  const bool walkingBack = phase >= WALK_STEPS;
+  const uint32_t step = walkingBack ? (WALK_STEPS * 2 - 1 - phase) : phase;
+  const int walkX = static_cast<int>(step) * WALK_TRAVEL / (WALK_STEPS - 1);
+  const int bob = (companionFrame % 2) ? BOB_HEIGHT : 0;
+
+  const int spriteX = SIDE_MARGIN + walkX;
+  const int spriteY = blockTop + bob;
+
+  const auto id = CompanionTracker::activeId();
+  const auto mood = COMPANION.currentMood();
+  // A neglected companion is curled up or powered down: pacing about would
+  // undercut the pose, so it stays put and only the quote rotates.
+  const bool restless = mood != companion::Mood::Neglected;
+  const int drawY = restless ? spriteY : spriteY - bob;
+  companion::drawPose(renderer, id, mood, restless ? spriteX : SIDE_MARGIN, drawY, scale, restless && walkingBack);
+
+  // Status lines sit centred under the character's whole pacing range, not
+  // under the sprite itself, so they stay put while the character moves.
+  const int lane = WALK_TRAVEL + spriteW;
+  if (showLabel) {
+    const char* label = companion::moodLabel(mood);
+
+    // Second line answers "why?" and "what next?". A reachable target beats a
+    // tally, so progress toward Thriving wins when there is progress to report.
+    char sub[40] = "";
+    const uint16_t minutes = COMPANION.minutesToday();
+    const companion::MoodThresholds thresholds;
+    if (minutes >= thresholds.contentMinutes && minutes < thresholds.thrivingMinutes) {
+      snprintf(sub, sizeof(sub), tr(STR_COMPANION_TO_THRIVING_FORMAT), thresholds.thrivingMinutes - minutes);
+    } else if (COMPANION.hasValidClock() && COMPANION_STATE.ledger.streakDays > 0) {
+      snprintf(sub, sizeof(sub), tr(STR_COMPANION_STREAK_FORMAT), COMPANION_STATE.ledger.streakDays);
+    }
+
+    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
+    const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
+
+    // Both lines share one centre so they read as a block. That centre starts
+    // under the character but is pushed right far enough that the widest line
+    // still clears the screen edge -- "27 min to Thriving" is wider than the
+    // character it sits under, so centring on the sprite alone runs it off.
+    const int widest = std::max(labelW, subW);
+    int centreX = SIDE_MARGIN + lane / 2;
+    centreX = std::max(centreX, SIDE_MARGIN + widest / 2);
+    centreX = std::min(centreX, pageWidth - SIDE_MARGIN - widest / 2);
+
+    const int labelY = blockTop + artHeight + LABEL_GAP;
+    renderer.drawText(UI_10_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
+    if (subW > 0) {
+      renderer.drawText(SMALL_FONT_ID, centreX - subW / 2, labelY + labelH + SUBLABEL_GAP, sub);
+    }
+  }
+
+  // A beaten personal best takes over the bubble once, then reverts to the
+  // normal mood lines. The flag is cleared by the caller after the render so a
+  // repaint mid-visit does not swallow it before it has been seen.
+  const char* quote = COMPANION_STATE.milestonePending ? companion::milestoneQuoteFor(id, companionQuoteIndex)
+                                                       : companion::quoteFor(id, mood, companionQuoteIndex);
+  if (!quote) return;
+
+  // Bubble body starts past the character's furthest step plus the tail, so the
+  // two can never collide mid-stride.
+  const int bubbleX = SIDE_MARGIN + WALK_TRAVEL + spriteW + GAP + TAIL_LENGTH;
+  const int bubbleW = pageWidth - bubbleX - SIDE_MARGIN;
+  if (bubbleW < MIN_BUBBLE_W) return;  // narrow screen: character only
+
+  // Anchored to the character's band, not to the bobbing sprite, so the text
+  // stays still while the character moves under it.
+  const int bubbleH = std::max(40, spriteH - 8);
+  const int bubbleY = blockTop + (artHeight - bubbleH) / 2;
+
+  companion::drawSpeechBubble(renderer, bubbleX, bubbleY, bubbleW, bubbleH, TAIL_LENGTH);
+
+  const Rect textBounds{bubbleX + BUBBLE_PAD, bubbleY + BUBBLE_PAD, bubbleW - BUBBLE_PAD * 2, bubbleH - BUBBLE_PAD * 2};
+  UITheme::drawCenteredWrappedText(renderer, textBounds, UI_10_FONT_ID, quote, 3);
 }
 
 bool HomeActivity::restoreCoverBuffer() {
@@ -330,6 +487,20 @@ void HomeActivity::render(RenderLock&&) {
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
+
+  // Companion lives in the gap between the last menu row and the button hints.
+  // Measured from the menu's own row height rather than a fixed offset, so it
+  // adapts to themes and to the OPDS row appearing or not.
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  // Rows are laid out at menuRowHeight + menuSpacing pitch (see the themes'
+  // drawButtonMenu). getMenuRowHeight() returns only the row itself, so using it
+  // here underestimates the menu by one spacing per row and the companion ends
+  // up crowding the last entry. Counting the trailing spacing as well leaves a
+  // natural gap between the final row and the companion.
+  const int menuPitch = metrics.menuRowHeight + metrics.menuSpacing;
+  const int menuBottom = menuTop + static_cast<int>(menuItems.size()) * menuPitch;
+  companionFrame++;
+  drawCompanion(menuBottom, pageHeight - metrics.buttonHintsHeight, pageWidth);
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));

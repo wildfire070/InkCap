@@ -388,7 +388,7 @@ void EpubReaderActivity::loop() {
     }
 
     if ((millis() - lastPageTurnTime) >= pageTurnDuration) {
-      pageTurn(true);
+      pageTurnTracked(true);
       requestUpdate();
       return;
     }
@@ -515,7 +515,7 @@ void EpubReaderActivity::loop() {
     }
     const bool forward = pendingManualTurn > 0;
     pendingManualTurn = 0;
-    pageTurn(forward);
+    pageTurnTracked(forward);
     requestUpdate();
     return;
   }
@@ -565,9 +565,9 @@ void EpubReaderActivity::loop() {
   }
 
   if (prevTriggered) {
-    pageTurn(false);
+    pageTurnTracked(false);
   } else {
-    pageTurn(true);
+    pageTurnTracked(true);
   }
   requestUpdate();
 }

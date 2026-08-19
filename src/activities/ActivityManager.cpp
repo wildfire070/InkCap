@@ -13,6 +13,7 @@
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
+#include "companion/CompanionTracker.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
@@ -75,6 +76,11 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  // Banks reading time for the companion. Self-gating: does nothing unless a
+  // reader session is open, so it is safe to drive from the shared loop rather
+  // than duplicating it into every reader subclass.
+  COMPANION.tick();
+
   if (currentActivity) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {

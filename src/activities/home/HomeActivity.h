@@ -55,6 +55,14 @@ class HomeActivity final : public Activity {
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
+  // Rotates the companion's line so each visit to Home gets a different one
+  // while it stays stable as the cursor moves around the menu.
+  uint32_t companionQuoteIndex = 0;
+  // Advances on every home repaint to drive the companion's walk cycle.
+  uint32_t companionFrame = 0;
+  // Draws the companion and its speech bubble in the strip between the menu and
+  // the button hints. No-op unless enabled.
+  void drawCompanion(int stripTop, int stripBottom, int pageWidth) const;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onRecentsOpen();

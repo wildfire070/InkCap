@@ -28,6 +28,10 @@ class ReaderActivity : public Activity {
   virtual bool handleFormatInput() { return false; }
   virtual bool pageTurn(bool isForward) = 0;
   virtual bool skipPages(int amount) { return pageTurn(amount > 0); }
+  // Calls pageTurn() and credits the reading companion when a page actually
+  // moved. One hook instead of one per call site; call this rather than
+  // pageTurn() from input handling so every format is counted the same way.
+  bool pageTurnTracked(bool isForward);
   virtual bool isAtEndOfBook() const = 0;
   virtual void onReturnFromEndOfBook() {}
 

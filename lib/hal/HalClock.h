@@ -27,6 +27,16 @@ class HalClock {
   // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
 
+  // Full UTC wall-clock reading, including the calendar date.
+  //
+  // Unlike getTime() this never substitutes a cached value: callers doing date
+  // arithmetic (reading streaks) must be able to tell "clock unknown" from a
+  // real date, because a stale one silently corrupts elapsed-day maths. Returns
+  // false when the board has no RTC or its oscillator never ran (never synced).
+  //
+  // Performs an I2C transaction on every call, so keep it off render paths.
+  bool getUtcDateTime(uint16_t& year, uint8_t& month, uint8_t& day, uint8_t& hour, uint8_t& minute) const;
+
   // Format time into a caller-provided buffer.
   // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces "H:MM AM"/"HH:MM PM" (needs >=9 bytes).
   // utcOffsetQuarterHoursBiased: biased quarter-hour offset (48 = UTC+0, 0 = UTC-12, 104 = UTC+14).

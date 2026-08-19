@@ -16,6 +16,7 @@
 #include "KOReaderCredentialStore.h"
 #include "ReaderFontSizes.h"
 #include "activities/settings/SettingsActivity.h"
+#include "companion/CompanionSprites.generated.h"
 #include "util/DictionaryRegistry.h"
 
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
@@ -195,6 +196,30 @@ inline std::vector<StrId> buildLongPressMenuValues() {
 // the font-family entry is replaced in that copy with a registry-aware version.
 // The font-size entry is always rebuilt, since its options are point sizes read
 // from the active family rather than a fixed enum.
+// Companion picker. The options are the generated character names, so adding a
+// .grid file surfaces a new choice with no change here.
+inline SettingInfo buildCompanionCharacterSetting() {
+  SettingInfo s;
+  s.nameId = StrId::STR_COMPANION_CHARACTER;
+  s.type = SettingType::ENUM;
+  s.valuePtr = &CrossPointSettings::companionId;
+  s.key = "companionId";
+  s.category = StrId::STR_CAT_DISPLAY;
+  // Name plus species, because a list of five bare proper nouns tells you
+  // nothing about what you are choosing. The popup cannot show sprites: its
+  // FreeInkUI DialogOption has no icon slot, and adding one would mean patching
+  // the SDK submodule and losing it on the next update.
+  s.enumStringValues.reserve(companion::COMPANION_COUNT);
+  for (int i = 0; i < companion::COMPANION_COUNT; i++) {
+    std::string label = companion::COMPANION_NAMES[i];
+    label += " (";
+    label += companion::COMPANION_KINDS[i];
+    label += ")";
+    s.enumStringValues.emplace_back(std::move(label));
+  }
+  return s;
+}
+
 inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
                                                 const std::vector<DictionaryEntry>* dictionaries = nullptr) {
   static const std::vector<SettingInfo> baseList = [] {
@@ -244,6 +269,16 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
                             "frontlightRestoreOnWake", StrId::STR_CAT_DISPLAY),
 #endif
+
+        // --- Reading companion ---
+        // Off by default: nothing about the stock reader changes until enabled.
+        SettingInfo::Toggle(StrId::STR_COMPANION_ENABLED, &CrossPointSettings::companionEnabled, "companionEnabled",
+                            StrId::STR_CAT_DISPLAY),
+        // Character names are proper nouns, identical in every UI language, so
+        // they come from the generated sprite table rather than the string table.
+        buildCompanionCharacterSetting(),
+        SettingInfo::Toggle(StrId::STR_COMPANION_ON_HOME, &CrossPointSettings::companionOnHome, "companionOnHome",
+                            StrId::STR_CAT_DISPLAY),
 
         // --- Reader ---
         // Built-in font-family entry. Replaced per-call with a registry-aware

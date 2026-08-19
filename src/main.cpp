@@ -34,6 +34,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "companion/CompanionState.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
@@ -414,6 +415,12 @@ void setup() {
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
+  // Loaded unconditionally, not just when the companion is enabled: a wake from
+  // deep sleep re-runs setup(), so gating on the setting means turning the
+  // companion off, waking, then back on leaves the in-memory ledger at defaults
+  // — and the next save overwrites a real streak with zeroes. Missing file on
+  // first run is expected and leaves the defaults in place.
+  COMPANION_STATE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
