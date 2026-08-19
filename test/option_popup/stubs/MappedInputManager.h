@@ -5,7 +5,7 @@ class HalGPIO;
 
 class MappedInputManager {
  public:
-  enum class Button { Back, Confirm, Left, Right, Up, Down };
+  enum class Button { Back, Confirm, Left, Right, Up, Down, Power };
   enum class SwipeDir { None, Left, Right, Up, Down };
   struct Labels {
     const char* btn1;
@@ -39,8 +39,13 @@ class MappedInputManager {
   }
 
   SwipeDir wasSwipe() const { return SwipeDir::None; }
-  bool wasPressed(Button) const { return false; }
+  bool wasPressed(const Button button) const {
+    if (button != Button::Confirm || !confirmPressed) return false;
+    confirmPressed = false;
+    return true;
+  }
   bool wasReleased(Button) const { return false; }
+  bool isPressed(const Button button) const { return button == Button::Power && powerPressed; }
   Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const {
     return {back, confirm, previous, next};
   }
@@ -48,6 +53,7 @@ class MappedInputManager {
   void suppressNextTouchTap() { suppressTouchTap = true; }
   void suppressNextConfirmRelease() {}
   void suppressNextBackRelease() {}
+  void suppressNextPowerRelease() { powerReleaseSuppressed = true; }
 
   void injectTouchDown(const int x, const int y) {
     touchX = x;
@@ -61,11 +67,21 @@ class MappedInputManager {
     touchRelease = true;
   }
 
+  void injectPowerConfirmPress() {
+    confirmPressed = true;
+    powerPressed = true;
+  }
+
+  bool isPowerReleaseSuppressed() const { return powerReleaseSuppressed; }
+
  private:
   const GfxRenderer& renderer;
   mutable bool touchDown = false;
   mutable bool touchRelease = false;
   mutable bool suppressTouchTap = false;
+  mutable bool confirmPressed = false;
+  mutable bool powerPressed = false;
+  mutable bool powerReleaseSuppressed = false;
   mutable int touchX = 0;
   mutable int touchY = 0;
 };

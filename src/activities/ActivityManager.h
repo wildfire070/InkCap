@@ -136,6 +136,7 @@ class ActivityManager {
   bool requiresExclusiveStorageLoop() const;
   bool isHomeActivity() const;
   bool isReaderActivity() const;
+  bool openReaderSettingsForTouchscreenEscapeHatch();
   bool handleHomeButtonBackOrHome();
   bool openReaderMenuFromShortcut();
   bool openReaderMenuAfterClosingOverlay();
