@@ -1,287 +1,262 @@
-# CrossPoint Reader
+# CrossPoint Reader — Companion
 
-[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
+A reading companion for [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader), the
+open-source e-reader firmware. Pick a small pixel character; it lives on your home screen and its
+mood depends on how much you actually read.
 
-CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
+![The five companions](docs/companion/roster.png)
 
-**Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
+Everything CrossPoint already does is untouched. The companion is **off by default** and adds
+around **16 KB of flash and 80 bytes of RAM** when you turn it on.
 
-![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
-
-> If you're planning to buy an Xteink device, consider purchasing an **X3/X4 Developer Edition** through https://crosspointreader.com. CrossPoint receives a small share of each sale, helping fund development costs.
-
-## What can CrossPoint do?
-
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
-
-- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
-
-- **Screenshots.**
-
-- **Custom fonts**: install your favorite fonts on the SD card.
-
-- **Tilt page turn (X3 only)**.
-
-- **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
-
-- **Wireless workflows**:
-  
-  - File transfer web UI
-  - EPUB Optimizer
-  - Web settings UI/API (edit many device settings from browser)
-  - WebSocket fast uploads
-  - WebDAV handler
-  - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
-  - Calibre wireless connect flow
-  - OPDS browser with saved servers (up to 8), search, pagination, and direct download
-  - OTA update checks and installs from GitHub releases
-
-- **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
-
-- **Localization**: 24 UI languages and counting. RTL support.
-
-### Coming soon:
-
-- More themes.
-
-- Much more! stay tuned.
+<!-- TODO: replace with a real photo of the home screen on your device -->
+<!-- ![Companion on the home screen](docs/companion/photos/home-screen.jpg) -->
+> **📸 Photo goes here** — the home screen with a companion and its speech bubble.
 
 ---
 
-## USB-locked devices (Xteink Unlocker)
+## What it does
 
-Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
-If your device is locked, you will need to use the **Xteink Unlocker** tool available at
-https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
+Read regularly and your companion thrives. Ignore it and it sulks, wilts, or powers down.
 
-**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
+- **Five characters** to choose from, each with their own artwork and voice
+- **Four moods**, driven by how much you read and how many days you skip
+- **180 written lines** — the character comments on how you are doing, and the line changes
+  every time you land on the home screen
+- **It paces around** while you move the menu cursor, and turns to face the way it is walking
+- **A streak counter**, and a nudge telling you how far you are from the top mood today
 
-**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
-[Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
-USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
+---
 
-> ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-> 
-> **The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-> 
-> Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
-> stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
-> the firmware you flashed doesn't support OTA, **there is no way out**.
+## The companions
 
-## Install firmware
+Left to right in each strip: **Thriving · Content · Peckish · Neglected**.
 
-### Web installer (recommended)
+### Sophocles — the fox
+House Telemanus's sigil fox from *Red Rising*. Aristocratic, judgemental, and permanently
+convinced you are hiding jellybeans.
 
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
+![Sophocles in four moods](docs/companion/sophocles.png)
 
-### Web installer (specific version)
+> *"You smell faintly of jellybeans. Approved."*
+> *"I have seen dead men read more than this."*
 
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
-3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
+### Vellum — the ghost
+A page-spirit that only stays solid while somebody is still reading. When neglected it literally
+fades out — the same artwork drawn at a quarter density instead of a solid fill.
 
-### Revert to Official Firmware
+![Vellum in four moods](docs/companion/vellum.png)
 
-To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
+> *"I am not haunting you. I am supervising."*
+> *"Bloody hell, I can see through my own hands."*
+
+### Octavo — the robot
+A page-counting unit that runs on finished chapters instead of batteries. Swears exclusively in
+error codes.
+
+![Octavo in four moods](docs/companion/octavo.png)
+
+> *"SIGNAL STRONG. READING QUOTA EXCEEDED."*
+> *"FATAL: give a shit exception. Core dumped."*
+
+### Lumen — the moth
+A paper moth that navigates by the light of whatever you are reading. Wings spread when the
+reading is good, shut tight when it is not.
+
+![Lumen in four moods](docs/companion/lumen.png)
+
+> *"Drunk on lumens. Absolutely hammered."*
+> *"I have started eating the curtains. Your fault."*
+
+### Sprig — the sprout
+A potted thing that grows a leaf per finished chapter. Passive-aggressive about drought.
+
+![Sprig in four moods](docs/companion/sprig.png)
+
+> *"I am the best damn plant on this device."*
+> *"I am ninety percent stick at this point."*
+
+<!-- TODO: replace with a real photo showing a couple of different characters -->
+> **📸 Photo goes here** — a different character on the device, for contrast.
+
+---
+
+## How moods work
+
+| Mood | How you get there |
+| --- | --- |
+| **Thriving** | 25+ credited minutes today |
+| **Content** | 2+ minutes today, **or** you read yesterday |
+| **Peckish** | Exactly two quiet days — you skipped one full day |
+| **Neglected** | Three or more quiet days |
+
+Two details matter:
+
+**"Credited" minutes are real reading.** Time only accrues while a page turned within the last
+five minutes. A reader left open on one page earns nothing. Page-flipping without reading accrues
+time but still has to clear a real threshold, so it will not jump you a tier.
+
+**Days are your days.** The rollover uses your device's clock in your own timezone, so a
+late-evening session does not land on tomorrow and break a streak. If the clock was never set,
+day-based decay pauses instead of guessing, and the mood simply reflects the current session.
+
+There is no death state. However long you neglect it, one good session brings it straight back.
+
+<!-- TODO: replace with a real photo of a neglected companion -->
+> **📸 Photo goes here** — a Peckish or Neglected companion, if you can bear to earn one.
+
+---
+
+## Install
+
+### Easiest — no toolchain needed
+
+1. Download `firmware.bin` from the [latest release](../../releases/latest)
+2. Connect your device by USB-C and wake it
+3. Go to [crosspointreader.com/#flash-tools](https://crosspointreader.com/#flash-tools)
+4. Pick your device (**X3** or **X4**), choose **Custom .bin**, and upload the file
+
+Your books, reading progress, and settings live on the SD card and are not touched by flashing.
 
 ### Command line
 
-1. Install [`esptool`](https://github.com/espressif/esptool):
-
 ```bash
 pip install esptool
+esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  write-flash 0x10000 firmware.bin
 ```
 
-2. Download `firmware.bin` from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
-3. Connect your device via USB-C.
-4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
+Find your port with `ls /dev/cu.*` on macOS or `dmesg | grep tty` on Linux.
+
+### Back up first (recommended)
+
+Flashing replaces the firmware. To be able to return to exactly what you have now — including
+your Wi-Fi credentials and settings — save a full image first:
 
 ```bash
-log stream --predicate 'subsystem == "com.apple.iokit"' --info
+esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  read-flash 0 0x1000000 crosspoint-backup.bin
 ```
 
-5. Flash:
+Restore it with `write-flash 0 crosspoint-backup.bin`. You can also always reflash an official
+build from the web flasher above.
+
+> **Note on locked devices.** Some units bought from third-party sellers ship with USB flashing
+> locked. If the browser's serial picker cannot see your device, check
+> [CrossPoint's notes on the Xteink Unlocker](https://github.com/crosspoint-reader/crosspoint-reader#usb-locked-devices-xteink-unlocker)
+> before going further.
+
+---
+
+## Turning it on
+
+**Settings → Companion** to enable, then **Character** to choose who lives on your home screen.
+**Show on Home** controls whether it is drawn.
+
+Nothing changes about the reader until you enable it.
+
+<!-- TODO: replace with a real photo of the settings screen -->
+> **📸 Photo goes here** — the character picker.
+
+---
+
+## Building from source
 
 ```bash
-esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
+git clone --recursive https://github.com/JoshuaMillerCode/crosspoint-reader-companion
+cd crosspoint-reader-companion
+pio run -e default            # build
+pio run -e default -t upload  # build and flash
 ```
 
-Adjust `/dev/ttyACM0` to match your system.
+Needs [pioarduino](https://github.com/pioarduino/pioarduino) and Python 3.8+. The `--recursive`
+matters: the FreeInk SDK is a submodule. If you forget it, run
+`git submodule update --init --recursive`.
 
-### Manual
-
-See [Development quick start](#development-quick-start) below.
-
----
-
-## Custom SD-card fonts
-
-Convert your own TTF/OTF files into `.cpfont` files that load from the SD card. No firmware reflash is needed.
-
-1. Go to https://crosspointreader.com/fonts and open the "SD-card font builder" form.
-2. Upload up to four styles (regular, bold, italic, bold-italic), set the family name, point sizes, and Unicode range.
-3. Download the generated `.cpfont` files.
-4. Copy them to your SD card under `/fonts/YourFont/` (or `/.fonts/YourFont/` to hide the folder).
-5. Select the font on the device from the font settings.
-
-Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` script unmodified, so output matches a local host build.
-
----
-
-## Documentation
-
-- [User Guide](./USER_GUIDE.md)
-- [Web server usage](./docs/webserver.md)
-- [Web server endpoints](./docs/webserver-endpoints.md)
-- [Project scope](./SCOPE.md)
-- [Contributing docs](./docs/contributing/README.md)
-- [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build new screens on the FreeInkUI activity bases (UiListActivity and friends), plus build envs for the non-Xteink touch devices
-
----
-
-## Development quick start
-
-### Prerequisites
-
-- [pioarduino](https://github.com/pioarduino/pioarduino) or VS Code + pioarduino plugin
-- Python 3.8+
-- `clang-format` 21
-- USB-C cable supporting data transfer
-
-### Setup
+Host-side unit tests, no hardware required:
 
 ```bash
-git clone --recursive https://github.com/crosspoint-reader/crosspoint-reader
-cd crosspoint-reader
-
-# if cloned without --recursive:
-git submodule update --init --recursive
+cmake -S test -B build/test && cmake --build build/test
+ctest --test-dir build/test
 ```
-
-### Nix/NixOS
-
-Nix/NixOS users can enter the development shell with either `nix develop` (flakes) or `nix-shell`:
-
-```bash
-nix develop -f nix
-# or
-nix-shell nix
-```
-
-To flash a connected ESP32-C3 device, enable PlatformIO's udev rules in your NixOS configuration:
-
-```nix
-services.udev.packages = with pkgs; [ platformio-core.udev ];
-```
-
-After rebuilding the system configuration, reconnect the device or reload udev rules.
-
-### Build / flash / monitor
-
-```bash
-pio run --target upload
-```
-
-### Contributor pre-PR checks
-
-```bash
-./bin/clang-format-fix
-pio check -e default
-pio run -e default
-```
-
-### Debugging
-
-After flashing the new features, it’s recommended to capture detailed logs from the serial port.
-
-First, make sure all required Python packages are installed:
-
-```python
-python3 -m pip install pyserial colorama matplotlib
-```
-
-After that run the script:
-
-```sh
-# For Linux
-# This was tested on Debian and should work on most Linux systems.
-python3 scripts/debugging_monitor.py
-
-# For macOS
-python3 scripts/debugging_monitor.py /dev/cu.usbmodem2101
-```
-
-Minor adjustments may be required for Windows.
 
 ---
 
-## Internals
+## Making your own character
 
-CrossPoint Reader is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
+Each companion is a single plain-text file in [`src/companion/sprites/`](src/companion/sprites/)
+holding both its artwork and its dialogue. No binary assets, no image editor.
 
-### Data caching
+```
+name: Sophocles
+kind: fox
 
-The first time chapters of a book are loaded, they are cached to the SD card. Subsequent loads are served from the
-cache. This cache directory exists at `.crosspoint` on the SD card. The structure is as follows:
+[thriving]
+..............##..........##......
+.............#ww#........#ww#.....
+...  30 rows of 34 characters  ...
 
-```text
-.crosspoint/
-├── epub_<hash>/         # one directory per book, named by content hash
-│   ├── progress.bin     # reading position (chapter, page, etc.)
-│   ├── cover.bmp        # generated cover image
-│   ├── book.bin         # metadata: title, author, spine, TOC
-│   ├── css_rules.cache  # parsed CSS rule cache
-│   ├── img_*            # rendered image cache files
-│   └── sections/        # per-chapter layout cache
-│       ├── 0.bin
-│       ├── 1.bin
-│       └── ...
-├── settings.json        # device settings
-├── state.json           # resume/runtime state
-└── recent.json          # recent books list
+[quotes.thriving]
+Tail up. Very pleased with your page count.
+You smell faintly of jellybeans. Approved.
 ```
 
-Removing `/.crosspoint` clears all cached metadata and forces a full regeneration on next open. Book deletes, overwrites, and moves done through the firmware or web UI clear or re-key matching caches; manual SD-card edits may leave stale cache directories behind.
+| Character | Meaning |
+| --- | --- |
+| `.` | transparent |
+| `#` | ink — outline, eyes, nose |
+| `w` | paper — chest, muzzle, inner ears, tail tip |
+| `o` | body fill, drawn as a 50% checkerboard |
+| `d` | faded fill, drawn at 25% — used for ghosts and dead batteries |
 
-For more details on the internal file structures, see the [file formats document](./docs/file-formats.md).
+Add a `.grid` file, list it in [`order.txt`](src/companion/sprites/order.txt), and rebuild. It
+appears in the settings picker automatically. The build step packs the art into flash and will
+**fail the build** with a `file:line` error if a row is the wrong width or a line is too long for
+the speech bubble.
 
----
-
-## Contributing
-
-Contributions are welcome. If you're new to the codebase, start with the [contributing docs](./docs/contributing/README.md). For things to work on, check the [ideas discussion board](https://github.com/crosspoint-reader/crosspoint-reader/discussions/categories/ideas) — leave a comment before starting so we don't duplicate effort.
-
-Everyone here is a volunteer, so please be respectful and patient. For governance and community expectations, see [GOVERNANCE.md](./GOVERNANCE.md).
-
----
-
-## Community forks
-
-One of the best things about open source is that anyone can take the code in a different direction. If you need something outside CrossPoint's [scope](./SCOPE.md), check out the community forks:
-
-- [CrossInk](https://github.com/uxjulia/CrossInk) — Typography and reading tracking: Bionic Reading (bolds word stems to create fixation points), guide dots between words, improved paragraph indents, and replaces the default fonts with ChareInk/Lexend/Bitter.
-
-- [papyrix-reader](https://github.com/bigbag/papyrix-reader) — Adds FB2 and MD format support. Actively maintained with Arabic script support. Custom themes via SD card.
-
-- ~~[crosspet](https://github.com/trilwu/crosspet) — A Vietnamese fork that adds a Tamagotchi-style virtual chicken that grows based on your reading milestones (pages read, streaks, care). Also: Flashcards, Weather, Pomodoro timer, and mini-games.~~ (Unmaintained)
-
-- [crosspoint-reader-cjk](https://github.com/aBER0724/crosspoint-reader-cjk) — Purpose-built for Chinese, Japanese, and Korean reading.
-
-- [inx](https://github.com/obijuankenobiii/inx) — Completely reimagines the user interface with tabbed navigation.
-
-- ~~[PlusPoint](https://github.com/ngxson/pluspoint-reader) — custom JS apps support.~~ (Unmaintained)
-
-- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3. 
-
-- [t5s3-reader](https://github.com/ShallowGreen123/t5s3-reader) — Crosspoint port for LilyGo T5 ePaper S3 / T5S3 4.7-inch e-paper device.
-
-**Note:** Many of these features will make their way into CrossPoint over time. We maintain a slower pace to ensure rock-solid stability and squash bugs before they reach your device.
-
-Want to build your own device? Be sure to check out the [de-link](https://github.com/iandchasse/de-link) project.
+Because the panel is 1-bit, there is no colour: the dither densities are what give the artwork
+its shading, and they are resolved at build time so the render path stays trivial.
 
 ---
 
-CrossPoint Reader is **not affiliated with Xteink or any device manufacturer**.
+## How it is built
 
-Huge shoutout to [diy-esp32-epub-reader](https://github.com/atomic14/diy-esp32-epub-reader), which inspired this project.
+- **Sprites** are 34×30 hand-placed pixels, packed 1 bit per pixel. All twenty poses total
+  3,000 bytes.
+- **Mood logic** lives in [`lib/Companion/`](lib/Companion/) as pure functions with no Arduino,
+  FreeRTOS, or HAL dependencies, so the whole decay and crediting policy is covered by host unit
+  tests before it reaches a device.
+- **The walk cycle is driven by screen redraws, not a timer.** On e-ink a timer would keep the
+  panel refreshing, block the low-power idle, and accumulate ghosting. Moving only when the screen
+  was already repainting makes the animation free.
+- **The speech bubble** is drawn with a midpoint-circle algorithm for its rounded corners and a
+  half-plane test for the tail, since `GfxRenderer` has no rounded-rect primitive.
+- **State** persists to `/.crosspoint/companion.json`, checkpointed mid-session so a flat battery
+  does not discard an evening's reading.
+
+---
+
+## Scope
+
+This is a fork, not a proposed upstream feature. CrossPoint's [SCOPE.md](SCOPE.md) explicitly
+puts interactive extras out of scope for the core project, and that is the right call for a
+firmware whose job is to disappear while you read. That is exactly what forks are for.
+
+Everything else in this repository is CrossPoint, tracking upstream `develop`.
+
+---
+
+## Credits
+
+- **[CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** — the firmware
+  this builds on, and a genuinely pleasant codebase to work in
+- **Sophocles** is inspired by House Telemanus's sigil fox from Pierce Brown's *Red Rising*
+  series. No official artwork exists; this design is original. The other four characters are
+  original creations
+- Pixel technique follows [Derek Yu's tutorial](https://www.derekyu.com/makegames/pixelart.html)
+  and standard [1-bit dithering practice](https://pixelparmesan.com/blog/dithering-for-pixel-artists)
+- Companion mod by [@JoshuaMillerCode](https://github.com/JoshuaMillerCode)
+
+MIT licensed, same as CrossPoint. See [LICENSE](LICENSE).
+
+Not affiliated with Xteink, CrossPoint, or Pierce Brown.
