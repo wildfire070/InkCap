@@ -4,7 +4,7 @@ A reading companion for [CrossPoint](https://github.com/crosspoint-reader/crossp
 open-source e-reader firmware. Pick a small pixel character; it lives on your home screen and its
 mood depends on how much you actually read.
 
-![The five companions](docs/companion/roster.png)
+![The five companions, all thriving](docs/companion/roster-thriving.png)
 
 Everything CrossPoint already does is untouched. The companion is **off by default** and adds
 around **16 KB of flash and 80 bytes of RAM** when you turn it on.
