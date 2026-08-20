@@ -655,6 +655,9 @@ void ChapterHtmlSlimParser::flushLongTextRunIfNeeded(const bool force) {
     currentTextRunBytes = 0;
     return;
   }
+  // A ruby group needs all of its base words together to distribute the
+  // annotation and calculate its line-break constraints correctly.
+  if (inRuby) return;
 
   const size_t wordLimit = bufferedWordsBeforeLayoutLimit();
   const uint16_t byteLimit = textRunBytesBeforeLayoutLimit();
