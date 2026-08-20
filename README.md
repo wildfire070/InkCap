@@ -204,10 +204,20 @@ latter two under `/.crosspoint/` — and none of it is touched by flashing. This
 1.5.0 with the companion added, so if you are already on 1.5.0 your existing `settings.json` is
 read back unchanged: nothing to re-enter, nothing to set up again.
 
-> **Note on locked devices.** Some units bought from third-party sellers ship with USB flashing
-> locked. If the browser's serial picker cannot see your device, check
-> [CrossPoint's notes on the Xteink Unlocker](https://github.com/crosspoint-reader/crosspoint-reader#usb-locked-devices-xteink-unlocker)
-> before going further.
+> ### ⚠️ Locked devices — do not flash this with the Unlocker
+>
+> Some units bought from third-party sellers (AliExpress and similar) ship with USB flashing
+> locked from the factory. Units bought direct from xteink.com are not locked. If the browser's
+> serial picker cannot see your device, try another port and browser first, then see
+> [CrossPoint's notes on the Xteink Unlocker](https://github.com/crosspoint-reader/crosspoint-reader#usb-locked-devices-xteink-unlocker).
+>
+> **Do not put this firmware through the Xteink Unlocker.** The only firmwares that tool
+> officially supports are CrossPoint and CrossInk. Flashing anything else on a locked device can
+> **permanently brick it** or strand it on that firmware with no way back.
+>
+> The safe route is to unlock with official CrossPoint first, then install this build from inside
+> CrossPoint using the SD-card firmware update in Settings. That path never touches USB, so the
+> lock stops mattering.
 
 ---
 
@@ -223,11 +233,28 @@ Nothing changes about the reader until you enable it.
 
 ### Themes
 
-All four CrossPoint themes are supported. They lay their home screens out very differently, so the
-companion reads the space each one leaves and arranges itself to fit.
+All four CrossPoint themes are supported. Their home screens are laid out very
+differently, so each one tells the companion what space it can spare and the companion
+arranges itself to fit.
 
 | Theme | Where the companion sits |
 | --- | --- |
+| **Lyra** | In the column beside the menu |
+| **Lyra Extended** | In the column beside the menu |
+| **RoundedRaff** | In the column beside the menu |
+| **Classic** | Below the menu, or beside the book cover when a fifth menu row leaves no space underneath |
+
+On the first three the menu rows are narrowed to fit their labels, which opens a column
+tall enough for a full-size character with its speech bubble above it and its mood
+underneath. Classic's rows are full-width boxes with nothing to sit beside, so it uses
+the strip below the menu, and when an OPDS row pushes that strip out of usable space the
+book cover slides left and the companion takes the room next to it.
+
+If a theme still leaves too little room, the text gives way before the character does:
+the streak line goes first, then the mood label. Nothing is ever drawn over the menu,
+the cover, or the button hints.
+
+--- | --- |
 | **Lyra** | Below the menu. The roomiest layout: large character, speech bubble beside it, mood and streak underneath |
 | **Lyra Extended** | Below the menu, with the mood and streak moved to the right so the character keeps its size |
 | **Classic** | Below the menu, same side-by-side arrangement as Lyra Extended |
@@ -358,9 +385,12 @@ RoundedRaff's rows enough to squeeze the companion's column out.
 
 **Already fixed since 1.0.0**, thanks to people who reported them:
 
-- The companion only laid out correctly on Lyra. It now adapts to all four themes, and RoundedRaff
-  moved to the column beside its menu — that placement was a reader's suggestion and it is the best
-  the companion has looked on any theme
+- The companion only laid out correctly on Lyra. It now adapts to all four themes: Lyra, Lyra
+  Extended and RoundedRaff give it the column beside their menu, and Classic moves it next to the
+  book cover when a fifth menu row leaves no space below. Putting it beside the menu was a reader's
+  suggestion and it is the best the companion has looked anywhere
+- An OPDS server adds a fifth menu row, which used to push the companion off the bottom of the
+  screen entirely on Classic and Lyra Extended
 - Waking from sleep onto the home screen left the sleep image ghosted behind the UI until you
   pressed enough buttons to clear it. This one was a CrossPoint bug rather than a companion bug,
   and the fix costs about a second on wake in exchange for a clean screen

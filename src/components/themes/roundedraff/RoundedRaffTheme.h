@@ -102,8 +102,9 @@ class RoundedRaffTheme : public BaseTheme {
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
   int getMenuRowHeight(const GfxRenderer& renderer) const override;
-  Rect getHomeCompanionRect(const GfxRenderer& renderer, Rect menuRect, int buttonCount,
-                            const std::function<std::string(int index)>& buttonLabel, int hintsTop) const override;
+  HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
+                                             int buttonCount, const std::function<std::string(int index)>& buttonLabel,
+                                             int hintsTop) const override;
   int getMenuContentHeight(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,

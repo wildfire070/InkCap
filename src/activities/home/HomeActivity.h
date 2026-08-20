@@ -60,6 +60,9 @@ class HomeActivity final : public Activity {
   uint32_t companionQuoteIndex = 0;
   // Advances on every home repaint to drive the companion's walk cycle.
   uint32_t companionFrame = 0;
+  // Width the menu was last drawn at. The companion can sit in the space beside
+  // a narrowed menu, so touch must not claim the full row width there.
+  int companionMenuWidth = 0;
   // Draws the companion and its speech bubble in the region the theme set aside
   // for it. No-op unless enabled.
   void drawCompanion(Rect region) const;

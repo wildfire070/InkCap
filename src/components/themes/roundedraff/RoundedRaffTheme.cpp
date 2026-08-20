@@ -189,9 +189,12 @@ int RoundedRaffTheme::getMenuContentHeight(const GfxRenderer& renderer, const Re
   return std::min(buttonCount, pageItems) * rowStep;
 }
 
-Rect RoundedRaffTheme::getHomeCompanionRect(const GfxRenderer& renderer, const Rect rect, const int buttonCount,
-                                            const std::function<std::string(int index)>& buttonLabel,
-                                            const int hintsTop) const {
+HomeCompanionLayout RoundedRaffTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect rect,
+                                                             const Rect coverRect, const int buttonCount,
+                                                             const std::function<std::string(int index)>& buttonLabel,
+                                                             const int hintsTop) const {
+  (void)coverRect;
+  HomeCompanionLayout layout;
   // Rows here are pills only as wide as their label, and the tallest cover tile
   // of any theme leaves barely 50px underneath them. The column beside the menu
   // is the larger space by far, so the companion goes there instead.
@@ -216,7 +219,8 @@ Rect RoundedRaffTheme::getHomeCompanionRect(const GfxRenderer& renderer, const R
   const int left = rect.x + sidePadding + widestRow + kColumnGap;
   const int right = rect.x + rect.width - sidePadding;
   const int bottom = std::min(hintsTop, rect.y + visible * rowStep + kColumnGap);
-  return Rect{left, rect.y, std::max(0, right - left), std::max(0, bottom - rect.y)};
+  layout.region = Rect{left, rect.y, std::max(0, right - left), std::max(0, bottom - rect.y)};
+  return layout;
 }
 
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,

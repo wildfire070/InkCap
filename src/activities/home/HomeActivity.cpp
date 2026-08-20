@@ -565,8 +565,11 @@ void HomeActivity::loop() {
   // Row height from the theme, not the metrics table: RoundedRaff draws
   // font-derived rows and the touch grid must match the visuals exactly.
   const int menuRowHeight = GUI.getMenuRowHeight(renderer);
+  // Bounded by the drawn menu width, not the screen: where a theme narrows its
+  // rows to make room for the companion, a tap beside them must not select a row.
+  const int menuTouchRight = companionMenuWidth > 0 ? companionMenuWidth : INT32_MAX;
   const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, renderedMenuCount,
-                                              0, INT32_MAX, menuRowHeight);
+                                              0, menuTouchRight, menuRowHeight);
   if (menuTouch != MappedInputManager::RowTouch::None) {
     const int touchedIndex =
         metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
@@ -606,12 +609,7 @@ void HomeActivity::render(RenderLock&&) {
   // instead of the 48 KB full framebuffer the previous bind captured.
   coverRectX = 0;
   coverRectY = metrics.homeTopPadding;
-  coverRectW = pageWidth;
   coverRectH = metrics.homeCoverTileHeight;
-
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
@@ -629,26 +627,36 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
-  const Rect menuRect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-                      pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                                    metrics.homeMenuTopOffset + metrics.buttonHintsHeight)};
+  Rect menuRect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
+                pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
+                              metrics.homeMenuTopOffset + metrics.buttonHintsHeight)};
+  const Rect coverRect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight};
+  const auto labelAt = [&menuItems](int index) { return std::string(menuItems[index]); };
 
-  GUI.drawButtonMenu(
-      renderer, menuRect, static_cast<int>(menuItems.size()),
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+  // The theme decides where the companion goes and what gives up room for it.
+  // Deriving it here from the metrics table is only ever right for one theme:
+  // each spaces its rows differently, RoundedRaff sizes them from the font, and
+  // a theme whose rows are narrower than the screen has more usable space
+  // beside its menu than underneath it.
+  const auto companion = GUI.getHomeCompanionLayout(renderer, menuRect, coverRect, static_cast<int>(menuItems.size()),
+                                                    labelAt, pageHeight - metrics.buttonHintsHeight);
+  if (companion.menuWidth > 0) menuRect.width = companion.menuWidth;
+  companionMenuWidth = menuRect.width;
 
-  // The theme decides where the companion fits, rather than the home screen
-  // deriving it from the metrics table: every theme spaces its rows differently,
-  // RoundedRaff sizes them from the font, and its narrow pills leave more room
-  // beside the menu than under it. Any local formula is only ever right for one
-  // theme.
-  const Rect companionRect = GUI.getHomeCompanionRect(
-      renderer, menuRect, static_cast<int>(menuItems.size()),
-      [&menuItems](int index) { return std::string(menuItems[index]); }, pageHeight - metrics.buttonHintsHeight);
+  // Narrowing the rect is all it takes to move the cover: it centres its book
+  // inside whatever it is handed.
+  const Rect drawnCover =
+      companion.coverWidth > 0 ? Rect{coverRect.x, coverRect.y, companion.coverWidth, coverRect.height} : coverRect;
+  coverRectW = drawnCover.width;
+  GUI.drawRecentBookCover(renderer, drawnCover, recentBooks, selectorIndex, coverRendered, coverBufferStored,
+                          bufferRestored, std::bind(&HomeActivity::storeCoverBuffer, this));
+
+  GUI.drawButtonMenu(renderer, menuRect, static_cast<int>(menuItems.size()),
+                     metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(), labelAt,
+                     [&menuIcons](int index) { return menuIcons[index]; });
+
   companionFrame++;
-  drawCompanion(companionRect);
+  drawCompanion(companion.region);
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));

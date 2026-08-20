@@ -210,6 +210,18 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .textFieldLineEndOffset = 0};
 }
 
+// Where the home companion draws, plus any width a theme gives up to make room.
+// A zero width means "draw that element as usual".
+struct HomeCompanionLayout {
+  Rect region;         // empty when the theme has no room to spare
+  int menuWidth = 0;   // narrows the menu so the companion can sit beside it
+  int coverWidth = 0;  // narrows the cover tile, which re-centres the cover leftwards
+};
+
+// Below this the strip under the menu cannot hold a character and its status,
+// so a theme with somewhere better to put the companion should offer it.
+inline constexpr int kMinCompanionStripHeight = 60;
+
 class BaseTheme {
  public:
   virtual ~BaseTheme() = default;
@@ -235,12 +247,15 @@ class BaseTheme {
   // it from the metrics table: each theme spaces its rows differently, and
   // RoundedRaff both sizes rows from the font and paginates to fit `rect`.
   virtual int getMenuContentHeight(const GfxRenderer& renderer, Rect rect, int buttonCount) const;
-  // Where the home screen's reading companion may draw. Most themes run their
-  // menu full width, leaving only the strip between the last row and the button
-  // hints; a theme whose rows are narrower can hand back the column beside them
-  // instead. `hintsTop` is the first row the button hints occupy.
-  virtual Rect getHomeCompanionRect(const GfxRenderer& renderer, Rect menuRect, int buttonCount,
-                                    const std::function<std::string(int index)>& buttonLabel, int hintsTop) const;
+  // Where the home screen's reading companion draws, and what gives up room for
+  // it. The strip between the last menu row and the button hints is only big
+  // enough on some theme and menu-length combinations; a theme that can spare a
+  // column beside its menu or its cover tile says so by narrowing one of them.
+  // `hintsTop` is the first row the button hints occupy.
+  virtual HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
+                                                     int buttonCount,
+                                                     const std::function<std::string(int index)>& buttonLabel,
+                                                     int hintsTop) const;
   virtual int getListRowStep(bool hasSubtitle) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
