@@ -30,12 +30,12 @@ roughly a second on wake and applies whether or not you enable the companion.
 > what you have now.
 
 <p align="center">
-  <img src="docs/companion/photos/home-screen.jpg" width="380"
-       alt="An Xteink X3 showing the home screen, with Sophocles the pixel fox and a speech bubble reading 'Fine. This is fine. I am a fine boy.'">
+  <img src="docs/companion/photos/home-lyra-column.jpg" width="380"
+       alt="An Xteink X3 on the Lyra Extended theme. The menu sits on the left and Sophocles the pixel fox sits in the column beside it, saying 'I have chosen this spot. It is now mine.'">
 </p>
 
 <p align="center">
-  <em>Sophocles on an Xteink X3, twelve minutes short of Thriving.</em>
+  <em>Sophocles on an Xteink X3, in the column beside the menu. The line is his own idea.</em>
 </p>
 
 ---
@@ -102,12 +102,14 @@ A potted thing that grows a leaf per finished chapter. Passive-aggressive about 
 > *"I am ninety percent stick at this point."*
 
 <p align="center">
-  <img src="docs/companion/photos/character-vellum.jpg" width="380"
-       alt="The same home screen with Vellum the pixel ghost, saying 'A quiet day. I approve of quiet.'">
+  <img src="docs/companion/photos/home-classic-cover.jpg" width="380"
+       alt="The Classic theme on an Xteink X3, with the book cover shifted left and Vellum the pixel ghost beside it, saying 'I have seen worse readers. All dead now.'">
 </p>
 
 <p align="center">
-  <em>Same screen, different tenant. Switching character takes two button presses.</em>
+  <em>Vellum on the Classic theme. Different character, different theme, different corner of the
+  screen: Classic's menu rows are full width, so the companion takes the space next to the cover
+  instead. Switching character takes two button presses.</em>
 </p>
 
 ---
