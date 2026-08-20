@@ -93,4 +93,8 @@ class HomeActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool isHomeActivity() const override { return true; }
+
+  // Called by the boot path when the panel still shows a frame this activity did
+  // not draw, so the first paint clears it instead of ghosting through it.
+  static void notePanelHoldsRetainedFrame();
 };

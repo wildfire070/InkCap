@@ -33,6 +33,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/home/HomeActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "companion/CompanionState.h"
 #include "components/UITheme.h"
@@ -530,6 +531,9 @@ void setup() {
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)
+    // A splashless wake keeps the retained sleep frame on the panel for the
+    // reader to repaint over. Landing on home instead, home has to clear it.
+    if (resume == BootResume::SplashlessWake) HomeActivity::notePanelHoldsRetainedFrame();
     activityManager.goHome();
   } else {
     // Clear app state to avoid getting into a boot loop if the epub doesn't load
