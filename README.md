@@ -139,8 +139,8 @@ Thriving.
 The clock also needs setting once, over Wi-Fi, before day counting works. Until then the same
 fallback applies.
 
-<!-- TODO: replace with a real photo of a neglected companion -->
-> **📸 Photo goes here** — a Peckish or Neglected companion, if you can bear to earn one.
+<!-- A photo of a Peckish or Neglected companion would sit well here.
+     Earning one takes three quiet days. See docs/companion/photos/README.md -->
 
 ---
 
@@ -205,8 +205,8 @@ Your books and reading progress live on the SD card and are not touched by flash
 
 Nothing changes about the reader until you enable it.
 
-<!-- TODO: replace with a real photo of the settings screen -->
-> **📸 Photo goes here** — the character picker.
+<!-- A photo of the character picker would sit well here.
+     See docs/companion/photos/README.md -->
 
 ---
 
