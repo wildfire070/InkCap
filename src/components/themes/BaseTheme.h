@@ -230,6 +230,17 @@ class BaseTheme {
   // grid from this, so hit bands always match the visuals (RoundedRaff derives
   // its row height from the font, not the metrics table).
   virtual int getMenuRowHeight(const GfxRenderer& renderer) const;
+  // Height the drawn menu actually occupies inside `rect`, gaps included.
+  // Anything positioned below the menu must ask for this rather than deriving
+  // it from the metrics table: each theme spaces its rows differently, and
+  // RoundedRaff both sizes rows from the font and paginates to fit `rect`.
+  virtual int getMenuContentHeight(const GfxRenderer& renderer, Rect rect, int buttonCount) const;
+  // Where the home screen's reading companion may draw. Most themes run their
+  // menu full width, leaving only the strip between the last row and the button
+  // hints; a theme whose rows are narrower can hand back the column beside them
+  // instead. `hintsTop` is the first row the button hints occupy.
+  virtual Rect getHomeCompanionRect(const GfxRenderer& renderer, Rect menuRect, int buttonCount,
+                                    const std::function<std::string(int index)>& buttonLabel, int hintsTop) const;
   virtual int getListRowStep(bool hasSubtitle) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,

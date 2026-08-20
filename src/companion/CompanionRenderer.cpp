@@ -116,7 +116,7 @@ void drawPose(const GfxRenderer& renderer, const CompanionId id, const Mood mood
 }
 
 void drawSpeechBubble(const GfxRenderer& renderer, const int x, const int y, const int w, const int h,
-                      const int tailLength) {
+                      const int tailLength, const TailSide side) {
   if (w <= 4 || h <= 4) return;
 
   const int radius = std::min({10, w / 3, h / 3});
@@ -148,18 +148,30 @@ void drawSpeechBubble(const GfxRenderer& renderer, const int x, const int y, con
 
   if (tailLength <= 0) return;
 
-  // Tail angled down-left, the way a comic bubble points at whoever is talking.
-  // The base is kept near the tail's own length: a base much taller than the
-  // reach reads as a shallow flap rather than a pointer.
+  // Tail angled towards whoever is talking, the way a comic bubble points. The
+  // base is kept near the tail's own length: a base much wider than the reach
+  // reads as a shallow flap rather than a pointer. Paper fill goes down first,
+  // which also erases the body edge between the base points, so the tail opens
+  // into the bubble instead of being a stuck-on shape.
+  if (side == TailSide::Bottom) {
+    const int baseHalf = std::max(3, std::min(tailLength / 2, w / 8));
+    const int midX = left + w / 3;  // off-centre, towards the character's head
+    const int baseLeftX = midX - baseHalf;
+    const int baseRightX = midX + baseHalf;
+    const int tipY = bottom + tailLength;
+    const int tipX = baseLeftX - tailLength / 3;
+    fillTriangle(renderer, baseLeftX, bottom, baseRightX, bottom, tipX, tipY, false);
+    renderer.drawLine(baseLeftX, bottom, tipX, tipY, true);
+    renderer.drawLine(tipX, tipY, baseRightX, bottom, true);
+    return;
+  }
+
   const int baseHalf = std::max(3, std::min(tailLength / 2, h / 8));
   const int midY = top + h / 2;
   const int baseTopY = midY - baseHalf;
   const int baseBottomY = midY + baseHalf;
   const int tipX = left - tailLength;
   const int tipY = baseBottomY + tailLength / 3;
-
-  // Paper fill first: this also erases the body's left edge between the base
-  // points, so the tail opens into the bubble instead of being a stuck-on shape.
   fillTriangle(renderer, left, baseTopY, left, baseBottomY, tipX, tipY, false);
   renderer.drawLine(left, baseTopY, tipX, tipY, true);
   renderer.drawLine(tipX, tipY, left, baseBottomY, true);

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "CrossPointSettings.h"
@@ -184,8 +185,14 @@ bool HomeActivity::storeCoverBuffer() {
   return true;
 }
 
-void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, const int pageWidth) const {
+void HomeActivity::drawCompanion(const Rect region) const {
   if (!SETTINGS.companionEnabled || !SETTINGS.companionOnHome) return;
+  if (region.width <= 0 || region.height <= 0) return;
+
+  const int stripTop = region.y;
+  const int stripBottom = region.y + region.height;
+  const int pageWidth = region.x + region.width;
+  const int leftEdge = region.x;
 
   constexpr int SIDE_MARGIN = 10;
   constexpr int GAP = 4;          // between the tail tip and the character
@@ -205,30 +212,74 @@ void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, cons
   // character's furthest step, so every pixel of pacing pushes the bubble right.
   constexpr int WALK_TRAVEL = 14;
   constexpr int BOB_HEIGHT = 3;
+  constexpr int MAX_SCALE = 4;
 
   const int available = stripBottom - stripTop - BOTTOM_MARGIN;
-  if (available < companion::poseHeight(1)) return;  // theme leaves no room
 
   // getTextHeight() reports the ascender only, but drawText() takes y as the
   // top and descenders hang below it. Without this allowance the bottom line
   // overruns into the button hints.
   const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
   const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
-  const int labelBlock = LABEL_GAP + labelH + SUBLABEL_GAP + subH;
 
-  // Largest whole-pixel scale where the character and its labels both fit.
-  // Fractional scaling would smear the baked dither, so it grows in whole
-  // pixels only.
-  int scale = 4;
+  // The mood label, and under it the line answering "why?" and "what next?".
+  // A reachable target beats a tally, so progress toward Thriving wins when
+  // there is progress to report.
+  const auto id = CompanionTracker::activeId();
+  const auto mood = COMPANION.currentMood();
+  const char* label = companion::moodLabel(mood);
+  char sub[40] = "";
+  const uint16_t minutes = COMPANION.minutesToday();
+  const companion::MoodThresholds thresholds;
+  if (minutes >= thresholds.contentMinutes && minutes < thresholds.thrivingMinutes) {
+    snprintf(sub, sizeof(sub), tr(STR_COMPANION_TO_THRIVING_FORMAT), thresholds.thrivingMinutes - minutes);
+  } else if (COMPANION.hasValidClock() && COMPANION_STATE.ledger.streakDays > 0) {
+    snprintf(sub, sizeof(sub), tr(STR_COMPANION_STREAK_FORMAT), COMPANION_STATE.ledger.streakDays);
+  }
+
+  // A beaten personal best takes over the bubble once, then reverts to the
+  // normal mood lines. The flag is cleared by the caller after the render so a
+  // repaint mid-visit does not swallow it before it has been seen.
+  const char* quote = COMPANION_STATE.milestonePending ? companion::milestoneQuoteFor(id, companionQuoteIndex)
+                                                       : companion::quoteFor(id, mood, companionQuoteIndex);
+
+  // Side by side only works if the widest character this could pick still leaves
+  // a bubble wide enough to wrap. A column beside the menu does not, so it
+  // stacks the bubble above the character instead. Tested against the largest
+  // scale rather than the chosen one because the scale is picked on height, and
+  // a tall narrow region would otherwise choose a character that squeezes the
+  // bubble out entirely.
+  constexpr int SIDE_BY_SIDE_MIN_W =
+      SIDE_MARGIN * 2 + WALK_TRAVEL + companion::poseWidth(MAX_SCALE) + GAP + TAIL_LENGTH + MIN_BUBBLE_W;
+  if (region.width < SIDE_BY_SIDE_MIN_W) {
+    drawCompanionColumn(region, label, sub, quote);
+    return;
+  }
+
+  // Themes leave very different amounts of room under their menus: Lyra spares
+  // ~148px, Lyra Extended 90, Classic 78. Stacking the status under the
+  // character only works in the first case. Below the height that fits a
+  // scale-3 character over both status lines, the stack starves everything at
+  // once -- a 30px character beside a bubble too short to hold a single line --
+  // so the layout turns on its side instead: the status moves into a column at
+  // the right edge and the character and bubble each take the full strip height.
+  const int roomyNeeded = companion::poseHeight(3) + BOB_HEIGHT + LABEL_GAP + labelH + SUBLABEL_GAP + subH;
+  if (available < roomyNeeded) {
+    drawCompanionCompact(stripTop, available, leftEdge, pageWidth, label, sub, quote);
+    return;
+  }
+
+  // Whole-pixel scales only: fractional scaling would smear the baked dither.
+  const int labelBlock = LABEL_GAP + labelH + SUBLABEL_GAP + subH;
+  int scale = MAX_SCALE;
   while (scale > 1 && companion::poseHeight(scale) + BOB_HEIGHT + labelBlock > available) scale--;
 
   const int spriteW = companion::poseWidth(scale);
   const int spriteH = companion::poseHeight(scale);
-  const bool showLabel = spriteH + BOB_HEIGHT + labelBlock <= available;
 
   // Character and labels are centred as one block, so the status sits directly
   // under the feet instead of drifting to the bottom of the strip.
-  const int blockH = spriteH + BOB_HEIGHT + (showLabel ? labelBlock : 0);
+  const int blockH = spriteH + BOB_HEIGHT + labelBlock;
   const int blockTop = stripTop + std::max(0, (available - blockH) / 2);
   const int artHeight = spriteH + BOB_HEIGHT;
 
@@ -239,34 +290,20 @@ void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, cons
   const int walkX = static_cast<int>(step) * WALK_TRAVEL / (WALK_STEPS - 1);
   const int bob = (companionFrame % 2) ? BOB_HEIGHT : 0;
 
-  const int spriteX = SIDE_MARGIN + walkX;
+  const int spriteX = leftEdge + SIDE_MARGIN + walkX;
   const int spriteY = blockTop + bob;
 
-  const auto id = CompanionTracker::activeId();
-  const auto mood = COMPANION.currentMood();
   // A neglected companion is curled up or powered down: pacing about would
   // undercut the pose, so it stays put and only the quote rotates.
   const bool restless = mood != companion::Mood::Neglected;
   const int drawY = restless ? spriteY : spriteY - bob;
-  companion::drawPose(renderer, id, mood, restless ? spriteX : SIDE_MARGIN, drawY, scale, restless && walkingBack);
+  companion::drawPose(renderer, id, mood, restless ? spriteX : leftEdge + SIDE_MARGIN, drawY, scale,
+                      restless && walkingBack);
 
   // Status lines sit centred under the character's whole pacing range, not
   // under the sprite itself, so they stay put while the character moves.
   const int lane = WALK_TRAVEL + spriteW;
-  if (showLabel) {
-    const char* label = companion::moodLabel(mood);
-
-    // Second line answers "why?" and "what next?". A reachable target beats a
-    // tally, so progress toward Thriving wins when there is progress to report.
-    char sub[40] = "";
-    const uint16_t minutes = COMPANION.minutesToday();
-    const companion::MoodThresholds thresholds;
-    if (minutes >= thresholds.contentMinutes && minutes < thresholds.thrivingMinutes) {
-      snprintf(sub, sizeof(sub), tr(STR_COMPANION_TO_THRIVING_FORMAT), thresholds.thrivingMinutes - minutes);
-    } else if (COMPANION.hasValidClock() && COMPANION_STATE.ledger.streakDays > 0) {
-      snprintf(sub, sizeof(sub), tr(STR_COMPANION_STREAK_FORMAT), COMPANION_STATE.ledger.streakDays);
-    }
-
+  {
     const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
     const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
 
@@ -275,8 +312,8 @@ void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, cons
     // still clears the screen edge -- "27 min to Thriving" is wider than the
     // character it sits under, so centring on the sprite alone runs it off.
     const int widest = std::max(labelW, subW);
-    int centreX = SIDE_MARGIN + lane / 2;
-    centreX = std::max(centreX, SIDE_MARGIN + widest / 2);
+    int centreX = leftEdge + SIDE_MARGIN + lane / 2;
+    centreX = std::max(centreX, leftEdge + SIDE_MARGIN + widest / 2);
     centreX = std::min(centreX, pageWidth - SIDE_MARGIN - widest / 2);
 
     const int labelY = blockTop + artHeight + LABEL_GAP;
@@ -286,16 +323,11 @@ void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, cons
     }
   }
 
-  // A beaten personal best takes over the bubble once, then reverts to the
-  // normal mood lines. The flag is cleared by the caller after the render so a
-  // repaint mid-visit does not swallow it before it has been seen.
-  const char* quote = COMPANION_STATE.milestonePending ? companion::milestoneQuoteFor(id, companionQuoteIndex)
-                                                       : companion::quoteFor(id, mood, companionQuoteIndex);
   if (!quote) return;
 
   // Bubble body starts past the character's furthest step plus the tail, so the
   // two can never collide mid-stride.
-  const int bubbleX = SIDE_MARGIN + WALK_TRAVEL + spriteW + GAP + TAIL_LENGTH;
+  const int bubbleX = leftEdge + SIDE_MARGIN + WALK_TRAVEL + spriteW + GAP + TAIL_LENGTH;
   const int bubbleW = pageWidth - bubbleX - SIDE_MARGIN;
   if (bubbleW < MIN_BUBBLE_W) return;  // narrow screen: character only
 
@@ -308,6 +340,118 @@ void HomeActivity::drawCompanion(const int stripTop, const int stripBottom, cons
 
   const Rect textBounds{bubbleX + BUBBLE_PAD, bubbleY + BUBBLE_PAD, bubbleW - BUBBLE_PAD * 2, bubbleH - BUBBLE_PAD * 2};
   UITheme::drawCenteredWrappedText(renderer, textBounds, UI_10_FONT_ID, quote, 3);
+}
+
+void HomeActivity::drawCompanionCompact(const int stripTop, const int available, const int leftEdge,
+                                        const int pageWidth, const char* label, const char* sub,
+                                        const char* quote) const {
+  constexpr int SIDE_MARGIN = 10;
+  constexpr int GAP = 4;
+  constexpr int TAIL_LENGTH = 12;
+  constexpr int PAD = 6;             // bubble inner padding, tighter than the roomy layout's 10
+  constexpr int COL_GAP = 8;         // between the bubble and the status column
+  constexpr int MIN_BUBBLE_W = 200;  // below this the quote wraps to nonsense, so the column goes instead
+  constexpr int STRIP_INSET = 4;     // keeps the bubble off the menu row above and the hints below
+  constexpr int SUBLABEL_GAP = 0;
+  constexpr int DESCENDER_ALLOWANCE = 3;
+  constexpr int WALK_STEPS = 6;
+  constexpr int WALK_TRAVEL = 14;
+  constexpr int BOB_HEIGHT = 3;
+  constexpr int MAX_SCALE = 4;
+
+  // Nothing is stacked here, so the character is free to take the whole strip.
+  int scale = 0;
+  for (int candidate = MAX_SCALE; candidate >= 1; candidate--) {
+    if (companion::poseHeight(candidate) + BOB_HEIGHT <= available) {
+      scale = candidate;
+      break;
+    }
+  }
+  if (scale == 0) return;  // theme leaves no usable room
+
+  const int spriteW = companion::poseWidth(scale);
+  const int spriteH = companion::poseHeight(scale);
+  const int spriteTop = stripTop + (available - spriteH - BOB_HEIGHT) / 2;
+
+  const uint32_t phase = companionFrame % (WALK_STEPS * 2);
+  const bool walkingBack = phase >= WALK_STEPS;
+  const uint32_t step = walkingBack ? (WALK_STEPS * 2 - 1 - phase) : phase;
+  const int walkX = static_cast<int>(step) * WALK_TRAVEL / (WALK_STEPS - 1);
+  const int bob = (companionFrame % 2) ? BOB_HEIGHT : 0;
+
+  const auto id = CompanionTracker::activeId();
+  const auto mood = COMPANION.currentMood();
+  const bool restless = mood != companion::Mood::Neglected;
+  companion::drawPose(renderer, id, mood, leftEdge + SIDE_MARGIN + (restless ? walkX : 0),
+                      restless ? spriteTop + bob : spriteTop, scale, restless && walkingBack);
+
+  if (!quote) return;
+
+  // The bubble never spans the whole strip: sitting flush under the last menu
+  // row reads as a collision even when the arithmetic is right.
+  const int usableH = available - STRIP_INSET * 2;
+  const int bigLineH = renderer.getLineHeight(UI_10_FONT_ID);
+
+  // On the shortest strips a UI_10 bubble holds one line, which truncates the
+  // longer quotes, and a full-size mood label towers over a scale-1 character.
+  // Both drop to the small font together, so the text stays subordinate to the
+  // companion and every quote survives intact.
+  const bool tight = usableH < bigLineH * 2 + PAD * 2;
+  const int quoteFont = tight ? SMALL_FONT_ID : UI_10_FONT_ID;
+  const int labelFont = tight ? SMALL_FONT_ID : UI_10_FONT_ID;
+
+  const int labelH = renderer.getTextHeight(labelFont) + DESCENDER_ALLOWANCE;
+  const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int labelW = renderer.getTextWidth(labelFont, label, EpdFontFamily::BOLD);
+  const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
+
+  const int bubbleX = leftEdge + SIDE_MARGIN + WALK_TRAVEL + spriteW + GAP + TAIL_LENGTH;
+  int bubbleRight = pageWidth - SIDE_MARGIN;
+
+  // Status column at the right edge, dropped whole rather than clipped: it only
+  // earns its width if the bubble still has room to wrap sensibly.
+  const int statusRows = (available >= labelH + SUBLABEL_GAP + subH && subW > 0) ? 2 : (available >= labelH ? 1 : 0);
+  const int statusW = statusRows >= 2 ? std::max(labelW, subW) : labelW;
+  const bool showStatus = statusRows > 0 && bubbleRight - statusW - COL_GAP - bubbleX >= MIN_BUBBLE_W;
+  if (showStatus) bubbleRight -= statusW + COL_GAP;
+
+  const int bubbleW = bubbleRight - bubbleX;
+  if (bubbleW < MIN_BUBBLE_W) return;  // narrow screen: character only
+
+  // Wrapped here rather than inside drawCenteredWrappedText so the bubble can be
+  // sized to the lines the quote actually needs. Stretching it to the full strip
+  // instead just crowds the menu row above.
+  const int lineH = renderer.getLineHeight(quoteFont);
+  const int textW = bubbleW - PAD * 2;
+  const int maxLines = std::max(1, std::min(3, (usableH - PAD * 2) / lineH));
+  std::vector<std::string> lines;
+  if (renderer.getTextWidth(quoteFont, quote) <= textW) {
+    lines.emplace_back(quote);
+  } else {
+    lines = renderer.wrappedText(quoteFont, quote, textW, maxLines);
+  }
+  if (lines.empty()) return;
+
+  const int bubbleH = static_cast<int>(lines.size()) * lineH + PAD * 2;
+  const int bubbleY = stripTop + (available - bubbleH) / 2;
+  companion::drawSpeechBubble(renderer, bubbleX, bubbleY, bubbleW, bubbleH, TAIL_LENGTH);
+
+  const Rect textBounds{bubbleX + PAD, bubbleY, textW, bubbleH};
+  int textY = bubbleY + PAD;
+  for (const auto& line : lines) {
+    UITheme::drawCenteredText(renderer, textBounds, quoteFont, textY, line.c_str());
+    textY += lineH;
+  }
+
+  if (!showStatus) return;
+
+  const int statusH = statusRows >= 2 ? labelH + SUBLABEL_GAP + subH : labelH;
+  const int statusX = pageWidth - SIDE_MARGIN - statusW;
+  const int statusTop = stripTop + (available - statusH) / 2;
+  renderer.drawText(labelFont, statusX + (statusW - labelW) / 2, statusTop, label, true, EpdFontFamily::BOLD);
+  if (statusRows >= 2) {
+    renderer.drawText(SMALL_FONT_ID, statusX + (statusW - subW) / 2, statusTop + labelH + SUBLABEL_GAP, sub);
+  }
 }
 
 bool HomeActivity::restoreCoverBuffer() {
@@ -478,29 +622,26 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  const Rect menuRect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
+                      pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
+                                    metrics.homeMenuTopOffset + metrics.buttonHintsHeight)};
+
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
+      renderer, menuRect, static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
 
-  // Companion lives in the gap between the last menu row and the button hints.
-  // Measured from the menu's own row height rather than a fixed offset, so it
-  // adapts to themes and to the OPDS row appearing or not.
-  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
-  // Rows are laid out at menuRowHeight + menuSpacing pitch (see the themes'
-  // drawButtonMenu). getMenuRowHeight() returns only the row itself, so using it
-  // here underestimates the menu by one spacing per row and the companion ends
-  // up crowding the last entry. Counting the trailing spacing as well leaves a
-  // natural gap between the final row and the companion.
-  const int menuPitch = metrics.menuRowHeight + metrics.menuSpacing;
-  const int menuBottom = menuTop + static_cast<int>(menuItems.size()) * menuPitch;
+  // The theme decides where the companion fits, rather than the home screen
+  // deriving it from the metrics table: every theme spaces its rows differently,
+  // RoundedRaff sizes them from the font, and its narrow pills leave more room
+  // beside the menu than under it. Any local formula is only ever right for one
+  // theme.
+  const Rect companionRect = GUI.getHomeCompanionRect(
+      renderer, menuRect, static_cast<int>(menuItems.size()),
+      [&menuItems](int index) { return std::string(menuItems[index]); }, pageHeight - metrics.buttonHintsHeight);
   companionFrame++;
-  drawCompanion(menuBottom, pageHeight - metrics.buttonHintsHeight, pageWidth);
+  drawCompanion(companionRect);
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
@@ -528,3 +669,93 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+void HomeActivity::drawCompanionColumn(const Rect region, const char* label, const char* sub, const char* quote) const {
+  constexpr int PAD = 6;  // bubble inner padding
+  constexpr int TAIL_LENGTH = 12;
+  constexpr int BUBBLE_GAP = 2;  // between the tail tip and the character's head
+  constexpr int LABEL_GAP = 2;
+  constexpr int SUBLABEL_GAP = 0;
+  constexpr int DESCENDER_ALLOWANCE = 3;
+  constexpr int MARGIN = 4;  // keeps the block off the menu pills and the hints
+  constexpr int WALK_STEPS = 6;
+  constexpr int WALK_TRAVEL = 14;
+  constexpr int BOB_HEIGHT = 3;
+  constexpr int MAX_SCALE = 4;
+  constexpr int MIN_BUBBLE_W = 90;
+
+  const int colX = region.x + MARGIN;
+  const int colW = region.width - MARGIN * 2;
+  const int colTop = region.y + MARGIN;
+  const int colH = region.height - MARGIN * 2;
+  if (colW < MIN_BUBBLE_W) return;
+
+  const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int textW = colW - PAD * 2;
+
+  // The bubble is measured before the character is sized, because the quote
+  // needs however many lines it needs and the character takes what is left.
+  std::vector<std::string> lines;
+  if (quote) {
+    if (renderer.getTextWidth(UI_10_FONT_ID, quote) <= textW) {
+      lines.emplace_back(quote);
+    } else {
+      lines = renderer.wrappedText(UI_10_FONT_ID, quote, textW, 3);
+    }
+  }
+  const int bubbleH = lines.empty() ? 0 : static_cast<int>(lines.size()) * lineH + PAD * 2;
+  const int bubbleBlock = lines.empty() ? 0 : bubbleH + TAIL_LENGTH + BUBBLE_GAP;
+  const int statusBlock = LABEL_GAP + labelH + SUBLABEL_GAP + (sub[0] != '\0' ? subH : 0);
+
+  int scale = 0;
+  for (int candidate = MAX_SCALE; candidate >= 1; candidate--) {
+    if (companion::poseWidth(candidate) + WALK_TRAVEL > colW) continue;
+    if (bubbleBlock + companion::poseHeight(candidate) + BOB_HEIGHT + statusBlock <= colH) {
+      scale = candidate;
+      break;
+    }
+  }
+  if (scale == 0) return;
+
+  const int spriteW = companion::poseWidth(scale);
+  const int spriteH = companion::poseHeight(scale);
+  const int blockH = bubbleBlock + spriteH + BOB_HEIGHT + statusBlock;
+  const int blockTop = colTop + (colH - blockH) / 2;
+
+  // Bubble spans the column; the character paces underneath it, centred on the
+  // range it walks rather than on its own width so it does not appear to drift.
+  if (!lines.empty()) {
+    companion::drawSpeechBubble(renderer, colX, blockTop, colW, bubbleH, TAIL_LENGTH, companion::TailSide::Bottom);
+    const Rect textBounds{colX + PAD, blockTop, textW, bubbleH};
+    int textY = blockTop + PAD;
+    for (const auto& line : lines) {
+      UITheme::drawCenteredText(renderer, textBounds, UI_10_FONT_ID, textY, line.c_str());
+      textY += lineH;
+    }
+  }
+
+  const uint32_t phase = companionFrame % (WALK_STEPS * 2);
+  const bool walkingBack = phase >= WALK_STEPS;
+  const uint32_t step = walkingBack ? (WALK_STEPS * 2 - 1 - phase) : phase;
+  const int walkX = static_cast<int>(step) * WALK_TRAVEL / (WALK_STEPS - 1);
+  const int bob = (companionFrame % 2) ? BOB_HEIGHT : 0;
+
+  const auto id = CompanionTracker::activeId();
+  const auto mood = COMPANION.currentMood();
+  const bool restless = mood != companion::Mood::Neglected;
+  const int laneX = colX + (colW - spriteW - WALK_TRAVEL) / 2;
+  const int spriteTop = blockTop + bubbleBlock;
+  companion::drawPose(renderer, id, mood, laneX + (restless ? walkX : WALK_TRAVEL / 2),
+                      restless ? spriteTop + bob : spriteTop, scale, restless && walkingBack);
+
+  const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
+  const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
+  const int labelY = spriteTop + spriteH + BOB_HEIGHT + LABEL_GAP;
+  const int centreX = colX + colW / 2;
+  renderer.drawText(UI_10_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
+  if (subW > 0) {
+    renderer.drawText(SMALL_FONT_ID, centreX - subW / 2, labelY + labelH + SUBLABEL_GAP, sub);
+  }
+}

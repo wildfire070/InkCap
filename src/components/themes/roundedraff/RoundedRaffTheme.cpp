@@ -181,6 +181,44 @@ int RoundedRaffTheme::getMenuRowHeight(const GfxRenderer& renderer) const {
   return renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
 }
 
+int RoundedRaffTheme::getMenuContentHeight(const GfxRenderer& renderer, const Rect rect, const int buttonCount) const {
+  // Row height comes from the font, not the metrics table, and the menu
+  // paginates to whatever fits rect, so only the visible page counts.
+  const int rowStep = getMenuRowHeight(renderer) + kSelectableRowGap;
+  const int pageItems = std::max(1, rect.height / rowStep);
+  return std::min(buttonCount, pageItems) * rowStep;
+}
+
+Rect RoundedRaffTheme::getHomeCompanionRect(const GfxRenderer& renderer, const Rect rect, const int buttonCount,
+                                            const std::function<std::string(int index)>& buttonLabel,
+                                            const int hintsTop) const {
+  // Rows here are pills only as wide as their label, and the tallest cover tile
+  // of any theme leaves barely 50px underneath them. The column beside the menu
+  // is the larger space by far, so the companion goes there instead.
+  const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
+  const int rowStep = getMenuRowHeight(renderer) + kSelectableRowGap;
+  const int pageItems = std::max(1, rect.height / rowStep);
+  const int visible = std::min(buttonCount, pageItems);
+  const int menuMaxWidth = std::max(0, rect.width - sidePadding * 2);
+  constexpr int kRowPaddingX = 40;  // matches drawButtonMenu's pill padding
+  constexpr int kColumnGap = 16;
+
+  int widestRow = 0;
+  for (int i = 0; i < visible; ++i) {
+    const std::string label = buttonLabel(i);
+    const std::string truncated = renderer.truncatedText(kTitleFontId, label.c_str(),
+                                                         std::max(0, menuMaxWidth - kRowPaddingX), EpdFontFamily::BOLD);
+    const int rowWidth = std::min(
+        menuMaxWidth, renderer.getTextWidth(kTitleFontId, truncated.c_str(), EpdFontFamily::BOLD) + kRowPaddingX);
+    widestRow = std::max(widestRow, rowWidth);
+  }
+
+  const int left = rect.x + sidePadding + widestRow + kColumnGap;
+  const int right = rect.x + rect.width - sidePadding;
+  const int bottom = std::min(hintsTop, rect.y + visible * rowStep + kColumnGap);
+  return Rect{left, rect.y, std::max(0, right - left), std::max(0, bottom - rect.y)};
+}
+
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                       const std::function<std::string(int index)>& buttonLabel,
                                       const std::function<UIIcon(int index)>& rowIcon) const {

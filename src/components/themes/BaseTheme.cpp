@@ -794,6 +794,20 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
 int BaseTheme::getMenuRowHeight(const GfxRenderer&) const { return UITheme::getInstance().getMetrics().menuRowHeight; }
 
+int BaseTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCount) const {
+  // Mirrors the tileY arithmetic in drawButtonMenu below, including the leading
+  // verticalSpacing offset that Lyra does not apply.
+  return BaseMetrics::values.verticalSpacing +
+         buttonCount * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing);
+}
+
+Rect BaseTheme::getHomeCompanionRect(const GfxRenderer& renderer, const Rect menuRect, const int buttonCount,
+                                     const std::function<std::string(int index)>&, const int hintsTop) const {
+  // Full-width rows: all that is left is the strip underneath them.
+  const int top = menuRect.y + getMenuContentHeight(renderer, menuRect, buttonCount);
+  return Rect{0, top, menuRect.width, hintsTop - top};
+}
+
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {

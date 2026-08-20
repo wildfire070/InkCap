@@ -496,6 +496,11 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
   renderer.drawText(UI_10_FONT_ID, rect.x + padding, rect.y + rect.height / 2 + 2, tr(STR_START_READING), true);
 }
 
+int LyraTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCount) const {
+  // Rows start flush at rect.y here, with no leading verticalSpacing.
+  return buttonCount * (LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing);
+}
+
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
