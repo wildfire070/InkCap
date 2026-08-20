@@ -770,8 +770,9 @@ void ReaderOptionsActivity::render(RenderLock&&) {
       ((*currentSettings)[selectedIndex].valuePtr == &CrossPointSettings::screenMarginVertical ||
        (*currentSettings)[selectedIndex].valuePtr == &CrossPointSettings::screenMarginHorizontal);
   const auto labels = mappedInput.mapLabels(
-      tr(STR_BACK), (currentIsAction || selectedLineHeight || selectedScreenMargin) ? tr(STR_SELECT) : tr(STR_TOGGLE),
-      tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+      mappedInput.withBackArrow(tr(STR_BACK)),
+      (currentIsAction || selectedLineHeight || selectedScreenMargin) ? tr(STR_SELECT) : tr(STR_TOGGLE), tr(STR_DIR_UP),
+      tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, true);
 
   renderer.displayBuffer();

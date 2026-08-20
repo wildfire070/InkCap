@@ -1306,7 +1306,8 @@ void WifiSelectionActivity::renderNetworkList(const Rect* screen, const ThemeMet
   const bool hasSavedPassword = !networks.empty() && networks[selectedNetworkIndex].hasSavedPassword;
   const char* forgetLabel = hasSavedPassword ? tr(STR_FORGET_BUTTON) : "";
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONNECT), forgetLabel, tr(STR_RETRY));
+  const auto labels =
+      mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_CONNECT), forgetLabel, tr(STR_RETRY));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, useReaderButtonHints);
 }
 
@@ -1337,7 +1338,7 @@ void WifiSelectionActivity::renderConnecting(const Rect* screen, const ThemeMetr
   }
 
   if (!autoConnecting) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, useReaderButtonHints);
   }
 }
@@ -1400,7 +1401,7 @@ void WifiSelectionActivity::renderConnectionFailed(const Rect* screen, const The
   UITheme::drawCenteredWrappedText(renderer, textArea, UI_10_FONT_ID, top + height + 10, connectionError.c_str(), 3);
 
   // Use centralized button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), "", "");
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_DONE), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, useReaderButtonHints);
 }
 
@@ -1427,7 +1428,8 @@ void WifiSelectionActivity::renderForgetPrompt(const Rect* screen, const ThemeMe
   }
 
   // Use centralized button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_LEFT),
+                                            tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, useReaderButtonHints);
 }
 

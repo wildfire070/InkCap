@@ -16,6 +16,7 @@
 
 namespace {
 constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
+// v65: ruby continuation tokens cannot be line-broken by wordNoSpaceBefore.
 // v64: table cells split words at safe UTF-8 boundaries when hyphenation cannot fit them.
 // v63: dense eight-column tables use a wider leading label column.
 // v62: protect image-height page units from byte-density extrapolation.
@@ -23,7 +24,7 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // the serialized page payload; it also clamps inline-image top margins after
 // page decisions, invalidating layouts that can extend viewport-height images
 // beyond the page.
-constexpr uint8_t SECTION_FILE_VERSION = 64;
+constexpr uint8_t SECTION_FILE_VERSION = 65;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
