@@ -6,8 +6,13 @@ mood depends on how much you actually read.
 
 ![The five companions, all thriving](docs/companion/roster-thriving.png)
 
-Everything CrossPoint already does is untouched. The companion is **off by default** and adds
-around **16 KB of flash and 80 bytes of RAM** when you turn it on.
+The companion is **off by default** and adds around **16 KB of flash and 80 bytes of RAM** when you
+turn it on. Nothing about how CrossPoint reads, renders, or stores your books changes.
+
+The one deliberate exception is a fix, not a feature: waking from sleep onto the home screen used
+to leave the sleep image ghosted behind the UI, because the fast e-ink waveform paints over a
+retained frame without clearing it. The first home paint after a wake now clears properly. It costs
+roughly a second on wake and applies whether or not you enable the companion.
 
 > ### ⚠️ Device support
 >
@@ -151,8 +156,12 @@ source** — a C3 binary will not boot on its S3 chip.
 
 ### Step 1 — back up your current firmware (please do this)
 
-Flashing replaces what is on the device. A full backup lets you return to exactly your current
-setup, Wi-Fi credentials and settings included, rather than merely a clean reinstall.
+Flashing replaces the firmware on the device. A full backup lets you put back precisely the build
+you are running today, rather than the nearest official release.
+
+Your settings and saved networks are **not** what is at risk here — CrossPoint keeps those as JSON
+files in `/.crosspoint/` on the SD card, and flashing does not touch the card. The backup is
+insurance for the firmware itself.
 
 ```bash
 pip install esptool
@@ -171,7 +180,8 @@ esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
 ```
 
 If you skip the backup you can still recover — the web flasher below will put an official
-CrossPoint build back on — but you will lose your settings and saved networks.
+CrossPoint build back on — but it will be whatever version that flasher offers, not necessarily
+the exact build you had.
 
 ### Step 2 — flash
 
@@ -189,7 +199,10 @@ esptool --chip esp32c3 --port /dev/cu.usbmodemXXXX --baud 921600 \
   write-flash 0x10000 firmware.bin
 ```
 
-Your books and reading progress live on the SD card and are not touched by flashing.
+Your books, reading progress, settings and saved Wi-Fi networks all live on the SD card — the
+latter two under `/.crosspoint/` — and none of it is touched by flashing. This build is CrossPoint
+1.5.0 with the companion added, so if you are already on 1.5.0 your existing `settings.json` is
+read back unchanged: nothing to re-enter, nothing to set up again.
 
 > **Note on locked devices.** Some units bought from third-party sellers ship with USB flashing
 > locked. If the browser's serial picker cannot see your device, check
@@ -207,6 +220,21 @@ Nothing changes about the reader until you enable it.
 
 <!-- A photo of the character picker would sit well here.
      See docs/companion/photos/README.md -->
+
+### Themes
+
+All four CrossPoint themes are supported. They lay their home screens out very differently, so the
+companion reads the space each one leaves and arranges itself to fit.
+
+| Theme | Where the companion sits |
+| --- | --- |
+| **Lyra** | Below the menu. The roomiest layout: large character, speech bubble beside it, mood and streak underneath |
+| **Lyra Extended** | Below the menu, with the mood and streak moved to the right so the character keeps its size |
+| **Classic** | Below the menu, same side-by-side arrangement as Lyra Extended |
+| **RoundedRaff** | **Beside** the menu. Its rows are only as wide as their labels and its cover tile is the tallest of any theme, so the column next to the menu is much larger than the strip below it. The bubble sits above the character there |
+
+If a theme leaves too little room for all of it, the text gives way before the character does: the
+streak line goes first, then the mood label. Nothing is ever drawn over the menu or the button hints.
 
 ---
 
@@ -325,7 +353,17 @@ sensible to me and will annoy you.
 
 Things I already know are unfinished: there is no stats screen, the status bar has no companion
 glyph, and the milestone line for beating your best streak has never been seen by anyone because
-it takes days of reading to earn.
+it takes days of reading to earn. On themes other than English, a long menu label can widen
+RoundedRaff's rows enough to squeeze the companion's column out.
+
+**Already fixed since 1.0.0**, thanks to people who reported them:
+
+- The companion only laid out correctly on Lyra. It now adapts to all four themes, and RoundedRaff
+  moved to the column beside its menu — that placement was a reader's suggestion and it is the best
+  the companion has looked on any theme
+- Waking from sleep onto the home screen left the sleep image ghosted behind the UI until you
+  pressed enough buttons to clear it. This one was a CrossPoint bug rather than a companion bug,
+  and the fix costs about a second on wake in exchange for a clean screen
 
 If you build a character of your own, please send a pull request. One text file is the whole
 contribution.
@@ -336,7 +374,10 @@ This is a fork, not a proposed upstream feature. CrossPoint's [SCOPE.md](SCOPE.m
 puts interactive extras out of scope for the core project, and that is the right call for a
 firmware whose job is to disappear while you read. That is exactly what forks are for.
 
-Everything else in this repository is CrossPoint, tracking upstream `develop`.
+Everything else in this repository is CrossPoint, tracking upstream `develop`, apart from two
+upstream bug fixes found while building this: the sleep-wake ghosting described above, and a
+divide-by-zero in the settings list that made the character picker do nothing. Both belong
+upstream rather than in a fork, and both are offered there.
 
 ---
 
