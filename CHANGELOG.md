@@ -14,7 +14,17 @@
 
 ### Fixed
 
+- Crash reports now include the faulting instruction and CPU exception details needed to diagnose crashes on X3/X4 and X4 Pro/Sticky readers.
+- EPUB text layout now exits safely instead of restarting when an X3/X4 runs out of contiguous memory while arranging right-to-left text.
+- Holding page-turn buttons while browsing saved clippings no longer crashes.
+- File Browser navigation no longer risks corrupted rows while the list is redrawing, and wrapped two-line filenames remain reachable when paging.
+- The web EPUB optimizer now removes oversized XHTML comments that can otherwise stop low-memory chapter indexing.
+- Mixed reader fonts, including SD-card fallback glyphs, are warmed together to avoid repeated slow redraws.
+- Ruby annotations now stay together instead of splitting across lines.
+- Transparent BMP sleep overlays no longer develop white holes over the preserved reader page.
+- OPDS search now accepts the first Confirm press after closing the keyboard.
 - Treat empty KOReader sync responses as no remote reading position.
+- The image viewer no longer leaves a white box behind the hidden Previous/Next hint at the first or last image in a folder.
 - Holding a side button for a chapter skip now skips immediately instead of waiting for release.
 - XTC book covers now appear consistently across all Home screen layouts.
 - Choosing Sleep from Quick Actions now reliably shows the selected cover or sleep screen.
@@ -32,6 +42,7 @@
 - Dismissing a dictionary definition with Back or an outside tap now returns directly to the reader instead of reopening word selection.
 - The web Settings page now loads reliably when KOReader Sync has an older saved password.
 - Nearby Stats Sync now shows Sync and Cancel buttons on touch readers.
+- The image viewer now offers the "Set Cover" option for PNG files.
 
 ## [v1.5.1] - 2026-08-12
 

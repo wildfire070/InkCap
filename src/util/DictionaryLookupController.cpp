@@ -375,7 +375,7 @@ bool DictionaryLookupController::render() {
     } else
 #endif
     {
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), "", "");
+      const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_CONFIRM), "", "");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -409,7 +409,8 @@ bool DictionaryLookupController::render() {
         altFormUiApp.render();
         altFormUiReady = true;
       }
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
+      const auto labels =
+          mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
       return true;
@@ -423,7 +424,8 @@ bool DictionaryLookupController::render() {
                         std::max(1, bottom - y)};
     const int maxLines = std::max(1, textArea.height / renderer.getLineHeight(UI_10_FONT_ID));
     UITheme::drawCenteredWrappedText(renderer, textArea, UI_10_FONT_ID, y, lookupWord.c_str(), maxLines);
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
+    const auto labels =
+        mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     return true;
@@ -442,7 +444,8 @@ bool DictionaryLookupController::render() {
       renderer.drawText(UI_10_FONT_ID, labelX, labelY, label, true, EpdFontFamily::BOLD);
     }
 #endif
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
+    const auto labels =
+        mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_DONE), tr(STR_DICT_SWITCH), "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     return true;

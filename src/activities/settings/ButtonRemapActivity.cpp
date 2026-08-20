@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <cstdio>
+
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
@@ -287,7 +289,9 @@ bool ButtonRemapActivity::validateUnassigned(const uint8_t pressedButton) {
 const char* ButtonRemapActivity::getRoleName(const uint8_t roleIndex) const {
   switch (roleIndex) {
     case 0:
-      return tr(STR_BACK);
+      std::snprintf(roleNameStorage.data(), roleNameStorage.size(), "%s",
+                    mappedInput.resolveLabel(mappedInput.withBackArrow(tr(STR_BACK))));
+      return roleNameStorage.data();
     case 1:
       return tr(STR_CONFIRM);
     case 2:

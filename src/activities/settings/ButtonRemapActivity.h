@@ -33,6 +33,8 @@ class ButtonRemapActivity final : public Activity {
   // Error banner timing (used when reassigning duplicate buttons).
   unsigned long errorUntil = 0;
   std::string errorMessage;
+  static constexpr size_t ROLE_NAME_BUFFER_SIZE = 128;
+  mutable std::array<char, ROLE_NAME_BUFFER_SIZE> roleNameStorage{};
   UiHost ui;
   std::array<freeink::ui::ListItem, 4> listItems{};
 

@@ -43,7 +43,7 @@ void NearbyStatsSyncActivity::render(RenderLock&&) {
   }
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NEARBY_STATS_SIMULATOR_UNAVAILABLE), true,
                             EpdFontFamily::BOLD);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer(screenTransitionRefresh_.modeFor(static_cast<uint8_t>(state_)));
 }
@@ -683,7 +683,8 @@ void NearbyStatsSyncActivity::render(RenderLock&&) {
       const char* actionLabels[] = {tr(STR_NEARBY_STATS_SYNC_BUTTON), tr(STR_CANCEL)};
       TouchActionButtons::draw(renderer, actions, actionLabels, 0, -1, UI_10_FONT_ID);
     } else {
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEARBY_STATS_SYNC_BUTTON), "", "");
+      const auto labels =
+          mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_NEARBY_STATS_SYNC_BUTTON), "", "");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
     renderer.displayBuffer(screenTransitionRefresh_.modeFor(static_cast<uint8_t>(state_)));
@@ -700,7 +701,7 @@ void NearbyStatsSyncActivity::render(RenderLock&&) {
         SMALL_FONT_ID, centerY + renderer.getLineHeight(UI_10_FONT_ID) + renderer.getLineHeight(SMALL_FONT_ID) + 14,
         detailSecondary.c_str());
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer(screenTransitionRefresh_.modeFor(static_cast<uint8_t>(state_)));
 }

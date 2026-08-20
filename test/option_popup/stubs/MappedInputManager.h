@@ -13,6 +13,24 @@ class MappedInputManager {
     const char* btn3;
     const char* btn4;
   };
+  struct Label {
+    enum class Placement { None, Prefix, Suffix };
+
+    constexpr Label(const char* text = nullptr) : text(text) {}
+    constexpr Label(const Placement placement, const char* arrow, const char* text)
+        : placement(placement), arrow(arrow), text(text) {}
+
+    static constexpr Label withPrefix(const char* arrow, const char* text) {
+      return Label(Placement::Prefix, arrow, text);
+    }
+    static constexpr Label withSuffix(const char* arrow, const char* text) {
+      return Label(Placement::Suffix, arrow, text);
+    }
+
+    Placement placement = Placement::None;
+    const char* arrow = nullptr;
+    const char* text = nullptr;
+  };
 
   MappedInputManager(HalGPIO&, const GfxRenderer& renderer) : renderer(renderer) {}
 
@@ -46,8 +64,11 @@ class MappedInputManager {
   }
   bool wasReleased(Button) const { return false; }
   bool isPressed(const Button button) const { return button == Button::Power && powerPressed; }
-  Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const {
-    return {back, confirm, previous, next};
+  Label withBackArrow(const char* text) const { return Label(text); }
+  Label withPreviousPageArrow(const char* text) const { return Label(text); }
+  Label withNextPageArrow(const char* text) const { return Label(text); }
+  Labels mapLabels(const Label back, const Label confirm, const Label previous, const Label next) const {
+    return {back.text, confirm.text, previous.text, next.text};
   }
 
   void suppressNextTouchTap() { suppressTouchTap = true; }
