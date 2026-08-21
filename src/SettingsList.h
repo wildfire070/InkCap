@@ -18,6 +18,7 @@
 #include "KOReaderCredentialStore.h"
 #include "QuickActions.h"
 #include "activities/settings/SettingsActivity.h"
+#include "companion/CompanionSprites.generated.h"
 #include "util/Dictionary.h"
 #include "util/DictionaryRegistry.h"
 #include "util/FontFamilyLabel.h"
@@ -547,6 +548,30 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 // #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
 // can use it directly; mutable device UI lists use getSettingsList(), which
 // returns an owned copy and can add SD-card font and dictionary options.
+// Companion picker. The options are the generated character names, so adding a
+// .grid file surfaces a new choice with no change here.
+inline SettingInfo buildCompanionCharacterSetting() {
+  SettingInfo s;
+  s.nameId = StrId::STR_COMPANION_CHARACTER;
+  s.type = SettingType::ENUM;
+  s.valuePtr = &CrossPointSettings::companionId;
+  s.key = "companionId";
+  s.category = StrId::STR_CAT_DISPLAY;
+  // Name plus species, because a list of five bare proper nouns tells you
+  // nothing about what you are choosing. The popup cannot show sprites: its
+  // FreeInkUI DialogOption has no icon slot, and adding one would mean patching
+  // the SDK submodule and losing it on the next update.
+  s.enumStringValues.reserve(companion::COMPANION_COUNT);
+  for (int i = 0; i < companion::COMPANION_COUNT; i++) {
+    std::string label = companion::COMPANION_NAMES[i];
+    label += " (";
+    label += companion::COMPANION_KINDS[i];
+    label += ")";
+    s.enumStringValues.emplace_back(std::move(label));
+  }
+  return s;
+}
+
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
@@ -604,6 +629,16 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Value16(StrId::STR_END, &CrossPointSettings::frontlightScheduleEnd,
                              {0, FrontlightSchedule::kUnsetTimeOfDay, 1}, "frontlightScheduleEnd",
                              StrId::STR_CAT_DISPLAY));
+
+    // --- Reading companion ---
+    // Off by default: nothing about the stock reader changes until enabled.
+    add(SettingInfo::Toggle(StrId::STR_COMPANION_ENABLED, &CrossPointSettings::companionEnabled, "companionEnabled",
+                            StrId::STR_CAT_DISPLAY));
+    // Character names are proper nouns, identical in every UI language, so
+    // they come from the generated sprite table rather than the string table.
+    add(buildCompanionCharacterSetting());
+    add(SettingInfo::Toggle(StrId::STR_COMPANION_ON_HOME, &CrossPointSettings::companionOnHome, "companionOnHome",
+                            StrId::STR_CAT_DISPLAY));
 
     // --- Reader ---
     // Built-in font-family entry. Replaced per-call with a registry-aware

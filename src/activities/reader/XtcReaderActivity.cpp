@@ -27,6 +27,7 @@
 #include "XtcReaderMenuActivity.h"
 #include "activities/boot_sleep/SleepCoverAssets.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
@@ -113,6 +114,9 @@ void XtcReaderActivity::onEnter() {
     return;
   }
 
+  // Reading session starts here. No-op unless the companion is enabled.
+  COMPANION.beginSession();
+
   xtc->setupCacheDir();
 
   // Activate reader-specific front button mapping (if configured).
@@ -139,6 +143,10 @@ void XtcReaderActivity::onEnter() {
 void XtcReaderActivity::onExit() {
   mappedInput.setReaderTouchscreenOverride(false);
   Activity::onExit();
+
+  // Banks credited time and persists it. Runs before deep sleep too, because
+  // ActivityManager::goToSleep() drives the outgoing activity's onExit().
+  COMPANION.endSession();
 
   mappedInput.setReaderMode(false);
 
@@ -352,6 +360,7 @@ void XtcReaderActivity::loop() {
               recordForwardPageTurn(forwardReadSeconds, false);
             }
           }
+          COMPANION.onPageTurn();
           needsUpdate = true;
         }
       }
@@ -453,6 +462,7 @@ void XtcReaderActivity::loop() {
               recordForwardPageTurn(forwardReadSeconds, false);
             }
           }
+          COMPANION.onPageTurn();
           needsUpdate = true;
         }
       }
@@ -534,6 +544,7 @@ void XtcReaderActivity::loop() {
       } else {
         currentPage = 0;
       }
+      COMPANION.onPageTurn();
       needsUpdate = true;
     } else if (nextTriggered) {
       uint32_t forwardReadSeconds = 0;
@@ -546,6 +557,7 @@ void XtcReaderActivity::loop() {
       if (shouldRecordForwardRead) {
         recordForwardPageTurn(forwardReadSeconds, !skipPages);
       }
+      COMPANION.onPageTurn();
       needsUpdate = true;
     }
   }

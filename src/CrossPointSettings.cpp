@@ -242,9 +242,9 @@ uint8_t migrateTiltDirectionValue(const uint8_t direction) {
 
 const char* CrossPointSettings::getDefaultDeviceName() {
   if (BoardConfig::isSticky()) return "Sticky";
-  if (gpio.deviceIsX3()) return "InkCapO3 X3";
-  if (gpio.deviceIsX4()) return "InkCapO3 X4";
-  return "InkCapO3";
+  if (gpio.deviceIsX3()) return "Capy X3";
+  if (gpio.deviceIsX4()) return "Capy X4";
+  return "Capy";
 }
 
 const char* CrossPointSettings::getEffectiveDeviceName() const {

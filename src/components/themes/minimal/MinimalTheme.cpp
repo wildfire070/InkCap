@@ -734,6 +734,17 @@ void MinimalTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const s
   drawProgressBlock(renderer, coverRect, stats, progressPercent, false);
 }
 
+HomeCompanionLayout MinimalTheme::getHomeCompanionLayout(const GfxRenderer&, const Rect, const Rect coverRect,
+                                                         const int, const std::function<std::string(int index)>&,
+                                                         const int hintsTop) const {
+  HomeCompanionLayout layout;
+  const int top = coverRect.y + MinimalMetrics::values.homeCoverHeight;
+  if (hintsTop - top >= kMinCompanionStripHeight) {
+    layout.region = Rect{0, top, coverRect.width, hintsTop - top};
+  }
+  return layout;
+}
+
 void MinimalTheme::drawSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats,
                                    const float progressPercent, const bool inverted) const {
   renderer.clearScreen(inverted ? 0xFF : 0x00);

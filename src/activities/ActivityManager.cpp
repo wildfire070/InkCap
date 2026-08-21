@@ -16,6 +16,7 @@
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
+#include "companion/CompanionTracker.h"
 #include "components/TouchRegistry.h"
 #include "home/AlertActivity.h"
 #include "home/Ao3LibraryActivity.h"
@@ -182,6 +183,11 @@ void ActivityManager::loop() {
       return;
     }
   }
+
+  // Banks reading time for the companion. Self-gating: does nothing unless a
+  // reader session is open, so it is safe to drive from the shared loop rather
+  // than duplicating it into every reader subclass.
+  COMPANION.tick();
 
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());

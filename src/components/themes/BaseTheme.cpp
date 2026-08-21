@@ -745,6 +745,39 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
 int BaseTheme::getMenuRowHeight(const GfxRenderer&) const { return UITheme::getInstance().getMetrics().menuRowHeight; }
 
+int BaseTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCount) const {
+  // Mirrors the tileY arithmetic in drawButtonMenu below, including the leading
+  // verticalSpacing offset that Lyra does not apply.
+  return BaseMetrics::values.verticalSpacing +
+         buttonCount * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing);
+}
+
+HomeCompanionLayout BaseTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect menuRect,
+                                                      const Rect coverRect, const int buttonCount,
+                                                      const std::function<std::string(int index)>&,
+                                                      const int hintsTop) const {
+  HomeCompanionLayout layout;
+  const int top = menuRect.y + getMenuContentHeight(renderer, menuRect, buttonCount);
+  if (hintsTop - top >= kMinCompanionStripHeight) {
+    layout.region = Rect{0, top, menuRect.width, hintsTop - top};
+    return layout;
+  }
+
+  // Rows here are full-width boxes, so there is nothing to sit beside. The
+  // cover tile is the other big block: it centres its book inside whatever rect
+  // it is handed, so narrowing that rect slides the book left and opens a column
+  // on the right. The cover's own 90%-of-width cap scales with the rect, so it
+  // shrinks to suit rather than colliding with the companion.
+  constexpr int kCompanionColumnWidth = 200;
+  constexpr int kSideMargin = 10;
+  if (coverRect.width - kCompanionColumnWidth < kCompanionColumnWidth) return layout;  // too narrow to split
+
+  layout.coverWidth = coverRect.width - kCompanionColumnWidth;
+  layout.region =
+      Rect{coverRect.x + layout.coverWidth, coverRect.y, kCompanionColumnWidth - kSideMargin, coverRect.height};
+  return layout;
+}
+
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<const char*(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {

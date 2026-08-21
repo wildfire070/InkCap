@@ -617,6 +617,52 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
   renderer.drawText(UI_10_FONT_ID, rect.x + padding, rect.y + rect.height / 2 + 2, tr(STR_START_READING), true);
 }
 
+int LyraTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCount) const {
+  // Rows start flush at rect.y here, with no leading verticalSpacing.
+  return buttonCount * (LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing);
+}
+
+HomeCompanionLayout LyraTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect menuRect,
+                                                      const Rect coverRect, const int buttonCount,
+                                                      const std::function<std::string(int index)>& buttonLabel,
+                                                      const int hintsTop) const {
+  (void)coverRect;
+  HomeCompanionLayout layout;
+  const int sidePadding = LyraMetrics::values.contentSidePadding;
+  const int rowStep = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
+
+  // Tiles are drawn full width, but they only need to hold an icon and a label.
+  // Shrinking them to that opens a column beside the menu that is both taller
+  // and better shaped than the strip underneath, and it is where RoundedRaff
+  // already puts the companion.
+  int widestLabel = 0;
+  for (int i = 0; i < buttonCount; ++i) {
+    const std::string label = buttonLabel(i);
+    widestLabel = std::max(widestLabel, renderer.getTextWidth(UI_12_FONT_ID, label.c_str()));
+  }
+  // Mirrors drawButtonMenu's run: 16px inset, icon, gap, label, then the inset again.
+  const int tileWidth = 16 + mainMenuIconSize + hPaddingInSelection + 2 + widestLabel + 16;
+  const int menuWidth = tileWidth + sidePadding * 2;
+
+  constexpr int kColumnGap = 16;
+  constexpr int kMinColumnWidth = 150;
+  const int left = menuRect.x + menuWidth + kColumnGap;
+  const int right = menuRect.x + menuRect.width - sidePadding;
+  const int bottom = std::min(hintsTop, menuRect.y + buttonCount * rowStep);
+
+  // Long labels can eat the column. The strip underneath is the fallback, and on
+  // this theme it is usually big enough to work with.
+  if (right - left >= kMinColumnWidth) {
+    layout.menuWidth = menuWidth;
+    layout.region = Rect{left, menuRect.y, right - left, std::max(0, bottom - menuRect.y)};
+    return layout;
+  }
+
+  const int top = menuRect.y + getMenuContentHeight(renderer, menuRect, buttonCount);
+  layout.region = Rect{0, top, menuRect.width, hintsTop - top};
+  return layout;
+}
+
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<const char*(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {

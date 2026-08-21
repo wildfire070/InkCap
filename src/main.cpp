@@ -89,6 +89,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/home/BookActions.h"
+#include "activities/home/HomeActivity.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "activities/reader/StatsBackup.h"
@@ -97,6 +98,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/settings/KOReaderSettingsActivity.h"
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "companion/CompanionState.h"
 #include "components/UITheme.h"
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
@@ -1163,6 +1165,12 @@ void setup() {
              snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::FILE_TRANSFER)) {
     KOREADER_STORE.loadFromFile();
   }
+  // Loaded unconditionally, not just when the companion is enabled: a wake from
+  // deep sleep re-runs setup(), so gating on the setting means turning the
+  // companion off, waking, then back on leaves the in-memory ledger at defaults
+  // — and the next save overwrites a real streak with zeroes. Missing file on
+  // first run is expected and leaves the defaults in place.
+  COMPANION_STATE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
@@ -1214,7 +1222,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting InkCapO3 version " CROSSINK_VERSION);
+  LOG_DBG("MAIN", "Starting Capy version " CROSSINK_VERSION);
   logMemoryStats("Boot");
 
   // Resolve the single boot-presentation decision. Skipping the splash also
@@ -1372,6 +1380,9 @@ void setup() {
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)
+    // A splashless wake keeps the retained sleep frame on the panel for the
+    // reader to repaint over. Landing on home instead, home has to clear it.
+    if (resume == BootResume::SplashlessWake) HomeActivity::notePanelHoldsRetainedFrame();
     activityManager.goHome();
   } else {
     // Clear app state to avoid getting into a boot loop if the epub doesn't load

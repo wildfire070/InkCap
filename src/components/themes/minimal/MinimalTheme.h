@@ -63,6 +63,12 @@ class MinimalTheme : public LyraTheme {
                            const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f, const GlobalReadingStats* globalStats = nullptr,
                            const char* currentChapterTitle = nullptr) const override;
+  // The cover tile reserves more height (homeCoverTileHeight) than the drawn
+  // cover actually uses (homeCoverHeight), leaving a fixed, content-independent
+  // gap below it that's otherwise empty on every book -- safe for the companion.
+  HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
+                                             int buttonCount, const std::function<std::string(int index)>& buttonLabel,
+                                             int hintsTop) const override;
   void drawSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats = nullptr,
                        float progressPercent = -1.0f, bool inverted = false) const;
   void drawStatsSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats,

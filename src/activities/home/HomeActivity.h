@@ -84,6 +84,24 @@ class HomeActivity final : public Activity {
   const HomeMenuItem initialMenuItem;
   std::string initialBookPath;
 
+  // Rotates the companion's line so each visit to Home gets a different one
+  // while it stays stable as the cursor moves around the menu.
+  uint32_t companionQuoteIndex = 0;
+  // Advances on every home repaint to drive the companion's walk cycle.
+  uint32_t companionFrame = 0;
+  // Width the menu was last drawn at. The companion can sit in the space beside
+  // a narrowed menu, so touch must not claim the full row width there.
+  int companionMenuWidth = 0;
+  // Draws the companion and its speech bubble in the region the theme set aside
+  // for it. No-op unless enabled.
+  void drawCompanion(Rect region) const;
+  // Side-by-side fallback for themes whose menu leaves too little height to
+  // stack the status under the character.
+  void drawCompanionCompact(int stripTop, int available, int leftEdge, int pageWidth, const char* label,
+                            const char* sub, const char* quote) const;
+  // Stacked fallback for a region taller than it is wide: a column beside the
+  // menu rather than a strip beneath it.
+  void drawCompanionColumn(Rect region, const char* label, const char* sub, const char* quote) const;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onContinueReading();
@@ -138,4 +156,8 @@ class HomeActivity final : public Activity {
   bool allowPowerAsConfirmInReaderMode() const override { return quickActionsPopup.isActive(); }
   bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN action) override;
   std::string getCurrentBookPath() const override;
+
+  // Called by the boot path when the panel still shows a frame this activity did
+  // not draw, so the first paint clears it instead of ghosting through it.
+  static void notePanelHoldsRetainedFrame();
 };

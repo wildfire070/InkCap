@@ -62,6 +62,7 @@
 #include "activities/util/IntervalSelectionActivity.h"
 #include "clippings/ClippingTextMatcher.h"
 #include "clippings/ClippingsManager.h"
+#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "components/TouchHeaderBackButton.h"
@@ -2096,6 +2097,9 @@ void EpubReaderActivity::onEnter() {
     return;
   }
 
+  // Reading session starts here. No-op unless the companion is enabled.
+  COMPANION.beginSession();
+
   captureGlobalReaderSettings();
   epub->setupCacheDir();
   currentStatus = Ao3Librarian::getBookStatus(epub->getCachePath());
@@ -2239,6 +2243,10 @@ void EpubReaderActivity::onExit() {
   releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "reader exit");
   MemoryBudget::logEpubHeapPools("reader exit after caches");
   Activity::onExit();
+
+  // Banks credited time and persists it. Runs before deep sleep too, because
+  // ActivityManager::goToSleep() drives the outgoing activity's onExit().
+  COMPANION.endSession();
 
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
@@ -5141,6 +5149,9 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
     }
   }
   lastPageTurnTime = millis();
+  // Companion mood/streak tracking. Excludes footnote-preview navigation
+  // (returns above before reaching here) since that isn't real reading progress.
+  COMPANION.onPageTurn();
   requestUpdate();
 }
 

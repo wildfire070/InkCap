@@ -556,6 +556,14 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char dictionarySdFontFamilyName[64] = "";
   // Zero follows the active reader size.
   uint8_t dictionaryFontPointSize = 0;
+  // Reading companion: a small character whose mood tracks how much you read.
+  // Off by default so nothing about the stock reader changes unless asked for.
+  uint8_t companionEnabled = 0;
+  // Index into companion::COMPANION_SPRITES (0 = the first companion).
+  // Persisted numerically, so sprites/order.txt is append-only.
+  uint8_t companionId = 0;
+  // Draw the companion on the home screen (0 = off, 1 = on).
+  uint8_t companionOnHome = 1;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Hide file extensions in the file browser right-side value column (0 = show, 1 = hide)

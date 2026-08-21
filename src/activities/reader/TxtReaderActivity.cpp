@@ -21,6 +21,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/boot_sleep/SleepCoverAssets.h"
 #include "activities/home/FileBrowserActionActivity.h"
+#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -123,6 +124,9 @@ void TxtReaderActivity::onEnter() {
     return;
   }
 
+  // Reading session starts here. No-op unless the companion is enabled.
+  COMPANION.beginSession();
+
   sdFontSystem.ensureLoaded(renderer);
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
@@ -147,6 +151,10 @@ void TxtReaderActivity::onEnter() {
 void TxtReaderActivity::onExit() {
   mappedInput.setReaderTouchscreenOverride(false);
   Activity::onExit();
+
+  // Banks credited time and persists it. Runs before deep sleep too, because
+  // ActivityManager::goToSleep() drives the outgoing activity's onExit().
+  COMPANION.endSession();
 
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
@@ -330,10 +338,12 @@ void TxtReaderActivity::loop() {
 
   if (prevTriggered && currentPage > 0) {
     currentPage--;
+    COMPANION.onPageTurn();
     requestUpdate();
   } else if (nextTriggered) {
     if (currentPage < totalPages - 1) {
       currentPage++;
+      COMPANION.onPageTurn();
       requestUpdate();
     }
   }

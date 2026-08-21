@@ -567,6 +567,31 @@ void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const
   drawFooterStats(renderer, coverRect, globalStats);
 }
 
+HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect, const Rect coverRect,
+                                                           const int, const std::function<std::string(int index)>&,
+                                                           const int) const {
+  HomeCompanionLayout layout;
+
+  // Matches drawBookText's/drawFooterStats' own layout math exactly (down to
+  // reusing coverRectForScreen for the real drawn-cover rect), using the
+  // longest title/chapter wrap allowed so this never depends on which book is
+  // open, and always clears the footer row rather than guessing its position.
+  const Rect drawnCover = coverRectForScreen(renderer, coverRect);
+  const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
+  const int textBottom = drawnCover.y + drawnCover.height + kTitleTopGap +
+                         titleLineH * (kBookTitleMaxLines + kBookChapterMaxLines) + kTitleChapterGap;
+
+  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
+  const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;
+  const int footerCenterY = std::max(drawnCover.y + drawnCover.height + 120, footerY);
+  const int footerTop = footerCenterY - kFooterIconSize;
+
+  if (footerTop - textBottom >= kMinCompanionStripHeight) {
+    layout.region = Rect{0, textBottom, coverRect.width, footerTop - textBottom};
+  }
+  return layout;
+}
+
 void DashboardTheme::drawSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats,
                                      const GlobalReadingStats* globalStats, const float progressPercent,
                                      const char* currentChapterTitle, const bool inverted) const {
