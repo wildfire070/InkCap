@@ -318,6 +318,28 @@ void drawProgressBlock(const GfxRenderer& renderer, const Rect& coverRect, const
                     textBlack);
 }
 
+// The real bottom edge of whatever drawProgressBlock is about to draw for this
+// book, mirroring its own three cases (nothing / duration line only / duration
+// + bar + percent) rather than assuming the fullest one. Used to keep the
+// companion off of it without giving up the whole strip on books that don't
+// fill it.
+int progressBlockBottomY(const GfxRenderer& renderer, const Rect& coverRect, const BookReadingStats* stats,
+                         const float progressPercent) {
+  const bool hasDuration = stats != nullptr && stats->totalReadingSeconds > 0;
+  if (!hasDuration && progressPercent < 0.0f) {
+    return coverRect.y + coverRect.height;
+  }
+
+  const int durationY = coverRect.y + coverRect.height + kProgressBlockGap;
+  if (progressPercent < 0.0f) {
+    return durationY + renderer.getLineHeight(UI_10_FONT_ID);
+  }
+
+  const int barY = durationY + renderer.getLineHeight(UI_10_FONT_ID) + kProgressBarGap;
+  const int labelY = barY + kProgressBarHeight + kProgressLabelGap;
+  return labelY + renderer.getLineHeight(UI_10_FONT_ID);
+}
+
 void drawMissingBookCover(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book) {
   constexpr int commonBookCoverHeightRatio = 3;
   constexpr int commonBookCoverWidthRatio = 2;
@@ -734,11 +756,14 @@ void MinimalTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const s
   drawProgressBlock(renderer, coverRect, stats, progressPercent, false);
 }
 
-HomeCompanionLayout MinimalTheme::getHomeCompanionLayout(const GfxRenderer&, const Rect, const Rect coverRect,
+HomeCompanionLayout MinimalTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect, const Rect coverRect,
                                                          const int, const std::function<std::string(int index)>&,
-                                                         const int hintsTop) const {
+                                                         const int hintsTop, const HomeCompanionContext& context) const {
   HomeCompanionLayout layout;
-  const int top = coverRect.y + MinimalMetrics::values.homeCoverHeight;
+  // coverRect here is the reserved tile (homeCoverTileHeight), not the drawn
+  // cover (homeCoverHeight) drawProgressBlock actually anchors to.
+  const Rect drawnCover{coverRect.x, coverRect.y, coverRect.width, MinimalMetrics::values.homeCoverHeight};
+  const int top = progressBlockBottomY(renderer, drawnCover, context.stats, context.progressPercent);
   if (hintsTop - top >= kMinCompanionStripHeight) {
     layout.region = Rect{0, top, coverRect.width, hintsTop - top};
   }

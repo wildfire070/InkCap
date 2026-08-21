@@ -33,9 +33,11 @@ class DashboardTheme : public MinimalTheme {
                        const char* currentChapterTitle = nullptr, bool inverted = false) const;
   // Unlike Minimal, the space below Dashboard's cover isn't empty: it holds the
   // book title/chapter text (height varies with wrap) above a fixed footer
-  // stats row. Placement has to clear both, using the same worst-case text
-  // height and footer position math as the actual draw path.
+  // stats row. Placement has to clear both, measuring the actual title/chapter
+  // wrap for this book (via context) rather than assuming the longest one --
+  // the worst case reserves more than the footer leaves free on real hardware,
+  // which hid the companion on every book.
   HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
                                              int buttonCount, const std::function<std::string(int index)>& buttonLabel,
-                                             int hintsTop) const override;
+                                             int hintsTop, const HomeCompanionContext& context) const override;
 };

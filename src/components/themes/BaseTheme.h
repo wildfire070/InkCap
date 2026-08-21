@@ -232,6 +232,21 @@ struct HomeCompanionLayout {
   int coverWidth = 0;  // narrows the cover tile, which re-centres the cover leftwards
 };
 
+// What's actually about to be drawn below the cover on this render, for themes
+// whose companion placement depends on it: Dashboard measures the real
+// title/chapter wrap instead of assuming its worst case, and Minimal starts
+// below the progress block (duration/bar/percent) rather than assuming the
+// strip under the cover is always empty. Themes that don't need this ignore
+// it. `bookTitle`/`chapterTitle` are already resolved the same way the actual
+// draw call resolves them (title-or-path, chapter-or-author) so a theme
+// measuring them doesn't need to re-derive the fallback rule.
+struct HomeCompanionContext {
+  const char* bookTitle = nullptr;
+  const char* chapterTitle = nullptr;
+  const BookReadingStats* stats = nullptr;
+  float progressPercent = -1.0f;
+};
+
 // Below this the strip under the menu cannot hold a character and its status,
 // so a theme with somewhere better to put the companion should offer it.
 inline constexpr int kMinCompanionStripHeight = 60;
@@ -264,11 +279,13 @@ class BaseTheme {
   // it. The strip between the last menu row and the button hints is only big
   // enough on some theme and menu-length combinations; a theme that can spare a
   // column beside its menu or its cover tile says so by narrowing one of them.
-  // `hintsTop` is the first row the button hints occupy.
+  // `hintsTop` is the first row the button hints occupy; `context` carries what
+  // else is about to be drawn below the cover, for themes whose placement
+  // depends on it.
   virtual HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
                                                      int buttonCount,
                                                      const std::function<std::string(int index)>& buttonLabel,
-                                                     int hintsTop) const;
+                                                     int hintsTop, const HomeCompanionContext& context) const;
   virtual int getListRowStep(bool hasSubtitle, int rowHeightScale = 1) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle, int rowHeightScale = 1) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,

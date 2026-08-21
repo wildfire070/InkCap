@@ -114,7 +114,7 @@ class LyraTheme : public BaseTheme {
   int getMenuContentHeight(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
                                              int buttonCount, const std::function<std::string(int index)>& buttonLabel,
-                                             int hintsTop) const override;
+                                             int hintsTop, const HomeCompanionContext& context) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<const char*(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;

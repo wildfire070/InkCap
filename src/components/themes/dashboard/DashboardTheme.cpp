@@ -569,17 +569,35 @@ void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const
 
 HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect, const Rect coverRect,
                                                            const int, const std::function<std::string(int index)>&,
-                                                           const int) const {
+                                                           const int, const HomeCompanionContext& context) const {
   HomeCompanionLayout layout;
 
   // Matches drawBookText's/drawFooterStats' own layout math exactly (down to
-  // reusing coverRectForScreen for the real drawn-cover rect), using the
-  // longest title/chapter wrap allowed so this never depends on which book is
-  // open, and always clears the footer row rather than guessing its position.
+  // reusing coverRectForScreen for the real drawn-cover rect and wrapping the
+  // same strings at the same font/width), measuring the actual title/chapter
+  // this book will draw instead of assuming the longest wrap every theme
+  // allows -- that worst case (2 title lines + 2 chapter lines) reserves more
+  // than the footer leaves free on real hardware, so the companion never
+  // cleared the bar and was silently dropped on every book.
   const Rect drawnCover = coverRectForScreen(renderer, coverRect);
+  const int inset = contentInset(renderer);
+  const int textW = renderer.getScreenWidth() - inset * 2;
   const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int textBottom = drawnCover.y + drawnCover.height + kTitleTopGap +
-                         titleLineH * (kBookTitleMaxLines + kBookChapterMaxLines) + kTitleChapterGap;
+
+  int textBottom = drawnCover.y + drawnCover.height;
+  if (context.bookTitle != nullptr && context.bookTitle[0] != '\0') {
+    const auto titleLines =
+        renderer.wrappedText(UI_12_FONT_ID, context.bookTitle, textW, kBookTitleMaxLines, EpdFontFamily::BOLD);
+    if (!titleLines.empty()) {
+      textBottom += kTitleTopGap + static_cast<int>(titleLines.size()) * titleLineH;
+    }
+  }
+  if (context.chapterTitle != nullptr && context.chapterTitle[0] != '\0') {
+    const auto subtitleLines = renderer.wrappedText(UI_12_FONT_ID, context.chapterTitle, textW, kBookChapterMaxLines);
+    if (!subtitleLines.empty()) {
+      textBottom += kTitleChapterGap + static_cast<int>(subtitleLines.size()) * titleLineH;
+    }
+  }
 
   const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
   const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;

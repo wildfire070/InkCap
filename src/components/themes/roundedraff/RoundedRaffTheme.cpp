@@ -214,7 +214,7 @@ int RoundedRaffTheme::getMenuContentHeight(const GfxRenderer& renderer, const Re
 HomeCompanionLayout RoundedRaffTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect rect,
                                                              const Rect coverRect, const int buttonCount,
                                                              const std::function<std::string(int index)>& buttonLabel,
-                                                             const int hintsTop) const {
+                                                             const int hintsTop, const HomeCompanionContext&) const {
   (void)coverRect;
   HomeCompanionLayout layout;
   // Rows here are pills only as wide as their label, and the tallest cover tile

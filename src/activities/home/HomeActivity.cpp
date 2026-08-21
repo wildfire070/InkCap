@@ -2423,10 +2423,24 @@ void HomeActivity::render(RenderLock&&) {
     // Minimal and Dashboard have no persistent menu to narrow, so the theme
     // only ever hands back a below-content region (or an empty one when
     // there's no safe room) -- menuRect/buttonCount/buttonLabel are unused.
+    // Title/chapter are resolved with the same fallback drawRecentBookCover's
+    // draw path uses (title-or-path, chapter-or-author), so a theme measuring
+    // them sees exactly what will land on screen.
     const Rect minimalCoverRect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight};
+    const char* companionBookTitle = nullptr;
+    const char* companionChapterTitle = nullptr;
+    if (!recentBooks.empty()) {
+      const RecentBook& companionBook = recentBooks[0];
+      companionBookTitle = companionBook.title.empty() ? companionBook.path.c_str() : companionBook.title.c_str();
+      companionChapterTitle =
+          !currentBookChapterTitle.empty() ? currentBookChapterTitle.c_str() : companionBook.author.c_str();
+    }
+    const HomeCompanionContext companionContext{companionBookTitle, companionChapterTitle,
+                                                hasAnyBookStats(currentBookStats) ? &currentBookStats : nullptr,
+                                                currentBookProgressPercent};
     const auto minimalCompanion =
         GUI.getHomeCompanionLayout(renderer, Rect{}, minimalCoverRect, 0, [](int) { return std::string(); },
-                                   pageHeight - metrics.buttonHintsHeight);
+                                   pageHeight - metrics.buttonHintsHeight, companionContext);
     companionFrame++;
     drawCompanion(minimalCompanion.region);
 
@@ -2551,8 +2565,12 @@ void HomeActivity::render(RenderLock&&) {
   // each spaces its rows differently, RoundedRaff sizes them from the font, and
   // a theme whose rows are narrower than the screen has more usable space
   // beside its menu than underneath it.
+  // Only Dashboard's override reads the context, and Dashboard never reaches
+  // this branch (it goes through usesMinimalHomeInteraction() instead), so
+  // the default (empty) context is enough here.
   const auto companion = GUI.getHomeCompanionLayout(renderer, menuRect, coverRect, static_cast<int>(menuItems.size()),
-                                                    labelAt, pageHeight - metrics.buttonHintsHeight);
+                                                    labelAt, pageHeight - metrics.buttonHintsHeight,
+                                                    HomeCompanionContext{});
   if (companion.menuWidth > 0) menuRect.width = companion.menuWidth;
   companionMenuWidth = menuRect.width;
 

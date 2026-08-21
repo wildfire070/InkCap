@@ -755,7 +755,7 @@ int BaseTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCo
 HomeCompanionLayout BaseTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect menuRect,
                                                       const Rect coverRect, const int buttonCount,
                                                       const std::function<std::string(int index)>&,
-                                                      const int hintsTop) const {
+                                                      const int hintsTop, const HomeCompanionContext&) const {
   HomeCompanionLayout layout;
   const int top = menuRect.y + getMenuContentHeight(renderer, menuRect, buttonCount);
   if (hintsTop - top >= kMinCompanionStripHeight) {

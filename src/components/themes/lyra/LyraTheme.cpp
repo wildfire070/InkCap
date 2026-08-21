@@ -625,7 +625,7 @@ int LyraTheme::getMenuContentHeight(const GfxRenderer&, Rect, const int buttonCo
 HomeCompanionLayout LyraTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect menuRect,
                                                       const Rect coverRect, const int buttonCount,
                                                       const std::function<std::string(int index)>& buttonLabel,
-                                                      const int hintsTop) const {
+                                                      const int hintsTop, const HomeCompanionContext&) const {
   (void)coverRect;
   HomeCompanionLayout layout;
   const int sidePadding = LyraMetrics::values.contentSidePadding;
