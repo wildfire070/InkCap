@@ -1253,15 +1253,35 @@ void HomeActivity::drawCompanion(const Rect region) const {
   const int bubbleW = pageWidth - bubbleX - SIDE_MARGIN;
   if (bubbleW < MIN_BUBBLE_W) return;  // narrow screen: character only
 
+  // Small font, not UI_10: the quote pool runs up to ~50 characters and the
+  // narrower glyphs are what keep a long line to three rows instead of
+  // needing a fourth that drawCenteredWrappedText would silently ellipsis
+  // away. Measured here (rather than left to drawCenteredWrappedText) so the
+  // bubble can be sized to the lines the quote actually needs.
+  const int quoteLineH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int textW = bubbleW - BUBBLE_PAD * 2;
+  std::vector<std::string> lines;
+  if (renderer.getTextWidth(SMALL_FONT_ID, quote) <= textW) {
+    lines.emplace_back(quote);
+  } else {
+    lines = renderer.wrappedText(SMALL_FONT_ID, quote, textW, 3);
+  }
+  if (lines.empty()) return;
+
   // Anchored to the character's band, not to the bobbing sprite, so the text
-  // stays still while the character moves under it.
-  const int bubbleH = std::max(40, spriteH - 8);
+  // stays still while the character moves under it. Sized to the measured
+  // lines rather than a flat spriteH guess, so it never clips what it drew.
+  const int bubbleH = std::min(artHeight, static_cast<int>(lines.size()) * quoteLineH + BUBBLE_PAD * 2);
   const int bubbleY = blockTop + (artHeight - bubbleH) / 2;
 
   companion::drawSpeechBubble(renderer, bubbleX, bubbleY, bubbleW, bubbleH, TAIL_LENGTH);
 
-  const Rect textBounds{bubbleX + BUBBLE_PAD, bubbleY + BUBBLE_PAD, bubbleW - BUBBLE_PAD * 2, bubbleH - BUBBLE_PAD * 2};
-  UITheme::drawCenteredWrappedText(renderer, textBounds, UI_10_FONT_ID, textBounds.y, quote, 3);
+  const Rect textBounds{bubbleX + BUBBLE_PAD, bubbleY, textW, bubbleH};
+  int textY = bubbleY + BUBBLE_PAD;
+  for (const auto& line : lines) {
+    UITheme::drawCenteredText(renderer, textBounds, SMALL_FONT_ID, textY, line.c_str());
+    textY += quoteLineH;
+  }
 }
 
 void HomeActivity::drawCompanionCompact(const int stripTop, const int available, const int leftEdge,
@@ -2726,17 +2746,20 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
 
   const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
   const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
-  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  // Small font for the quote: narrower glyphs mean fewer of the ~50-character
+  // lines need a fourth row, which wrappedText's 3-line cap would otherwise
+  // ellipsis away.
+  const int lineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int textW = colW - PAD * 2;
 
   // The bubble is measured before the character is sized, because the quote
   // needs however many lines it needs and the character takes what is left.
   std::vector<std::string> lines;
   if (quote) {
-    if (renderer.getTextWidth(UI_10_FONT_ID, quote) <= textW) {
+    if (renderer.getTextWidth(SMALL_FONT_ID, quote) <= textW) {
       lines.emplace_back(quote);
     } else {
-      lines = renderer.wrappedText(UI_10_FONT_ID, quote, textW, 3);
+      lines = renderer.wrappedText(SMALL_FONT_ID, quote, textW, 3);
     }
   }
   const int bubbleH = lines.empty() ? 0 : static_cast<int>(lines.size()) * lineH + PAD * 2;
@@ -2765,7 +2788,7 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
     const Rect textBounds{colX + PAD, blockTop, textW, bubbleH};
     int textY = blockTop + PAD;
     for (const auto& line : lines) {
-      UITheme::drawCenteredText(renderer, textBounds, UI_10_FONT_ID, textY, line.c_str());
+      UITheme::drawCenteredText(renderer, textBounds, SMALL_FONT_ID, textY, line.c_str());
       textY += lineH;
     }
   }
