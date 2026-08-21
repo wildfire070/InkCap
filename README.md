@@ -387,6 +387,10 @@ RoundedRaff's rows enough to squeeze the companion's column out.
 
 **Already fixed since 1.0.0**, thanks to people who reported them:
 
+- Choosing a character did not survive a sleep. It always came back as the fox. The choice was
+  saved correctly and thrown away on the way back in, so anyone who picked a different companion
+  before 1.0.2 has been quietly losing it
+
 - The companion only laid out correctly on Lyra. It now adapts to all four themes: Lyra, Lyra
   Extended and RoundedRaff give it the column beside their menu, and Classic moves it next to the
   book cover when a fifth menu row leaves no space below. Putting it beside the menu was a reader's
