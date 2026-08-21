@@ -159,7 +159,14 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
       if (info.type == SettingType::ENUM) {
-        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+        // Options come from enumStringValues when the labels are runtime strings
+        // (character names) and from enumValues otherwise. Both have to be
+        // consulted, in that order, to match how the list is rendered and
+        // stepped: an enum backed only by string values would otherwise clamp
+        // against a count of zero and silently reset to the default on load.
+        const size_t optionCount =
+            info.enumStringValues.empty() ? info.enumValues.size() : info.enumStringValues.size();
+        v = clamp(v, (uint8_t)optionCount, fieldDefault);
       } else if (info.type == SettingType::TOGGLE) {
         v = clamp(v, (uint8_t)2, fieldDefault);
       } else if (info.type == SettingType::VALUE) {
