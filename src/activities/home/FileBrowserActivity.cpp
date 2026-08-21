@@ -1166,6 +1166,7 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.items = items.data();
   props.count = static_cast<uint16_t>(usesVirtualList ? totalEntries : items.size());
   props.itemsWindowFirst = usesVirtualList ? static_cast<uint16_t>(topIndex) : 0;
+  props.itemsWindowCount = usesVirtualList ? static_cast<uint16_t>(drawCount) : 0;
   if (!usesVirtualList) {
     props.selectedIndex =
         selectorIndex >= static_cast<size_t>(topIndex) && selectorIndex < static_cast<size_t>(topIndex) + drawCount

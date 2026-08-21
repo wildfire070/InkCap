@@ -239,7 +239,8 @@ bool attributeContainsToken(const char* value, const char* token) {
 }
 
 bool isHeaderOrBlock(const char* name) {
-  return matches(name, HEADER_TAGS, std::size(HEADER_TAGS)) || matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS));
+  return matches(name, HEADER_TAGS, std::size(HEADER_TAGS)) || matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) ||
+         strcmp(name, "caption") == 0;
 }
 
 bool isTableStructuralTag(const char* name) {
@@ -614,6 +615,15 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     }
     currentTextRunBytes = static_cast<uint16_t>(
         std::min<size_t>(currentTextRunBytes + static_cast<size_t>(partWordBufferIndex), UINT16_MAX));
+    partWordBufferIndex = 0;
+    nextWordContinues = false;
+    return;
+  }
+
+  if (!currentTextBlock) {
+    // Text outside a compact table cell has no cell buffer. Ignore malformed
+    // table content rather than dereferencing a null paragraph block.
+    LOG_ERR("EHP", "Discarding text without a paragraph or compact table cell");
     partWordBufferIndex = 0;
     nextWordContinues = false;
     return;
@@ -1878,6 +1888,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     const auto heap = MemoryBudget::snapshot();
     const bool useCompact = !MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_RICH_TABLE, MIN_MAX_ALLOC_FOR_RICH_TABLE);
     if (useCompact) {
+      // Finish the preceding paragraph before allocating compact-table state.
+      // On C3 this releases its layout buffers before the table's row buffers
+      // need the same constrained heap.
+      if (self->currentTextBlock && !self->currentTextBlock->isEmpty()) {
+        self->makePages();
+        if (self->lowMemoryAbort) {
+          return;
+        }
+      }
+      self->currentTextBlock.reset();
       const uint16_t lineHeight =
           static_cast<uint16_t>(self->renderer.getLineHeight(self->fontId) * self->lineCompression);
       self->currentCompactTable =
@@ -1899,10 +1919,6 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->compactFragmentHeight = 1;
       self->compactFragmentColumnCount = 0;
       LOG_DBG("EHP", "Compact table layout selected (free=%u, maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
-      // The preceding paragraph belongs before the table and must not become a
-      // second representation of the first compact cell.
-      self->makePages();
-      self->currentTextBlock.reset();
     } else {
       self->currentTableBuffer = makeUniqueNoThrow<BufferedTable>();
       if (!self->currentTableBuffer) {
@@ -2029,7 +2045,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     return;
   }
 
-  if (self->tableDepth == 1 &&
+  if (self->tableDepth == 1 && strcmp(name, "caption") != 0 &&
       (matches(name, HEADER_TAGS, std::size(HEADER_TAGS)) || matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)))) {
     // Treat block/header tags inside a table cell as transparent wrappers around the
     // cell's text content instead of forcing the whole table back to paragraph mode.
@@ -2597,7 +2613,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->startNewTextBlock(accumulated.withoutBottom());
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
-  } else if (matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS))) {
+  } else if (matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) || strcmp(name, "caption") == 0) {
     if (self->headingOpenerActive) {
       self->headingOpenerActive = false;
     }
@@ -3339,6 +3355,15 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
       }
       self->blockStyleCount_--;
     }
+  }
+  if (self->tableDepth == 1 && strcmp(name, "caption") == 0 && self->currentCompactTable && self->currentTextBlock) {
+    // Captions are ordinary text, not table cells. Emit them before the first
+    // grid row so compact-table capture never sees caption text without a
+    // destination block.
+    self->makePages();
+    self->currentTextBlock.reset();
+    self->currentTextRunBytes = 0;
+    self->nextWordContinues = false;
   }
   if (self->headingDepth == self->depth) {
     self->headingDepth = -1;
