@@ -908,8 +908,8 @@ unsigned long MappedInputManager::getHeldTime() const {
 namespace {
 
 bool isRightToLeftUiLanguage() {
-  const auto language = I18N.getLanguage();
-  return language == Language::AR || language == Language::HE;
+  // English-only build: no RTL language is ever compiled in.
+  return false;
 }
 
 }  // namespace
