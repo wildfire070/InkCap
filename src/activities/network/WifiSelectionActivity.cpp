@@ -1381,6 +1381,27 @@ void WifiSelectionActivity::renderSavePrompt(const Rect* screen, const ThemeMetr
     const auto actions = promptActionLayout(*screen, *metrics, height);
     const char* labels[] = {tr(STR_YES), tr(STR_NO)};
     TouchActionButtons::draw(renderer, actions, labels, 0, savePromptSelection, UI_10_FONT_ID);
+  } else {
+    // Button-only readers still need visible choices for Left/Right selection.
+    const int buttonY = top + 80;
+    constexpr int buttonWidth = 60;
+    constexpr int buttonSpacing = 30;
+    constexpr int totalWidth = buttonWidth * 2 + buttonSpacing;
+    const int startX = screen->x + (screen->width - totalWidth) / 2;
+
+    if (savePromptSelection == 0) {
+      const std::string text = "[" + std::string(tr(STR_YES)) + "]";
+      renderer.drawText(UI_10_FONT_ID, startX, buttonY, text.c_str());
+    } else {
+      renderer.drawText(UI_10_FONT_ID, startX + 4, buttonY, tr(STR_YES));
+    }
+
+    if (savePromptSelection == 1) {
+      const std::string text = "[" + std::string(tr(STR_NO)) + "]";
+      renderer.drawText(UI_10_FONT_ID, startX + buttonWidth + buttonSpacing, buttonY, text.c_str());
+    } else {
+      renderer.drawText(UI_10_FONT_ID, startX + buttonWidth + buttonSpacing + 4, buttonY, tr(STR_NO));
+    }
   }
 
   // Use centralized button hints
@@ -1425,6 +1446,27 @@ void WifiSelectionActivity::renderForgetPrompt(const Rect* screen, const ThemeMe
     const char* labels[] = {tr(STR_FORGET_BUTTON), tr(STR_CANCEL)};
     const int selectedVisualIndex = forgetPromptSelection == 1 ? 0 : 1;
     TouchActionButtons::draw(renderer, actions, labels, 0, selectedVisualIndex, UI_10_FONT_ID);
+  } else {
+    // Button-only readers still need visible choices for Left/Right selection.
+    const int buttonY = top + 80;
+    constexpr int buttonWidth = 120;
+    constexpr int buttonSpacing = 30;
+    constexpr int totalWidth = buttonWidth * 2 + buttonSpacing;
+    const int startX = screen->x + (screen->width - totalWidth) / 2;
+
+    if (forgetPromptSelection == 0) {
+      const std::string text = "[" + std::string(tr(STR_CANCEL)) + "]";
+      renderer.drawText(UI_10_FONT_ID, startX, buttonY, text.c_str());
+    } else {
+      renderer.drawText(UI_10_FONT_ID, startX + 4, buttonY, tr(STR_CANCEL));
+    }
+
+    if (forgetPromptSelection == 1) {
+      const std::string text = "[" + std::string(tr(STR_FORGET_BUTTON)) + "]";
+      renderer.drawText(UI_10_FONT_ID, startX + buttonWidth + buttonSpacing, buttonY, text.c_str());
+    } else {
+      renderer.drawText(UI_10_FONT_ID, startX + buttonWidth + buttonSpacing + 4, buttonY, tr(STR_FORGET_BUTTON));
+    }
   }
 
   // Use centralized button hints

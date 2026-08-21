@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- EPUB table captions no longer crash low-memory X3/X4 chapter indexing.
 - Crash reports now include the faulting instruction and CPU exception details needed to diagnose crashes on X3/X4 and X4 Pro/Sticky readers.
 - EPUB text layout now exits safely instead of restarting when an X3/X4 runs out of contiguous memory while arranging right-to-left text.
 - Holding page-turn buttons while browsing saved clippings no longer crashes.
