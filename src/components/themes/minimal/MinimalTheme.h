@@ -12,7 +12,13 @@ constexpr int coverWidthForHeight(const int coverHeight) {
 constexpr ThemeMetrics makeValues() {
   ThemeMetrics v = LyraMetrics::values;
   v.homeTopPadding = 50;
-  v.homeCoverHeight = 583;
+  // Was 583, taller than the cover art itself ever renders (capped at
+  // homeCoverImageHeight, 525 below) -- the difference was pure letterboxing
+  // above and below the cover, plus that much less room for the companion
+  // strip beneath it. 523 sits just under the image cap, so the art now
+  // fills its reserved height with no visible margin, and the strip below
+  // gains the 60px difference.
+  v.homeCoverHeight = 523;
   v.homeCoverTileHeight = 690;
   v.homeRecentBooksCount = 1;
   v.homeContinueReadingInMenu = false;
