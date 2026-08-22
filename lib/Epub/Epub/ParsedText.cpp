@@ -1445,10 +1445,13 @@ bool ParsedText::splitTokenAtCodepointBoundary(const size_t wordIndex, const int
     prefix.assign(word.data(), candidateOffset);
     const BionicTokenMetadata prefixBionic = computeBionicMetadata(prefix, style, bionicReadingEnabled);
     const int prefixWidth = measureTokenWidth(renderer, fontId, prefix, prefixBionic.style, prefixBionic.boundary);
-    if (prefixWidth <= availableWidth) {
-      chosenOffset = candidateOffset;
-      chosenWidth = prefixWidth;
+    if (prefixWidth > availableWidth) {
+      // Prefix widths grow with the prefix, so every longer candidate is also
+      // too wide. Stop here instead of measuring the rest of a huge token.
+      break;
     }
+    chosenOffset = candidateOffset;
+    chosenWidth = prefixWidth;
     cursor = next;
   }
 
