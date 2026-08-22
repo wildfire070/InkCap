@@ -31,12 +31,10 @@ class DashboardTheme : public MinimalTheme {
   void drawSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats,
                        const GlobalReadingStats* globalStats, float progressPercent = -1.0f,
                        const char* currentChapterTitle = nullptr, bool inverted = false) const;
-  // Unlike Minimal, the space below Dashboard's cover isn't empty: it holds the
-  // book title/chapter text (height varies with wrap) above a fixed footer
-  // stats row. Placement has to clear both, measuring the actual title/chapter
-  // wrap for this book (via context) rather than assuming the longest one --
-  // the worst case reserves more than the footer leaves free on real hardware,
-  // which hid the companion on every book.
+  // Lives in the column under the stats block, to the right of the (now
+  // cover-width) title/chapter text -- a fixed-size column bounded only by
+  // the cover and the two-row footer, so unlike the old below-title-chapter
+  // strip it never shrinks with how long a given book's title happens to be.
   HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,
                                              int buttonCount, const std::function<std::string(int index)>& buttonLabel,
                                              int hintsTop, const HomeCompanionContext& context) const override;

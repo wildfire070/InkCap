@@ -433,21 +433,6 @@ void drawIconLabel(const GfxRenderer& renderer, const uint8_t* icon, const int i
                     visibleLabel.c_str(), !inverted);
 }
 
-void drawRightAlignedIconLabel(const GfxRenderer& renderer, const uint8_t* icon, const int rightX, const int centerY,
-                               const char* label, const int maxTextW, const bool inverted = false) {
-  const std::string visibleLabel = renderer.truncatedText(UI_10_FONT_ID, label, maxTextW);
-  const int labelW = renderer.getTextWidth(UI_10_FONT_ID, visibleLabel.c_str());
-  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
-  const int textX = rightX - labelW;
-  const int iconX = textX - kFooterIconTextGap - kFooterIconSize;
-  if (inverted) {
-    renderer.drawIconInverted(icon, iconX, centerY - kFooterIconSize / 2, kFooterIconSize, kFooterIconSize);
-  } else {
-    renderer.drawIcon(icon, iconX, centerY - kFooterIconSize / 2, kFooterIconSize, kFooterIconSize);
-  }
-  renderer.drawText(UI_10_FONT_ID, textX, centerY - lineH / 2, visibleLabel.c_str(), !inverted);
-}
-
 void drawLeftAnchoredFooterStat(const GfxRenderer& renderer, const int labelX, const int centerY, const int maxTextW,
                                 const char* value, const char* label, const bool inverted = false) {
   const int valueLineH = renderer.getLineHeight(UI_12_FONT_ID);
@@ -461,27 +446,47 @@ void drawLeftAnchoredFooterStat(const GfxRenderer& renderer, const int labelX, c
   renderer.drawText(UI_10_FONT_ID, labelX, topY + valueLineH + kStatsValueLabelGap, visibleLabel.c_str(), !inverted);
 }
 
-void drawRightAnchoredFooterStat(const GfxRenderer& renderer, const int labelRightX, const int centerY,
-                                 const int maxTextW, const char* value, const char* label,
-                                 const bool inverted = false) {
-  const int valueLineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int labelLineH = renderer.getLineHeight(UI_10_FONT_ID);
-  const int totalH = valueLineH + kStatsValueLabelGap + labelLineH;
-  const int valueW = renderer.getTextWidth(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
-  const std::string visibleLabel = renderer.truncatedText(UI_10_FONT_ID, label, maxTextW);
-  const int labelW = renderer.getTextWidth(UI_10_FONT_ID, visibleLabel.c_str());
-  const int labelX = labelRightX - labelW;
-  const int topY = centerY - totalH / 2;
-  renderer.drawText(UI_12_FONT_ID, labelX + (labelW - valueW) / 2, topY, value, !inverted, EpdFontFamily::BOLD);
-  renderer.drawText(UI_10_FONT_ID, labelX, topY + valueLineH + kStatsValueLabelGap, visibleLabel.c_str(), !inverted);
+// Row-to-row center spacing for the two stacked footer rows below. The RTC
+// branch draws single icon+label lines (drawIconLabel, ~kFooterIconSize
+// tall); the non-RTC branch draws bold-value-over-small-label pairs
+// (drawLeftAnchoredFooterStat, roughly twice as tall), which need more room
+// so their own two internal lines don't collide between rows.
+int footerRowGap() {
+  return halClock.isAvailable() ? 32 : 64;
+}
+
+// Both stacked left now (previously the second stat sat right-aligned,
+// splitting the row in two) so the whole right side below the stats column
+// is free for the companion. footerBottomRowCenterY keeps the same floor as
+// the old single-row anchor -- never higher than just under the cover, never
+// lower than the true screen bottom minus the button-hint reserve -- so this
+// still reads as "pinned to the bottom" the way it always has.
+int footerBottomRowCenterY(const GfxRenderer& renderer, const Rect& coverRect) {
+  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
+  const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;
+  return std::max(coverRect.y + coverRect.height + 120, footerY);
+}
+
+int footerTopRowCenterY(const GfxRenderer& renderer, const Rect& coverRect) {
+  return footerBottomRowCenterY(renderer, coverRect) - footerRowGap();
+}
+
+// Top edge of the whole two-row block, for the companion's clearance --
+// shared with getHomeCompanionLayout so the two can never drift apart.
+int footerBlockTop(const GfxRenderer& renderer, const Rect& coverRect) {
+  const int halfRowH = halClock.isAvailable()
+                           ? kFooterIconSize / 2
+                           : (renderer.getLineHeight(UI_12_FONT_ID) + kStatsValueLabelGap +
+                              renderer.getLineHeight(UI_10_FONT_ID)) /
+                                 2;
+  return footerTopRowCenterY(renderer, coverRect) - halfRowH;
 }
 
 void drawFooterStats(const GfxRenderer& renderer, const Rect& coverRect, const GlobalReadingStats* globalStats,
                      const bool inverted = false) {
   const int inset = contentInset(renderer);
-  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
-  const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;
-  const int centerY = std::max(coverRect.y + coverRect.height + 120, footerY);
+  const int row1CenterY = footerTopRowCenterY(renderer, coverRect);
+  const int row2CenterY = footerBottomRowCenterY(renderer, coverRect);
 
   if (!halClock.isAvailable()) {
     char totalTime[40];
@@ -493,30 +498,28 @@ void drawFooterStats(const GfxRenderer& renderer, const Rect& coverRect, const G
 
     const int halfW = renderer.getScreenWidth() / 2;
     const int maxTextW = std::max(1, halfW - inset * 2);
-    drawLeftAnchoredFooterStat(renderer, coverRect.x, centerY, maxTextW, totalTime,
+    drawLeftAnchoredFooterStat(renderer, coverRect.x, row1CenterY, maxTextW, totalTime,
                                tr(STR_STATS_TOTAL_READING_TIME_LBL_SHORT), inverted);
-    const int rightX = renderer.getScreenWidth() - inset;
-    drawRightAnchoredFooterStat(renderer, rightX, centerY, maxTextW, booksRead, tr(STR_STATS_COMPLETED_LBL), inverted);
+    drawLeftAnchoredFooterStat(renderer, coverRect.x, row2CenterY, maxTextW, booksRead, tr(STR_STATS_COMPLETED_LBL),
+                               inverted);
     return;
   }
 
   char streakBuf[48];
   formatStreakStat(globalStats, streakBuf, sizeof(streakBuf));
-
   const int leftTextW = renderer.getScreenWidth() / 2 - inset - kFooterIconSize - kFooterIconTextGap;
-  drawIconLabel(renderer, StreakIcon, coverRect.x, centerY, streakBuf, leftTextW, inverted);
+  drawIconLabel(renderer, StreakIcon, coverRect.x, row1CenterY, streakBuf, leftTextW, inverted);
 
   const char* readerLabel = readerTypeLabel(globalStats);
-  const int rightX = renderer.getScreenWidth() - inset - (gpio.deviceIsX3() ? kPairInwardShiftX3 : 0);
-  const int maxReaderTextW = std::max(1, renderer.getScreenWidth() / 2 - inset - kFooterIconSize - kFooterIconTextGap);
-  drawRightAlignedIconLabel(renderer, readerTypeIcon(globalStats), rightX, centerY, readerLabel, maxReaderTextW,
-                            inverted);
+  drawIconLabel(renderer, readerTypeIcon(globalStats), coverRect.x, row2CenterY, readerLabel, leftTextW, inverted);
 }
 
 void drawBookText(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book,
                   const char* currentChapterTitle, const bool black = true) {
-  const int inset = contentInset(renderer);
-  const int textW = renderer.getScreenWidth() - inset * 2;
+  // Capped to the cover's own width, not the full screen: the companion now
+  // lives in the column to the right (under the stats block), so title/
+  // chapter text can no longer run under it.
+  const int textW = coverRect.width;
   const char* title = book.title.empty() ? book.path.c_str() : book.title.c_str();
   auto titleLines = renderer.wrappedText(UI_12_FONT_ID, title, textW, kBookTitleMaxLines, EpdFontFamily::BOLD);
   int textY = coverRect.y + coverRect.height + kTitleTopGap;
@@ -569,43 +572,27 @@ void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const
 
 HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& renderer, const Rect, const Rect coverRect,
                                                            const int, const std::function<std::string(int index)>&,
-                                                           const int, const HomeCompanionContext& context) const {
+                                                           const int, const HomeCompanionContext&) const {
   HomeCompanionLayout layout;
 
-  // Matches drawBookText's/drawFooterStats' own layout math exactly (down to
-  // reusing coverRectForScreen for the real drawn-cover rect and wrapping the
-  // same strings at the same font/width), measuring the actual title/chapter
-  // this book will draw instead of assuming the longest wrap every theme
-  // allows -- that worst case (2 title lines + 2 chapter lines) reserves more
-  // than the footer leaves free on real hardware, so the companion never
-  // cleared the bar and was silently dropped on every book.
+  // Lives in the same column as the stats block above it: under the stats,
+  // to the right of the (now cover-width) title/chapter block, down to the
+  // top of the two-row footer. The old placement was a strip below
+  // title/chapter whose height swung with how much a given book's title
+  // happened to wrap, and regularly came out too short to be usable; this
+  // column's height depends only on the cover and footer, both fixed for a
+  // given device, so it's identical on every book.
   const Rect drawnCover = coverRectForScreen(renderer, coverRect);
   const int inset = contentInset(renderer);
-  const int textW = renderer.getScreenWidth() - inset * 2;
-  const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
+  const int statsW = isWideScreen(renderer) ? kStatsColumnWidthWide : kStatsColumnWidth;
+  const int columnRight = renderer.getScreenWidth() - inset - (gpio.deviceIsX3() ? kPairInwardShiftX3 : 0);
+  const int columnLeft = columnRight - statsW;
 
-  int textBottom = drawnCover.y + drawnCover.height;
-  if (context.bookTitle != nullptr && context.bookTitle[0] != '\0') {
-    const auto titleLines =
-        renderer.wrappedText(UI_12_FONT_ID, context.bookTitle, textW, kBookTitleMaxLines, EpdFontFamily::BOLD);
-    if (!titleLines.empty()) {
-      textBottom += kTitleTopGap + static_cast<int>(titleLines.size()) * titleLineH;
-    }
-  }
-  if (context.chapterTitle != nullptr && context.chapterTitle[0] != '\0') {
-    const auto subtitleLines = renderer.wrappedText(UI_12_FONT_ID, context.chapterTitle, textW, kBookChapterMaxLines);
-    if (!subtitleLines.empty()) {
-      textBottom += kTitleChapterGap + static_cast<int>(subtitleLines.size()) * titleLineH;
-    }
-  }
+  const int top = drawnCover.y + drawnCover.height;
+  const int bottom = footerBlockTop(renderer, drawnCover);
 
-  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
-  const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;
-  const int footerCenterY = std::max(drawnCover.y + drawnCover.height + 120, footerY);
-  const int footerTop = footerCenterY - kFooterIconSize;
-
-  if (footerTop - textBottom >= kMinCompanionStripHeight) {
-    layout.region = Rect{0, textBottom, coverRect.width, footerTop - textBottom};
+  if (bottom - top >= kMinCompanionStripHeight) {
+    layout.region = Rect{columnLeft, top, columnRight - columnLeft, bottom - top};
   }
   return layout;
 }

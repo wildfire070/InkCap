@@ -85,6 +85,15 @@ constexpr int kProgressLabelGap = 5;
 constexpr int kStatsFooterReaderIconSize = 24;
 constexpr int kStatsFooterStreakIconSize = 24;
 constexpr int kStatsFooterSideInset = 48;
+// kMinCompanionStripHeight (60, in BaseTheme.h) is calibrated for the roomier
+// layouts, which fall back to a side column below that height. The strip
+// below Minimal's cover is the only option here, and drawCompanionCompact
+// (what anything under roomyNeeded routes to) still shows a usable scale-1
+// character down to ~35px, so 60 was turning away strips that would have
+// rendered fine -- most books draw both a duration and a progress bar into
+// this same strip, which regularly left just under 60px and silently
+// dropped the companion on nearly every book.
+constexpr int kMinCompanionStripHeightMinimal = 40;
 int homeButtonHintSelection = -1;
 
 bool dominantReaderTypeBucket(const GlobalReadingStats& globalStats, ReadingTimeBucket& bucketOut) {
@@ -764,7 +773,7 @@ HomeCompanionLayout MinimalTheme::getHomeCompanionLayout(const GfxRenderer& rend
   // cover (homeCoverHeight) drawProgressBlock actually anchors to.
   const Rect drawnCover{coverRect.x, coverRect.y, coverRect.width, MinimalMetrics::values.homeCoverHeight};
   const int top = progressBlockBottomY(renderer, drawnCover, context.stats, context.progressPercent);
-  if (hintsTop - top >= kMinCompanionStripHeight) {
+  if (hintsTop - top >= kMinCompanionStripHeightMinimal) {
     layout.region = Rect{0, top, coverRect.width, hintsTop - top};
   }
   return layout;
