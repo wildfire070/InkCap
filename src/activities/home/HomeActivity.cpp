@@ -1141,7 +1141,9 @@ void HomeActivity::drawCompanion(const Rect region) const {
   // getTextHeight() reports the ascender only, but drawText() takes y as the
   // top and descenders hang below it. Without this allowance the bottom line
   // overruns into the button hints.
-  const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
+  // Same font as the dialogue bubble (SMALL_FONT_ID) so the mood label and
+  // status line don't read as a different size than the text right below.
+  const int labelH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
   const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
 
   // The mood label, and under it the line answering "why?" and "what next?".
@@ -1226,7 +1228,7 @@ void HomeActivity::drawCompanion(const Rect region) const {
   // under the sprite itself, so they stay put while the character moves.
   const int lane = WALK_TRAVEL + spriteW;
   {
-    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
+    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
     const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
 
     // Both lines share one centre so they read as a block. That centre starts
@@ -1239,7 +1241,7 @@ void HomeActivity::drawCompanion(const Rect region) const {
     centreX = std::min(centreX, pageWidth - SIDE_MARGIN - widest / 2);
 
     const int labelY = blockTop + artHeight + LABEL_GAP;
-    renderer.drawText(UI_10_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
     if (subW > 0) {
       renderer.drawText(SMALL_FONT_ID, centreX - subW / 2, labelY + labelH + SUBLABEL_GAP, sub);
     }
@@ -1343,9 +1345,9 @@ void HomeActivity::drawCompanionCompact(const int stripTop, const int available,
   const int labelFont = tight ? SMALL_FONT_ID : UI_10_FONT_ID;
 
   const int labelH = renderer.getTextHeight(labelFont) + DESCENDER_ALLOWANCE;
-  const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
+  const int subH = renderer.getTextHeight(labelFont) + DESCENDER_ALLOWANCE;
   const int labelW = renderer.getTextWidth(labelFont, label, EpdFontFamily::BOLD);
-  const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
+  const int subW = sub[0] != '\0' ? renderer.getTextWidth(labelFont, sub) : 0;
 
   const int bubbleX = leftEdge + SIDE_MARGIN + WALK_TRAVEL + spriteW + GAP + TAIL_LENGTH;
   int bubbleRight = pageWidth - SIDE_MARGIN;
@@ -1392,7 +1394,7 @@ void HomeActivity::drawCompanionCompact(const int stripTop, const int available,
   const int statusTop = stripTop + (available - statusH) / 2;
   renderer.drawText(labelFont, statusX + (statusW - labelW) / 2, statusTop, label, true, EpdFontFamily::BOLD);
   if (statusRows >= 2) {
-    renderer.drawText(SMALL_FONT_ID, statusX + (statusW - subW) / 2, statusTop + labelH + SUBLABEL_GAP, sub);
+    renderer.drawText(labelFont, statusX + (statusW - subW) / 2, statusTop + labelH + SUBLABEL_GAP, sub);
   }
 }
 
@@ -2762,11 +2764,11 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
   const int colH = region.height - MARGIN * 2;
   if (colW < MIN_BUBBLE_W) return;
 
-  const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
+  // Small font throughout -- matches the dialogue bubble below, and narrower
+  // glyphs mean fewer of the ~50-character quotes need a fourth row, which
+  // wrappedText's line cap would otherwise ellipsis away.
+  const int labelH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
   const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
-  // Small font for the quote: narrower glyphs mean fewer of the ~50-character
-  // lines need a fourth row, which wrappedText's line cap would otherwise
-  // ellipsis away.
   const int lineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int textW = colW - PAD * 2;
   const int statusBlock = LABEL_GAP + labelH + SUBLABEL_GAP + (sub[0] != '\0' ? subH : 0);
@@ -2837,11 +2839,11 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
   companion::drawPose(renderer, id, mood, laneX + (restless ? walkX : WALK_TRAVEL / 2),
                       restless ? spriteTop + bob : spriteTop, scale, restless && walkingBack);
 
-  const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
+  const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
   const int subW = sub[0] != '\0' ? renderer.getTextWidth(SMALL_FONT_ID, sub) : 0;
   const int labelY = spriteTop + spriteH + BOB_HEIGHT + LABEL_GAP;
   const int centreX = colX + colW / 2;
-  renderer.drawText(UI_10_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
+  renderer.drawText(SMALL_FONT_ID, centreX - labelW / 2, labelY, label, true, EpdFontFamily::BOLD);
   if (subW > 0) {
     renderer.drawText(SMALL_FONT_ID, centreX - subW / 2, labelY + labelH + SUBLABEL_GAP, sub);
   }
