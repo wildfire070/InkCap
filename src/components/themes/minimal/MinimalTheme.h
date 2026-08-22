@@ -11,14 +11,22 @@ constexpr int coverWidthForHeight(const int coverHeight) {
 
 constexpr ThemeMetrics makeValues() {
   ThemeMetrics v = LyraMetrics::values;
-  v.homeTopPadding = 50;
+  // Was 50. The header only needs room for a battery icon and percentage
+  // text; other themes run their own header as short as 28 (LyraCarousel)
+  // or 40 (Base). 36 stays comfortably inside that range while handing the
+  // difference to the companion strip below -- the button-hint row it has
+  // to clear on non-touch devices (X3/X4) doesn't shrink with touch the way
+  // Dashboard's footer does, so every pixel gained above it matters more
+  // there than it does on X4 Pro.
+  v.homeTopPadding = 36;
   // Was 583, taller than the cover art itself ever renders (capped at
   // homeCoverImageHeight, 525 below) -- the difference was pure letterboxing
   // above and below the cover, plus that much less room for the companion
-  // strip beneath it. 523 sits just under the image cap, so the art now
-  // fills its reserved height with no visible margin, and the strip below
-  // gains the 60px difference.
-  v.homeCoverHeight = 523;
+  // strip beneath it. Trimmed further to 480 (proportionally narrower too,
+  // via coverWidthForHeight) for the same reason: X3/X4 have no touch-based
+  // slack anywhere else to give the companion, so the cover is the only
+  // remaining lever for them specifically.
+  v.homeCoverHeight = 480;
   v.homeCoverTileHeight = 690;
   v.homeRecentBooksCount = 1;
   v.homeContinueReadingInMenu = false;
