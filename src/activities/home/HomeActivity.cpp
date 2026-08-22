@@ -2765,24 +2765,36 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
   const int labelH = renderer.getTextHeight(UI_10_FONT_ID) + DESCENDER_ALLOWANCE;
   const int subH = renderer.getTextHeight(SMALL_FONT_ID) + DESCENDER_ALLOWANCE;
   // Small font for the quote: narrower glyphs mean fewer of the ~50-character
-  // lines need a fourth row, which wrappedText's 3-line cap would otherwise
+  // lines need a fourth row, which wrappedText's line cap would otherwise
   // ellipsis away.
   const int lineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int textW = colW - PAD * 2;
+  const int statusBlock = LABEL_GAP + labelH + SUBLABEL_GAP + (sub[0] != '\0' ? subH : 0);
 
-  // The bubble is measured before the character is sized, because the quote
-  // needs however many lines it needs and the character takes what is left.
+  // The bubble gets whatever's left after reserving room for a guaranteed
+  // scale-1 character plus the status block, instead of always committing to
+  // a fixed 3-line bubble regardless of how much room this column actually
+  // has. A column this narrow-but-short -- Dashboard's under-stats placement
+  // on non-touch/no-RTC devices, where the footer sits higher -- couldn't fit
+  // a full 3-line bubble at all, so nothing drew whatsoever instead of
+  // falling back to a shorter bubble or none. Capped at 6 lines so a very
+  // tall column doesn't stretch the bubble absurdly.
+  constexpr int kQuoteMaxLines = 6;
+  const int minCharacterBlock = companion::poseHeight(1) + BOB_HEIGHT;
+  const int bubbleOverhead = TAIL_LENGTH + BUBBLE_GAP + PAD * 2;
+  const int bubbleBudget = colH - minCharacterBlock - statusBlock - bubbleOverhead;
+  const int maxLines = std::max(0, std::min(kQuoteMaxLines, bubbleBudget / lineH));
+
   std::vector<std::string> lines;
-  if (quote) {
+  if (quote && maxLines > 0) {
     if (renderer.getTextWidth(SMALL_FONT_ID, quote) <= textW) {
       lines.emplace_back(quote);
     } else {
-      lines = renderer.wrappedText(SMALL_FONT_ID, quote, textW, 3);
+      lines = renderer.wrappedText(SMALL_FONT_ID, quote, textW, maxLines);
     }
   }
   const int bubbleH = lines.empty() ? 0 : static_cast<int>(lines.size()) * lineH + PAD * 2;
   const int bubbleBlock = lines.empty() ? 0 : bubbleH + TAIL_LENGTH + BUBBLE_GAP;
-  const int statusBlock = LABEL_GAP + labelH + SUBLABEL_GAP + (sub[0] != '\0' ? subH : 0);
 
   int scale = 0;
   for (int candidate = MAX_SCALE; candidate >= 1; candidate--) {
