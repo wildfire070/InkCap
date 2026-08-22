@@ -275,7 +275,10 @@ bool buildIndex(const std::string& directory, const bool includePng, const bool 
   }
   directoryFile.close();
 
-  if (!output.seek(0) || !writeExact(output, &header, sizeof(header)) || !output.sync() || !output.close()) {
+  const bool finalized = output.seek(0) && writeExact(output, &header, sizeof(header)) && output.sync();
+  // Close before removing: the earlier error paths do the same, and deleting a
+  // still-open file is not safe on SdFat.
+  if (!output.close() || !finalized) {
     Storage.remove(tempPath);
     return false;
   }

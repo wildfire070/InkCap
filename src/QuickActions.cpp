@@ -37,7 +37,7 @@ void showConfiguredPopup(OptionPopup& popup, const std::function<void()>& reques
   }
   if (actions.empty()) return;
   popup.show(StrId::STR_QUICK_ACTIONS, labels, 0,
-             [actions = std::move(actions), actionHandler = std::move(actionHandler), &popup](const int selected) {
+             [actions = std::move(actions), actionHandler = std::move(actionHandler)](const int selected) {
                if (selected >= 0 && static_cast<size_t>(selected) < actions.size()) {
                  const auto action = static_cast<CrossPointSettings::SHORT_PWRBTN>(actions[selected]);
                  // These actions read or write the current framebuffer immediately.
@@ -45,15 +45,12 @@ void showConfiguredPopup(OptionPopup& popup, const std::function<void()>& reques
                  // them captures or paints over the stale modal image. Other actions
                  // already schedule their own redraw and should not pay for an extra
                  // full-page render here.
+                 // Quick Lock is never offered here (isQuickActionSlotActionAvailable
+                 // filters it out) because unlocking needs a single physical shortcut.
                  if ((action == CrossPointSettings::SHORT_PWRBTN::SLEEP && sleepScreenNeedsUnderlyingFrame()) ||
-                     action == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK ||
                      (action == CrossPointSettings::SHORT_PWRBTN::SCREENSHOT &&
                       !activityManager.canSnapshotForSleepOverlay())) {
-                   const auto updateResult = activityManager.requestUpdateAndWait();
-                   if (action == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK &&
-                       updateResult == RequestUpdateResult::Rendered) {
-                     popup.skipPostSelectionUpdate();
-                   }
+                   (void)activityManager.requestUpdateAndWait();
                  }
                  if (actionHandler) {
                    actionHandler(action);
