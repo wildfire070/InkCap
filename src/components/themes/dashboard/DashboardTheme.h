@@ -32,8 +32,11 @@ class DashboardTheme : public MinimalTheme {
                        const GlobalReadingStats* globalStats, float progressPercent = -1.0f,
                        const char* currentChapterTitle = nullptr, bool inverted = false) const;
   // Lives right of the (now cover-width) title/chapter text, from the
-  // cover's right edge to the screen edge -- a fixed-size column bounded
-  // only by the cover and the two-row footer, so unlike the old
+  // cover's right edge to the screen edge, and from under the stats block
+  // down to the button-hint reserve -- the footer's two rows are both
+  // left-anchored, so the whole right side is free for the companion, not
+  // just the strip above the footer. A fixed-size column bounded only by
+  // the cover and the button-hint reserve, so unlike the old
   // below-title-chapter strip it never shrinks with how long a given book's
   // title happens to be.
   HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,

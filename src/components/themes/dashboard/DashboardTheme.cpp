@@ -47,6 +47,7 @@ constexpr int kBookChapterMaxLines = 2;
 constexpr int kFooterIconSize = 24;
 constexpr int kFooterIconTextGap = 18;
 constexpr int kFooterBottomGap = 57;
+constexpr int kCompanionColumnBottomMargin = 16;
 constexpr int kStatsRowCount = 7;
 constexpr int kStatsRowCountX4 = 6;
 constexpr int kStatsValueLabelGap = 1;
@@ -471,17 +472,6 @@ int footerTopRowCenterY(const GfxRenderer& renderer, const Rect& coverRect) {
   return footerBottomRowCenterY(renderer, coverRect) - footerRowGap();
 }
 
-// Top edge of the whole two-row block, for the companion's clearance --
-// shared with getHomeCompanionLayout so the two can never drift apart.
-int footerBlockTop(const GfxRenderer& renderer, const Rect& coverRect) {
-  const int halfRowH = halClock.isAvailable()
-                           ? kFooterIconSize / 2
-                           : (renderer.getLineHeight(UI_12_FONT_ID) + kStatsValueLabelGap +
-                              renderer.getLineHeight(UI_10_FONT_ID)) /
-                                 2;
-  return footerTopRowCenterY(renderer, coverRect) - halfRowH;
-}
-
 void drawFooterStats(const GfxRenderer& renderer, const Rect& coverRect, const GlobalReadingStats* globalStats,
                      const bool inverted = false) {
   const int inset = contentInset(renderer);
@@ -576,11 +566,12 @@ HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& re
   HomeCompanionLayout layout;
 
   // Lives under the stats block, to the right of the (now cover-width)
-  // title/chapter block, down to the top of the two-row footer. The old
-  // placement was a strip below title/chapter whose height swung with how
-  // much a given book's title happened to wrap, and regularly came out too
-  // short to be usable; this column's height depends only on the cover and
-  // footer, both fixed for a given device, so it's identical on every book.
+  // title/chapter block, down almost to the screen bottom. The old placement
+  // was a strip below title/chapter whose height swung with how much a
+  // given book's title happened to wrap, and regularly came out too short
+  // to be usable; this column's height depends only on the cover and the
+  // button-hint reserve, both fixed for a given device, so it's identical
+  // on every book.
   //
   // Wider than just the stats column above it: below the cover, title/
   // chapter no longer needs the space between the cover's right edge and the
@@ -588,13 +579,20 @@ HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& re
   // right after the cover instead of being capped to the stats column's own
   // width -- narrower than that left the character stuck at a small scale
   // and the bubble text tight enough to still need truncating.
+  //
+  // Runs down to the button-hint reserve, not just down to where the footer
+  // starts: the footer's two rows are both left-anchored (leftTextW caps
+  // them to roughly the left half of the screen), so the entire right side
+  // below the stats column is free for the whole height of the footer too,
+  // not only the strip above it.
   const Rect drawnCover = coverRectForScreen(renderer, coverRect);
   const int inset = contentInset(renderer);
   const int columnRight = renderer.getScreenWidth() - inset - (gpio.deviceIsX3() ? kPairInwardShiftX3 : 0);
   const int columnLeft = drawnCover.x + drawnCover.width + kCoverStatsGap;
 
+  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
   const int top = drawnCover.y + drawnCover.height;
-  const int bottom = footerBlockTop(renderer, drawnCover);
+  const int bottom = renderer.getScreenHeight() - buttonHintReserve - kCompanionColumnBottomMargin;
 
   if (bottom - top >= kMinCompanionStripHeight) {
     layout.region = Rect{columnLeft, top, columnRight - columnLeft, bottom - top};
