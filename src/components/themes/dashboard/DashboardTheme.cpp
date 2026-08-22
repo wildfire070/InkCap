@@ -575,18 +575,23 @@ HomeCompanionLayout DashboardTheme::getHomeCompanionLayout(const GfxRenderer& re
                                                            const int, const HomeCompanionContext&) const {
   HomeCompanionLayout layout;
 
-  // Lives in the same column as the stats block above it: under the stats,
-  // to the right of the (now cover-width) title/chapter block, down to the
-  // top of the two-row footer. The old placement was a strip below
-  // title/chapter whose height swung with how much a given book's title
-  // happened to wrap, and regularly came out too short to be usable; this
-  // column's height depends only on the cover and footer, both fixed for a
-  // given device, so it's identical on every book.
+  // Lives under the stats block, to the right of the (now cover-width)
+  // title/chapter block, down to the top of the two-row footer. The old
+  // placement was a strip below title/chapter whose height swung with how
+  // much a given book's title happened to wrap, and regularly came out too
+  // short to be usable; this column's height depends only on the cover and
+  // footer, both fixed for a given device, so it's identical on every book.
+  //
+  // Wider than just the stats column above it: below the cover, title/
+  // chapter no longer needs the space between the cover's right edge and the
+  // stats column's left edge (kCoverStatsGap), so the companion can start
+  // right after the cover instead of being capped to the stats column's own
+  // width -- narrower than that left the character stuck at a small scale
+  // and the bubble text tight enough to still need truncating.
   const Rect drawnCover = coverRectForScreen(renderer, coverRect);
   const int inset = contentInset(renderer);
-  const int statsW = isWideScreen(renderer) ? kStatsColumnWidthWide : kStatsColumnWidth;
   const int columnRight = renderer.getScreenWidth() - inset - (gpio.deviceIsX3() ? kPairInwardShiftX3 : 0);
-  const int columnLeft = columnRight - statsW;
+  const int columnLeft = drawnCover.x + drawnCover.width + kCoverStatsGap;
 
   const int top = drawnCover.y + drawnCover.height;
   const int bottom = footerBlockTop(renderer, drawnCover);
