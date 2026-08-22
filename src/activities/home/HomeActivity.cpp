@@ -2773,19 +2773,38 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
   const int textW = colW - PAD * 2;
   const int statusBlock = LABEL_GAP + labelH + SUBLABEL_GAP + (sub[0] != '\0' ? subH : 0);
 
-  // The bubble gets whatever's left after reserving room for a guaranteed
-  // scale-1 character plus the status block, instead of always committing to
-  // a fixed 3-line bubble regardless of how much room this column actually
-  // has. A column this narrow-but-short -- Dashboard's under-stats placement
-  // on non-touch/no-RTC devices, where the footer sits higher -- couldn't fit
-  // a full 3-line bubble at all, so nothing drew whatsoever instead of
-  // falling back to a shorter bubble or none. Capped at 6 lines so a very
-  // tall column doesn't stretch the bubble absurdly.
+  // Character scale and bubble line count are chosen together: a fixed
+  // scale-1 reservation used to hand the bubble every spare pixel above that
+  // floor, which kept the character pinned to its smallest size even on a
+  // column with plenty of room to spare, and still didn't leave enough for
+  // a full-length quote on the shortest columns. Each candidate scale (large
+  // to small) gets scored by how much of the quote it leaves room for --
+  // preferring a bigger character is only worth it while at least a couple
+  // of lines of dialogue still fit, since a wordless companion isn't the
+  // goal either. Capped at 6 lines so a very tall column doesn't stretch the
+  // bubble absurdly.
   constexpr int kQuoteMaxLines = 6;
-  const int minCharacterBlock = companion::poseHeight(1) + BOB_HEIGHT;
+  constexpr int kPreferredMinQuoteLines = 2;
   const int bubbleOverhead = TAIL_LENGTH + BUBBLE_GAP + PAD * 2;
-  const int bubbleBudget = colH - minCharacterBlock - statusBlock - bubbleOverhead;
-  const int maxLines = std::max(0, std::min(kQuoteMaxLines, bubbleBudget / lineH));
+
+  int scale = 0;
+  int maxLines = 0;
+  int bestScore = -1;
+  for (int candidate = MAX_SCALE; candidate >= 1; candidate--) {
+    if (companion::poseWidth(candidate) + WALK_TRAVEL > colW) continue;
+    const int characterBlock = companion::poseHeight(candidate) + BOB_HEIGHT;
+    if (characterBlock + statusBlock > colH) continue;
+    const int bubbleBudget = colH - characterBlock - statusBlock - bubbleOverhead;
+    const int candidateMaxLines = std::max(0, std::min(kQuoteMaxLines, bubbleBudget / lineH));
+    const int tier = candidateMaxLines >= kPreferredMinQuoteLines ? 2 : (candidateMaxLines >= 1 ? 1 : 0);
+    const int score = tier * 100 + candidate;
+    if (score > bestScore) {
+      bestScore = score;
+      scale = candidate;
+      maxLines = candidateMaxLines;
+    }
+  }
+  if (scale == 0) return;
 
   std::vector<std::string> lines;
   if (quote && maxLines > 0) {
@@ -2797,16 +2816,6 @@ void HomeActivity::drawCompanionColumn(const Rect region, const char* label, con
   }
   const int bubbleH = lines.empty() ? 0 : static_cast<int>(lines.size()) * lineH + PAD * 2;
   const int bubbleBlock = lines.empty() ? 0 : bubbleH + TAIL_LENGTH + BUBBLE_GAP;
-
-  int scale = 0;
-  for (int candidate = MAX_SCALE; candidate >= 1; candidate--) {
-    if (companion::poseWidth(candidate) + WALK_TRAVEL > colW) continue;
-    if (bubbleBlock + companion::poseHeight(candidate) + BOB_HEIGHT + statusBlock <= colH) {
-      scale = candidate;
-      break;
-    }
-  }
-  if (scale == 0) return;
 
   const int spriteW = companion::poseWidth(scale);
   const int spriteH = companion::poseHeight(scale);
