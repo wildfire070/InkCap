@@ -610,8 +610,12 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
                                          fontStyle, nextWordContinues,
                                          honorsPublisherDecorations() && effectiveBackgroundBlack,
                                          insideFootnoteLink ? currentFootnote.linkId : 0)) {
-      LOG_ERR("EHP", "Compact table text capture failed");
-      lowMemoryAbort = true;
+      // The row exceeded the compact model's fixed text/token budget. Degrade
+      // this table to paragraphs the way the rich path does for its own limits,
+      // rather than failing the whole section build.
+      LOG_DBG("EHP", "Compact table row capacity exceeded; flattening table");
+      compactTableUnsupported = true;
+      currentCompactTable->markUnsupported();
     }
     currentTextRunBytes = static_cast<uint16_t>(
         std::min<size_t>(currentTextRunBytes + static_cast<size_t>(partWordBufferIndex), UINT16_MAX));
@@ -1186,7 +1190,9 @@ bool ChapterHtmlSlimParser::emitCompactTableRow(TableFragmentRow& row,
         completeCurrentPage();
         completedPageCount++;
         stopPreviewIfPageLimitReached();
-        if (previewStopRequested || !startNewPage("compact table paragraph page break")) return false;
+        // A preview that reached its page limit has finished normally.
+        if (previewStopRequested) return true;
+        if (!startNewPage("compact table paragraph page break")) return false;
       }
       auto pageLine = makeUniqueNoThrow<PageLine>(line, style.leftInset(), currentPageNextY);
       if (!pageLine) {
@@ -1220,7 +1226,8 @@ bool ChapterHtmlSlimParser::emitCompactTableRow(TableFragmentRow& row,
     completeCurrentPage();
     completedPageCount++;
     stopPreviewIfPageLimitReached();
-    if (previewStopRequested || !startNewPage("compact table page break")) return false;
+    if (previewStopRequested) return true;
+    if (!startNewPage("compact table page break")) return false;
   }
 
   if (compactFragmentRows.empty()) {
@@ -2029,9 +2036,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (self->currentCompactTable) {
       if (!self->currentCompactTable->beginCell(self->currentTableCellIsHeader, parsedColSpan,
                                                 self->currentTableCellVisibleOffset, tableCellBlockStyle)) {
-        LOG_ERR("EHP", "Failed to begin compact table cell");
-        self->lowMemoryAbort = true;
-        return;
+        // Too many cells for the compact row model: flatten instead of aborting.
+        LOG_DBG("EHP", "Compact table cell capacity exceeded; flattening table");
+        self->compactTableUnsupported = true;
+        self->currentCompactTable->markUnsupported();
       }
       self->currentTextBlock.reset();
       self->currentTextRunBytes = 0;
