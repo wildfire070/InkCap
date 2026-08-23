@@ -557,7 +557,7 @@ inline SettingInfo buildCompanionCharacterSetting() {
   s.valuePtr = &CrossPointSettings::companionId;
   s.key = "companionId";
   s.category = StrId::STR_CAT_DISPLAY;
-  // Name plus species, because a list of five bare proper nouns tells you
+  // Name plus species, because a list of bare proper nouns tells you
   // nothing about what you are choosing. The popup cannot show sprites: its
   // FreeInkUI DialogOption has no icon slot, and adding one would mean patching
   // the SDK submodule and losing it on the next update.
