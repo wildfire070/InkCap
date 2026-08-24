@@ -18,6 +18,7 @@
 #include "util/BookCacheUtils.h"
 
 #if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#define CROSSINK_USB_RX_OVERFLOW_ENABLED
 #include <USBCDC.h>
 #endif
 
@@ -53,7 +54,7 @@ uint8_t transferBuffer[SERIAL_CHUNK_SIZE];
 // Set once per process() call from the caller's screen context; read by every command handler.
 bool fileTransferAllowed = false;
 
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
 std::atomic<uint32_t> rxDroppedBytes{0};
 
 void onCdcEvent(void*, esp_event_base_t, int32_t eventId, void* eventData) {
@@ -64,7 +65,7 @@ void onCdcEvent(void*, esp_event_base_t, int32_t eventId, void* eventData) {
 #endif
 
 // Only native USB exposes the CDC overflow event used to reject incomplete uploads.
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
 uint32_t rxOverflowCount() { return rxDroppedBytes.load(std::memory_order_relaxed); }
 
 bool rxOverflowedSince(const uint32_t snapshot, uint32_t& dropped) {
@@ -327,6 +328,18 @@ void handleList() {
     writeLine("ERR:not_directory\n");
     return;
   }
+  root.close();
+
+  if (!FsHelpers::directoryCanBeEnumerated(path)) {
+    writeLine("ERR:list_failed\n");
+    return;
+  }
+
+  root = Storage.open(path);
+  if (!root) {
+    writeLine("ERR:opendir\n");
+    return;
+  }
 
   logSerial.printf("DIR:%s\n", path);
   HalFile file = root.openNextFile();
@@ -345,6 +358,12 @@ void handleList() {
     yield();
     file = root.openNextFile();
   }
+  if (FsHelpers::directoryIterationFailed(root)) {
+    LOG_ERR("USB", "Directory listing failed before EOF: %s", path);
+    root.close();
+    writeLine("ERR:list_failed\n");
+    return;
+  }
   root.close();
   writeLine("END\n");
 }
@@ -358,9 +377,29 @@ void handleMkdir() {
     return;
   }
 
+  const std::string parentPath = FsHelpers::extractFolderPath(path);
+  std::string rollbackBoundary = parentPath;
+  while (rollbackBoundary != "/" && !Storage.exists(rollbackBoundary.c_str())) {
+    rollbackBoundary = FsHelpers::extractFolderPath(rollbackBoundary);
+  }
+
   const bool created = Storage.mkdir(path, true);
   if (created || Storage.exists(path)) {
-    if (created) SleepImageIndex::invalidateForPath(path);
+    if (created) {
+      const auto visibility = FsHelpers::directoryEntryVisibility(parentPath.c_str(), path);
+      if (visibility != FsHelpers::DirectoryEntryVisibility::Visible) {
+        if (visibility == FsHelpers::DirectoryEntryVisibility::Missing) {
+          std::string rollbackPath = path;
+          while (rollbackPath != rollbackBoundary) {
+            Storage.rmdir(rollbackPath.c_str());
+            rollbackPath = FsHelpers::extractFolderPath(rollbackPath);
+          }
+        }
+        writeLine("ERR:mkdir_not_visible\n");
+        return;
+      }
+      SleepImageIndex::invalidateForPath(path);
+    }
     writeLine("OK\n");
   } else {
     writeLine("ERR:mkdir_failed\n");
@@ -368,12 +407,12 @@ void handleMkdir() {
 }
 
 void handleWrite() {
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
   const uint32_t rxOverflowAtStart = rxOverflowCount();
 #endif
   char path[PATH_BUFFER_SIZE];
   if (!readNormalizedPath(path, sizeof(path))) return;
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
   if (rxOverflowCount() != rxOverflowAtStart) {
     writeRxOverflowError(rxOverflowAtStart);
     return;
@@ -387,7 +426,7 @@ void handleWrite() {
   }
   const uint32_t expectedSize = readLe32(sizeBytes);
 
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
   if (rxOverflowCount() != rxOverflowAtStart) {
     writeRxOverflowError(rxOverflowAtStart);
     return;
@@ -459,7 +498,7 @@ void handleWrite() {
       return;
     }
 
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
     if (rxOverflowCount() != rxOverflowAtStart) {
       file.close();
       Storage.remove(TEMP_UPLOAD_PATH);
@@ -500,7 +539,7 @@ void handleWrite() {
   }
   file.close();
 
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
   if (rxOverflowCount() != rxOverflowAtStart) {
     Storage.remove(TEMP_UPLOAD_PATH);
     writeRxOverflowError(rxOverflowAtStart);
@@ -702,7 +741,7 @@ ProcessResult handleLine() {
 }  // namespace
 
 void registerUsbCdcOverflowHandler() {
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE && !defined(SIMULATOR)
+#if defined(CROSSINK_USB_RX_OVERFLOW_ENABLED)
   logSerial.onEvent(onCdcEvent);
 #endif
 }

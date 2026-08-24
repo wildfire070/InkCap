@@ -25,12 +25,12 @@ bool DictionaryRegistry::discover() {
   root_.clear();
 
   char resolvedRoot[32];
-  for (const auto* candidate : DICT_ROOT_CANDIDATES) {
-    if (FsHelpers::resolveRootDirectoryIgnoreCase(candidate, resolvedRoot, sizeof(resolvedRoot))) {
-      root_ = resolvedRoot;
-      break;
-    }
-  }
+  const bool foundRoot = std::any_of(
+      DICT_ROOT_CANDIDATES, DICT_ROOT_CANDIDATES + (sizeof(DICT_ROOT_CANDIDATES) / sizeof(*DICT_ROOT_CANDIDATES)),
+      [&](const auto* candidate) {
+        return FsHelpers::resolveRootDirectoryIgnoreCase(candidate, resolvedRoot, sizeof(resolvedRoot));
+      });
+  if (foundRoot) root_ = resolvedRoot;
 
   if (root_.empty()) {
     LOG_DBG("DREG", "No dictionary directory found on SD card");

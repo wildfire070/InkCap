@@ -5,7 +5,7 @@
 #include "QuickLockState.h"
 #include "QuickLockTrigger.h"
 
-// Owns the Power + side-button chord latch.  Once a chord fires, both buttons
+// Owns the Power + side-button chord latches. Once a chord fires, both buttons
 // must be released before another shortcut can fire from the same hold.
 class ButtonShortcutController {
  public:
@@ -48,14 +48,15 @@ class ButtonShortcutController {
   };
 
   Result update(uint32_t nowMs, bool powerPressed, bool chordButtonPressed, bool shortPowerRelease,
-                bool quickLockOnShortPower, ChordAction action) {
+                bool quickLockOnShortPower, ChordAction action, bool modalOwnsInput = false) {
     if (chordActive_) {
       if (!powerPressed && !chordButtonPressed) chordActive_ = false;
       return {Event::None, true};
     }
 
-    if (powerPressed && chordButtonPressed && action != ChordAction::Disabled) {
+    if (powerPressed && chordButtonPressed && (modalOwnsInput || action != ChordAction::Disabled)) {
       chordActive_ = true;
+      if (modalOwnsInput) return {Event::None, true};
       if (quickLockState_.isLocked() && !canRunChordWhileQuickLocked(action, QuickLockTrigger::PowerUp)) {
         return {Event::None, true};
       }
@@ -72,18 +73,35 @@ class ButtonShortcutController {
     return {Event::None, quickLockState_.isLocked()};
   }
 
-  Result updateUpDown(uint32_t nowMs, bool upPressed, bool downPressed, ChordAction action,
-                      bool touchscreenEscapeHatch) {
+  Result updatePowerDown(bool powerPressed, bool downPressed, bool blockAction) {
+    if (powerDownChordActive_) {
+      if (!powerPressed && !downPressed) powerDownChordActive_ = false;
+      return {Event::None, true};
+    }
+
+    if (!powerPressed || !downPressed) return {};
+
+    powerDownChordActive_ = true;
+    return blockAction ? Result{Event::None, true} : Result{Event::Screenshot, true};
+  }
+
+  Result updateUpDown(uint32_t nowMs, bool upPressed, bool downPressed, ChordAction action, bool touchscreenEscapeHatch,
+                      bool modalOwnsInput = false) {
     if (upDownChordActive_) {
       if (!upPressed && !downPressed) upDownChordActive_ = false;
       return {Event::None, true};
     }
 
-    if (!upPressed || !downPressed || (!touchscreenEscapeHatch && action == ChordAction::Disabled)) {
-      return {Event::None, quickLockState_.isLocked()};
+    if (!upPressed || !downPressed || (!modalOwnsInput && !touchscreenEscapeHatch && action == ChordAction::Disabled)) {
+      // An idle Up + Down controller must not preempt the reader's permitted
+      // Quick Lock unlock trigger (for example, long-press Menu or Back).
+      // Locked input is consumed by the main Quick Lock path after it has
+      // given that trigger a chance to run.
+      return {};
     }
 
     upDownChordActive_ = true;
+    if (modalOwnsInput) return {Event::None, true};
     if (quickLockState_.isLocked() && !canRunChordWhileQuickLocked(action, QuickLockTrigger::UpDown)) {
       return {Event::None, true};
     }
@@ -145,6 +163,7 @@ class ButtonShortcutController {
   QuickLockState quickLockState_;
   QuickLockTrigger quickLockTrigger_ = QuickLockTrigger::None;
   bool chordActive_ = false;
+  bool powerDownChordActive_ = false;
   bool upDownChordActive_ = false;
   bool unlockTriggerReleased_ = true;
 };
