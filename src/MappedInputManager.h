@@ -43,6 +43,7 @@ class MappedInputManager {
   struct Label {
     enum class Placement { None, Prefix, Suffix };
 
+    // cppcheck-suppress noExplicitConstructor
     constexpr Label(const char* text = nullptr) : text(text) {}
     constexpr Label(const Placement placement, const char* arrow, const char* text)
         : placement(placement), arrow(arrow), text(text) {}

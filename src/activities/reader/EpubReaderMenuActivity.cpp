@@ -159,7 +159,7 @@ Rect readerMenuHeaderActionTouchRect(const Rect& header, const Rect& actionRect)
   const int touchWidth = std::min(headerActionTouchSize, header.width);
   const int touchX = actionRect.x + actionRect.width - touchWidth;
   // The title reserves the space left of touchX. Treat the remaining header
-  // corner—including the non-interactive battery area—as Home so the icon is
+  // corner, including the non-interactive battery area, as Home so the icon is
   // easy to hit without changing its visual placement.
   return Rect{touchX, header.y, header.x + header.width - touchX, header.height};
 }
@@ -240,10 +240,10 @@ EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
     mainItems.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
   }
   mainItems.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
-  mainItems.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
   mainItems.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   mainItems.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL_SECONDS});
   mainItems.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
+  mainItems.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
   bookmarkItems.push_back({MenuAction::SAVE_CLIPPING, StrId::STR_SAVE_CLIPPING});
   if (hasClippings) {
     bookmarkItems.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS});
@@ -538,7 +538,7 @@ void EpubReaderMenuActivity::loop() {
 
   // A home-key long press toggles the reader menu: the same hold that opens it
   // closes it. The SDK fires the long event once per hold, so the opening hold
-  // (still down as the menu appears) does not immediately re-close it — only a
+  // (still down as the menu appears) does not immediately re-close it, only a
   // fresh press-and-hold does.
   if (mappedInput.wasReaderMenuHold()) {
     finishCancelled();

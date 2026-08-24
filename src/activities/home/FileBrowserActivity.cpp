@@ -253,6 +253,13 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
     files.emplace_back(fileNameBuffer.get());
     file.close();
   }
+  if (FsHelpers::directoryIterationFailed(root)) {
+    LOG_ERR("FileBrowser", "Directory listing failed before EOF: %s", basepath.c_str());
+    fileListReadFailed = true;
+    files.clear();
+    root.close();
+    return false;
+  }
   root.close();
   return true;
 }
@@ -267,6 +274,7 @@ void FileBrowserActivity::loadFilesLocked() {
   clearIndexNameCache();
   fileListMemoryLimited = false;
   visibleStatusCache.clear();
+  fileListReadFailed = false;
   if (fileIndex) fileIndex->close();
 
   bool overflow = false;
@@ -291,6 +299,12 @@ void FileBrowserActivity::loadFilesLocked() {
         mode == Mode::PickFirmware ? acceptFirmware : (mode == Mode::PickDirectory ? acceptDirectory : acceptCommon);
     if (fileIndex->open(basepath.c_str(), accept)) {
       usingIndex = true;
+      return;
+    }
+    if (fileIndex->directoryReadFailed()) {
+      LOG_ERR("FileBrowser", "index scan failed before EOF: %s", basepath.c_str());
+      fileListReadFailed = true;
+      files.clear();
       return;
     }
   } else {
@@ -1122,9 +1136,11 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
 
   const size_t totalEntries = entryCount();
   if (totalEntries == 0) {
-    const char* emptyMessage = fileListMemoryLimited
-                                   ? tr(STR_MEMORY_ERROR)
-                                   : (mode == Mode::PickFirmware ? tr(STR_NO_BIN_FILES) : tr(STR_NO_FILES_FOUND));
+    const char* emptyMessage =
+        fileListMemoryLimited
+            ? tr(STR_MEMORY_ERROR)
+            : (fileListReadFailed ? tr(STR_ERROR_GENERAL_FAILURE)
+                                  : (mode == Mode::PickFirmware ? tr(STR_NO_BIN_FILES) : tr(STR_NO_FILES_FOUND)));
     screen.centeredText(emptyMessage, screen.theme().bodyText);
     return;
   }
