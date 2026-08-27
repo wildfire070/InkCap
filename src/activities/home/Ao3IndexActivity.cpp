@@ -9,6 +9,7 @@
 
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
+#include "SdCardFontSystem.h"
 
 namespace {
 
@@ -46,6 +47,11 @@ void Ao3IndexActivity::onEnter() {
 }
 
 void Ao3IndexActivity::runHeapCheck() {
+  if (ESP.getFreeHeap() < 80 * 1024) {
+    // A loaded SD custom font can be the difference here; release it and
+    // recheck before giving up.
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < 80 * 1024) {
     state = State::ERROR;
     errorMessage = "Insufficient memory to run indexing (need 80KB free heap).";
@@ -266,6 +272,9 @@ void Ao3IndexActivity::tickSingleSniffing() {
 
 void Ao3IndexActivity::tickSingleScraping() {
   if (ESP.getFreeHeap() < 80 * 1024) {
+    sdFontSystem.releaseForNetwork(renderer);
+  }
+  if (ESP.getFreeHeap() < 80 * 1024) {
     yield();
     return;  // defer tick
   }
@@ -464,6 +473,9 @@ void Ao3IndexActivity::startDirIndexing() {
 }
 
 void Ao3IndexActivity::tickDirIndexing() {
+  if (ESP.getFreeHeap() < 80 * 1024) {
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < 80 * 1024) {
     yield();
     return;  // defer

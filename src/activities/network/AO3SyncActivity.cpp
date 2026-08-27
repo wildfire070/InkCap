@@ -9,6 +9,7 @@
 #include <esp_crt_bundle.h>
 
 #include "HalStorage.h"
+#include "SdCardFontSystem.h"
 #include "activities/ActivityResult.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
@@ -33,6 +34,11 @@ constexpr uint32_t AO3_SYNC_MIN_MAX_ALLOC = 32 * 1024;
 void AO3SyncActivity::onEnter() {
   Activity::onEnter();
 
+  if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
+    // A loaded SD custom font can be the difference here; release it and
+    // recheck before giving up.
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
     LOG_ERR("AO3", "Insufficient heap for update check: free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     errorMessage = "Not enough memory";
@@ -92,6 +98,11 @@ void AO3SyncActivity::performSearch() {
     state = AO3SyncState::ERROR;
     return;
   }
+
+  // Release right before the real request: the Wi-Fi selection screen and the
+  // "Searching" status screen render on the way here and can lazily reload the
+  // SD font, so releasing any earlier doesn't reliably free memory for TLS.
+  sdFontSystem.releaseForNetwork(renderer);
 
   usingOrgFallback = false;
   const std::string searchUrls[] = {"https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true",
@@ -309,6 +320,9 @@ void AO3SyncActivity::performDownload() {
   downloadProgress = 0;
   downloadTotal = 0;
   requestUpdate();
+
+  // Same reasoning as performSearch(): release right before the real request.
+  sdFontSystem.releaseForNetwork(renderer);
 
   std::string downloadUrl = "https://archiveofourown.gay/downloads/" + workId + "/work.epub?v=" + scrapedDate;
   std::string tempPath = bookPath + ".tmp";
