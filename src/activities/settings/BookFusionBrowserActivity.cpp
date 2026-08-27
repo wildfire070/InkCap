@@ -59,9 +59,7 @@ BookFusionBrowserActivity::BookFusionBrowserActivity(GfxRenderer& renderer, Mapp
 
 void BookFusionBrowserActivity::onEnter() {
   Activity::onEnter();
-  // Match BookFusionAuthActivity/BookFusionSyncActivity: browsing also makes
-  // HTTPS requests, so release the SD-font catalog too, not just the active font.
-  sdFontSystem.releaseForNetwork(renderer);
+  sdFontSystem.releaseLoadedFont(renderer);
 
   state = BrowserState::CHECK_WIFI;
   selectedCategory = 0;
@@ -446,6 +444,12 @@ void BookFusionBrowserActivity::selectCategory(int index) {
 void BookFusionBrowserActivity::loadPage(int pageIndex) {
   if (pageIndex < 0) return;
   showLoadingBeforeFetch();
+
+  // Release right before the real request, matching BookFusionAuthActivity/
+  // BookFusionSyncActivity: screens rendered on the way here (Wi-Fi selection,
+  // category selection, this loading screen) can lazily reload the SD font,
+  // so releasing any earlier than this doesn't reliably free memory for TLS.
+  sdFontSystem.releaseForNetwork(renderer);
 
   BookFusionSearchResult result;
   const auto err = BookFusionSyncClient::searchBooks(pageIndex, CATEGORIES[currentCategory].list, result);
