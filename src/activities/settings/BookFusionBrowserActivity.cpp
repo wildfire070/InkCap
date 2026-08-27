@@ -59,7 +59,9 @@ BookFusionBrowserActivity::BookFusionBrowserActivity(GfxRenderer& renderer, Mapp
 
 void BookFusionBrowserActivity::onEnter() {
   Activity::onEnter();
-  sdFontSystem.releaseLoadedFont(renderer);
+  // Match BookFusionAuthActivity/BookFusionSyncActivity: browsing also makes
+  // HTTPS requests, so release the SD-font catalog too, not just the active font.
+  sdFontSystem.releaseForNetwork(renderer);
 
   state = BrowserState::CHECK_WIFI;
   selectedCategory = 0;
