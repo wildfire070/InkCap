@@ -69,4 +69,5 @@ class BookFusionBrowserActivity final : public Activity {
   void loadPage(int pageIndex);
   void selectCategory(int index);
   void downloadBook(const BookFusionBook& book);
+  void activateSelected();
 };
