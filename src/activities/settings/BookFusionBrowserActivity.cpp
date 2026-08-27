@@ -125,6 +125,21 @@ int bookIndexForRow(const BookFusionSearchResult& page, int row) {
 }
 }  // namespace
 
+void BookFusionBrowserActivity::activateSelected() {
+  const int prevOffset = page.currentPage > 0 ? 1 : 0;
+  const int rowCount = prevOffset + static_cast<int>(page.books.size()) + (page.hasMore ? 1 : 0);
+  if (selectorIndex < 0 || selectorIndex >= rowCount) return;
+
+  const int bookIndex = bookIndexForRow(page, selectorIndex);
+  if (bookIndex >= 0) {
+    downloadBook(page.books[bookIndex]);
+  } else if (selectorIndex < prevOffset) {
+    loadPage(page.currentPage - 1);
+  } else {
+    loadPage(page.currentPage + 1);
+  }
+}
+
 void BookFusionBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<BookFusionBrowserActivity*>(user);
   self->app.clearTapFlash();
@@ -140,15 +155,7 @@ void BookFusionBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* 
   const int rowCount = prevOffset + static_cast<int>(self->page.books.size()) + (self->page.hasMore ? 1 : 0);
   if (event.value < 0 || event.value >= rowCount) return;
   self->selectorIndex = event.value;
-
-  const int bookIndex = bookIndexForRow(self->page, event.value);
-  if (bookIndex >= 0) {
-    self->downloadBook(self->page.books[bookIndex]);
-  } else if (event.value < prevOffset) {
-    self->loadPage(self->page.currentPage - 1);
-  } else {
-    self->loadPage(self->page.currentPage + 1);
-  }
+  self->activateSelected();
 }
 
 void BookFusionBrowserActivity::onCancelEvent(const fui::ActionEvent&, void* user) {
@@ -214,6 +221,11 @@ void BookFusionBrowserActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       state = BrowserState::CATEGORY_SELECTION;
       requestUpdate();
+      return;
+    }
+
+    if (rowCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      activateSelected();
       return;
     }
 
