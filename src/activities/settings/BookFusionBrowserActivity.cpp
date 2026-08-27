@@ -463,6 +463,11 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   // so releasing any earlier than this doesn't reliably free memory for TLS.
   sdFontSystem.releaseForNetwork(renderer);
 
+  // The previous page's books are dead weight once we've decided to
+  // navigate; free them before the fetch instead of after, so they aren't
+  // sitting in heap alongside the TLS handshake below.
+  page = BookFusionSearchResult{};
+
   BookFusionSearchResult result;
   const auto err = BookFusionSyncClient::searchBooks(pageIndex, CATEGORIES[currentCategory].list, result);
   if (err != BookFusionSyncClient::OK) {
