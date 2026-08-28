@@ -111,14 +111,17 @@ void AO3SyncActivity::performSearch() {
   // SD font, so releasing any earlier doesn't reliably free memory for TLS.
   sdFontSystem.releaseForNetwork(renderer);
 
-  usingOrgFallback = false;
-  const std::string searchUrls[] = {"https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true",
-                                    "https://archiveofourown.org/works/" + cleanWorkId + "?view_adult=true"};
+  // .org is the official domain and the one most likely to resolve/connect
+  // reliably; .gay is an unofficial mirror, kept only as a fallback for when
+  // .org is unreachable or blocks the request.
+  usingGayFallback = false;
+  const std::string searchUrls[] = {"https://archiveofourown.org/works/" + cleanWorkId + "?view_adult=true",
+                                    "https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true"};
 
   int status_code = 0;
   for (int urlIdx = 0; urlIdx < 2; urlIdx++) {
     if (urlIdx == 1) {
-      usingOrgFallback = true;
+      usingGayFallback = true;
       requestUpdateAndWait();
       delay(1000);
     }
@@ -176,7 +179,7 @@ void AO3SyncActivity::performSearch() {
 
     if (status_code == 403) {
       http.end();
-      if (urlIdx == 0) continue;  // try .org
+      if (urlIdx == 0) continue;  // try .gay
       errorMessage = tr(STR_AO3_ERROR_LOCKED);
       state = AO3SyncState::ERROR;
       return;
@@ -336,32 +339,63 @@ void AO3SyncActivity::performDownload() {
   errorMessage = "";
   downloadProgress = 0;
   downloadTotal = 0;
-  requestUpdate();
+  // Must actually wait (not just requestUpdate()): the framebuffer release
+  // just below frees the buffer this render may still be reading from
+  // mid-flight otherwise — the same null-framebuffer store fault found and
+  // fixed in BookFusionBrowserActivity::downloadBook().
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("AO3", "Downloading screen could not be rendered before fetch");
+    requestUpdate(true);
+  }
 
   // Same reasoning as performSearch(): release right before the real request.
   sdFontSystem.releaseForNetwork(renderer);
 
-  std::string downloadUrl = "https://archiveofourown.gay/downloads/" + workId + "/work.epub?v=" + scrapedDate;
+  // Same reasoning as performSearch(): .org first, .gay only as a fallback.
+  std::string downloadUrl = "https://archiveofourown.org/downloads/" + workId + "/work.epub?v=" + scrapedDate;
   std::string tempPath = bookPath + ".tmp";
 
   LOG_INF("AO3", "Downloading: %s -> %s", downloadUrl.c_str(), tempPath.c_str());
 
-  auto result = HttpDownloader::downloadToFile(downloadUrl, tempPath, [this](size_t downloaded, size_t total) {
+  // Same framebuffer reasoning as BookFusionBrowserActivity::downloadBook():
+  // free it for the whole transfer, reacquiring only to draw each throttled
+  // progress update.
+  const auto progressCallback = [this](size_t downloaded, size_t total) {
     downloadProgress = downloaded;
     downloadTotal = total;
-    requestUpdate(true);
-  });
+    if (!renderer.reallocFrameBuffersAfterNetwork()) {
+      LOG_ERR("AO3", "Framebuffer realloc failed during download progress");
+      ESP.restart();
+    }
+    if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+      LOG_ERR("AO3", "Download progress screen could not be rendered");
+      requestUpdate(true);
+    }
+    renderer.releaseFrameBuffersForNetwork();
+  };
+
+  renderer.releaseFrameBuffersForNetwork();
+  auto result = HttpDownloader::downloadToFile(downloadUrl, tempPath, progressCallback);
 
   if (result == HttpDownloader::HTTP_ERROR) {
-    usingOrgFallback = true;
+    usingGayFallback = true;
+    if (!renderer.reallocFrameBuffersAfterNetwork()) {
+      LOG_ERR("AO3", "Framebuffer realloc failed before gay fallback");
+      ESP.restart();
+    }
     requestUpdateAndWait();
     delay(1000);
-    downloadUrl = "https://archiveofourown.org/downloads/" + workId + "/work.epub?v=" + scrapedDate;
-    result = HttpDownloader::downloadToFile(downloadUrl, tempPath, [this](size_t downloaded, size_t total) {
-      downloadProgress = downloaded;
-      downloadTotal = total;
-      requestUpdate(true);
-    });
+    downloadUrl = "https://archiveofourown.gay/downloads/" + workId + "/work.epub?v=" + scrapedDate;
+    renderer.releaseFrameBuffersForNetwork();
+    result = HttpDownloader::downloadToFile(downloadUrl, tempPath, progressCallback);
+  }
+
+  // The buffer is left released by progressCallback regardless of how the
+  // transfer ended; bring it back before any of the result-handling below
+  // renders.
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("AO3", "Framebuffer realloc failed after download");
+    ESP.restart();
   }
 
   if (result == HttpDownloader::OK) {
@@ -474,8 +508,8 @@ void AO3SyncActivity::renderSearching() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto top = (pageHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
 
-  if (usingOrgFallback) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, "Retrying on .org domain...");
+  if (usingGayFallback) {
+    renderer.drawCenteredText(UI_10_FONT_ID, top, "Retrying on .gay domain...");
   } else {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_AO3_SEARCHING));
   }
