@@ -569,6 +569,13 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   filename += ".epub";
   LOG_DBG("BFBrowser", "Downloading book %lu -> %s", (unsigned long)book.bookId, filename.c_str());
 
+  // Release again for the transfer itself: it's the same wolfSSL heap
+  // pressure as the quick metadata calls above, just spread over a much
+  // longer window. The progress callback below reallocates/renders/releases
+  // around each throttled update instead of holding the buffer for the
+  // whole download.
+  renderer.releaseFrameBuffersForNetwork();
+
   bool cancelRequested = false;
   auto pollCancel = [this, &cancelRequested] {
     if (cancelRequested || cancelDownload) {
@@ -618,10 +625,29 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
             now - lastProgressUpdateMs >= DOWNLOAD_PROGRESS_MIN_UPDATE_MS) {
           lastRenderedPercent = percent;
           lastProgressUpdateMs = now;
-          requestUpdate(true);
+
+          // The buffer is released for the whole transfer (see above); bring
+          // it back just long enough to draw this update, then hand it back.
+          if (!renderer.reallocFrameBuffersAfterNetwork()) {
+            LOG_ERR("BFBrowser", "Framebuffer realloc failed during download progress");
+            ESP.restart();
+          }
+          if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+            LOG_ERR("BFBrowser", "Download progress screen could not be rendered");
+            requestUpdate(true);
+          }
+          renderer.releaseFrameBuffersForNetwork();
         }
       },
       &cancelRequested, "", "", downloadOptions);
+
+  // The buffer is left released by the loop above (every progress render
+  // re-releases it after drawing) regardless of how the transfer ended;
+  // bring it back before any of the result-handling below renders.
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("BFBrowser", "Framebuffer realloc failed after download");
+    ESP.restart();
+  }
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
