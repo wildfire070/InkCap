@@ -32,6 +32,7 @@ struct BookFusionSearchResult {
   std::vector<BookFusionBook> books;  // Capacity reserved to BOOKFUSION_BOOKS_PER_PAGE by the caller.
   int currentPage = 0;
   bool hasMore = false;
+  int totalCount = 0;  // From the Total-Count response header; 0 if the header was absent.
 };
 
 /** Reading position for one book, as stored by BookFusion. */

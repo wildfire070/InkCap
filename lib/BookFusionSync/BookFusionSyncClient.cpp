@@ -4,7 +4,6 @@
 #ifdef SIMULATOR
 #include <ArduinoJsonStringCompat.h>
 #endif
-#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -14,9 +13,11 @@
 #include <WiFiClientSecure.h>
 #else
 #include <SecureHttpClient.h>
+#include <StreamingJsonParser.h>
 #endif
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -84,6 +85,15 @@ bool insufficientHeap() {
   return false;
 }
 
+// Total-Count is authoritative when present. Falling back to "the page came
+// back full" avoids under-reporting hasMore on an old server that doesn't
+// send the header, at the cost of one extra (empty) page fetch at the very
+// end of the list in that fallback case.
+bool deriveHasMore(int page, int totalCount, size_t bookCount) {
+  return (totalCount > 0) ? (page + 1) * BOOKFUSION_BOOKS_PER_PAGE < totalCount
+                          : bookCount == static_cast<size_t>(BOOKFUSION_BOOKS_PER_PAGE);
+}
+
 #ifdef SIMULATOR
 void addAuthHeaders(HTTPClient& http) {
   const std::string bearer = "Bearer " + BOOKFUSION_STORE.getAccessToken();
@@ -109,6 +119,215 @@ freeink::SecureHttpClient& resolveClient(freeink::SecureHttpClient& fallback) {
   if (s_sessionClient) return *s_sessionClient;
   fallback.setInsecure();
   return fallback;
+}
+
+void safeCopy(char* dst, size_t dstSize, const char* src, size_t srcLen) {
+  const size_t n = srcLen < dstSize - 1 ? srcLen : dstSize - 1;
+  memcpy(dst, src, n);
+  dst[n] = '\0';
+}
+
+// SAX consumer for POST /api/user/books/search's top-level array of book
+// objects. Feeds straight off the wire via StreamingJsonParser (the same
+// parser OtaUpdater's ReleaseJsonParser already uses for GitHub's release
+// JSON) so a page response never needs a full-buffer allocation or a
+// round-trip through an SD temp file. Only fields BookFusionBook actually
+// has are captured; every other field BookFusion sends (cover, format,
+// categories, ...) is structurally skipped via depth tracking, not parsed.
+class BookFusionSearchJsonStream {
+ public:
+  explicit BookFusionSearchJsonStream(BookFusionSearchResult& out)
+      : parser(JsonCallbacks{this, sOnKey, sOnString, sOnNumber, sOnBool, sOnNull, sOnObjectStart, sOnObjectEnd,
+                             sOnArrayStart, sOnArrayEnd}),
+        out(out) {
+    out.books.clear();
+    out.books.reserve(BOOKFUSION_BOOKS_PER_PAGE);
+  }
+
+  void feed(const char* data, size_t len) { parser.feed(data, len); }
+  bool ok() const { return !parser.hasError(); }
+
+ private:
+  enum class Position : uint8_t { TOP_LEVEL, IN_BOOK, IN_AUTHORS_ARRAY, IN_AUTHOR_OBJECT };
+  enum class LastKey : uint8_t { NONE, ID, TITLE, AUTHORS, AUTHOR_NAME };
+
+  static void sOnKey(void* ctx, const char* key, size_t len);
+  static void sOnString(void* ctx, const char* value, size_t len);
+  static void sOnNumber(void* ctx, const char* value, size_t len);
+  static void sOnBool(void* ctx, bool value);
+  static void sOnNull(void* ctx);
+  static void sOnObjectStart(void* ctx);
+  static void sOnObjectEnd(void* ctx);
+  static void sOnArrayStart(void* ctx);
+  static void sOnArrayEnd(void* ctx);
+
+  void commitBook();
+
+  StreamingJsonParser parser;
+  BookFusionSearchResult& out;
+
+  Position position = Position::TOP_LEVEL;
+  LastKey lastKey = LastKey::NONE;
+  uint8_t bookDepth = 0;    // nesting depth within the book object currently open; 1 = the book's own fields
+  uint8_t authorDepth = 0;  // nesting depth within the author object currently open
+
+  BookFusionBook current;
+  bool haveId = false;
+  char currentAuthorName[48];
+};
+
+void BookFusionSearchJsonStream::commitBook() {
+  if (haveId && static_cast<int>(out.books.size()) < BOOKFUSION_BOOKS_PER_PAGE) {
+    if (current.title.empty()) current.title = "Untitled";
+    out.books.push_back(std::move(current));
+  }
+  current = BookFusionBook{};
+  haveId = false;
+}
+
+void BookFusionSearchJsonStream::sOnKey(void* ctx, const char* key, size_t len) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->position) {
+    case Position::IN_BOOK:
+      if (self->bookDepth == 1) {
+        if (len == 2 && memcmp(key, "id", 2) == 0)
+          self->lastKey = LastKey::ID;
+        else if (len == 5 && memcmp(key, "title", 5) == 0)
+          self->lastKey = LastKey::TITLE;
+        else if (len == 7 && memcmp(key, "authors", 7) == 0)
+          self->lastKey = LastKey::AUTHORS;
+        else
+          self->lastKey = LastKey::NONE;
+      }
+      break;
+    case Position::IN_AUTHOR_OBJECT:
+      if (self->authorDepth == 1) {
+        self->lastKey = (len == 4 && memcmp(key, "name", 4) == 0) ? LastKey::AUTHOR_NAME : LastKey::NONE;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void BookFusionSearchJsonStream::sOnString(void* ctx, const char* value, size_t len) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->lastKey) {
+    case LastKey::TITLE:
+      if (self->position == Position::IN_BOOK && self->bookDepth == 1) self->current.title.assign(value, len);
+      break;
+    case LastKey::AUTHOR_NAME:
+      if (self->position == Position::IN_AUTHOR_OBJECT && self->authorDepth == 1)
+        safeCopy(self->currentAuthorName, sizeof(self->currentAuthorName), value, len);
+      break;
+    default:
+      break;
+  }
+  self->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnNumber(void* ctx, const char* value, size_t /*len*/) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  if (self->lastKey == LastKey::ID && self->position == Position::IN_BOOK && self->bookDepth == 1) {
+    self->current.bookId = static_cast<uint32_t>(strtoul(value, nullptr, 10));
+    self->haveId = self->current.bookId != 0;
+  }
+  self->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnBool(void* ctx, bool /*value*/) {
+  static_cast<BookFusionSearchJsonStream*>(ctx)->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnNull(void* ctx) {
+  static_cast<BookFusionSearchJsonStream*>(ctx)->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnObjectStart(void* ctx) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->position) {
+    case Position::TOP_LEVEL:
+      self->position = Position::IN_BOOK;
+      self->bookDepth = 1;
+      self->current = BookFusionBook{};
+      self->haveId = false;
+      break;
+    case Position::IN_BOOK:
+      self->bookDepth++;  // an object field we don't care about (cover, etc.) -- skip structurally
+      break;
+    case Position::IN_AUTHORS_ARRAY:
+      self->position = Position::IN_AUTHOR_OBJECT;
+      self->authorDepth = 1;
+      self->currentAuthorName[0] = '\0';
+      break;
+    case Position::IN_AUTHOR_OBJECT:
+      self->authorDepth++;
+      break;
+  }
+  self->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnObjectEnd(void* ctx) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->position) {
+    case Position::IN_BOOK:
+      if (self->bookDepth > 0) self->bookDepth--;
+      if (self->bookDepth == 0) {
+        self->commitBook();
+        self->position = Position::TOP_LEVEL;
+      }
+      break;
+    case Position::IN_AUTHOR_OBJECT:
+      if (self->authorDepth > 0) self->authorDepth--;
+      if (self->authorDepth == 0) {
+        if (self->currentAuthorName[0] != '\0') {
+          if (!self->current.author.empty()) self->current.author += ", ";
+          self->current.author += self->currentAuthorName;
+        }
+        self->position = Position::IN_AUTHORS_ARRAY;
+      }
+      break;
+    default:
+      break;
+  }
+  self->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnArrayStart(void* ctx) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->position) {
+    case Position::TOP_LEVEL:
+      break;  // the root array itself; stay at TOP_LEVEL, next object starts a book
+    case Position::IN_BOOK:
+      if (self->lastKey == LastKey::AUTHORS && self->bookDepth == 1) {
+        self->position = Position::IN_AUTHORS_ARRAY;
+      } else {
+        self->bookDepth++;  // an array field we don't care about -- skip structurally
+      }
+      break;
+    case Position::IN_AUTHORS_ARRAY:
+    case Position::IN_AUTHOR_OBJECT:
+      self->authorDepth++;
+      break;
+  }
+  self->lastKey = LastKey::NONE;
+}
+
+void BookFusionSearchJsonStream::sOnArrayEnd(void* ctx) {
+  auto* self = static_cast<BookFusionSearchJsonStream*>(ctx);
+  switch (self->position) {
+    case Position::TOP_LEVEL:
+      break;  // end of the root array
+    case Position::IN_BOOK:
+      if (self->bookDepth > 0) self->bookDepth--;
+      break;
+    case Position::IN_AUTHORS_ARRAY:
+      self->position = Position::IN_BOOK;
+      break;
+    case Position::IN_AUTHOR_OBJECT:
+      if (self->authorDepth > 0) self->authorDepth--;
+      break;
+  }
 }
 #endif
 }  // namespace
@@ -263,8 +482,7 @@ BookFusionSyncClient::Error BookFusionSyncClient::pollForToken(const std::string
   if (httpCode == 200) {
     const char* token = doc["access_token"] | "";
     if (token[0] == '\0') return JSON_ERROR;
-    const char* refresh = doc["refresh_token"] | "";
-    BOOKFUSION_STORE.setTokens(token, refresh);
+    BOOKFUSION_STORE.setTokens(token);
     BOOKFUSION_STORE.saveToFile();
     LOG_DBG("BFS", "Token received and saved");
     return OK;
@@ -291,27 +509,28 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
   LOG_DBG("BFS", "searchBooks page=%d (heap: %u)", page, (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
-  // Request one extra book to detect hasMore without relying on headers; see
-  // BOOKFUSION_BOOKS_PER_PAGE for the heap-budget reasoning.
   JsonDocument reqDoc;
   reqDoc["page"] = page;
-  reqDoc["per_page"] = BOOKFUSION_BOOKS_PER_PAGE + 1;
+  reqDoc["per_page"] = BOOKFUSION_BOOKS_PER_PAGE;
   reqDoc["sort"] = "added_at-desc";
   if (list != nullptr) reqDoc["list"] = list;
   std::string body;
   serializeJson(reqDoc, body);
 
+  int totalCount = 0;
+
+#ifdef SIMULATOR
   // Discard every field but the ones we display; BookFusion book objects
   // carry ~20 fields (cover URLs, descriptions, etc.) that would otherwise
   // multiply JsonDocument heap use several times over for no benefit here.
+  // (Only needed here -- the on-device branch below streams straight into
+  // BookFusionSearchJsonStream and never buffers a JsonDocument at all.)
   JsonDocument filter;
   filter[0]["id"] = true;
   filter[0]["title"] = true;
   filter[0]["authors"][0]["name"] = true;
-
   JsonDocument doc;
 
-#ifdef SIMULATOR
   WiFiClientSecure secureClient;
   secureClient.setInsecure();
   HTTPClient http;
@@ -323,6 +542,10 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
   const String responseBody = http.getString();
+  // The simulator's HTTPClient mock doesn't expose response headers, so
+  // totalCount stays 0 here and deriveHasMore() falls back to its
+  // page-came-back-full heuristic -- fine for a desktop dev build, no
+  // production pagination accuracy needed.
   http.end();
 
   LOG_DBG("BFS", "searchBooks page=%d response: %d", page, httpCode);
@@ -335,83 +558,6 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
     logJsonParseFailure("searchBooks", error, responseBody.c_str());
     return JSON_ERROR;
   }
-#else
-  freeink::SecureHttpClient tmp;
-  freeink::SecureHttpClient& http = resolveClient(tmp);
-  if (!http.begin(url)) {
-    LOG_ERR("BFS", "Bad URL: %s", url.c_str());
-    return NETWORK_ERROR;
-  }
-  addAuthHeaders(http);
-  http.addHeader("Content-Type", "application/json");
-
-  // Stream the response straight to SD instead of buffering it in a
-  // std::string. Each wolfSSL handshake fragments the heap (see
-  // beginSession()), and a large response's std::string::append() growing
-  // past what the fragmented heap can offer calls abort() (no exceptions on
-  // this firmware). Parsing from a file sidesteps response size entirely.
-  static constexpr char TMP_PATH[] = "/.bookfusion_search.json";
-  bool writeOk = true;
-  int httpCode = -1;
-  {
-    HalFile tmpFile;
-    if (!Storage.openFileForWrite("BFS", TMP_PATH, tmpFile)) {
-      LOG_ERR("BFS", "searchBooks: failed to open temp file for write");
-      return SERVER_ERROR;
-    }
-    httpCode = http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
-                                [&tmpFile, &writeOk](const uint8_t* data, size_t len) -> bool {
-                                  if (!writeOk) return false;
-                                  if (tmpFile.write(data, len) != len) {
-                                    writeOk = false;
-                                    return false;
-                                  }
-                                  return true;
-                                });
-    tmpFile.close();
-  }
-  lastHttpCode = httpCode;
-  lastTransportError = (httpCode < 0) ? httpCode : 0;
-
-  LOG_DBG("BFS", "searchBooks page=%d response: %d", page, httpCode);
-  if (!writeOk || httpCode <= 0) {
-    Storage.remove(TMP_PATH);
-    return NETWORK_ERROR;
-  }
-  if (httpCode == 401) {
-    Storage.remove(TMP_PATH);
-    return AUTH_FAILED;
-  }
-  if (httpCode != 200) {
-    Storage.remove(TMP_PATH);
-    return SERVER_ERROR;
-  }
-
-  DeserializationError error = DeserializationError::Ok;
-  {
-    HalFile readFile;
-    if (!Storage.openFileForRead("BFS", TMP_PATH, readFile)) {
-      LOG_ERR("BFS", "searchBooks: failed to open temp file for read");
-      Storage.remove(TMP_PATH);
-      return SERVER_ERROR;
-    }
-    struct HalFileReader {
-      HalFile& file;
-      int read() { return file.read(); }
-      size_t readBytes(char* buf, size_t len) {
-        const int n = file.read(buf, len);
-        return n < 0 ? 0 : static_cast<size_t>(n);
-      }
-    } reader{readFile};
-    error = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
-    readFile.close();
-  }
-  Storage.remove(TMP_PATH);
-  if (error) {
-    logJsonParseFailure("searchBooks", error, nullptr);
-    return JSON_ERROR;
-  }
-#endif
 
   if (!doc.is<JsonArray>()) {
     LOG_ERR("BFS", "searchBooks: expected a JSON array");
@@ -421,13 +567,12 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
   out.books.clear();
   out.books.reserve(BOOKFUSION_BOOKS_PER_PAGE);
   out.currentPage = page;
-  out.hasMore = false;
+  out.totalCount = totalCount;
 
   for (JsonObject book : doc.as<JsonArray>()) {
-    if (static_cast<int>(out.books.size()) >= BOOKFUSION_BOOKS_PER_PAGE) {
-      out.hasMore = true;
-      break;
-    }
+    // Safety cap only -- per_page already asks the server for exactly
+    // BOOKFUSION_BOOKS_PER_PAGE, so this shouldn't trigger in practice.
+    if (static_cast<int>(out.books.size()) >= BOOKFUSION_BOOKS_PER_PAGE) break;
 
     BookFusionBook b;
     b.bookId = book["id"] | (uint32_t)0;
@@ -446,8 +591,54 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
     out.books.push_back(std::move(b));
   }
 
-  LOG_DBG("BFS", "searchBooks: %zu books on page %d, hasMore=%d", out.books.size(), page, out.hasMore);
+  out.hasMore = deriveHasMore(page, totalCount, out.books.size());
+  LOG_DBG("BFS", "searchBooks: %zu books on page %d, hasMore=%d, totalCount=%d", out.books.size(), page, out.hasMore,
+          totalCount);
   return OK;
+#else
+  freeink::SecureHttpClient tmp;
+  freeink::SecureHttpClient& http = resolveClient(tmp);
+  if (!http.begin(url)) {
+    LOG_ERR("BFS", "Bad URL: %s", url.c_str());
+    return NETWORK_ERROR;
+  }
+  addAuthHeaders(http);
+  http.addHeader("Content-Type", "application/json");
+
+  // Feed the response straight into a SAX parser as it streams off the
+  // wire, instead of buffering it (each wolfSSL handshake fragments the
+  // heap -- see beginSession() -- so a large response's std::string::append()
+  // growing past what the fragmented heap can offer calls abort(), no
+  // exceptions on this firmware) or round-tripping it through an SD temp
+  // file. BookFusionSearchJsonStream populates out.books directly.
+  BookFusionSearchJsonStream stream(out);
+  const int httpCode =
+      http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+                       [&stream](const uint8_t* data, size_t len) -> bool {
+                         stream.feed(reinterpret_cast<const char*>(data), len);
+                         return true;
+                       });
+  lastHttpCode = httpCode;
+  lastTransportError = (httpCode < 0) ? httpCode : 0;
+  const std::string totalCountHeader = http.getHeader("Total-Count");
+  if (!totalCountHeader.empty()) totalCount = std::atoi(totalCountHeader.c_str());
+
+  LOG_DBG("BFS", "searchBooks page=%d response: %d", page, httpCode);
+  if (httpCode <= 0) return NETWORK_ERROR;
+  if (httpCode == 401) return AUTH_FAILED;
+  if (httpCode != 200) return SERVER_ERROR;
+  if (!stream.ok()) {
+    LOG_ERR("BFS", "searchBooks: malformed JSON response");
+    return JSON_ERROR;
+  }
+
+  out.currentPage = page;
+  out.totalCount = totalCount;
+  out.hasMore = deriveHasMore(page, totalCount, out.books.size());
+  LOG_DBG("BFS", "searchBooks: %zu books on page %d, hasMore=%d, totalCount=%d", out.books.size(), page, out.hasMore,
+          totalCount);
+  return OK;
+#endif
 }
 
 BookFusionSyncClient::Error BookFusionSyncClient::getProgress(uint32_t bookId, BookFusionProgress& outProgress) {
