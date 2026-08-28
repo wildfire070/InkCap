@@ -305,6 +305,17 @@ bool GfxRenderer::restoreFrameBufferAfterBuild() {
   return frameBuffer != nullptr;
 }
 
+void GfxRenderer::releaseFrameBuffersForNetwork() {
+  display.releaseFrameBuffersToHeap();
+  frameBuffer = nullptr;
+}
+
+bool GfxRenderer::reallocFrameBuffersAfterNetwork() {
+  if (!display.reallocFrameBuffers()) return false;
+  frameBuffer = display.getFrameBuffer();
+  return frameBuffer != nullptr;
+}
+
 GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
   // Nesting guard: if the framebuffer is already lent out (an outer loan),
   // stay inert so this end() cannot return storage the outer loan still owns.
@@ -320,6 +331,21 @@ void GfxRenderer::FrameBufferLoan::end() {
     // Only reachable if the framebuffer never existed, which begin() already
     // asserts against; kept as a backstop since running blind helps nobody.
     LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+    ESP.restart();
+  }
+}
+
+GfxRenderer::NetworkBufferLoan::NetworkBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
+  if (!renderer_.hasFrameBuffer()) return;
+  renderer_.releaseFrameBuffersForNetwork();
+  active_ = true;
+}
+
+void GfxRenderer::NetworkBufferLoan::end() {
+  if (!active_) return;
+  active_ = false;
+  if (!renderer_.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("GFX", "Framebuffer realloc failed after network fetch - restarting");
     ESP.restart();
   }
 }

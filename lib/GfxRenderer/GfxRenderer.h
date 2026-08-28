@@ -365,6 +365,37 @@ class GfxRenderer {
     bool active_ = false;
   };
 
+  // Free the framebuffer(s) back to the general heap (unlike the build loan
+  // above, which only lends the bytes as scratch) so a network operation's
+  // TLS buffers have a real contiguous block to allocate from. Between
+  // release and a successful realloc NOTHING may draw or display — the
+  // panel keeps showing its last refreshed image. realloc returns the
+  // buffer white, so the caller must redraw the full screen; it returns
+  // false if the heap could not supply the buffers back (release itself
+  // cannot fail).
+  void releaseFrameBuffersForNetwork();
+  bool reallocFrameBuffersAfterNetwork();
+
+  // RAII form of the pair above, for network calls with several early-return
+  // error paths (a manual release/realloc pair would need one at every
+  // return). Reallocates on scope exit; a realloc failure there restarts the
+  // device (running blind with no framebuffer helps nobody), matching
+  // FrameBufferLoan's own backstop. Display the status screen the panel
+  // should hold BEFORE constructing one. Nesting-safe: inert if the
+  // framebuffer is already released.
+  class NetworkBufferLoan {
+   public:
+    explicit NetworkBufferLoan(GfxRenderer& renderer);
+    ~NetworkBufferLoan() { end(); }
+    void end();
+    NetworkBufferLoan(const NetworkBufferLoan&) = delete;
+    NetworkBufferLoan& operator=(const NetworkBufferLoan&) = delete;
+
+   private:
+    GfxRenderer& renderer_;
+    bool active_ = false;
+  };
+
   // Low level functions
   uint8_t* getFrameBuffer() const;
   size_t getBufferSize() const;

@@ -106,6 +106,18 @@ uint8_t* HalDisplay::lendFrameBufferStorage(uint32_t* sizeOut) { return einkDisp
 
 void HalDisplay::returnFrameBufferStorage() { einkDisplay.returnBuildStorage(); }
 
+// Free the framebuffer(s) back to the heap for a memory-hungry network
+// operation. Unlike lendFrameBufferStorage() (which keeps the allocation
+// alive as build scratch), this genuinely frees it via free(), so the bytes
+// become available to any allocator (e.g. wolfSSL's TLS buffers) — at the
+// cost of no display operations being possible until reallocFrameBuffers().
+void HalDisplay::releaseFrameBuffersToHeap() { einkDisplay.releaseBuffers(); }
+
+// Reallocate after releaseFrameBuffersToHeap(). Buffers come back white, so
+// the caller must fully redraw before the next display call. Returns false
+// if the heap cannot supply the buffers back.
+bool HalDisplay::reallocFrameBuffers() { return einkDisplay.reallocBuffers(); }
+
 void HalDisplay::copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* msbBuffer) {
   einkDisplay.copyGrayscaleBuffers(lsbBuffer, msbBuffer);
 }
