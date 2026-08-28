@@ -365,6 +365,17 @@ class GfxRenderer {
     bool active_ = false;
   };
 
+  // Free the framebuffer(s) back to the general heap (unlike the build loan
+  // above, which only lends the bytes as scratch) so a network operation's
+  // TLS buffers have a real contiguous block to allocate from. Between
+  // release and a successful realloc NOTHING may draw or display — the
+  // panel keeps showing its last refreshed image. realloc returns the
+  // buffer white, so the caller must redraw the full screen; it returns
+  // false if the heap could not supply the buffers back (release itself
+  // cannot fail).
+  void releaseFrameBuffersForNetwork();
+  bool reallocFrameBuffersAfterNetwork();
+
   // Low level functions
   uint8_t* getFrameBuffer() const;
   size_t getBufferSize() const;

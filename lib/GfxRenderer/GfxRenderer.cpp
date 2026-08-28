@@ -305,6 +305,17 @@ bool GfxRenderer::restoreFrameBufferAfterBuild() {
   return frameBuffer != nullptr;
 }
 
+void GfxRenderer::releaseFrameBuffersForNetwork() {
+  display.releaseFrameBuffersToHeap();
+  frameBuffer = nullptr;
+}
+
+bool GfxRenderer::reallocFrameBuffersAfterNetwork() {
+  if (!display.reallocFrameBuffers()) return false;
+  frameBuffer = display.getFrameBuffer();
+  return frameBuffer != nullptr;
+}
+
 GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
   // Nesting guard: if the framebuffer is already lent out (an outer loan),
   // stay inert so this end() cannot return storage the outer loan still owns.

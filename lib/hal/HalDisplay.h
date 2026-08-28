@@ -69,6 +69,13 @@ class HalDisplay {
   uint8_t* lendFrameBufferStorage(uint32_t* sizeOut);
   void returnFrameBufferStorage();
 
+  // Free the framebuffer(s) back to the heap (not just lent as scratch) for
+  // a memory-hungry network operation. No display operations are possible
+  // until reallocFrameBuffers() returns true; the panel keeps showing its
+  // last refreshed image in the meantime.
+  void releaseFrameBuffersToHeap();
+  bool reallocFrameBuffers();
+
   // X3 grayscale preconditioning (OEM "AA-pre-BW(mid)" settle pass), windowed
   // to the gray region in physical panel coordinates (no-arg = full frame).
   // Call after the BW base frame is displayed and before the grayscale planes

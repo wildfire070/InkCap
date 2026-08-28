@@ -78,7 +78,12 @@ void BookFusionBrowserActivity::onEnter() {
   requestUpdate();
 
   if (!BookFusionSyncClient::getBearerToken().empty()) {
-    BookFusionSyncClient::beginSession();
+    // Not calling beginSession() here: keeping the BookFusion TLS connection
+    // open for the whole browse session held its buffers in heap
+    // continuously (see SecureHttpClient's keep-alive comment), permanently
+    // taxing every subsequent page load/download instead of paying a brief,
+    // fully-released cost per request. Each call now uses its own
+    // short-lived fallback connection (see resolveClient()).
     checkAndConnectWifi();
   } else {
     state = BrowserState::ERROR;
@@ -468,8 +473,22 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   // sitting in heap alongside the TLS handshake below.
   page = BookFusionSearchResult{};
 
+  // The e-ink framebuffer(s) are a permanent multi-KB heap resident that caps
+  // the largest contiguous allocatable block well below what wolfSSL needs
+  // for a TLS handshake+read (confirmed via serial log: MEMORY_E mid-read
+  // despite tens of KB of nominally free heap). Free them for the duration
+  // of the request — no display operations may happen until the realloc
+  // below — and bring them back before the next render.
+  renderer.releaseFrameBuffersForNetwork();
+
   BookFusionSearchResult result;
   const auto err = BookFusionSyncClient::searchBooks(pageIndex, CATEGORIES[currentCategory].list, result);
+
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("BFBrowser", "Framebuffer realloc failed after network fetch");
+    ESP.restart();
+  }
+
   if (err != BookFusionSyncClient::OK) {
     state = BrowserState::ERROR;
     errorMessage = BookFusionSyncClient::errorString(err);
@@ -490,10 +509,36 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   downloadProgress = downloadTotal = 0;
   cancelDownload = false;
   goHomeAfterCancel = false;
-  requestUpdate(true);
+
+  // Must actually wait for this render (not just requestUpdate(true), which
+  // returns before the e-ink refresh finishes): the framebuffer release just
+  // below frees the buffer this refresh may still be reading from mid-flight,
+  // which crashed with a null-framebuffer store fault when this used the
+  // non-waiting form.
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("BFBrowser", "Downloading screen could not be rendered before fetch");
+    requestUpdate(true);
+  }
+
+  // Same reasoning as loadPage(): the "Downloading" status screen just
+  // rendered above and can lazily reload the SD font, so release right
+  // before the real request instead of any earlier.
+  sdFontSystem.releaseForNetwork(renderer);
+
+  // Same framebuffer-release reasoning as loadPage(). Scoped to just this
+  // quick metadata call — the EPUB transfer below renders progress updates
+  // throughout, which needs the framebuffer, so it can't be wrapped the
+  // same way.
+  renderer.releaseFrameBuffersForNetwork();
 
   std::string downloadUrl;
   const auto urlErr = BookFusionSyncClient::getDownloadUrl(book.bookId, downloadUrl);
+
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("BFBrowser", "Framebuffer realloc failed after network fetch");
+    ESP.restart();
+  }
+
   // End the browse session now: the actual EPUB transfer below goes through
   // HttpDownloader on its own connection, so there's no reason to keep the
   // BookFusion session's idle TLS connection open during a potentially long
