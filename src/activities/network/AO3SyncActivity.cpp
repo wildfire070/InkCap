@@ -1,5 +1,6 @@
 #include "AO3SyncActivity.h"
 
+#include <GfxRenderer.h>
 #include <HTTPClient.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -36,7 +37,13 @@ void AO3SyncActivity::onEnter() {
 
   if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
     // A loaded SD custom font can be the difference here; release it and
-    // recheck before giving up.
+    // recheck before giving up. (Not releasing the framebuffer too: render()
+    // runs on a separate task, and nothing guarantees whatever render got
+    // queued getting into this activity has actually finished — releasing
+    // while it's still in flight is a confirmed crash, not a hypothetical
+    // one; see BookFusionBrowserActivity::downloadBook()'s fix. The
+    // streaming-read release further down is safe because it's preceded by
+    // a genuinely-waited requestUpdateAndWait(), not just requestUpdate().)
     sdFontSystem.releaseForNetwork(renderer);
   }
   if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
@@ -222,75 +229,85 @@ void AO3SyncActivity::performSearch() {
     bool foundChapters = false;
     bytesProcessed = 0;
 
-    while (bytesProcessed < 100000 && http.connected()) {
-      // Allow user to abort
-      mappedInput.update();
-      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-        LOG_INF("AO3", "Search aborted by user");
-        errorMessage = "Search Aborted";
-        foundDate = false;  // Force failure
-        break;
-      }
+    {
+      // Release the e-ink framebuffer(s) for this streaming read: up to
+      // 100 KB of response body is read and scanned here, the same class of
+      // operation that produced a wolfSSL MEMORY_E on BookFusion's much
+      // smaller responses (see BookFusionBrowserActivity::loadPage()).
+      // Nothing in this loop renders, so it's safe to hold released for its
+      // whole duration; the loan reallocates automatically when this scope
+      // ends, on every exit path (break or falling through).
+      GfxRenderer::NetworkBufferLoan fbLoan(renderer);
+      while (bytesProcessed < 100000 && http.connected()) {
+        // Allow user to abort
+        mappedInput.update();
+        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+          LOG_INF("AO3", "Search aborted by user");
+          errorMessage = "Search Aborted";
+          foundDate = false;  // Force failure
+          break;
+        }
 
-      size_t available = stream->available();
-      if (available > 0) {
-        int toRead = std::min(available, (size_t)1024);
-        // crossink-simulator's Stream::read() is the single-byte overload only; use the
-        // buffered readBytes() helper there instead of the multi-arg Client::read() used
-        // on real hardware.
+        size_t available = stream->available();
+        if (available > 0) {
+          int toRead = std::min(available, (size_t)1024);
+          // crossink-simulator's Stream::read() is the single-byte overload only; use the
+          // buffered readBytes() helper there instead of the multi-arg Client::read() used
+          // on real hardware.
 #ifdef SIMULATOR
-        int read = stream->readBytes((uint8_t*)buffer, toRead);
+          int read = stream->readBytes((uint8_t*)buffer, toRead);
 #else
-        int read = stream->read((uint8_t*)buffer, toRead);
+          int read = stream->read((uint8_t*)buffer, toRead);
 #endif
-        if (read > 0) {
-          bytesProcessed += read;
-          std::string chunk(buffer, read);
-          htmlAcc += chunk;
+          if (read > 0) {
+            bytesProcessed += read;
+            std::string chunk(buffer, read);
+            htmlAcc += chunk;
 
-          // Maintain small window for markers (Fast Discard)
-          if (htmlAcc.size() > 2048) {
-            htmlAcc = htmlAcc.substr(htmlAcc.size() - 1024);
-          }
-
-          // Search for date
-          if (!foundDate) {
-            size_t pos = htmlAcc.find("<dd class=\"status\">");
-            if (pos != std::string::npos) {
-              size_t endPos = htmlAcc.find("</dd>", pos);
-              if (endPos != std::string::npos) {
-                scrapedDate = htmlAcc.substr(pos + 19, endPos - (pos + 19));
-                foundDate = true;
-              }
+            // Maintain small window for markers (Fast Discard)
+            if (htmlAcc.size() > 2048) {
+              htmlAcc = htmlAcc.substr(htmlAcc.size() - 1024);
             }
-          }
 
-          // Search for chapters
-          if (!foundChapters) {
-            size_t pos = htmlAcc.find("<dd class=\"chapters\">");
-            if (pos != std::string::npos) {
-              size_t endPos = htmlAcc.find("</dd>", pos);
-              if (endPos != std::string::npos) {
-                std::string chapStr = htmlAcc.substr(pos + 21, endPos - (pos + 21));
-                size_t slashPos = chapStr.find("/");
-                if (slashPos != std::string::npos) {
-                  std::string current = chapStr.substr(0, slashPos);
-                  std::string total = chapStr.substr(slashPos + 1);
-                  if (total != "?" && current == total) {
-                    scrapedIsCompleted = true;
-                  } else {
-                    scrapedIsCompleted = false;
-                  }
-                  foundChapters = true;
+            // Search for date
+            if (!foundDate) {
+              size_t pos = htmlAcc.find("<dd class=\"status\">");
+              if (pos != std::string::npos) {
+                size_t endPos = htmlAcc.find("</dd>", pos);
+                if (endPos != std::string::npos) {
+                  scrapedDate = htmlAcc.substr(pos + 19, endPos - (pos + 19));
+                  foundDate = true;
                 }
               }
             }
-          }
 
-          if (foundDate && foundChapters) break;
+            // Search for chapters
+            if (!foundChapters) {
+              size_t pos = htmlAcc.find("<dd class=\"chapters\">");
+              if (pos != std::string::npos) {
+                size_t endPos = htmlAcc.find("</dd>", pos);
+                if (endPos != std::string::npos) {
+                  std::string chapStr = htmlAcc.substr(pos + 21, endPos - (pos + 21));
+                  size_t slashPos = chapStr.find("/");
+                  if (slashPos != std::string::npos) {
+                    std::string current = chapStr.substr(0, slashPos);
+                    std::string total = chapStr.substr(slashPos + 1);
+                    if (total != "?" && current == total) {
+                      scrapedIsCompleted = true;
+                    } else {
+                      scrapedIsCompleted = false;
+                    }
+                    foundChapters = true;
+                  }
+                }
+              }
+            }
+
+            if (foundDate && foundChapters) break;
+          }
+        } else {
+          delay(10);  // Wait for more data
         }
-      } else {
-        delay(10);  // Wait for more data
       }
     }
 
