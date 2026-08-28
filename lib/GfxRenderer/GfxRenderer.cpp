@@ -335,6 +335,21 @@ void GfxRenderer::FrameBufferLoan::end() {
   }
 }
 
+GfxRenderer::NetworkBufferLoan::NetworkBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
+  if (!renderer_.hasFrameBuffer()) return;
+  renderer_.releaseFrameBuffersForNetwork();
+  active_ = true;
+}
+
+void GfxRenderer::NetworkBufferLoan::end() {
+  if (!active_) return;
+  active_ = false;
+  if (!renderer_.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("GFX", "Framebuffer realloc failed after network fetch - restarting");
+    ESP.restart();
+  }
+}
+
 bool GfxRenderer::isFontCacheScanning() const { return fontCacheManager_ && fontCacheManager_->isScanning(); }
 
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {

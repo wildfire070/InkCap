@@ -376,6 +376,26 @@ class GfxRenderer {
   void releaseFrameBuffersForNetwork();
   bool reallocFrameBuffersAfterNetwork();
 
+  // RAII form of the pair above, for network calls with several early-return
+  // error paths (a manual release/realloc pair would need one at every
+  // return). Reallocates on scope exit; a realloc failure there restarts the
+  // device (running blind with no framebuffer helps nobody), matching
+  // FrameBufferLoan's own backstop. Display the status screen the panel
+  // should hold BEFORE constructing one. Nesting-safe: inert if the
+  // framebuffer is already released.
+  class NetworkBufferLoan {
+   public:
+    explicit NetworkBufferLoan(GfxRenderer& renderer);
+    ~NetworkBufferLoan() { end(); }
+    void end();
+    NetworkBufferLoan(const NetworkBufferLoan&) = delete;
+    NetworkBufferLoan& operator=(const NetworkBufferLoan&) = delete;
+
+   private:
+    GfxRenderer& renderer_;
+    bool active_ = false;
+  };
+
   // Low level functions
   uint8_t* getFrameBuffer() const;
   size_t getBufferSize() const;
