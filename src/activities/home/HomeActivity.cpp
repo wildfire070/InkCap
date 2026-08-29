@@ -62,6 +62,8 @@ enum class HomeMenuAction {
   Bookmarks,
   FileTransfer,
   Settings,
+  COUNT,  // Sentinel only -- not a real action. Must stay last; sizes HomeMenuEntries
+          // below. Add new actions above this line, never after it.
 };
 
 struct HomeMenuEntry {
@@ -71,7 +73,15 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  // buildSelectableHomeMenuItems()'s worst case is Continue Reading plus every
+  // optional entry appendHomeMenuItems() can add (OPDS, BookFusion, Reading
+  // Stats, Bookmarks/Clippings) plus the entries always present (Browse Files,
+  // Recent Books, File Transfer, Settings) -- one of every HomeMenuAction value
+  // at once. Sized from HomeMenuAction::COUNT instead of a hand-counted literal
+  // so a future action added to the enum grows this automatically -- push()
+  // silently drops anything past capacity, so undercounting here doesn't fail
+  // loudly, it just quietly removes whichever entry was pushed last.
+  static constexpr int kCapacity = static_cast<int>(HomeMenuAction::COUNT);
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -1498,6 +1508,7 @@ void HomeActivity::loop() {
             break;
           case HomeMenuAction::ContinueReading:
           case HomeMenuAction::Settings:
+          case HomeMenuAction::COUNT:
             break;
         }
       };
@@ -1736,6 +1747,8 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::Settings:
         onSettingsOpen();
+        break;
+      case HomeMenuAction::COUNT:
         break;
     }
   };
