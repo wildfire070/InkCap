@@ -5685,22 +5685,34 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const int requestedPageBeforeCatchUp = section->currentPage;
   if (!activeFootnotePreview && partialRebuildAbortedForLowMemory && section->pageCount > 0 &&
       section->currentPage >= static_cast<int>(section->pageCount)) {
-    const bool shouldSilentRestartForPartialLowMemory =
-        !lowMemoryPartialRestartAttempted && section->lastBuildLayoutAbortedForLowMemory() &&
-        section->currentPage == static_cast<int>(section->pageCount) &&
-        section->pageCount < std::numeric_limits<uint16_t>::max() && currentSpineIndex >= 0 &&
-        currentSpineIndex <= std::numeric_limits<uint16_t>::max();
-    if (shouldSilentRestartForPartialLowMemory) {
-      const uint16_t lastReadablePage = section->pageCount - 1;
-      const uint16_t targetPage = section->pageCount;
-      const int estimatedPages = section->estimatedTotalPages();
-      if (restartForLowMemoryLayout(targetPage, lastReadablePage, estimatedPages, "partial EPUB layout")) {
-        return;
+    // The previous build attempt gave up because of low heap, but heap conditions change over
+    // time (the fragmentation that caused the failure may since have cleared). Re-check now
+    // instead of trusting that latch forever -- otherwise a reader who hits this once stays
+    // capped at that page for the rest of the section even after heap fully recovers, with no
+    // way forward except leaving and reopening the book (which is what actually resets the
+    // latch, via loadSectionWithFont() above). If heap looks fine now, clear the latch and fall
+    // through to the normal partial catch-up path below, which retries the build.
+    if (backgroundSectionBuildHasHeap()) {
+      LOG_INF("ERS", "Heap recovered since last low-memory build failure; retrying instead of capping at watermark");
+      partialRebuildAbortedForLowMemory = false;
+    } else {
+      const bool shouldSilentRestartForPartialLowMemory =
+          !lowMemoryPartialRestartAttempted && section->lastBuildLayoutAbortedForLowMemory() &&
+          section->currentPage == static_cast<int>(section->pageCount) &&
+          section->pageCount < std::numeric_limits<uint16_t>::max() && currentSpineIndex >= 0 &&
+          currentSpineIndex <= std::numeric_limits<uint16_t>::max();
+      if (shouldSilentRestartForPartialLowMemory) {
+        const uint16_t lastReadablePage = section->pageCount - 1;
+        const uint16_t targetPage = section->pageCount;
+        const int estimatedPages = section->estimatedTotalPages();
+        if (restartForLowMemoryLayout(targetPage, lastReadablePage, estimatedPages, "partial EPUB layout")) {
+          return;
+        }
       }
+      LOG_ERR("ERS", "Requested page %d exceeds low-memory partial watermark %u; showing last readable page",
+              section->currentPage, section->pageCount);
+      section->currentPage = section->pageCount - 1;
     }
-    LOG_ERR("ERS", "Requested page %d exceeds low-memory partial watermark %u; showing last readable page",
-            section->currentPage, section->pageCount);
-    section->currentPage = section->pageCount - 1;
   }
   if (!activeFootnotePreview && section->isPartial() && section->currentPage >= static_cast<int>(section->pageCount)) {
     showIndexingPopup();
