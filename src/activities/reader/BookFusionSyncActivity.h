@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include "BookFusionSyncClient.h"
 #include "activities/Activity.h"
 
 /**
@@ -11,13 +12,16 @@
  *
  * Flow: connect WiFi -> fetch remote percentage -> compare with local
  * percentage -> let the user apply the remote value or upload the local one
- * (or skip the choice entirely if only one side has progress).
+ * (or skip the choice entirely if only one side has progress, or if neither
+ * side has moved since the last sync per BookFusionBookIdStore's baseline).
  *
- * BookFusion's protocol is percentage-only (no chapter/xpath granularity),
- * so "apply" lands at the start of the resolved chapter rather than an exact
- * page -- consistent with what BookFusion itself actually stores. This is
- * self-contained: it only uses the generic Epub/EpubReaderUtils APIs, not
- * anything from lib/KOReaderSync/.
+ * Percentage is still the primary comparison metric shown on screen, but
+ * BookFusion also carries chapter_index/page_position_in_book alongside it
+ * when available; "apply" prefers the reported chapter over a percentage-
+ * derived guess, still landing at that chapter's start rather than an exact
+ * page since BookFusion has no intra-chapter page granularity to land on.
+ * This is self-contained: it only uses the generic Epub/EpubReaderUtils
+ * APIs, not anything from lib/KOReaderSync/.
  */
 class BookFusionSyncActivity final : public Activity {
  public:
@@ -56,11 +60,26 @@ class BookFusionSyncActivity final : public Activity {
   float remotePercent = 0.0f;
   bool hasRemoteProgress = false;
 
+  // Full captures (percentage + chapter/page granularity where available),
+  // built alongside localPercent/remotePercent in performSync(). Used for
+  // applyRemoteProgress()'s chapter-accurate landing spot and for saving the
+  // post-sync baseline; localPercent/remotePercent stay the source of truth
+  // for the on-screen comparison and render() display.
+  BookFusionProgress localSyncProgress;
+  BookFusionProgress remoteSyncProgress;
+
   // Selection in result screen (0 = Apply remote, 1 = Upload local)
   int selectedOption = 0;
 
   unsigned long autoReturnAt = 0;
   static constexpr unsigned long AUTO_RETURN_DELAY_MS = 1200;
+
+  // Set right before a render that immediately precedes a blocking network
+  // call, so render() can collapse the EPD analog rails once that paint
+  // completes instead of holding them powered through the multi-second
+  // wait alongside WiFi TX. One-shot: consumed and cleared by the very next
+  // render() regardless of which state it was set for.
+  bool powerDownAfterRender = false;
 
   void onWifiSelectionComplete(bool success);
   void performSync();

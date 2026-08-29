@@ -19,6 +19,7 @@
 #include "ClearCacheActivity.h"
 #include "ClockOffsetActivity.h"
 #include "ClockSyncActivity.h"
+#include "RefreshBookFusionMetadataActivity.h"
 #include "CrossPointSettings.h"
 #include "FontSelectionActivity.h"
 #include "FrontlightTimePickerActivity.h"
@@ -1055,6 +1056,10 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::ClockSync:
         startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::RefreshBookFusionMetadata:
+        startActivityForResult(std::make_unique<RefreshBookFusionMetadataActivity>(renderer, mappedInput),
+                               resultHandler);
         break;
       case SettingAction::QuickActions:
         startActivityForResult(std::make_unique<QuickActionsActivity>(renderer, mappedInput), resultHandler);

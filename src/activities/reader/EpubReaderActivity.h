@@ -480,6 +480,7 @@ class EpubReaderActivity final : public Activity {
   }
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
+  void maybeRunAutoSync();
   bool skipLoopDelay() override {
     return sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
            !backgroundBuildYieldForInput.load(std::memory_order_relaxed);

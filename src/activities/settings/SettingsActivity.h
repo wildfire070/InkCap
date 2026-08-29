@@ -49,6 +49,7 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   ClockSync,
+  RefreshBookFusionMetadata,
 };
 
 struct SettingInfo {

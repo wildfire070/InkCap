@@ -605,6 +605,12 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                              StrId::STR_CAT_DISPLAY));
 
     // --- Reader ---
+    add(SettingInfo::Enum(StrId::STR_BF_AUTOSYNC, &CrossPointSettings::autosyncMode,
+                          {StrId::STR_STATE_OFF, StrId::STR_BF_AUTOSYNC_EVERY_CHAPTER,
+                           StrId::STR_BF_AUTOSYNC_EVERY_5_PERCENT, StrId::STR_BF_AUTOSYNC_EVERY_10_PERCENT,
+                           StrId::STR_BF_AUTOSYNC_ON_EXIT},
+                          "autosyncMode", StrId::STR_CAT_READER));
+    add(SettingInfo::Action(StrId::STR_BF_REFRESH_METADATA, SettingAction::RefreshBookFusionMetadata));
     // Built-in font-family entry. Replaced per-call with a registry-aware
     // version when SD fonts are installed.
     add(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,

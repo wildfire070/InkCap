@@ -3,7 +3,28 @@
 #include <string>
 
 /**
- * Per-book sidecar linking a local EPUB to its BookFusion book ID.
+ * The reading-position baseline recorded by the most recent sync (push or
+ * pull), used to detect whether local progress has changed independently
+ * since then -- see BookFusionBookIdStore::loadSyncBaseline().
+ *
+ * pageNumber/totalPages are -1/0 when unknown (a sidecar written before this
+ * field existed, or one written by an "apply remote" that only had a
+ * percentage/chapter to go on) -- callers fall back to a float-epsilon
+ * compare against percentage/pagePositionInBook in that case.
+ */
+struct BookFusionSyncBaseline {
+  bool hasBaseline = false;   // false if no sidecar, or the sidecar predates this field.
+  std::string syncedAtUtcIso;  // Server-reported updated_at from the last successful sync, if any.
+  float percentage = 0.0f;
+  float pagePositionInBook = 0.0f;
+  int chapterIndex = 0;
+  int pageNumber = -1;
+  int totalPages = 0;
+};
+
+/**
+ * Per-book sidecar linking a local EPUB to its BookFusion book ID, plus the
+ * reading-time-sync watermark and last-sync position baseline.
  *
  * Not a PersistableStore singleton -- one JSON file per book, living inside
  * that book's existing cache directory (Epub::cachePathForFilePath(), i.e.
@@ -12,8 +33,9 @@
  * where "bookfusion.json" is added to the cache-preservation lists so this
  * sidecar survives cache clears/rebuilds like progress.bin does.
  *
- * Returns 0 from loadBookId() when no sidecar exists -- 0 is never a valid
- * BookFusion book ID.
+ * Every save is a read-modify-write against the existing sidecar doc, so
+ * saving one field (e.g. the reading-time watermark) never clobbers another
+ * (e.g. the book ID or sync baseline).
  */
 class BookFusionBookIdStore {
  public:
@@ -25,6 +47,16 @@ class BookFusionBookIdStore {
 
   // Removes the sidecar for epubPath, if any.
   static void clearBookId(const std::string& epubPath);
+
+  // How many seconds of BookReadingStats::totalReadingSeconds have already
+  // been pushed to BookFusion's reading-time-tracking endpoint. 0 if never
+  // synced.
+  static uint32_t loadSyncedReadingSeconds(const std::string& epubPath);
+  static bool saveSyncedReadingSeconds(const std::string& epubPath, uint32_t seconds);
+
+  // The position baseline recorded by the most recent sync.
+  static BookFusionSyncBaseline loadSyncBaseline(const std::string& epubPath);
+  static bool saveSyncBaseline(const std::string& epubPath, const BookFusionSyncBaseline& baseline);
 
  private:
   static std::string sidecarPath(const std::string& epubPath);

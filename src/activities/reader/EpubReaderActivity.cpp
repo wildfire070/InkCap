@@ -25,6 +25,7 @@
 
 #include "../settings/DictionarySelectActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
+#include "BookFusionBookIdStore.h"
 #include "BookFusionSyncActivity.h"
 #include "BookStatsActivity.h"
 #include "ClipSelectionActivity.h"
@@ -66,6 +67,7 @@
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/Dictionary.h"
+#include "util/ProgressAutoSync.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -97,6 +99,11 @@ constexpr unsigned long TRANSIENT_FEEDBACK_MS = 1000UL;
 constexpr unsigned long IDLE_SD_FONT_PREWARM_DELAY_MS = 400UL;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_FREE = 64U * 1024U;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_MAX_ALLOC = 40U * 1024U;
+// Longer settle delay than the SD-font prewarm above: a silent WiFi
+// connect + HTTP round trip blocks the input/render loop for a few
+// seconds, so only attempt it once the reader has been genuinely idle for
+// a while, not just between two quick page turns.
+constexpr unsigned long AUTOSYNC_IDLE_DELAY_MS = 3000UL;
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
 constexpr uint32_t MIN_READING_PACE_SAMPLE_SECONDS = 2;
 constexpr uint16_t MIN_STORED_TIME_LEFT_PACE_SAMPLE_COUNT = 3;
@@ -2188,6 +2195,7 @@ void EpubReaderActivity::onEnter() {
   // Load reading stats and record session start time.
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
+  ProgressAutoSync::resetSessionBaseline();
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
   const uint32_t cumulativeAvgSeconds =
       stats.totalPagesTurned > 0 ? stats.totalReadingSeconds / stats.totalPagesTurned : 0;
@@ -2273,6 +2281,28 @@ void EpubReaderActivity::onExit() {
       stats.save(epub->getCachePath());
     }
     globalStats.save();
+  }
+
+  // AUTOSYNC_ON_EXIT's trigger. Blocking (WiFi connect + HTTP round trip) --
+  // unavoidable here, this is the last moment before whatever comes next
+  // (Home, sleep) tears down the network anyway. Must run before section
+  // resets and epub is released just below, but doesn't touch either of
+  // them itself (see ProgressAutoSync::performPush()), so it's safe even
+  // though it blocks for a few seconds with both still "open".
+  if (epub && section && !section->isBuilding()) {
+    const uint32_t autosyncBookId = BookFusionBookIdStore::loadBookId(epub->getPath());
+    if (autosyncBookId != 0) {
+      const int autosyncPageNumber = section->currentPage;
+      const int autosyncPageCount = section->pageCount;
+      const float autosyncChapterProgress = autosyncPageCount > 0
+                                                 ? static_cast<float>(autosyncPageNumber + 1) /
+                                                       static_cast<float>(autosyncPageCount)
+                                                 : 0.0f;
+      const float autosyncBookPercent = epub->calculateProgress(currentSpineIndex, autosyncChapterProgress);
+      ProgressAutoSync::runOnExit(renderer, autosyncBookId, epub->getPath(), epub->getCachePath(),
+                                  autosyncBookPercent, currentSpineIndex, autosyncPageNumber, autosyncPageCount,
+                                  epub->getSpineItemsCount());
+    }
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
@@ -2458,6 +2488,30 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   page->renderText(renderer, renderFontId, 0, 0);
   scope.endScanAndPrewarm();
   LOG_DBG("ERS", "Idle SD font prewarm: spine=%d page=%d in %lums", currentSpineIndex, nextPage, millis() - startedAt);
+}
+
+void EpubReaderActivity::maybeRunAutoSync() {
+  // Cheap early-out before any of the gates below: nothing pending, nothing
+  // to do.
+  if (!ProgressAutoSync::isArmed()) return;
+
+  if (!section || section->isBuilding() || activeFootnotePreview || automaticPageTurnActive ||
+      !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
+      (millis() - lastRenderCompleteMs) < AUTOSYNC_IDLE_DELAY_MS) {
+    return;
+  }
+
+  const uint32_t bookId = BookFusionBookIdStore::loadBookId(epub->getPath());
+  if (bookId == 0) return;  // Not linked to a BookFusion book; nothing to push.
+
+  const int pageNumber = section->currentPage;
+  const int pageCount = section->pageCount;
+  const float chapterProgress =
+      pageCount > 0 ? static_cast<float>(pageNumber + 1) / static_cast<float>(pageCount) : 0.0f;
+  const float bookPercent = epub->calculateProgress(currentSpineIndex, chapterProgress);
+
+  ProgressAutoSync::runIfArmed(renderer, bookId, epub->getPath(), epub->getCachePath(), bookPercent,
+                               currentSpineIndex, pageNumber, pageCount, epub->getSpineItemsCount());
 }
 
 // One dismissal rule for every transient reader confirmation: it clears when its
@@ -2969,6 +3023,7 @@ void EpubReaderActivity::loop() {
   }
   if (!prevTriggered && !nextTriggered) {
     idlePrewarmNextPage();
+    maybeRunAutoSync();
     return;
   }
 
@@ -5099,6 +5154,19 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
       }
       stats.totalPagesTurned++;
       globalStats.totalPagesTurned++;
+    }
+    // Cheap and non-blocking: just records whether the configured autosync
+    // threshold was crossed. section may be null right after a chapter-
+    // boundary advance (reset a few lines up), landing on page 0 in that
+    // case. The actual network push, if armed, happens later from loop()
+    // at a moment it chooses to be safe -- see maybeRunAutoSync().
+    {
+      float chapterProgress = 0.0f;
+      if (section && section->pageCount > 0) {
+        chapterProgress = static_cast<float>(section->currentPage + 1) / static_cast<float>(section->pageCount);
+      }
+      const float bookPercent = epub ? epub->calculateProgress(currentSpineIndex, chapterProgress) : 0.0f;
+      ProgressAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
     }
   } else {
     recordCurrentPageReadingTime(source);

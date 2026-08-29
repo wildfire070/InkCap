@@ -5,7 +5,7 @@
 
 // How many books are requested/shown per browser page. Kept small so a page
 // response stays well under the streaming JSON buffer.
-constexpr int BOOKFUSION_BOOKS_PER_PAGE = 8;
+constexpr int BOOKFUSION_BOOKS_PER_PAGE = 10;  // Matches InsiderPhD's fork (MAX_BOOKS).
 
 /**
  * Response from starting the OAuth device-code flow.
@@ -25,6 +25,9 @@ struct BookFusionBook {
   uint32_t bookId = 0;
   std::string title;
   std::string author;
+  std::string coverUrl;      // Empty if the book has no cover.
+  uint32_t downloadSize = 0;  // EPUB file size in bytes (API "download_size"); 0 if absent.
+  std::string format;        // "EPUB", "PDF", etc. Empty means EPUB (the API's own default).
 };
 
 /** One page of library search results. */
@@ -35,11 +38,32 @@ struct BookFusionSearchResult {
   int totalCount = 0;  // From the Total-Count response header; 0 if the header was absent.
 };
 
+/** One of the user's BookFusion bookshelves. */
+struct BookFusionBookshelf {
+  uint32_t id = 0;
+  std::string name;
+};
+
+/** The user's bookshelves, capped so a browser menu stays a fixed size. */
+struct BookFusionBookshelfList {
+  static constexpr int MAX_SHELVES = 64;
+  std::vector<BookFusionBookshelf> shelves;
+};
+
 /** Reading position for one book, as stored by BookFusion. */
 struct BookFusionProgress {
   uint32_t bookId = 0;
   float percentage = 0.0f;  // 0.0..1.0
   int64_t timestamp = 0;    // Unix timestamp reported by the server (never generated locally, see below).
+
+  // Chapter+page granularity, in addition to percentage. hasChapterInfo is
+  // false when the server response didn't include chapter_index/
+  // page_position_in_book (an older sidecar, or a percentage-only client) --
+  // callers fall back to percentage-only resolution in that case.
+  bool hasChapterInfo = false;
+  int chapterIndex = 0;             // EPUB spine index, 0-based.
+  float pagePositionInBook = 0.0f;  // (chapterIndex + intra-chapter fraction) / spineCount, 0.0..1.0.
+  std::string updatedAt;            // Server-reported ISO-8601 timestamp, for conflict-detection ordering.
 };
 
 /**
@@ -63,6 +87,7 @@ class BookFusionSyncClient {
     AUTH_PENDING,  // User has not yet approved the device code.
     SLOW_DOWN,     // Server asked us to increase the poll interval.
     EXPIRED,       // Device code expired before the user approved it.
+    DENIED,        // User explicitly declined authorization (access_denied).
     SERVER_ERROR,
     JSON_ERROR,
     NOT_FOUND,
@@ -83,10 +108,20 @@ class BookFusionSyncClient {
 
   /**
    * Fetch one page of the user's library.
-   * @param page 0-based page index.
-   * @param list Optional BookFusion list/category filter (nullptr for "all books").
+   * @param page 1-based page index (BookFusion's API convention -- page 1 is the first page,
+   *             same as the bookshelves endpoint).
+   * @param list Optional BookFusion list/category filter (nullptr for "all books"). Ignored
+   *             when bookshelfId is non-zero.
+   * @param bookshelfId Optional bookshelf filter (0 for none). When set, list is ignored -- a
+   *                    shelf is browsed on its own, not intersected with a category.
+   * @param sort Optional BookFusion sort key (e.g. "last_read_at-desc"); defaults to
+   *             "added_at-desc" when null.
    */
-  static Error searchBooks(int page, const char* list, BookFusionSearchResult& out);
+  static Error searchBooks(int page, const char* list, BookFusionSearchResult& out, uint32_t bookshelfId = 0,
+                           const char* sort = nullptr);
+
+  /** Fetch the user's bookshelves (id + name only), up to BookFusionBookshelfList::MAX_SHELVES. */
+  static Error searchBookshelves(BookFusionBookshelfList& out);
 
   /**
    * Keep one HTTPS connection alive across the subsequent searchBooks()/
@@ -111,6 +146,15 @@ class BookFusionSyncClient {
 
   /** Upload a reading position for a book. */
   static Error updateProgress(const BookFusionProgress& progress);
+
+  /**
+   * Log a span of reading time for a book. durationSeconds must be >= 5
+   * (BookFusion's minimum). loggedAtUtcIso must be a real, NTP-sourced
+   * "YYYY-MM-DDTHH:MM:SSZ" timestamp -- unlike every other timestamp in this
+   * client, this one has no server-reported alternative, so the caller is
+   * responsible for only calling this when the clock looks genuinely synced.
+   */
+  static Error trackReadingTime(uint32_t bookId, uint32_t durationSeconds, const char* loggedAtUtcIso);
 
   /**
    * Fetch a one-time download URL for a book (authenticated POST to

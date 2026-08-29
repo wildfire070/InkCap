@@ -6,6 +6,7 @@
 #include <WiFi.h>
 
 #include <cmath>
+#include <ctime>
 
 #include "BookFusionBookIdStore.h"
 #include "BookFusionSyncClient.h"
@@ -13,9 +14,11 @@
 #include "SdCardFontSystem.h"
 #include "activities/home/RecentBookProgress.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/reader/BookReadingStats.h"
 #include "activities/reader/EpubReaderUtils.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
+#include "HalClock.h"
 #include "fontIds.h"
 #include "network/WifiUtils.h"
 
@@ -23,6 +26,69 @@ namespace {
 // Same-progress tolerance used to skip the Apply/Upload prompt when both
 // sides already agree.
 constexpr float SAME_PROGRESS_EPSILON = 0.001f;
+
+// Every other timestamp this client ever sends is server-reported -- this is
+// the one exception (BookFusion's reading-time endpoint has no server-side
+// "now"). NTP-syncs the system clock and formats it as UTC ISO-8601, or
+// returns false if the result still doesn't look like a real current date
+// (no RTC, no WiFi, or NTP failed) -- callers skip the push rather than
+// send a bogus timestamp.
+bool currentUtcIsoTimestamp(char* buf, size_t bufSize) {
+#ifndef SIMULATOR
+  if (!halClock.syncSystemTimeFromNTP()) {
+    LOG_DBG("BFSync", "NTP sync unavailable for reading-time timestamp");
+  }
+#endif
+  const time_t now = time(nullptr);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  if (timeinfo.tm_year + 1900 < 2024) return false;  // Clock still looks unsynced.
+  strftime(buf, bufSize, "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return true;
+}
+
+// Pushes the reading-time delta since the last successful push, if any.
+// Best-effort: failure here doesn't fail the overall progress push.
+void pushReadingTimeDelta(uint32_t bookId, const Epub& epub, const std::string& epubPath) {
+  const auto stats = BookReadingStats::load(epub.getCachePath());
+  if (stats.totalReadingSeconds == 0) return;
+
+  const uint32_t syncedSeconds = BookFusionBookIdStore::loadSyncedReadingSeconds(epubPath);
+  if (stats.totalReadingSeconds <= syncedSeconds) return;
+  const uint32_t deltaSeconds = stats.totalReadingSeconds - syncedSeconds;
+  if (deltaSeconds < 5) return;  // Below BookFusion's minimum.
+
+  char loggedAt[32];
+  if (!currentUtcIsoTimestamp(loggedAt, sizeof(loggedAt))) return;
+
+  const auto result = BookFusionSyncClient::trackReadingTime(bookId, deltaSeconds, loggedAt);
+  if (result == BookFusionSyncClient::OK) {
+    BookFusionBookIdStore::saveSyncedReadingSeconds(epubPath, stats.totalReadingSeconds);
+  } else {
+    LOG_DBG("BFSync", "trackReadingTime failed: %s", BookFusionSyncClient::errorString(result).c_str());
+  }
+}
+
+// Does pos match what the last sync recorded? Chapter-exact when both sides
+// have chapter granularity; percentage-only fallback otherwise (an older
+// sidecar, or a position that never got chapter info).
+bool matchesBaseline(const BookFusionSyncBaseline& baseline, const BookFusionProgress& pos) {
+  if (!baseline.hasBaseline) return false;
+  if (!pos.hasChapterInfo) return std::fabs(baseline.percentage - pos.percentage) < SAME_PROGRESS_EPSILON;
+  if (baseline.chapterIndex != pos.chapterIndex) return false;
+  return std::fabs(baseline.pagePositionInBook - pos.pagePositionInBook) <= 0.0005f &&
+         std::fabs(baseline.percentage - pos.percentage) <= 0.05f;
+}
+
+BookFusionSyncBaseline makeBaseline(const BookFusionProgress& pos, const std::string& updatedAt) {
+  BookFusionSyncBaseline baseline;
+  baseline.hasBaseline = true;
+  baseline.syncedAtUtcIso = updatedAt;
+  baseline.percentage = pos.percentage;
+  baseline.pagePositionInBook = pos.pagePositionInBook;
+  baseline.chapterIndex = pos.chapterIndex;
+  return baseline;
+}
 }  // namespace
 
 bool BookFusionSyncActivity::ensureEpubLoaded() {
@@ -45,6 +111,11 @@ void BookFusionSyncActivity::markAutoReturn() { autoReturnAt = millis() + AUTO_R
 void BookFusionSyncActivity::onEnter() {
   Activity::onEnter();
   sdFontSystem.releaseLoadedFont(renderer);
+
+  // TODO(BLE): disable the BLE page-turner here before the WiFi/TLS calls
+  // below once InkCap has BLE support -- upstream disables Bluetooth at this
+  // same point (BLE and WiFi share the radio, and the BLE stack's heap use
+  // competes with the TLS handshake). No-op today: InkCap has no BLE code.
 
   bookId = BookFusionBookIdStore::loadBookId(epubPath);
   if (bookId == 0) {
@@ -94,6 +165,7 @@ void BookFusionSyncActivity::onWifiSelectionComplete(const bool success) {
     RenderLock lock(*this);
     state = SYNCING;
     statusMessage = tr(STR_BF_SYNCING);
+    powerDownAfterRender = true;
   }
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
     LOG_ERR("BFSync", "Syncing screen could not be rendered before request");
@@ -112,21 +184,32 @@ void BookFusionSyncActivity::performSync() {
     return;
   }
 
+  localSyncProgress = BookFusionProgress{};
+  localSyncProgress.bookId = bookId;
   EpubReaderUtils::Progress localProgress;
+  const int spineCount = epub->getSpineItemsCount();
   if (EpubReaderUtils::loadProgress(*epub, localProgress, "BFSync") && localProgress.hasPageCount &&
       localProgress.pageCount > 0) {
     const float chapterProgress =
         static_cast<float>(localProgress.pageNumber + 1) / static_cast<float>(localProgress.pageCount);
     localPercent = epub->calculateProgress(localProgress.spineIndex, chapterProgress);
+    if (spineCount > 0) {
+      localSyncProgress.hasChapterInfo = true;
+      localSyncProgress.chapterIndex = localProgress.spineIndex;
+      localSyncProgress.pagePositionInBook =
+          (static_cast<float>(localProgress.spineIndex) + chapterProgress) / static_cast<float>(spineCount);
+    }
   } else {
     localPercent = 0.0f;
   }
+  localSyncProgress.percentage = localPercent;
 
   BookFusionProgress remote;
   const auto result = BookFusionSyncClient::getProgress(bookId, remote);
   hasRemoteProgress = result == BookFusionSyncClient::OK;
   if (hasRemoteProgress) {
     remotePercent = remote.percentage;
+    remoteSyncProgress = remote;
   } else if (result != BookFusionSyncClient::NOT_FOUND) {
     RenderLock lock(*this);
     state = SYNC_FAILED;
@@ -141,7 +224,14 @@ void BookFusionSyncActivity::performSync() {
     return;
   }
 
-  if (std::fabs(localPercent - remotePercent) < SAME_PROGRESS_EPSILON) {
+  // Beyond the raw percentage match below, also treat this as already-synced
+  // if neither side has moved since the last successful sync -- catches the
+  // case where local/remote don't match each other exactly (rounding,
+  // chapter-boundary drift) but both still match what was last synced.
+  const auto baseline = BookFusionBookIdStore::loadSyncBaseline(epubPath);
+  const bool alreadySynced = std::fabs(localPercent - remotePercent) < SAME_PROGRESS_EPSILON ||
+                             (matchesBaseline(baseline, localSyncProgress) && matchesBaseline(baseline, remoteSyncProgress));
+  if (alreadySynced) {
     RenderLock lock(*this);
     state = SYNC_COMPLETE;
     statusMessage = tr(STR_ALREADY_SYNCED);
@@ -164,14 +254,22 @@ void BookFusionSyncActivity::applyRemoteProgress() {
   }
   requestUpdate(true);
 
-  const int percentInt = std::max(0, std::min(100, static_cast<int>(remotePercent * 100.0f + 0.5f)));
+  // Prefer the chapter index BookFusion reported (still landing at the start
+  // of that chapter -- BookFusion has no intra-chapter page granularity we
+  // could reconstruct exactly). Fall back to resolving a chapter from the
+  // percentage alone when the remote position predates chapter info.
   int spineIndex = 0;
-  float spineProgress = 0.0f;
   bool saved = false;
-  if (epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, spineProgress)) {
-    // BookFusion has no chapter/page granularity, so land at the start of the
-    // resolved chapter rather than fabricating an exact page.
+  if (remoteSyncProgress.hasChapterInfo && remoteSyncProgress.chapterIndex >= 0 &&
+      remoteSyncProgress.chapterIndex < epub->getSpineItemsCount()) {
+    spineIndex = remoteSyncProgress.chapterIndex;
     saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
+  } else {
+    const int percentInt = std::max(0, std::min(100, static_cast<int>(remotePercent * 100.0f + 0.5f)));
+    float spineProgress = 0.0f;
+    if (epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, spineProgress)) {
+      saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
+    }
   }
 
   if (!saved) {
@@ -183,6 +281,7 @@ void BookFusionSyncActivity::applyRemoteProgress() {
   }
 
   RecentBookProgress::saveCachedEpubPercent(epub->getCachePath(), remotePercent * 100.0f);
+  BookFusionBookIdStore::saveSyncBaseline(epubPath, makeBaseline(remoteSyncProgress, remoteSyncProgress.updatedAt));
   returnToReader();
 }
 
@@ -191,13 +290,13 @@ void BookFusionSyncActivity::uploadLocalProgress() {
     RenderLock lock(*this);
     state = UPLOADING;
     statusMessage = tr(STR_BF_UPLOADING);
+    powerDownAfterRender = true;
   }
   requestUpdate(true);
 
-  BookFusionProgress progress;
-  progress.bookId = bookId;
-  progress.percentage = localPercent;
-  const auto result = BookFusionSyncClient::updateProgress(progress);
+  localSyncProgress.bookId = bookId;
+  localSyncProgress.percentage = localPercent;
+  const auto result = BookFusionSyncClient::updateProgress(localSyncProgress);
 
   if (result != BookFusionSyncClient::OK) {
     RenderLock lock(*this);
@@ -206,6 +305,12 @@ void BookFusionSyncActivity::uploadLocalProgress() {
     requestUpdate();
     return;
   }
+
+  pushReadingTimeDelta(bookId, *epub, epubPath);
+  // No server-reported updated_at for a push we just made -- the baseline's
+  // syncedAtUtcIso stays empty here, matching the "no comparable timestamp"
+  // fallback matchesBaseline() already takes for float-epsilon comparison.
+  BookFusionBookIdStore::saveSyncBaseline(epubPath, makeBaseline(localSyncProgress, ""));
 
   RenderLock lock(*this);
   state = SYNC_COMPLETE;
@@ -301,5 +406,8 @@ void BookFusionSyncActivity::render(RenderLock&&) {
     labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
   }
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer();
+
+  const bool powerOff = powerDownAfterRender;
+  powerDownAfterRender = false;
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH, powerOff);
 }
