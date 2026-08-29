@@ -18,10 +18,17 @@
  * Percentage is still the primary comparison metric shown on screen, but
  * BookFusion also carries chapter_index/page_position_in_book alongside it
  * when available; "apply" prefers the reported chapter over a percentage-
- * derived guess, still landing at that chapter's start rather than an exact
- * page since BookFusion has no intra-chapter page granularity to land on.
- * This is self-contained: it only uses the generic Epub/EpubReaderUtils
- * APIs, not anything from lib/KOReaderSync/.
+ * derived guess, and derives an intra-chapter fraction from
+ * page_position_in_book (or from resolveLocationPercentToSpineProgress()'s
+ * own fraction in the percentage-only fallback). It hands that fraction to
+ * the reader via CrossPointState's pendingBookFusionSyncSpine/Progress,
+ * consumed by EpubReaderActivity::onEnter() the same way a bookmark jump is
+ * (pendingSpineProgress/pendingPercentJump) -- letting the reader's existing
+ * machinery land on the correct page once the chapter's real page count is
+ * known, rather than always landing on page 0. BookFusion itself has no
+ * page-exact position to hand us, so this is still an estimate, just a
+ * closer one than chapter-start. This is self-contained: it only uses the
+ * generic Epub/EpubReaderUtils APIs, not anything from lib/KOReaderSync/.
  */
 class BookFusionSyncActivity final : public Activity {
  public:

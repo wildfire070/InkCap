@@ -10,6 +10,7 @@
 
 #include "BookFusionBookIdStore.h"
 #include "BookFusionSyncClient.h"
+#include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "activities/home/RecentBookProgress.h"
@@ -254,20 +255,27 @@ void BookFusionSyncActivity::applyRemoteProgress() {
   }
   requestUpdate(true);
 
-  // Prefer the chapter index BookFusion reported (still landing at the start
-  // of that chapter -- BookFusion has no intra-chapter page granularity we
-  // could reconstruct exactly). Fall back to resolving a chapter from the
-  // percentage alone when the remote position predates chapter info.
+  // Prefer the chapter index BookFusion reported, deriving the intra-chapter fraction from
+  // pagePositionInBook the same way it was encoded when captured (pagePositionInBook =
+  // (spineIndex + intra) / spineCount, so intra = pagePositionInBook * spineCount - spineIndex).
+  // Falls back to resolving a chapter from the percentage alone -- via the same location-index
+  // system used elsewhere in this codebase -- when the remote position predates chapter info.
   int spineIndex = 0;
+  float intraSpineProgress = 0.0f;
   bool saved = false;
+  const int spineCount = epub->getSpineItemsCount();
   if (remoteSyncProgress.hasChapterInfo && remoteSyncProgress.chapterIndex >= 0 &&
-      remoteSyncProgress.chapterIndex < epub->getSpineItemsCount()) {
+      remoteSyncProgress.chapterIndex < spineCount) {
     spineIndex = remoteSyncProgress.chapterIndex;
+    if (spineCount > 0) {
+      intraSpineProgress = std::max(
+          0.0f, std::min(1.0f, remoteSyncProgress.pagePositionInBook * static_cast<float>(spineCount) -
+                                    static_cast<float>(spineIndex)));
+    }
     saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
   } else {
     const int percentInt = std::max(0, std::min(100, static_cast<int>(remotePercent * 100.0f + 0.5f)));
-    float spineProgress = 0.0f;
-    if (epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, spineProgress)) {
+    if (epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, intraSpineProgress)) {
       saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
     }
   }
@@ -279,6 +287,13 @@ void BookFusionSyncActivity::applyRemoteProgress() {
     requestUpdate();
     return;
   }
+
+  // Hand the intra-chapter fraction to the reader the same way a bookmark jump does --
+  // EpubReaderActivity::onEnter() resolves it against the target chapter's real page count
+  // once that section actually builds, landing closer to the synced position than page 0.
+  APP_STATE.pendingBookFusionSyncSpine = static_cast<uint16_t>(spineIndex);
+  APP_STATE.pendingBookFusionSyncProgress = intraSpineProgress;
+  APP_STATE.saveToFile();
 
   RecentBookProgress::saveCachedEpubPercent(epub->getCachePath(), remotePercent * 100.0f);
   BookFusionBookIdStore::saveSyncBaseline(epubPath, makeBaseline(remoteSyncProgress, remoteSyncProgress.updatedAt));

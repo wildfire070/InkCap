@@ -86,6 +86,9 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["pendingBookmarkProgress"] = pendingBookmarkProgress;
   doc["pendingBookmarkParagraphIndex"] = pendingBookmarkParagraphIndex;
   doc["pendingClippingIndex"] = pendingClippingIndex;
+  doc["pendingBookFusionSyncSpine"] = pendingBookFusionSyncSpine;
+  doc["pendingBookFusionSyncProgress"] = pendingBookFusionSyncProgress;
+  doc["pendingBookFusionSyncRetryCount"] = pendingBookFusionSyncRetryCount;
   doc["showBootScreen"] = showBootScreen;
   doc["quickLockResumePending"] = quickLockResumePending;
   doc["quickLockResumeTrigger"] = quickLockResumeTrigger;
@@ -116,6 +119,9 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   pendingBookmarkProgress = doc["pendingBookmarkProgress"] | static_cast<float>(-1.0f);
   pendingBookmarkParagraphIndex = doc["pendingBookmarkParagraphIndex"] | static_cast<uint16_t>(UINT16_MAX);
   pendingClippingIndex = doc["pendingClippingIndex"] | static_cast<uint16_t>(UINT16_MAX);
+  pendingBookFusionSyncSpine = doc["pendingBookFusionSyncSpine"] | static_cast<uint16_t>(UINT16_MAX);
+  pendingBookFusionSyncProgress = doc["pendingBookFusionSyncProgress"] | static_cast<float>(-1.0f);
+  pendingBookFusionSyncRetryCount = doc["pendingBookFusionSyncRetryCount"] | static_cast<uint8_t>(0);
   showBootScreen = doc["showBootScreen"] | true;
   quickLockResumePending = doc["quickLockResumePending"] | false;
   quickLockResumeTrigger = doc["quickLockResumeTrigger"] | static_cast<uint8_t>(0);
@@ -160,11 +166,17 @@ bool CrossPointState::loadFromBinaryFile() {
     serialization::readPod(inputFile, pendingBookmarkProgress);
     pendingBookmarkParagraphIndex = UINT16_MAX;
     pendingClippingIndex = UINT16_MAX;
+    pendingBookFusionSyncSpine = UINT16_MAX;
+    pendingBookFusionSyncProgress = -1.0f;
+    pendingBookFusionSyncRetryCount = 0;
   } else {
     pendingBookmarkSpine = UINT16_MAX;
     pendingBookmarkProgress = -1.0f;
     pendingBookmarkParagraphIndex = UINT16_MAX;
     pendingClippingIndex = UINT16_MAX;
+    pendingBookFusionSyncSpine = UINT16_MAX;
+    pendingBookFusionSyncProgress = -1.0f;
+    pendingBookFusionSyncRetryCount = 0;
   }
 
   return true;

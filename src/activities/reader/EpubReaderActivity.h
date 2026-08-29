@@ -170,6 +170,21 @@ class EpubReaderActivity final : public Activity {
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
+  // True when pendingPercentJump targets an inherently approximate position (a percent-based
+  // jump or a BookFusion sync landing) rather than an exact one (a bookmark/clipping/paragraph).
+  // Lets the low-memory build path retain a readable partial cache instead of hard-failing --
+  // landing somewhere within whatever got built is an acceptable degrade for an estimate, but
+  // not for a bookmark the user placed at an exact spot.
+  bool pendingPercentJumpApproximate = false;
+  // True only when the current pendingPercentJump came from a BookFusion sync landing (not a
+  // plain in-reader percent-jump). Lets a chapter that fails to lay out at all (zero pages, no
+  // partial cache to retain -- see pendingPercentJumpApproximate) re-arm itself and retry once
+  // with a clean heap after a low-memory silent restart, before giving up and landing at
+  // chapter start.
+  bool pendingPercentJumpIsBookFusionSync = false;
+  // Mirrors CrossPointState::pendingBookFusionSyncRetryCount at the point this jump was
+  // consumed in onEnter(): 0 on the initial attempt, 1 once the one allowed retry has been used.
+  uint8_t bookFusionSyncRetryCount = 0;
   // Normalized 0.0-1.0 progress within the target spine item, computed from book percentage.
   float pendingSpineProgress = 0.0f;
   uint16_t pendingParagraphIndex = UINT16_MAX;

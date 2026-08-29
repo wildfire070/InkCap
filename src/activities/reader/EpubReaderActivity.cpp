@@ -2132,6 +2132,8 @@ void EpubReaderActivity::onEnter() {
     pendingParagraphIndex = APP_STATE.pendingBookmarkParagraphIndex;
     pendingClippingIndex = APP_STATE.pendingClippingIndex;
     pendingPercentJump = true;
+    pendingPercentJumpApproximate = false;
+    pendingPercentJumpIsBookFusionSync = false;
     cachedSpineIndex = currentSpineIndex;
 
     // Clear the pending jump
@@ -2139,6 +2141,25 @@ void EpubReaderActivity::onEnter() {
     APP_STATE.pendingBookmarkProgress = -1.0f;
     APP_STATE.pendingBookmarkParagraphIndex = UINT16_MAX;
     APP_STATE.pendingClippingIndex = UINT16_MAX;
+    APP_STATE.saveToFile();
+  } else if (APP_STATE.pendingBookFusionSyncSpine != UINT16_MAX && APP_STATE.pendingBookFusionSyncProgress >= 0.0f) {
+    // Resume from a just-applied BookFusion sync. currentSpineIndex is the chapter BookFusion
+    // reported (or resolved from its percentage); pendingSpineProgress is the intra-chapter
+    // fraction, resolved against this chapter's real page count once it's actually built --
+    // same mechanism a bookmark jump uses, since BookFusion has no finer-grained position to
+    // hand us than "this far through this chapter".
+    currentSpineIndex = APP_STATE.pendingBookFusionSyncSpine;
+    pendingSpineProgress = APP_STATE.pendingBookFusionSyncProgress;
+    pendingPercentJump = true;
+    pendingPercentJumpApproximate = true;
+    pendingPercentJumpIsBookFusionSync = true;
+    bookFusionSyncRetryCount = APP_STATE.pendingBookFusionSyncRetryCount;
+    cachedSpineIndex = currentSpineIndex;
+
+    // Clear the pending jump
+    APP_STATE.pendingBookFusionSyncSpine = UINT16_MAX;
+    APP_STATE.pendingBookFusionSyncProgress = -1.0f;
+    APP_STATE.pendingBookFusionSyncRetryCount = 0;
     APP_STATE.saveToFile();
   } else {
     EpubReaderUtils::Progress progress;
@@ -2174,6 +2195,8 @@ void EpubReaderActivity::onEnter() {
       cachedSpineIndex = currentSpineIndex;
       pendingPageJump = restartPageBuildTarget;
       pendingPercentJump = false;
+      pendingPercentJumpApproximate = false;
+      pendingPercentJumpIsBookFusionSync = false;
       pendingParagraphIndex = UINT16_MAX;
       pendingClippingIndex = UINT16_MAX;
       lowMemoryPartialRestartAttempted = true;
@@ -3194,6 +3217,8 @@ void EpubReaderActivity::jumpToPercent(int percent) {
     pendingSpineProgress = locationSpineProgress;
     nextPageNumber = 0;
     pendingPercentJump = true;
+    pendingPercentJumpApproximate = true;
+    pendingPercentJumpIsBookFusionSync = false;
     section.reset();
     armReadingPaceWarmup("percent_jump");
     return;
@@ -3242,6 +3267,8 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   currentSpineIndex = targetSpineIndex;
   nextPageNumber = 0;
   pendingPercentJump = true;
+  pendingPercentJumpApproximate = true;
+  pendingPercentJumpIsBookFusionSync = false;
   section.reset();
   armReadingPaceWarmup("percent_jump");
 }
@@ -3888,12 +3915,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                 }
                 nextPageNumber = section->currentPage;
                 pendingPercentJump = false;
+                pendingPercentJumpApproximate = false;
+                pendingPercentJumpIsBookFusionSync = false;
                 pendingParagraphIndex = UINT16_MAX;
               } else {
                 currentSpineIndex = bm.spineIndex;
                 pendingSpineProgress = bm.progress;
                 pendingParagraphIndex = bm.paragraphIndex;
                 pendingPercentJump = true;
+                pendingPercentJumpApproximate = false;
+                pendingPercentJumpIsBookFusionSync = false;
                 section.reset();
               }
               armReadingPaceWarmup("bookmark_jump");
@@ -5553,8 +5584,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         return;
       }
 
-      if (!fallbackBuildSucceeded && readablePartialFallback && !buildingFootnotePreview && !pendingPercentJump &&
-          pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+      if (!fallbackBuildSucceeded && readablePartialFallback && !buildingFootnotePreview &&
+          (!pendingPercentJump || pendingPercentJumpApproximate) && pendingClippingIndex == UINT16_MAX &&
+          pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
         const int target = pendingPageJump.has_value() ? *pendingPageJump : std::max(0, nextPageNumber);
         bool targetAvailable = target < static_cast<int>(readablePartialFallback->pageCount);
         if (!pendingAnchor.empty()) {
@@ -5573,8 +5605,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
 
       if (!fallbackBuildSucceeded && layoutAbortedForLowMemory && section && section->isPartial() &&
-          section->pageCount > 0 && !buildingFootnotePreview && !pendingPercentJump && pendingAnchor.empty() &&
-          pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+          section->pageCount > 0 && !buildingFootnotePreview && (!pendingPercentJump || pendingPercentJumpApproximate) &&
+          pendingAnchor.empty() && pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX &&
+          !pendingRelayoutReposition) {
         LOG_ERR("ERS", "Incremental build stopped for low heap; retaining readable partial cache (%u pages)",
                 section->pageCount);
         fallbackBuildSucceeded = true;
@@ -5584,6 +5617,40 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         usedRenderMode = lastAttemptedRenderMode;
         safeModeBuildSucceeded = lastAttemptUsedSafeMode;
         queueLowMemoryLayoutAlert(false);
+      }
+
+      if (!fallbackBuildSucceeded && layoutAbortedForLowMemory && pendingPercentJumpApproximate &&
+          !buildingFootnotePreview && pendingAnchor.empty() && pendingClippingIndex == UINT16_MAX &&
+          pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+        // Every render mode (including Safe Mode) failed to lay out even the chapter's first text
+        // block, so there's no partial cache to retain either (see the block above).
+        if (pendingPercentJumpIsBookFusionSync && bookFusionSyncRetryCount == 0 && !lowMemoryPartialRestartAttempted &&
+            currentSpineIndex >= 0 && currentSpineIndex <= std::numeric_limits<uint16_t>::max()) {
+          // Heap right after a fresh boot is far less fragmented than mid-session (a WiFi/TLS
+          // round-trip plus the SD font reload on reader re-entry can easily be the difference
+          // between fitting and not). Re-arm the same sync jump for one retry with a clean heap
+          // before giving up on precise positioning -- capped at one via the persisted retry
+          // count so a chapter that's structurally too big (not just fragmented) still degrades
+          // to chapter start instead of rebooting forever.
+          APP_STATE.pendingBookFusionSyncSpine = static_cast<uint16_t>(currentSpineIndex);
+          APP_STATE.pendingBookFusionSyncProgress = pendingSpineProgress;
+          APP_STATE.pendingBookFusionSyncRetryCount = 1;
+          APP_STATE.saveToFile();
+          lowMemoryPartialRestartAttempted = true;
+          LOG_ERR("ERS",
+                  "Low heap during chapter build for BookFusion sync; retrying once after clean reboot (spine=%d)",
+                  currentSpineIndex);
+          silentRestartToReader();
+          return;
+        }
+        // No retry available (or already used) -- for an approximate jump (BookFusion sync,
+        // percent-jump) landing at chapter start is an acceptable degrade -- it's this feature's
+        // pre-existing behavior before precise positioning -- so recover via the same
+        // silent-restart mechanism a normal incremental low-heap failure already uses rather than
+        // surfacing a hard error for what was only ever a position estimate.
+        if (restartForLowMemoryLayout(0, 0, 0, "chapter build for approximate jump")) {
+          return;
+        }
       }
 
       if (!fallbackBuildSucceeded) {
@@ -5739,6 +5806,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       pendingClippingIndex = UINT16_MAX;
       pendingParagraphIndex = UINT16_MAX;
       pendingPercentJump = false;
+      pendingPercentJumpApproximate = false;
+      pendingPercentJumpIsBookFusionSync = false;
     }
 
     // Keep negative page numbers in bounds now. Upper-bound clamping waits until after
