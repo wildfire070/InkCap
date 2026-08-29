@@ -4,6 +4,8 @@
 #include <Logging.h>
 #include <SdCardFont.h>
 
+#include <cstring>
+
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
                                    const std::map<int, SdCardFont*>& sdCardFonts)
     : fontMap_(fontMap), sdCardFonts_(sdCardFonts) {}
@@ -83,7 +85,12 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
     }
   }
   // Keep the existing per-string fallback for unusually mixed render passes.
-  if (!entry) return;
+  if (!entry) {
+    LOG_ERR("FCM", "recordText: all %u scan slots full, dropping font %d entirely (len=%u) -- its glyphs will hit the "
+                   "slow on-demand path unprewarmed",
+            MAX_SCAN_FONTS, fontId, static_cast<unsigned>(strlen(text)));
+    return;
+  }
 
   if ((style & EpdFontFamily::SMALL_CAPS) != 0) {
     for (const char* p = text; *p != '\0'; ++p) {
