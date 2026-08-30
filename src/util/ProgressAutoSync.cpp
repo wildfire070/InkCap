@@ -71,8 +71,8 @@ void performPush(GfxRenderer& renderer, uint32_t bookId, const std::string& epub
   // than today's behavior if the network is genuinely flaky.
   //
   // Each network call gets its own NetworkBufferLoan scope, matching every other BookFusion call
-  // site with more than one sequential request (e.g. RefreshBookFusionMetadataActivity) --
-  // rather than holding one loan across both the fetch and the push.
+  // site with more than one sequential request -- rather than holding one loan across both the
+  // fetch and the push.
   BookFusionProgress remote;
   BookFusionSyncClient::Error fetchResult;
   {
