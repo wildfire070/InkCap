@@ -205,6 +205,14 @@ class Epub {
   // EPUB's own OPF metadata (no network call). Empty if absent or not yet loaded.
   const std::string& getBookshelf() const;
 
+  const std::string& getSeriesName() const;
+  // Calibre stores the index as a float ("1.0"); trailing zeros/dot trimmed for display.
+  std::string getSeriesIndex() const;
+  // User's own Calibre custom column for content rating (Explicit/Mature/General/
+  // Teen/-), from calibre:user_metadata:#rating -- distinct from Ao3Librarian's own
+  // AO3-preface-scraped rating.
+  const std::string& getContentRating() const;
+
  private:
   std::string getCachedCoverImagePath(const std::string& coverImageHref) const;
   bool ensureCachedCoverImage(const std::string& coverImageHref, std::string& outPath) const;
