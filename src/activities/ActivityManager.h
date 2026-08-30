@@ -77,10 +77,6 @@ class ActivityManager {
   TaskHandle_t waitingTaskHandle = nullptr;
   portMUX_TYPE renderStateMux = portMUX_INITIALIZER_UNLOCKED;
 
-  // Mutex to protect rendering operations from race conditions
-  // Must only be used via RenderLock
-  SemaphoreHandle_t renderingMutex = nullptr;
-
   // Whether to trigger a render after the current loop()
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
@@ -89,8 +85,7 @@ class ActivityManager {
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : renderer(renderer), mappedInput(mappedInput), renderingMutex(xSemaphoreCreateMutex()) {
-    assert(renderingMutex != nullptr && "Failed to create rendering mutex");
+      : renderer(renderer), mappedInput(mappedInput) {
     stackActivities.reserve(10);
   }
   ~ActivityManager() { assert(false); /* should never be called */ };
