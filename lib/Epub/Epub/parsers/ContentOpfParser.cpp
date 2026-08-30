@@ -347,6 +347,16 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       // BookFusion's "bookshelf" Calibre custom column. The content is a JSON blob
       // describing the column; pull only the "#value#" out (string or list).
       self->bookshelf = extractCalibreCustomValue(contentAttr);
+    } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:series") == 0) {
+      // Calibre's custom series metadata. EPUB3-only belongs-to-collection is not
+      // handled here; Calibre always writes the calibre:* pair for back-compat.
+      self->seriesName = contentAttr;
+    } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:series_index") == 0) {
+      self->seriesIndex = contentAttr;
+    } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:user_metadata:#rating") == 0) {
+      // User's own custom column for content rating (Explicit/Mature/General/
+      // Teen/-), same "#value#" JSON-blob shape as the bookshelf column above.
+      self->contentRating = extractCalibreCustomValue(contentAttr);
     }
     return;
   }

@@ -103,6 +103,14 @@ class ContentOpfParser final : public Print {
   // written into the EPUB's own OPF metadata at export time -- no network call needed.
   std::string bookshelf;
 
+  std::string seriesName;   // calibre:series
+  std::string seriesIndex;  // calibre:series_index
+
+  // User's own Calibre custom column for content rating (Explicit/Mature/General/
+  // Teen/-), distinct from Calibre's built-in numeric star-rating field and from
+  // Ao3Librarian's own AO3-preface-scraped rating (same values, separate pipeline).
+  std::string contentRating;  // calibre:user_metadata:#rating (#value# extracted)
+
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache, const bool collectCssFiles = true)
       : cachePath(cachePath),
