@@ -42,6 +42,11 @@ class BookFusionBookIdStore {
   // Reads the sidecar for epubPath, or returns 0 if none exists.
   static uint32_t loadBookId(const std::string& epubPath);
 
+  // Whether epubPath has a BookFusion sidecar at all -- convenience wrapper
+  // for call sites that only care about linkage, not the actual ID (e.g. a
+  // cover badge indicating "this book is BookFusion-linked").
+  static bool hasBookId(const std::string& epubPath) { return loadBookId(epubPath) != 0; }
+
   // Writes (or overwrites) the sidecar for epubPath. Returns false on failure.
   static bool saveBookId(const std::string& epubPath, uint32_t bookId);
 

@@ -7,10 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "BookFusionBookIdStore.h"
 #include "RecentBooksStore.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/icon_bookfusion.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -78,6 +80,24 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
                             true);
           drawLucideIcon(renderer, icon_book_open_32, tileX + hPaddingInSelection + 24,
                          tileY + hPaddingInSelection + 24);
+        }
+
+        // BookFusion-linked books: bottom-left badge, same positioning as
+        // LyraTheme's single-cover version. Ported from InsiderPhD's fork.
+        if (BookFusionBookIdStore::hasBookId(recentBooks[i].path)) {
+          constexpr int BF_ICON_SIZE = 24;
+          constexpr int BF_PADDING = 4;
+          constexpr int BF_MARGIN = 4;
+          constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
+          const int coverX = tileX + hPaddingInSelection;
+          const int coverY = tileY + hPaddingInSelection;
+          const int coverDrawH = Lyra3CoversMetrics::values.homeCoverHeight;
+          const int iconY = ((coverY + coverDrawH - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
+          const int badgeX = coverX + BF_MARGIN;
+          const int badgeY = iconY - BF_PADDING;
+          const int iconX = badgeX + BF_PADDING;
+          renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
+          drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
         }
       }
 
