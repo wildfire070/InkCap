@@ -67,6 +67,7 @@
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/Dictionary.h"
+#include "util/KOReaderAutoSync.h"
 #include "util/ProgressAutoSync.h"
 #include "util/ScreenshotUtil.h"
 
@@ -2219,6 +2220,7 @@ void EpubReaderActivity::onEnter() {
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
   ProgressAutoSync::resetSessionBaseline();
+  KOReaderAutoSync::resetSessionBaseline();
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
   const uint32_t cumulativeAvgSeconds =
       stats.totalPagesTurned > 0 ? stats.totalReadingSeconds / stats.totalPagesTurned : 0;
@@ -2340,6 +2342,15 @@ void EpubReaderActivity::onExit() {
                                   autosyncBookPercent, currentSpineIndex, autosyncPageNumber, autosyncPageCount,
                                   epub->getSpineItemsCount());
     }
+  }
+
+  // KOReader's independent AUTOSYNC_ON_EXIT trigger -- separate credentials, separate document
+  // identity, same blocking-is-fine reasoning as the BookFusion block above.
+  const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  if (koreaderAutosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
+    LOG_INF("ERS", "Skipping on-exit KOReader auto-sync: no active section to read progress from");
+  } else if (epub && sectionReadableForAutosync) {
+    KOReaderAutoSync::runOnExit(renderer, epub, currentSpineIndex, section->currentPage, section->pageCount);
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
@@ -2528,9 +2539,10 @@ void EpubReaderActivity::idlePrewarmNextPage() {
 }
 
 void EpubReaderActivity::maybeRunAutoSync() {
-  // Cheap early-out before any of the gates below: nothing pending, nothing
-  // to do.
-  if (!ProgressAutoSync::isArmed()) return;
+  // Cheap early-out before any of the gates below: nothing pending from either sync system.
+  const bool bookFusionArmed = ProgressAutoSync::isArmed();
+  const bool koreaderArmed = KOReaderAutoSync::isArmed();
+  if (!bookFusionArmed && !koreaderArmed) return;
 
   // See the matching comment in onExit()'s AUTOSYNC_ON_EXIT block: isBuilding() alone stays true
   // through background indexing of later pages, long after the current page is actually
@@ -2541,17 +2553,22 @@ void EpubReaderActivity::maybeRunAutoSync() {
     return;
   }
 
-  const uint32_t bookId = BookFusionBookIdStore::loadBookId(epub->getPath());
-  if (bookId == 0) return;  // Not linked to a BookFusion book; nothing to push.
-
   const int pageNumber = section->currentPage;
   const int pageCount = section->pageCount;
   const float chapterProgress =
       pageCount > 0 ? static_cast<float>(pageNumber + 1) / static_cast<float>(pageCount) : 0.0f;
   const float bookPercent = epub->calculateProgress(currentSpineIndex, chapterProgress);
 
-  ProgressAutoSync::runIfArmed(renderer, bookId, epub->getPath(), epub->getCachePath(), bookPercent,
-                               currentSpineIndex, pageNumber, pageCount, epub->getSpineItemsCount());
+  if (bookFusionArmed) {
+    const uint32_t bookId = BookFusionBookIdStore::loadBookId(epub->getPath());
+    if (bookId != 0) {
+      ProgressAutoSync::runIfArmed(renderer, bookId, epub->getPath(), epub->getCachePath(), bookPercent,
+                                   currentSpineIndex, pageNumber, pageCount, epub->getSpineItemsCount());
+    }
+  }
+  if (koreaderArmed) {
+    KOReaderAutoSync::runIfArmed(renderer, epub, currentSpineIndex, pageNumber, pageCount, bookPercent);
+  }
 }
 
 // One dismissal rule for every transient reader confirmation: it clears when its
@@ -5215,6 +5232,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
       }
       const float bookPercent = epub ? epub->calculateProgress(currentSpineIndex, chapterProgress) : 0.0f;
       ProgressAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
+      KOReaderAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
     }
   } else {
     recordCurrentPageReadingTime(source);

@@ -628,6 +628,20 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
         return 0;
     }
   }
+  // Same AUTOSYNC modes as autosyncMode above, but an independent toggle: BookFusion
+  // and KOReader auto-sync are unrelated systems (separate credentials, separate
+  // document identity), so either can be enabled without the other.
+  uint8_t koreaderAutosyncMode = AUTOSYNC_OFF;
+  uint8_t getKoreaderAutosyncPercentStep() const {
+    switch (koreaderAutosyncMode) {
+      case AUTOSYNC_EVERY_5_PERCENT:
+        return 5;
+      case AUTOSYNC_EVERY_10_PERCENT:
+        return 10;
+      default:
+        return 0;
+    }
+  }
 #ifdef CROSSINK_ENABLE_READING_STATS_TOGGLE
   // Debug/test builds can disable stat writes so navigation tests do not affect personal reading stats.
   uint8_t trackReadingStats = 1;

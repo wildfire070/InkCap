@@ -5,6 +5,7 @@
 
 #include <cstring>
 
+#include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
@@ -18,10 +19,15 @@
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int MENU_ITEMS = 8;
+constexpr int MENU_ITEMS = 9;
 const StrId menuNames[MENU_ITEMS] = {StrId::STR_USERNAME,          StrId::STR_PASSWORD,      StrId::STR_SYNC_SERVER_URL,
                                      StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA, StrId::STR_SYNC_BEHAVIOR,
-                                     StrId::STR_SIGN_UP,           StrId::STR_AUTHENTICATE};
+                                     StrId::STR_SIGN_UP,           StrId::STR_AUTHENTICATE, StrId::STR_KOREADER_AUTOSYNC};
+// Reuses the same generic value labels BookFusionSettingsActivity's Auto-Sync row uses --
+// "Every Chapter"/"Every 5%"/etc. aren't BookFusion-specific wording.
+constexpr StrId autosyncLabels[CrossPointSettings::AUTOSYNC_COUNT] = {
+    StrId::STR_STATE_OFF, StrId::STR_BF_AUTOSYNC_EVERY_CHAPTER, StrId::STR_BF_AUTOSYNC_EVERY_5_PERCENT,
+    StrId::STR_BF_AUTOSYNC_EVERY_10_PERCENT, StrId::STR_BF_AUTOSYNC_ON_EXIT};
 constexpr fui::ActionId ACTION_ROW = 1;
 }  // namespace
 
@@ -170,6 +176,11 @@ void KOReaderSettingsActivity::handleSelection() {
       return;
     }
     silentRestartToNetwork(NetworkBootTarget::KOREADER_AUTH);
+  } else if (selectedIndex == 8) {
+    // Auto-Sync: cycle through the modes.
+    SETTINGS.koreaderAutosyncMode = (SETTINGS.koreaderAutosyncMode + 1) % CrossPointSettings::AUTOSYNC_COUNT;
+    SETTINGS.saveToFile();
+    requestUpdate();
   }
 }
 
@@ -211,6 +222,9 @@ void KOReaderSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
     } else if (i == 5) {
       values[i] =
           KOREADER_STORE.getSyncBehavior() == KOReaderSyncBehavior::SMART ? tr(STR_SMART_SYNC) : tr(STR_ASK_EVERY_TIME);
+    } else if (i == 8) {
+      const auto mode = SETTINGS.koreaderAutosyncMode;
+      values[i] = I18N.get(autosyncLabels[mode < CrossPointSettings::AUTOSYNC_COUNT ? mode : 0]);
     } else {
       values[i] = KOREADER_STORE.hasCredentials() ? "" : std::string("[") + tr(STR_SET_CREDENTIALS_FIRST) + "]";
     }
