@@ -210,6 +210,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     REFRESH_10 = 2,
     REFRESH_15 = 3,
     REFRESH_30 = 4,
+    REFRESH_NEVER = 5,
     REFRESH_FREQUENCY_COUNT
   };
 
@@ -253,6 +254,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     // Appended after the X4 Pro and Quick Actions values so existing settings
     // files continue to mean exactly the same thing.
     QUICK_LOCK = 30,
+    // Shortcut values are persisted. Append new actions; never reuse removed
+    // raw values or they can silently change an existing binding's behavior.
+    PREVIOUS_PAGE = 31,
+    NEARBY_POSITION_SYNC = 32,
     SHORT_PWRBTN_COUNT
   };
 
@@ -289,6 +294,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CHORD_QUICK_ACTIONS = 26,
     CHORD_TOGGLE_FRONTLIGHT = 27,
     CHORD_TOGGLE_TOUCHSCREEN = 28,
+    CHORD_PREVIOUS_PAGE = 29,
+    CHORD_NEARBY_POSITION_SYNC = 30,
     POWER_CHORD_ACTION_COUNT
   };
 
@@ -401,6 +408,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
+  // Night mode: inverted output polarity, applied to every activity per render
+  // by ActivityManager. Sleep screens retain normal polarity.
+  uint8_t screenInverted = 0;
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
@@ -438,6 +448,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t extraParagraphSpacing = 1;
   uint8_t forceParagraphIndents = 0;
   uint8_t textAntiAliasing = 1;
+  // Legacy per-book night-mode state. Kept for existing reader-setting files;
+  // renderer output now stays normal and global display inversion owns Night Mode.
   uint8_t readerDarkMode = 0;
   // Touch screen reader zones/gestures on boards with a touch controller.
   uint8_t touchReaderControls = TOUCH_READER_ON;
