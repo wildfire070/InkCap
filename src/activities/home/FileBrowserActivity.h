@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -98,6 +99,12 @@ class FileBrowserActivity final : public Activity {
   const char* entryNameAt(size_t row);
   void toggleHiddenFiles();
   size_t findEntry(const std::string& name);
+
+  // BookFusion: whether this file has a synced-book sidecar, shown by swapping the
+  // row's file-type icon for the BookFusion mark. Cached per visible row index (avoids
+  // an SD stat per row on every redraw/scroll).
+  bool isBookFusionLinked(const std::string& path);
+  std::map<size_t, bool> visibleBookFusionCache;
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",

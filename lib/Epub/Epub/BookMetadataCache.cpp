@@ -13,7 +13,7 @@
 
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
-constexpr uint8_t BOOK_CACHE_VERSION = 9;          // v9: NFC titles and updated guide start-reference handling
+constexpr uint8_t BOOK_CACHE_VERSION = 10;  // v10: added bookshelf (BookFusion Calibre custom column) metadata
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
@@ -208,7 +208,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::BufferedFileReader tocIn(tocFile, BUILD_IO_BUFFER_SIZE);
   const uint32_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
                                 metadata.coverItemHref.size() + metadata.textReferenceHref.size() +
-                                sizeof(uint32_t) * 5;
+                                metadata.bookshelf.size() + sizeof(uint32_t) * 6;
   const uint32_t lutSize = sizeof(uint32_t) * spineCount + sizeof(uint32_t) * tocCount;
   const uint32_t lutOffset = headerASize + metadataSize;
 
@@ -224,6 +224,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::writeString(bookOut, metadata.language);
   serialization::writeString(bookOut, metadata.coverItemHref);
   serialization::writeString(bookOut, metadata.textReferenceHref);
+  serialization::writeString(bookOut, metadata.bookshelf);
 
   // Loop through spine entries, writing LUT positions
   spineIn.seek(0);
@@ -535,7 +536,8 @@ bool BookMetadataCache::load() {
       !serialization::tryReadString(bookFile, coreMetadata.author) ||
       !serialization::tryReadString(bookFile, coreMetadata.language) ||
       !serialization::tryReadString(bookFile, coreMetadata.coverItemHref) ||
-      !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref)) {
+      !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref) ||
+      !serialization::tryReadString(bookFile, coreMetadata.bookshelf)) {
     LOG_DBG("BMC", "Cache metadata is truncated");
     bookFile.close();
     Storage.remove(bookBinPath.c_str());

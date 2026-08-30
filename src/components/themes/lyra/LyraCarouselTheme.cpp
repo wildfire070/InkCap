@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "BookFusionBookIdStore.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
 #include "components/TouchRegistry.h"
@@ -21,6 +22,7 @@
 #include "components/UiAppHelpers.h"
 #include "components/icons/chart.h"
 #include "components/icons/cover.h"
+#include "components/icons/icon_bookfusion.h"
 #include "fontIds.h"
 
 namespace {
@@ -404,6 +406,26 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
           renderer.drawBitmap(bitmap, outRect.x, outRect.y, outRect.width, outRect.height, cropX, cropY);
           renderer.maskRoundedRectOutsideCorners(outRect.x, outRect.y, outRect.width, outRect.height, kCornerRadius,
                                                  Color::White);
+
+          // BookFusion-linked books: bottom-left badge on the center (focused)
+          // cover only, matching the single-cover badge on other themes. iconY
+          // snapped to a multiple of 8 because drawImageTransparent truncates the
+          // display-y via integer divide by 8 -- non-aligned values shift the icon
+          // relative to the white fill. This theme has no InsiderPhD equivalent to
+          // port from; extended here to match Lyra/RoundedRaff/Lyra3Covers, which do.
+          if (BookFusionBookIdStore::hasBookId(book.path)) {
+            constexpr int BF_ICON_SIZE = 24;
+            constexpr int BF_PADDING = 4;
+            constexpr int BF_MARGIN = 4;
+            constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
+            const int iconY = ((outRect.y + outRect.height - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
+            const int badgeX = outRect.x + BF_MARGIN;
+            const int badgeY = iconY - BF_PADDING;
+            const int iconX = badgeX + BF_PADDING;
+            renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
+            drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
+          }
+
           file.close();
           return true;
         }

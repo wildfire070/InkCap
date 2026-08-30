@@ -7,6 +7,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <string_view>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -63,6 +64,58 @@ bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches
     compared += chunkSize;
   }
   return true;
+}
+
+// Calibre embeds custom-column data as a JSON blob in a <meta> content attribute.
+// Pull out just the "#value#" field without a full JSON parser: handles a quoted
+// string ("#value#": "Shelf") or a list ("#value#": ["A","B"] -> "A, B"). Returns
+// empty for null/absent. Bounded -- only the extracted value is copied out, not the blob.
+std::string extractCalibreCustomValue(const char* json) {
+  if (!json) return {};
+  const std::string_view sv{json};
+  const auto key = sv.find("\"#value#\"");
+  if (key == std::string_view::npos) return {};
+
+  size_t i = key + 9;  // past the key token
+  while (i < sv.size() && (sv[i] == ' ' || sv[i] == ':' || sv[i] == '\t')) i++;
+  if (i >= sv.size()) return {};
+
+  const auto readQuoted = [&](size_t pos, std::string& out) -> size_t {
+    // pos points at the opening quote; appends unescaped contents to out, returns
+    // index just past the closing quote (or npos on malformed input).
+    pos++;
+    while (pos < sv.size()) {
+      const char c = sv[pos];
+      if (c == '\\' && pos + 1 < sv.size()) {
+        out.push_back(sv[pos + 1]);
+        pos += 2;
+        continue;
+      }
+      if (c == '"') return pos + 1;
+      out.push_back(c);
+      pos++;
+    }
+    return std::string_view::npos;
+  };
+
+  std::string value;
+  if (sv[i] == '"') {
+    readQuoted(i, value);
+  } else if (sv[i] == '[') {
+    i++;
+    while (i < sv.size() && sv[i] != ']') {
+      if (sv[i] == '"') {
+        std::string item;
+        i = readQuoted(i, item);
+        if (i == std::string_view::npos) break;
+        if (!value.empty()) value.append(", ");
+        value.append(item);
+      } else {
+        i++;
+      }
+    }
+  }
+  return value;
 }
 }  // namespace
 
@@ -273,17 +326,27 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
     bool isCover = false;
     std::string coverItemId;
+    const char* nameAttr = nullptr;
+    const char* contentAttr = nullptr;
 
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "name") == 0 && strcmp(atts[i + 1], "cover") == 0) {
-        isCover = true;
+      if (strcmp(atts[i], "name") == 0) {
+        nameAttr = atts[i + 1];
+        if (strcmp(atts[i + 1], "cover") == 0) {
+          isCover = true;
+        }
       } else if (strcmp(atts[i], "content") == 0) {
         coverItemId = atts[i + 1];
+        contentAttr = atts[i + 1];
       }
     }
 
     if (isCover) {
       self->coverItemId = coverItemId;
+    } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:user_metadata:#bookshelf") == 0) {
+      // BookFusion's "bookshelf" Calibre custom column. The content is a JSON blob
+      // describing the column; pull only the "#value#" out (string or list).
+      self->bookshelf = extractCalibreCustomValue(contentAttr);
     }
     return;
   }

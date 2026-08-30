@@ -17,6 +17,9 @@ class BookMetadataCache {
     std::string language;
     std::string coverItemHref;
     std::string textReferenceHref;
+    // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookshelf),
+    // read straight out of the EPUB's own OPF metadata -- no network call needed.
+    std::string bookshelf;
   };
 
   struct SpineEntry {

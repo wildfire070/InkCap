@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "BookActions.h"
+#include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
@@ -271,6 +272,7 @@ void FileBrowserActivity::loadFilesLocked() {
   usingIndex = false;
   clearIndexNameCache();
   fileListMemoryLimited = false;
+  visibleBookFusionCache.clear();
   fileListReadFailed = false;
   if (fileIndex) fileIndex->close();
 
@@ -1081,6 +1083,11 @@ std::string getFileExtension(const std::string& filename) {
 
 }  // namespace
 
+bool FileBrowserActivity::isBookFusionLinked(const std::string& path) {
+  if (!FsHelpers::hasEpubExtension(path)) return false;
+  return BookFusionBookIdStore::hasBookId(path);
+}
+
 void FileBrowserActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<FileBrowserActivity*>(user)->buildListScreen(screen);
 }
@@ -1171,10 +1178,19 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     if ((entry.back() == '/' && isPreferredSleepFolder(fullPath)) || isPinnedSleepFavorite(fullPath)) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
+    bool isBookFusion = false;
+    if (entry.back() != '/') {
+      auto bfCached = visibleBookFusionCache.find(entryIndex);
+      isBookFusion = bfCached != visibleBookFusionCache.end()
+                         ? bfCached->second
+                         : (visibleBookFusionCache[entryIndex] = isBookFusionLinked(fullPath));
+    }
     fui::ListItem item;
     item.label = names[i].c_str();
     if (!values[i].empty()) item.value = values[i].c_str();
-    item.icon = listIconFor(UITheme::getFileIcon(entry), twoLineRows ? 32 : 24);
+    // BookFusion-linked books display the BF mark in the row's icon slot instead
+    // of the usual file-type icon (matching InsiderPhD's original file-browser badge).
+    item.icon = listIconFor(isBookFusion ? UIIcon::BookFusion : UITheme::getFileIcon(entry), twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);
   }
