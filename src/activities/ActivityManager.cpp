@@ -155,6 +155,9 @@ void ActivityManager::renderTaskLoop() {
     TouchRegistry::getInstance().beginFrame();
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
+      // Apply Night Mode to each activity's normal-polarity frame. SleepActivity
+      // explicitly clears inversion for its normal sleep screen.
+      display.setInverted(SETTINGS.screenInverted != 0);
       currentActivity->render(std::move(lock));
     }
     TouchRegistry::getInstance().publish();
@@ -447,7 +450,12 @@ void ActivityManager::goToHotspotFileTransfer(const std::string& returnBookPath)
 
 void ActivityManager::goToUsbDrive() {
 #if CROSSINK_APP_CAP_USB_DRIVE
-  replaceActivity(std::make_unique<UsbDriveActivity>(renderer, mappedInput));
+  auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: USB Drive activity");
+    return;
+  }
+  replaceActivity(std::move(activity));
 #else
   LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
 #endif
