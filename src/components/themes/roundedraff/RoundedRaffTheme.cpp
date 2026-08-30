@@ -11,6 +11,9 @@
 #include <string>
 #include <vector>
 
+#include <Epub.h>
+#include <FsHelpers.h>
+
 #include "RecentBooksStore.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
@@ -144,8 +147,20 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
       if (coverPath.empty()) {
         hasCover = false;
       } else {
+        // Adaptive path/generation (see HomeActivity::loadRecentCovers) avoids forcing a
+        // fixed 2:3 crop on covers whose real aspect ratio is too far from it -- confirmed
+        // on hardware with an AO3-style info-card cover that was getting silently truncated.
+        // The stored bitmap's own height can come out shorter than homeCoverHeight in that
+        // case, so its draw (and the rounded-corner mask) is vertically centered within the
+        // fixed slot rather than stretched to fill it. XTC covers aren't part of this (no
+        // adaptive path for them yet), so they keep the existing fixed-ratio lookup.
+        const bool isEpub = FsHelpers::hasEpubExtension(book.path);
+        const int defaultThumbWidth =
+            static_cast<int>((static_cast<int64_t>(RoundedRaffMetrics::values.homeCoverHeight) * 2 + 1) / 3);
         const std::string coverBmpPath =
-            UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
+            isEpub ? Epub(book.path, "/.crosspoint")
+                         .getAdaptiveThumbBmpPath(defaultThumbWidth, RoundedRaffMetrics::values.homeCoverHeight)
+                   : UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
         HalFile file;
@@ -153,11 +168,11 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
             coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                RoundedRaffMetrics::values.homeCoverHeight);
-            renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                                   RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
-                                                   Color::LightGray);
+            const int drawHeight = std::min(bitmap.getHeight(), RoundedRaffMetrics::values.homeCoverHeight);
+            const int drawY = imgY + (RoundedRaffMetrics::values.homeCoverHeight - drawHeight) / 2;
+            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, drawY, coverWidth, drawHeight);
+            renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, drawY, coverWidth, drawHeight,
+                                                   kCoverRadius, Color::LightGray);
           } else {
             hasCover = false;
           }

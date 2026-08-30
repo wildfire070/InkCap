@@ -13,6 +13,9 @@
 #include <string>
 #include <vector>
 
+#include <Epub.h>
+#include <FsHelpers.h>
+
 #include "DeviceCapabilities.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
@@ -495,7 +498,20 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       if (coverPath.empty()) {
         hasCover = false;
       } else {
-        const std::string coverBmpPath = UITheme::getCoverThumbPath(coverPath, LyraMetrics::values.homeCoverHeight);
+        // Adaptive path/generation (see HomeActivity::loadRecentCovers) avoids forcing a
+        // fixed 2:3 crop on covers whose real aspect ratio is too far from it -- confirmed
+        // on hardware with an AO3-style info-card cover that was getting silently truncated.
+        // The stored bitmap's own height can come out shorter than homeCoverHeight in that
+        // case, so its draw is vertically centered within the fixed slot below rather than
+        // stretched to fill it. XTC covers aren't part of this (no adaptive path for them
+        // yet), so they keep the existing fixed-ratio lookup.
+        const bool isEpub = FsHelpers::hasEpubExtension(book.path);
+        const int defaultThumbWidth =
+            static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 2 + 1) / 3);
+        const std::string coverBmpPath =
+            isEpub ? Epub(book.path, "/.crosspoint")
+                         .getAdaptiveThumbBmpPath(defaultThumbWidth, LyraMetrics::values.homeCoverHeight)
+                   : UITheme::getCoverThumbPath(coverPath, LyraMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
         HalFile file;
@@ -503,8 +519,9 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
             coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
-                                LyraMetrics::values.homeCoverHeight);
+            const int drawHeight = std::min(bitmap.getHeight(), LyraMetrics::values.homeCoverHeight);
+            const int drawY = tileY + hPaddingInSelection + (LyraMetrics::values.homeCoverHeight - drawHeight) / 2;
+            renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, drawY, coverWidth, drawHeight);
           } else {
             hasCover = false;
           }
