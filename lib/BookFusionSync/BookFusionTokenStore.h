@@ -18,7 +18,6 @@
 class BookFusionTokenStore : public PersistableStore<BookFusionTokenStore> {
  private:
   std::string accessToken;
-  std::string refreshToken;  // May be empty if BookFusion's device flow does not issue one.
 
   BookFusionTokenStore() = default;
   ~BookFusionTokenStore() = default;
@@ -30,9 +29,8 @@ class BookFusionTokenStore : public PersistableStore<BookFusionTokenStore> {
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
 
-  void setTokens(const std::string& access, const std::string& refresh);
+  void setTokens(const std::string& access);
   const std::string& getAccessToken() const { return accessToken; }
-  const std::string& getRefreshToken() const { return refreshToken; }
 
   bool hasToken() const;
   void clearTokens();

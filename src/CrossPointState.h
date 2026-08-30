@@ -54,6 +54,17 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   float pendingBookmarkProgress = -1.0f;
   uint16_t pendingBookmarkParagraphIndex = UINT16_MAX;
   uint16_t pendingClippingIndex = UINT16_MAX;
+  // One-shot jump set when applying a synced BookFusion position, consumed the same way as
+  // the pendingBookmark* fields above -- lets the reader's existing pendingSpineProgress/
+  // pendingPercentJump machinery land on the correct page once the target chapter's real page
+  // boundaries are known, instead of always landing on page 0 of the chapter.
+  uint16_t pendingBookFusionSyncSpine = UINT16_MAX;
+  float pendingBookFusionSyncProgress = -1.0f;
+  // 0 on a fresh sync; set to 1 when the reader re-arms this same jump for one retry with a
+  // clean heap after a low-memory silent restart. Caps the retry at once so a chapter that's
+  // structurally too big to lay out (not just fragmented) degrades to chapter start instead of
+  // rebooting forever.
+  uint8_t pendingBookFusionSyncRetryCount = 0;
 
   // Set by background move task on failure; read and cleared by ActivityManager to show AlertActivity.
   // Title/body are written before the flag is set to ensure they are visible when flag is read.

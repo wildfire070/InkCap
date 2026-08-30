@@ -30,6 +30,7 @@
 #include "../settings/DictionarySelectActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
 #include "Ao3EndOfBookSeriesActivity.h"
+#include "BookFusionBookIdStore.h"
 #include "BookFusionSyncActivity.h"
 #include "BookStatsActivity.h"
 #include "ClipSelectionActivity.h"
@@ -72,6 +73,8 @@
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/Dictionary.h"
+#include "util/KOReaderAutoSync.h"
+#include "util/ProgressAutoSync.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -103,6 +106,11 @@ constexpr unsigned long TRANSIENT_FEEDBACK_MS = 1000UL;
 constexpr unsigned long IDLE_SD_FONT_PREWARM_DELAY_MS = 400UL;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_FREE = 64U * 1024U;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_MAX_ALLOC = 40U * 1024U;
+// Longer settle delay than the SD-font prewarm above: a silent WiFi
+// connect + HTTP round trip blocks the input/render loop for a few
+// seconds, so only attempt it once the reader has been genuinely idle for
+// a while, not just between two quick page turns.
+constexpr unsigned long AUTOSYNC_IDLE_DELAY_MS = 3000UL;
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
 constexpr uint32_t MIN_READING_PACE_SAMPLE_SECONDS = 2;
 constexpr uint16_t MIN_STORED_TIME_LEFT_PACE_SAMPLE_COUNT = 3;
@@ -2142,6 +2150,8 @@ void EpubReaderActivity::onEnter() {
     pendingParagraphIndex = APP_STATE.pendingBookmarkParagraphIndex;
     pendingClippingIndex = APP_STATE.pendingClippingIndex;
     pendingPercentJump = true;
+    pendingPercentJumpApproximate = false;
+    pendingPercentJumpIsBookFusionSync = false;
     cachedSpineIndex = currentSpineIndex;
 
     // Clear the pending jump
@@ -2149,6 +2159,25 @@ void EpubReaderActivity::onEnter() {
     APP_STATE.pendingBookmarkProgress = -1.0f;
     APP_STATE.pendingBookmarkParagraphIndex = UINT16_MAX;
     APP_STATE.pendingClippingIndex = UINT16_MAX;
+    APP_STATE.saveToFile();
+  } else if (APP_STATE.pendingBookFusionSyncSpine != UINT16_MAX && APP_STATE.pendingBookFusionSyncProgress >= 0.0f) {
+    // Resume from a just-applied BookFusion sync. currentSpineIndex is the chapter BookFusion
+    // reported (or resolved from its percentage); pendingSpineProgress is the intra-chapter
+    // fraction, resolved against this chapter's real page count once it's actually built --
+    // same mechanism a bookmark jump uses, since BookFusion has no finer-grained position to
+    // hand us than "this far through this chapter".
+    currentSpineIndex = APP_STATE.pendingBookFusionSyncSpine;
+    pendingSpineProgress = APP_STATE.pendingBookFusionSyncProgress;
+    pendingPercentJump = true;
+    pendingPercentJumpApproximate = true;
+    pendingPercentJumpIsBookFusionSync = true;
+    bookFusionSyncRetryCount = APP_STATE.pendingBookFusionSyncRetryCount;
+    cachedSpineIndex = currentSpineIndex;
+
+    // Clear the pending jump
+    APP_STATE.pendingBookFusionSyncSpine = UINT16_MAX;
+    APP_STATE.pendingBookFusionSyncProgress = -1.0f;
+    APP_STATE.pendingBookFusionSyncRetryCount = 0;
     APP_STATE.saveToFile();
   } else {
     EpubReaderUtils::Progress progress;
@@ -2184,6 +2213,8 @@ void EpubReaderActivity::onEnter() {
       cachedSpineIndex = currentSpineIndex;
       pendingPageJump = restartPageBuildTarget;
       pendingPercentJump = false;
+      pendingPercentJumpApproximate = false;
+      pendingPercentJumpIsBookFusionSync = false;
       pendingParagraphIndex = UINT16_MAX;
       pendingClippingIndex = UINT16_MAX;
       lowMemoryPartialRestartAttempted = true;
@@ -2205,6 +2236,8 @@ void EpubReaderActivity::onEnter() {
   // Load reading stats and record session start time.
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
+  ProgressAutoSync::resetSessionBaseline();
+  KOReaderAutoSync::resetSessionBaseline();
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
   const uint32_t cumulativeAvgSeconds =
       stats.totalPagesTurned > 0 ? stats.totalReadingSeconds / stats.totalPagesTurned : 0;
@@ -2294,6 +2327,51 @@ void EpubReaderActivity::onExit() {
       stats.save(epub->getCachePath());
     }
     globalStats.save();
+  }
+
+  // AUTOSYNC_ON_EXIT's trigger. Blocking (WiFi connect + HTTP round trip) --
+  // unavoidable here, this is the last moment before whatever comes next
+  // (Home, sleep) tears down the network anyway. Must run before section
+  // resets and epub is released just below, but doesn't touch either of
+  // them itself (see ProgressAutoSync::performPush()), so it's safe even
+  // though it blocks for a few seconds with both still "open".
+  // Background indexing of the rest of the chapter can keep section->isBuilding() true well past
+  // the point where the current page is actually readable (see the buildSomeMore() tick loop
+  // above) -- gating on that outright meant on-exit sync almost never fired during casual
+  // reading. activeBuildHasCaughtReadablePages() is the same "is pageCount/currentPage trustworthy
+  // right now" check the reader itself uses elsewhere, regardless of whether background build of
+  // later pages is still ongoing.
+  const bool autosyncOnExitConfigured = SETTINGS.autosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  const bool sectionReadableForAutosync = section && section->activeBuildHasCaughtReadablePages();
+  if (autosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
+    LOG_INF("ERS", "Skipping on-exit BookFusion auto-sync: no active section to read progress from");
+  } else if (epub && sectionReadableForAutosync) {
+    const uint32_t autosyncBookId = BookFusionBookIdStore::loadBookId(epub->getPath());
+    if (autosyncBookId == 0) {
+      if (autosyncOnExitConfigured) {
+        LOG_INF("ERS", "Skipping on-exit BookFusion auto-sync: book isn't linked to BookFusion");
+      }
+    } else {
+      const int autosyncPageNumber = section->currentPage;
+      const int autosyncPageCount = section->pageCount;
+      const float autosyncChapterProgress = autosyncPageCount > 0
+                                                 ? static_cast<float>(autosyncPageNumber + 1) /
+                                                       static_cast<float>(autosyncPageCount)
+                                                 : 0.0f;
+      const float autosyncBookPercent = epub->calculateProgress(currentSpineIndex, autosyncChapterProgress);
+      ProgressAutoSync::runOnExit(renderer, autosyncBookId, epub->getPath(), epub->getCachePath(),
+                                  autosyncBookPercent, currentSpineIndex, autosyncPageNumber, autosyncPageCount,
+                                  epub->getSpineItemsCount());
+    }
+  }
+
+  // KOReader's independent AUTOSYNC_ON_EXIT trigger -- separate credentials, separate document
+  // identity, same blocking-is-fine reasoning as the BookFusion block above.
+  const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  if (koreaderAutosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
+    LOG_INF("ERS", "Skipping on-exit KOReader auto-sync: no active section to read progress from");
+  } else if (epub && sectionReadableForAutosync) {
+    KOReaderAutoSync::runOnExit(renderer, epub, currentSpineIndex, section->currentPage, section->pageCount);
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
@@ -2479,6 +2557,39 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   page->renderText(renderer, renderFontId, 0, 0);
   scope.endScanAndPrewarm();
   LOG_DBG("ERS", "Idle SD font prewarm: spine=%d page=%d in %lums", currentSpineIndex, nextPage, millis() - startedAt);
+}
+
+void EpubReaderActivity::maybeRunAutoSync() {
+  // Cheap early-out before any of the gates below: nothing pending from either sync system.
+  const bool bookFusionArmed = ProgressAutoSync::isArmed();
+  const bool koreaderArmed = KOReaderAutoSync::isArmed();
+  if (!bookFusionArmed && !koreaderArmed) return;
+
+  // See the matching comment in onExit()'s AUTOSYNC_ON_EXIT block: isBuilding() alone stays true
+  // through background indexing of later pages, long after the current page is actually
+  // readable, so it's not the right gate here either.
+  if (!section || !section->activeBuildHasCaughtReadablePages() || activeFootnotePreview ||
+      automaticPageTurnActive || !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
+      (millis() - lastRenderCompleteMs) < AUTOSYNC_IDLE_DELAY_MS) {
+    return;
+  }
+
+  const int pageNumber = section->currentPage;
+  const int pageCount = section->pageCount;
+  const float chapterProgress =
+      pageCount > 0 ? static_cast<float>(pageNumber + 1) / static_cast<float>(pageCount) : 0.0f;
+  const float bookPercent = epub->calculateProgress(currentSpineIndex, chapterProgress);
+
+  if (bookFusionArmed) {
+    const uint32_t bookId = BookFusionBookIdStore::loadBookId(epub->getPath());
+    if (bookId != 0) {
+      ProgressAutoSync::runIfArmed(renderer, bookId, epub->getPath(), epub->getCachePath(), bookPercent,
+                                   currentSpineIndex, pageNumber, pageCount, epub->getSpineItemsCount());
+    }
+  }
+  if (koreaderArmed) {
+    KOReaderAutoSync::runIfArmed(renderer, epub, currentSpineIndex, pageNumber, pageCount, bookPercent);
+  }
 }
 
 // One dismissal rule for every transient reader confirmation: it clears when its
@@ -3002,6 +3113,7 @@ void EpubReaderActivity::loop() {
   }
   if (!prevTriggered && !nextTriggered) {
     idlePrewarmNextPage();
+    maybeRunAutoSync();
     return;
   }
 
@@ -3172,6 +3284,8 @@ void EpubReaderActivity::jumpToPercent(int percent) {
     pendingSpineProgress = locationSpineProgress;
     nextPageNumber = 0;
     pendingPercentJump = true;
+    pendingPercentJumpApproximate = true;
+    pendingPercentJumpIsBookFusionSync = false;
     section.reset();
     armReadingPaceWarmup("percent_jump");
     return;
@@ -3220,6 +3334,8 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   currentSpineIndex = targetSpineIndex;
   nextPageNumber = 0;
   pendingPercentJump = true;
+  pendingPercentJumpApproximate = true;
+  pendingPercentJumpIsBookFusionSync = false;
   section.reset();
   armReadingPaceWarmup("percent_jump");
 }
@@ -3883,12 +3999,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                 }
                 nextPageNumber = section->currentPage;
                 pendingPercentJump = false;
+                pendingPercentJumpApproximate = false;
+                pendingPercentJumpIsBookFusionSync = false;
                 pendingParagraphIndex = UINT16_MAX;
               } else {
                 currentSpineIndex = bm.spineIndex;
                 pendingSpineProgress = bm.progress;
                 pendingParagraphIndex = bm.paragraphIndex;
                 pendingPercentJump = true;
+                pendingPercentJumpApproximate = false;
+                pendingPercentJumpIsBookFusionSync = false;
                 section.reset();
               }
               armReadingPaceWarmup("bookmark_jump");
@@ -5156,6 +5276,20 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
       stats.totalPagesTurned++;
       globalStats.totalPagesTurned++;
     }
+    // Cheap and non-blocking: just records whether the configured autosync
+    // threshold was crossed. section may be null right after a chapter-
+    // boundary advance (reset a few lines up), landing on page 0 in that
+    // case. The actual network push, if armed, happens later from loop()
+    // at a moment it chooses to be safe -- see maybeRunAutoSync().
+    {
+      float chapterProgress = 0.0f;
+      if (section && section->pageCount > 0) {
+        chapterProgress = static_cast<float>(section->currentPage + 1) / static_cast<float>(section->pageCount);
+      }
+      const float bookPercent = epub ? epub->calculateProgress(currentSpineIndex, chapterProgress) : 0.0f;
+      ProgressAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
+      KOReaderAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
+    }
   } else {
     recordCurrentPageReadingTime(source);
     armReadingPaceWarmup("back_page");
@@ -5553,8 +5687,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         return;
       }
 
-      if (!fallbackBuildSucceeded && readablePartialFallback && !buildingFootnotePreview && !pendingPercentJump &&
-          pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+      if (!fallbackBuildSucceeded && readablePartialFallback && !buildingFootnotePreview &&
+          (!pendingPercentJump || pendingPercentJumpApproximate) && pendingClippingIndex == UINT16_MAX &&
+          pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
         const int target = pendingPageJump.has_value() ? *pendingPageJump : std::max(0, nextPageNumber);
         bool targetAvailable = target < static_cast<int>(readablePartialFallback->pageCount);
         if (!pendingAnchor.empty()) {
@@ -5573,8 +5708,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
 
       if (!fallbackBuildSucceeded && layoutAbortedForLowMemory && section && section->isPartial() &&
-          section->pageCount > 0 && !buildingFootnotePreview && !pendingPercentJump && pendingAnchor.empty() &&
-          pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+          section->pageCount > 0 && !buildingFootnotePreview && (!pendingPercentJump || pendingPercentJumpApproximate) &&
+          pendingAnchor.empty() && pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX &&
+          !pendingRelayoutReposition) {
         LOG_ERR("ERS", "Incremental build stopped for low heap; retaining readable partial cache (%u pages)",
                 section->pageCount);
         fallbackBuildSucceeded = true;
@@ -5584,6 +5720,40 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         usedRenderMode = lastAttemptedRenderMode;
         safeModeBuildSucceeded = lastAttemptUsedSafeMode;
         queueLowMemoryLayoutAlert(false);
+      }
+
+      if (!fallbackBuildSucceeded && layoutAbortedForLowMemory && pendingPercentJumpApproximate &&
+          !buildingFootnotePreview && pendingAnchor.empty() && pendingClippingIndex == UINT16_MAX &&
+          pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
+        // Every render mode (including Safe Mode) failed to lay out even the chapter's first text
+        // block, so there's no partial cache to retain either (see the block above).
+        if (pendingPercentJumpIsBookFusionSync && bookFusionSyncRetryCount == 0 && !lowMemoryPartialRestartAttempted &&
+            currentSpineIndex >= 0 && currentSpineIndex <= std::numeric_limits<uint16_t>::max()) {
+          // Heap right after a fresh boot is far less fragmented than mid-session (a WiFi/TLS
+          // round-trip plus the SD font reload on reader re-entry can easily be the difference
+          // between fitting and not). Re-arm the same sync jump for one retry with a clean heap
+          // before giving up on precise positioning -- capped at one via the persisted retry
+          // count so a chapter that's structurally too big (not just fragmented) still degrades
+          // to chapter start instead of rebooting forever.
+          APP_STATE.pendingBookFusionSyncSpine = static_cast<uint16_t>(currentSpineIndex);
+          APP_STATE.pendingBookFusionSyncProgress = pendingSpineProgress;
+          APP_STATE.pendingBookFusionSyncRetryCount = 1;
+          APP_STATE.saveToFile();
+          lowMemoryPartialRestartAttempted = true;
+          LOG_ERR("ERS",
+                  "Low heap during chapter build for BookFusion sync; retrying once after clean reboot (spine=%d)",
+                  currentSpineIndex);
+          silentRestartToReader();
+          return;
+        }
+        // No retry available (or already used) -- for an approximate jump (BookFusion sync,
+        // percent-jump) landing at chapter start is an acceptable degrade -- it's this feature's
+        // pre-existing behavior before precise positioning -- so recover via the same
+        // silent-restart mechanism a normal incremental low-heap failure already uses rather than
+        // surfacing a hard error for what was only ever a position estimate.
+        if (restartForLowMemoryLayout(0, 0, 0, "chapter build for approximate jump")) {
+          return;
+        }
       }
 
       if (!fallbackBuildSucceeded) {
@@ -5739,6 +5909,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       pendingClippingIndex = UINT16_MAX;
       pendingParagraphIndex = UINT16_MAX;
       pendingPercentJump = false;
+      pendingPercentJumpApproximate = false;
+      pendingPercentJumpIsBookFusionSync = false;
     }
 
     // Keep negative page numbers in bounds now. Upper-bound clamping waits until after
@@ -5753,22 +5925,34 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const int requestedPageBeforeCatchUp = section->currentPage;
   if (!activeFootnotePreview && partialRebuildAbortedForLowMemory && section->pageCount > 0 &&
       section->currentPage >= static_cast<int>(section->pageCount)) {
-    const bool shouldSilentRestartForPartialLowMemory =
-        !lowMemoryPartialRestartAttempted && section->lastBuildLayoutAbortedForLowMemory() &&
-        section->currentPage == static_cast<int>(section->pageCount) &&
-        section->pageCount < std::numeric_limits<uint16_t>::max() && currentSpineIndex >= 0 &&
-        currentSpineIndex <= std::numeric_limits<uint16_t>::max();
-    if (shouldSilentRestartForPartialLowMemory) {
-      const uint16_t lastReadablePage = section->pageCount - 1;
-      const uint16_t targetPage = section->pageCount;
-      const int estimatedPages = section->estimatedTotalPages();
-      if (restartForLowMemoryLayout(targetPage, lastReadablePage, estimatedPages, "partial EPUB layout")) {
-        return;
+    // The previous build attempt gave up because of low heap, but heap conditions change over
+    // time (the fragmentation that caused the failure may since have cleared). Re-check now
+    // instead of trusting that latch forever -- otherwise a reader who hits this once stays
+    // capped at that page for the rest of the section even after heap fully recovers, with no
+    // way forward except leaving and reopening the book (which is what actually resets the
+    // latch, via loadSectionWithFont() above). If heap looks fine now, clear the latch and fall
+    // through to the normal partial catch-up path below, which retries the build.
+    if (backgroundSectionBuildHasHeap()) {
+      LOG_INF("ERS", "Heap recovered since last low-memory build failure; retrying instead of capping at watermark");
+      partialRebuildAbortedForLowMemory = false;
+    } else {
+      const bool shouldSilentRestartForPartialLowMemory =
+          !lowMemoryPartialRestartAttempted && section->lastBuildLayoutAbortedForLowMemory() &&
+          section->currentPage == static_cast<int>(section->pageCount) &&
+          section->pageCount < std::numeric_limits<uint16_t>::max() && currentSpineIndex >= 0 &&
+          currentSpineIndex <= std::numeric_limits<uint16_t>::max();
+      if (shouldSilentRestartForPartialLowMemory) {
+        const uint16_t lastReadablePage = section->pageCount - 1;
+        const uint16_t targetPage = section->pageCount;
+        const int estimatedPages = section->estimatedTotalPages();
+        if (restartForLowMemoryLayout(targetPage, lastReadablePage, estimatedPages, "partial EPUB layout")) {
+          return;
+        }
       }
+      LOG_ERR("ERS", "Requested page %d exceeds low-memory partial watermark %u; showing last readable page",
+              section->currentPage, section->pageCount);
+      section->currentPage = section->pageCount - 1;
     }
-    LOG_ERR("ERS", "Requested page %d exceeds low-memory partial watermark %u; showing last readable page",
-            section->currentPage, section->pageCount);
-    section->currentPage = section->pageCount - 1;
   }
   if (!activeFootnotePreview && section->isPartial() && section->currentPage >= static_cast<int>(section->pageCount)) {
     showIndexingPopup();
