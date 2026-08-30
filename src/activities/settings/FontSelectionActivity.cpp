@@ -23,6 +23,11 @@ namespace {
 constexpr uint8_t INVALID_STORED_FONT_SIZE = 0xFF;
 constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 constexpr fui::ActionId ACTION_ROW = 1;
+// Same thresholds and rationale as the font-family list builder in SettingsList.h: a heap-tight
+// moment (long reading session, a font just loaded) plus enough SD font families used to abort()
+// outright on an uncaught allocation failure here (-fno-exceptions has no catch for std::bad_alloc).
+constexpr uint32_t MIN_FREE_HEAP = 24576;
+constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
 
 uint8_t closestSizeIndex(const std::vector<uint8_t>& sizes, const uint8_t targetPointSize) {
   if (sizes.empty()) return 0;
@@ -102,13 +107,21 @@ void FontSelectionActivity::onEnter() {
   originalSdFontFamilyName_[sizeof(originalSdFontFamilyName_) - 1] = '\0';
 
   fonts_.clear();
-  fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
+
+  const bool hasHeapForFontList = ESP.getFreeHeap() >= MIN_FREE_HEAP && ESP.getMaxAllocHeap() >= MIN_MAX_ALLOC_HEAP;
+  if (!hasHeapForFontList) {
+    LOG_ERR("FONTSEL", "Skipping SD font family list: %u free (need %u), %u max alloc (need %u)", ESP.getFreeHeap(),
+            MIN_FREE_HEAP, ESP.getMaxAllocHeap(), MIN_MAX_ALLOC_HEAP);
+  }
+
+  fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT +
+                (hasHeapForFontList && registry_ ? registry_->getFamilyCount() : 0));
 
   constexpr FontFamilyPointSizeRange builtinRange{10, 16};
   fonts_.push_back({fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange), true, 0});
   fonts_.push_back({fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange), true, 1});
 
-  if (registry_) {
+  if (hasHeapForFontList && registry_) {
     const auto& families = registry_->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
       fonts_.push_back({fontFamilyLabel(families[i].name, fontFamilyPointSizeRange(families[i])), false,
@@ -287,6 +300,17 @@ void FontSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.setContentMargin(fui::Insets{static_cast<int16_t>(listTop), 0,
                                       static_cast<int16_t>(renderer.getScreenHeight() - listTop - listHeight), 0});
   const int currentFontIndex = findCurrentFontIndex(registry_, originalSdFontFamilyName_, originalFontFamily_);
+
+  // Rebuilt on every render (e.g. right after switching fonts, when a family just finished
+  // loading and heap is at its most fragmented) -- skip this pass rather than crash on an
+  // uncaught allocation failure if there isn't room; the list simply doesn't refresh until a
+  // later frame where heap has recovered.
+  if (ESP.getFreeHeap() < MIN_FREE_HEAP || ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP) {
+    LOG_ERR("FONTSEL", "Skipping font list rebuild: %u free (need %u), %u max alloc (need %u)", ESP.getFreeHeap(),
+            MIN_FREE_HEAP, ESP.getMaxAllocHeap(), MIN_MAX_ALLOC_HEAP);
+    return;
+  }
+
   std::vector<fui::ListItem> items;
   items.reserve(fonts_.size());
   for (size_t i = 0; i < fonts_.size(); ++i) {
