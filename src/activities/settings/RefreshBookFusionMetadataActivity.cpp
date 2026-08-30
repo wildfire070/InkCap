@@ -196,16 +196,26 @@ void RefreshBookFusionMetadataActivity::refreshOneBook(const BookFusionBook& boo
     GfxRenderer::NetworkBufferLoan fbLoan(renderer);
     if (BookFusionSyncClient::getProgress(book.bookId, remote) == BookFusionSyncClient::OK && remote.percentage > 0.0f) {
       int spineIndex = 0;
-      bool saved = false;
+      float spineProgress = 0.0f;
+      bool resolved = false;
       if (remote.hasChapterInfo && remote.chapterIndex >= 0 && remote.chapterIndex < epub.getSpineItemsCount()) {
         spineIndex = remote.chapterIndex;
-        saved = EpubReaderUtils::saveProgress(epub, spineIndex, 0, 1);
+        resolved = true;
       } else {
         const int percentInt = std::max(0, std::min(100, static_cast<int>(remote.percentage * 100.0f + 0.5f)));
-        float spineProgress = 0.0f;
-        if (epub.resolveLocationPercentToSpineProgress(percentInt, spineIndex, spineProgress)) {
-          saved = EpubReaderUtils::saveProgress(epub, spineIndex, 0, 1);
-        }
+        resolved = epub.resolveLocationPercentToSpineProgress(percentInt, spineIndex, spineProgress);
+      }
+      bool saved = false;
+      if (resolved) {
+        // The chapter's real page count is unknown without opening the book, so save a
+        // fixed-precision placeholder approximating spineProgress rather than page 0 of 1 --
+        // loadProgress()'s (page+1)/pageCount math would read page 0/1 back as 100% through the
+        // chapter (not "just starting it"), showing an inflated in-progress percentage anywhere
+        // that reads this book's saved progress before it's ever actually opened.
+        constexpr int kPlaceholderPageCount = 10000;
+        const int placeholderPage = std::max(
+            0, std::min(kPlaceholderPageCount - 1, static_cast<int>(spineProgress * kPlaceholderPageCount)));
+        saved = EpubReaderUtils::saveProgress(epub, spineIndex, placeholderPage, kPlaceholderPageCount);
       }
       if (saved) positionsOk++;
     }

@@ -272,12 +272,26 @@ void BookFusionSyncActivity::applyRemoteProgress() {
           0.0f, std::min(1.0f, remoteSyncProgress.pagePositionInBook * static_cast<float>(spineCount) -
                                     static_cast<float>(spineIndex)));
     }
-    saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
   } else {
     const int percentInt = std::max(0, std::min(100, static_cast<int>(remotePercent * 100.0f + 0.5f)));
-    if (epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, intraSpineProgress)) {
-      saved = EpubReaderUtils::saveProgress(*epub, spineIndex, 0, 1);
+    if (!epub->resolveLocationPercentToSpineProgress(percentInt, spineIndex, intraSpineProgress)) {
+      intraSpineProgress = -1.0f;  // signals "couldn't resolve" below, distinct from a real 0.0f
     }
+  }
+
+  if (intraSpineProgress >= 0.0f) {
+    // The reader hasn't built this chapter yet, so its real page count is unknown -- save a
+    // fixed-precision placeholder (e.g. intra=0.3 -> page 2999/10000) that approximates the
+    // actual fraction, rather than page 0 of 1, which loadProgress()'s (page+1)/pageCount math
+    // would read back as 100% through the chapter instead of "just starting it". That wrong
+    // reading was making the very next sync's already-synced/conflict check always see local
+    // progress as ahead of what was just applied, so it never recognized two sides as matching.
+    // pendingBookFusionSyncSpine/Progress (set below) still drive the reader's actual landing
+    // page once the chapter builds and overwrites this placeholder with the real value.
+    constexpr int kPlaceholderPageCount = 10000;
+    const int placeholderPage =
+        std::max(0, std::min(kPlaceholderPageCount - 1, static_cast<int>(intraSpineProgress * kPlaceholderPageCount)));
+    saved = EpubReaderUtils::saveProgress(*epub, spineIndex, placeholderPage, kPlaceholderPageCount);
   }
 
   if (!saved) {
