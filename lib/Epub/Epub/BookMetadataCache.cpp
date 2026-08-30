@@ -13,7 +13,7 @@
 
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
-constexpr uint8_t BOOK_CACHE_VERSION = 10;         // v10: added ao3WorkId, ao3UpdateDate, ao3IsCompleted metadata
+constexpr uint8_t BOOK_CACHE_VERSION = 11;  // v11: added bookshelf (BookFusion Calibre custom column) metadata
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
@@ -208,8 +208,8 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::BufferedFileReader tocIn(tocFile, BUILD_IO_BUFFER_SIZE);
   const uint32_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
                                 metadata.coverItemHref.size() + metadata.textReferenceHref.size() +
-                                metadata.ao3WorkId.size() + metadata.ao3UpdateDate.size() + sizeof(uint32_t) * 7 +
-                                sizeof(metadata.ao3IsCompleted);
+                                metadata.ao3WorkId.size() + metadata.ao3UpdateDate.size() + metadata.bookshelf.size() +
+                                sizeof(uint32_t) * 8 + sizeof(metadata.ao3IsCompleted);
   const uint32_t lutSize = sizeof(uint32_t) * spineCount + sizeof(uint32_t) * tocCount;
   const uint32_t lutOffset = headerASize + metadataSize;
 
@@ -228,6 +228,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::writeString(bookOut, metadata.ao3WorkId);
   serialization::writeString(bookOut, metadata.ao3UpdateDate);
   serialization::writePod(bookOut, metadata.ao3IsCompleted);
+  serialization::writeString(bookOut, metadata.bookshelf);
 
   // Loop through spine entries, writing LUT positions
   spineIn.seek(0);
@@ -542,7 +543,8 @@ bool BookMetadataCache::load() {
       !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref) ||
       !serialization::tryReadString(bookFile, coreMetadata.ao3WorkId) ||
       !serialization::tryReadString(bookFile, coreMetadata.ao3UpdateDate) ||
-      !serialization::tryReadPod(bookFile, coreMetadata.ao3IsCompleted)) {
+      !serialization::tryReadPod(bookFile, coreMetadata.ao3IsCompleted) ||
+      !serialization::tryReadString(bookFile, coreMetadata.bookshelf)) {
     LOG_DBG("BMC", "Cache metadata is truncated");
     bookFile.close();
     Storage.remove(bookBinPath.c_str());

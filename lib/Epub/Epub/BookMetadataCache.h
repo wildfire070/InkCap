@@ -21,6 +21,9 @@ class BookMetadataCache {
     std::string ao3WorkId;
     std::string ao3UpdateDate;
     bool ao3IsCompleted = false;
+    // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookshelf),
+    // read straight out of the EPUB's own OPF metadata -- no network call needed.
+    std::string bookshelf;
   };
 
   struct SpineEntry {

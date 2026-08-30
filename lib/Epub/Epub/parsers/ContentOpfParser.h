@@ -109,6 +109,10 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
+  // BookFusion's "bookshelf" Calibre custom column (calibre:user_metadata:#bookshelf),
+  // written into the EPUB's own OPF metadata at export time -- no network call needed.
+  std::string bookshelf;
+
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache, const bool collectCssFiles = true)
       : cachePath(cachePath),

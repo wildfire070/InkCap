@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "BookFusionBookIdStore.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/GlobalReadingStats.h"
@@ -30,6 +31,7 @@
 #include "components/icons/afternoon.h"
 #include "components/icons/book24.h"
 #include "components/icons/evening.h"
+#include "components/icons/icon_bookfusion.h"
 #include "components/icons/morning.h"
 #include "components/icons/night.h"
 #include "components/icons/streak.h"
@@ -427,6 +429,26 @@ void drawBookCover(const GfxRenderer& renderer, const Rect& coverRect, const Rec
                                                  kCoverCornerRadius, backgroundColor);
           renderer.drawRoundedRect(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height, 1,
                                    kCoverCornerRadius, true);
+
+          // BookFusion-linked books: bottom-left badge with white padding around the
+          // mark, anchored to the actual drawn cover rect. iconY snapped to a multiple
+          // of 8 because drawImageTransparent truncates the display-y via integer
+          // divide by 8 -- non-aligned values shift the icon relative to the white
+          // fill. This theme has no InsiderPhD equivalent to port from; extended here
+          // to match Lyra/RoundedRaff/Lyra3Covers, which do.
+          if (BookFusionBookIdStore::hasBookId(book.path)) {
+            constexpr int BF_ICON_SIZE = 24;
+            constexpr int BF_PADDING = 4;
+            constexpr int BF_MARGIN = 4;
+            constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
+            const int iconY = ((bitmapRect.y + bitmapRect.height - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
+            const int badgeX = bitmapRect.x + BF_MARGIN;
+            const int badgeY = iconY - BF_PADDING;
+            const int iconX = badgeX + BF_PADDING;
+            renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
+            drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
+          }
+
           hasCover = true;
         }
         file.close();

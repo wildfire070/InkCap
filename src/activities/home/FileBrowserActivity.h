@@ -106,6 +106,12 @@ class FileBrowserActivity final : public Activity {
   BookStatus getBookStatus(const std::string& path);
   std::map<size_t, BookStatus> visibleStatusCache;
 
+  // BookFusion: whether this file has a synced-book sidecar, shown by swapping the
+  // row's file-type icon for the BookFusion mark. Cached per visible row index, same
+  // as visibleStatusCache above (avoids an SD stat per row on every redraw/scroll).
+  bool isBookFusionLinked(const std::string& path);
+  std::map<size_t, bool> visibleBookFusionCache;
+
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
                                Mode mode = Mode::Books);

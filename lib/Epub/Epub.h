@@ -201,6 +201,10 @@ class Epub {
   void saveAo3Info(const std::string& workId, const std::string& date, bool completed) const;
   std::string sniffPublisher() const;
 
+  // BookFusion's "bookshelf" Calibre custom column value, read straight out of the
+  // EPUB's own OPF metadata (no network call). Empty if absent or not yet loaded.
+  const std::string& getBookshelf() const;
+
  private:
   std::string getCachedCoverImagePath(const std::string& coverImageHref) const;
   bool ensureCachedCoverImage(const std::string& coverImageHref, std::string& outPath) const;
