@@ -62,7 +62,6 @@ class BookFusionBrowserActivity final : public Activity {
   // of a live progress bar. See buildDownloadScreen().
   std::string downloadTitle;
   std::string downloadAuthor;
-  std::string downloadCoverPath;  // Thumb BMP path, empty if no cover was fetched.
   size_t downloadProgress = 0;
   size_t downloadTotal = 0;
   bool goHomeAfterCancel = false;
