@@ -150,11 +150,22 @@ bool HalStorage::beginUsbDrive() {
   }
   if (!usbDriveContext->massStorage.begin(blockDevice)) {
     LOG_ERR("USB", "USB Drive MSC initialization failed");
+    if (!SDCard.begin()) {
+      LOG_ERR("USB", "Unable to remount SD card after USB Drive startup failure");
+    }
     return false;
   }
   return true;
 #elif defined(SIMULATOR) && CROSSINK_APP_CAP_USB_DRIVE
   return true;
+#else
+  return false;
+#endif
+}
+
+bool HalStorage::disconnectUsbDriveHost() {
+#if FREEINK_CAP_USB_MSC
+  return usbDriveContext && usbDriveContext->massStorage.disconnectHost();
 #else
   return false;
 #endif
