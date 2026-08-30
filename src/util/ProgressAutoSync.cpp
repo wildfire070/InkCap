@@ -31,11 +31,17 @@ bool connectSilentlyIfNeeded(bool& broughtUpWifi) {
   if (hasActiveStationWifiConnection()) return true;
 
   const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
-  if (lastSsid.empty()) return false;
+  if (lastSsid.empty()) {
+    LOG_INF("BFAuto", "Skipping auto-sync: no previously-connected WiFi network to reuse");
+    return false;
+  }
   const auto cred = WIFI_STORE.findCredential(lastSsid);
-  if (!cred) return false;
+  if (!cred) {
+    LOG_INF("BFAuto", "Skipping auto-sync: no saved credential for last-connected network %s", lastSsid.c_str());
+    return false;
+  }
 
-  LOG_DBG("BFAuto", "Silently connecting to %s", cred->ssid.c_str());
+  LOG_INF("BFAuto", "Silently connecting to %s", cred->ssid.c_str());
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.begin(cred->ssid.c_str(), cred->password.empty() ? nullptr : cred->password.c_str());
@@ -50,7 +56,7 @@ bool connectSilentlyIfNeeded(bool& broughtUpWifi) {
     delay(POLL_INTERVAL_MS);
   }
 
-  LOG_DBG("BFAuto", "Silent connect to %s timed out", cred->ssid.c_str());
+  LOG_INF("BFAuto", "Silent connect to %s timed out; skipping auto-sync", cred->ssid.c_str());
   WiFi.disconnect(true);
   return false;
 }
@@ -117,14 +123,18 @@ void performPush(GfxRenderer& renderer, uint32_t bookId, const std::string& epub
       progress.pagePositionInBook = (static_cast<float>(spineIndex) + chapterProgress) / static_cast<float>(spineCount);
     }
 
-    if (BookFusionSyncClient::updateProgress(progress) == BookFusionSyncClient::OK) {
+    const auto pushResult = BookFusionSyncClient::updateProgress(progress);
+    if (pushResult == BookFusionSyncClient::OK) {
       BookFusionSyncBaseline baseline;
       baseline.hasBaseline = true;
       baseline.percentage = progress.percentage;
       baseline.pagePositionInBook = progress.pagePositionInBook;
       baseline.chapterIndex = progress.chapterIndex;
       BookFusionBookIdStore::saveSyncBaseline(epubPath, baseline);
-      LOG_DBG("BFAuto", "Pushed %.1f%% for book %lu", bookPercent * 100.0f, (unsigned long)bookId);
+      LOG_INF("BFAuto", "Pushed %.1f%% for book %lu", bookPercent * 100.0f, (unsigned long)bookId);
+    } else {
+      LOG_ERR("BFAuto", "Auto-sync push failed for book %lu: %s", (unsigned long)bookId,
+              BookFusionSyncClient::errorString(pushResult).c_str());
     }
 
     pushReadingTimeDelta(bookId, epubPath, epubCachePath);

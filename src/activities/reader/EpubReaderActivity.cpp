@@ -2312,9 +2312,23 @@ void EpubReaderActivity::onExit() {
   // resets and epub is released just below, but doesn't touch either of
   // them itself (see ProgressAutoSync::performPush()), so it's safe even
   // though it blocks for a few seconds with both still "open".
-  if (epub && section && !section->isBuilding()) {
+  // Background indexing of the rest of the chapter can keep section->isBuilding() true well past
+  // the point where the current page is actually readable (see the buildSomeMore() tick loop
+  // above) -- gating on that outright meant on-exit sync almost never fired during casual
+  // reading. activeBuildHasCaughtReadablePages() is the same "is pageCount/currentPage trustworthy
+  // right now" check the reader itself uses elsewhere, regardless of whether background build of
+  // later pages is still ongoing.
+  const bool autosyncOnExitConfigured = SETTINGS.autosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  const bool sectionReadableForAutosync = section && section->activeBuildHasCaughtReadablePages();
+  if (autosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
+    LOG_INF("ERS", "Skipping on-exit BookFusion auto-sync: no active section to read progress from");
+  } else if (epub && sectionReadableForAutosync) {
     const uint32_t autosyncBookId = BookFusionBookIdStore::loadBookId(epub->getPath());
-    if (autosyncBookId != 0) {
+    if (autosyncBookId == 0) {
+      if (autosyncOnExitConfigured) {
+        LOG_INF("ERS", "Skipping on-exit BookFusion auto-sync: book isn't linked to BookFusion");
+      }
+    } else {
       const int autosyncPageNumber = section->currentPage;
       const int autosyncPageCount = section->pageCount;
       const float autosyncChapterProgress = autosyncPageCount > 0
@@ -2518,8 +2532,11 @@ void EpubReaderActivity::maybeRunAutoSync() {
   // to do.
   if (!ProgressAutoSync::isArmed()) return;
 
-  if (!section || section->isBuilding() || activeFootnotePreview || automaticPageTurnActive ||
-      !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
+  // See the matching comment in onExit()'s AUTOSYNC_ON_EXIT block: isBuilding() alone stays true
+  // through background indexing of later pages, long after the current page is actually
+  // readable, so it's not the right gate here either.
+  if (!section || !section->activeBuildHasCaughtReadablePages() || activeFootnotePreview ||
+      automaticPageTurnActive || !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
       (millis() - lastRenderCompleteMs) < AUTOSYNC_IDLE_DELAY_MS) {
     return;
   }
