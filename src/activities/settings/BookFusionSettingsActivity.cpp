@@ -6,7 +6,9 @@
 #include "BookFusionAuthActivity.h"
 #include "BookFusionBrowserActivity.h"
 #include "BookFusionTokenStore.h"
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "RefreshBookFusionMetadataActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -17,8 +19,12 @@
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int MENU_ITEMS = 2;
-const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_ACCOUNT, StrId::STR_BF_BROWSE_LIBRARY};
+constexpr int MENU_ITEMS = 4;
+const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_BROWSE_LIBRARY, StrId::STR_BF_ACCOUNT, StrId::STR_BF_AUTOSYNC,
+                                     StrId::STR_BF_REFRESH_METADATA};
+constexpr StrId autosyncLabels[CrossPointSettings::AUTOSYNC_COUNT] = {
+    StrId::STR_STATE_OFF, StrId::STR_BF_AUTOSYNC_EVERY_CHAPTER, StrId::STR_BF_AUTOSYNC_EVERY_5_PERCENT,
+    StrId::STR_BF_AUTOSYNC_EVERY_10_PERCENT, StrId::STR_BF_AUTOSYNC_ON_EXIT};
 constexpr fui::ActionId ACTION_ROW = 1;
 }  // namespace
 
@@ -91,6 +97,11 @@ void BookFusionSettingsActivity::loop() {
 
 void BookFusionSettingsActivity::handleSelection() {
   if (selectedIndex == 0) {
+    // Browse Library: only reachable once signed in (row is disabled otherwise).
+    if (!BOOKFUSION_STORE.hasToken()) return;
+    startActivityForResult(std::make_unique<BookFusionBrowserActivity>(renderer, mappedInput),
+                           [this](const ActivityResult&) { requestUpdate(); });
+  } else if (selectedIndex == 1) {
     // Account: sign in if signed out, confirm-then-sign-out if signed in.
     if (BOOKFUSION_STORE.hasToken()) {
       startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_BF_SIGN_OUT),
@@ -105,10 +116,14 @@ void BookFusionSettingsActivity::handleSelection() {
       startActivityForResult(std::make_unique<BookFusionAuthActivity>(renderer, mappedInput),
                              [this](const ActivityResult&) { requestUpdate(); });
     }
-  } else if (selectedIndex == 1) {
-    // Browse Library: only reachable once signed in (row is disabled otherwise).
-    if (!BOOKFUSION_STORE.hasToken()) return;
-    startActivityForResult(std::make_unique<BookFusionBrowserActivity>(renderer, mappedInput),
+  } else if (selectedIndex == 2) {
+    // Auto-Sync: cycle through the modes.
+    SETTINGS.autosyncMode = (SETTINGS.autosyncMode + 1) % CrossPointSettings::AUTOSYNC_COUNT;
+    SETTINGS.saveToFile();
+    requestUpdate();
+  } else if (selectedIndex == 3) {
+    // Refresh Metadata: handles the not-signed-in / no-books-linked cases itself.
+    startActivityForResult(std::make_unique<RefreshBookFusionMetadataActivity>(renderer, mappedInput),
                            [this](const ActivityResult&) { requestUpdate(); });
   }
 }
@@ -126,8 +141,11 @@ void BookFusionSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
 
   const bool signedIn = BOOKFUSION_STORE.hasToken();
   std::vector<std::string> values(MENU_ITEMS);
-  values[0] = signedIn ? tr(STR_BF_SIGNED_IN) : tr(STR_BF_SIGNED_OUT);
-  values[1] = signedIn ? "" : std::string("[") + tr(STR_BF_SIGN_IN_FIRST) + "]";
+  values[0] = signedIn ? "" : std::string("[") + tr(STR_BF_SIGN_IN_FIRST) + "]";
+  values[1] = signedIn ? tr(STR_BF_SIGNED_IN) : tr(STR_BF_SIGNED_OUT);
+  values[2] =
+      I18N.get(autosyncLabels[SETTINGS.autosyncMode < CrossPointSettings::AUTOSYNC_COUNT ? SETTINGS.autosyncMode : 0]);
+  values[3] = signedIn ? "" : std::string("[") + tr(STR_BF_SIGN_IN_FIRST) + "]";
 
   std::vector<fui::ListItem> items;
   items.reserve(MENU_ITEMS);
@@ -146,6 +164,14 @@ void BookFusionSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
   props.valueInset = 8;
+  // Match BookFusionBrowserActivity's category list: InkCap's ported Lyra theme
+  // (LyraTheme.h) sets listRowHeight=36, but InsiderPhD's original Lyra rows are
+  // 40px. Scoped here rather than in LyraTheme.h itself since that constant is
+  // shared app-wide; plain Lyra only, since Lyra_3_Covers/Carousel are
+  // InkCap-only variants with their own independently-tuned row heights.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::LYRA) {
+    props.rowHeight = 40;
+  }
   const auto rows = configureUiList(props, screen.theme(), screen.body());
   visibleRows = rows > 0 ? rows : 1;
   topIndex = scrollListBy(topIndex, 0, visibleRows, MENU_ITEMS);
