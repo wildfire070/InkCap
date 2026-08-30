@@ -490,6 +490,8 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.ao3UpdateDate = opfParser.ao3UpdateDate;
   bookMetadata.ao3IsCompleted = opfParser.ao3IsCompleted;
 
+  bookMetadata.bookshelf = opfParser.bookshelf;
+
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;
   }
@@ -1985,6 +1987,14 @@ void Epub::saveAo3Info(const std::string& workId, const std::string& date, const
     serialization::writeString(f, date);
     f.close();
   }
+}
+
+const std::string& Epub::getBookshelf() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.bookshelf;
 }
 
 namespace {

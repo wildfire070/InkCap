@@ -15,6 +15,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "BookActions.h"
+#include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
@@ -274,6 +275,7 @@ void FileBrowserActivity::loadFilesLocked() {
   clearIndexNameCache();
   fileListMemoryLimited = false;
   visibleStatusCache.clear();
+  visibleBookFusionCache.clear();
   fileListReadFailed = false;
   if (fileIndex) fileIndex->close();
 
@@ -1093,6 +1095,11 @@ BookStatus FileBrowserActivity::getBookStatus(const std::string& path) {
   return Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(path, "/.crosspoint"));
 }
 
+bool FileBrowserActivity::isBookFusionLinked(const std::string& path) {
+  if (!FsHelpers::hasEpubExtension(path)) return false;
+  return BookFusionBookIdStore::hasBookId(path);
+}
+
 void FileBrowserActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<FileBrowserActivity*>(user)->buildListScreen(screen);
 }
@@ -1183,6 +1190,7 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     if ((entry.back() == '/' && isPreferredSleepFolder(fullPath)) || isPinnedSleepFavorite(fullPath)) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
+    bool isBookFusion = false;
     if (entry.back() != '/') {
       auto cached = visibleStatusCache.find(entryIndex);
       const BookStatus status = cached != visibleStatusCache.end()
@@ -1192,11 +1200,17 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       if (glance[0] != '\0') {
         values[i] = values[i].empty() ? glance : std::string(glance) + " " + values[i];
       }
+      auto bfCached = visibleBookFusionCache.find(entryIndex);
+      isBookFusion = bfCached != visibleBookFusionCache.end()
+                         ? bfCached->second
+                         : (visibleBookFusionCache[entryIndex] = isBookFusionLinked(fullPath));
     }
     fui::ListItem item;
     item.label = names[i].c_str();
     if (!values[i].empty()) item.value = values[i].c_str();
-    item.icon = listIconFor(UITheme::getFileIcon(entry), twoLineRows ? 32 : 24);
+    // BookFusion-linked books display the BF mark in the row's icon slot instead
+    // of the usual file-type icon (matching InsiderPhD's original file-browser badge).
+    item.icon = listIconFor(isBookFusion ? UIIcon::BookFusion : UITheme::getFileIcon(entry), twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);
   }

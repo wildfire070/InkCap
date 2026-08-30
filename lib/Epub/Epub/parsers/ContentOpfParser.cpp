@@ -7,6 +7,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <string_view>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -82,6 +83,58 @@ bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches
     compared += chunkSize;
   }
   return true;
+}
+
+// Calibre embeds custom-column data as a JSON blob in a <meta> content attribute.
+// Pull out just the "#value#" field without a full JSON parser: handles a quoted
+// string ("#value#": "Shelf") or a list ("#value#": ["A","B"] -> "A, B"). Returns
+// empty for null/absent. Bounded -- only the extracted value is copied out, not the blob.
+std::string extractCalibreCustomValue(const char* json) {
+  if (!json) return {};
+  const std::string_view sv{json};
+  const auto key = sv.find("\"#value#\"");
+  if (key == std::string_view::npos) return {};
+
+  size_t i = key + 9;  // past the key token
+  while (i < sv.size() && (sv[i] == ' ' || sv[i] == ':' || sv[i] == '\t')) i++;
+  if (i >= sv.size()) return {};
+
+  const auto readQuoted = [&](size_t pos, std::string& out) -> size_t {
+    // pos points at the opening quote; appends unescaped contents to out, returns
+    // index just past the closing quote (or npos on malformed input).
+    pos++;
+    while (pos < sv.size()) {
+      const char c = sv[pos];
+      if (c == '\\' && pos + 1 < sv.size()) {
+        out.push_back(sv[pos + 1]);
+        pos += 2;
+        continue;
+      }
+      if (c == '"') return pos + 1;
+      out.push_back(c);
+      pos++;
+    }
+    return std::string_view::npos;
+  };
+
+  std::string value;
+  if (sv[i] == '"') {
+    readQuoted(i, value);
+  } else if (sv[i] == '[') {
+    i++;
+    while (i < sv.size() && sv[i] != ']') {
+      if (sv[i] == '"') {
+        std::string item;
+        i = readQuoted(i, item);
+        if (i == std::string_view::npos) break;
+        if (!value.empty()) value.append(", ");
+        value.append(item);
+      } else {
+        i++;
+      }
+    }
+  }
+  return value;
 }
 }  // namespace
 
@@ -329,6 +382,10 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
         // AO3 support: FanFicFare/Calibre stamp the export date here; take the date portion.
         std::string ts = contentAttr;
         self->ao3UpdateDate = (ts.size() >= 10) ? ts.substr(0, 10) : ts;
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#bookshelf") == 0) {
+        // BookFusion's "bookshelf" Calibre custom column. The content is a JSON blob
+        // describing the column; pull only the "#value#" out (string or list).
+        self->bookshelf = extractCalibreCustomValue(contentAttr);
       }
     }
     return;

@@ -31,6 +31,13 @@ constexpr uint32_t DOWNLOAD_IDLE_TIMEOUT_MS = 30000;
 constexpr size_t DEFAULT_DOWNLOAD_BUFFER_SIZE = 2048;
 constexpr uint8_t MAX_REDIRECTS = 5;
 
+// BookFusion's CDN wants a browser-shaped request (InsiderPhD's fork spoofs a
+// browser User-Agent and sets Referer "for BookFusion compatibility"); every
+// other download keeps sending CrossInk's own identifying UA.
+bool isBookFusionUrl(const std::string& url) { return url.find("bookfusion.com") != std::string::npos; }
+constexpr char BOOKFUSION_USER_AGENT[] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";
+constexpr char BOOKFUSION_REFERER[] = "https://www.bookfusion.com/";
+
 void logNetworkState(const char* phase) {
   LOG_DBG("HTTP", "%s: heap free=%u maxAlloc=%u wifi=%d rssi=%d", phase, ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           static_cast<int>(WiFi.status()), WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
@@ -168,9 +175,15 @@ struct Sink {
   bool rangeIgnored = false;
 };
 
-void setRequestHeaders(esp_http_client_handle_t client, const std::string& username, const std::string& password,
-                       const std::string& bearerToken, size_t resumeOffset, bool sendAuthorization) {
-  esp_http_client_set_header(client, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+void setRequestHeaders(esp_http_client_handle_t client, const std::string& url, const std::string& username,
+                       const std::string& password, const std::string& bearerToken, size_t resumeOffset,
+                       bool sendAuthorization) {
+  if (isBookFusionUrl(url)) {
+    esp_http_client_set_header(client, "User-Agent", BOOKFUSION_USER_AGENT);
+    esp_http_client_set_header(client, "Referer", BOOKFUSION_REFERER);
+  } else {
+    esp_http_client_set_header(client, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  }
   esp_http_client_set_header(client, "Connection", "close");
   if (resumeOffset > 0) {
     char rangeHeader[40];
@@ -227,7 +240,13 @@ HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::s
     }
     // Replace SecureHttpClient's built-in User-Agent so strict servers receive
     // exactly one header while retaining CrossInk's device/version identity.
-    http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+    // BookFusion's CDN wants a browser-shaped request instead (see isBookFusionUrl).
+    if (isBookFusionUrl(currentUrl)) {
+      http.setUserAgent(BOOKFUSION_USER_AGENT);
+      http.addHeader("Referer", BOOKFUSION_REFERER);
+    } else {
+      http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+    }
     if (sink.resumeOffset > 0) {
       char rangeHeader[40];
       snprintf(rangeHeader, sizeof(rangeHeader), "bytes=%zu-", sink.resumeOffset);
@@ -365,7 +384,7 @@ HttpDownloader::DownloadError runGetDefault(const std::string& url, const std::s
       return HttpDownloader::HTTP_ERROR;
     }
 
-    setRequestHeaders(client, username, password, bearerToken, sink.resumeOffset, sendAuthorization);
+    setRequestHeaders(client, currentUrl, username, password, bearerToken, sink.resumeOffset, sendAuthorization);
 
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
