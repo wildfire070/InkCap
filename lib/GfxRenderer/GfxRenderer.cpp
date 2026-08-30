@@ -284,6 +284,17 @@ bool GfxRenderer::ensureBitmapScratchBuffers(const size_t outputRowSize, const s
 }
 
 void GfxRenderer::releaseFrameBufferForBuild() {
+  // Locked here (not only in the RAII loan below) because several call sites
+  // -- BookFusionBrowserActivity/RefreshBookFusionMetadataActivity/
+  // AO3SyncActivity's network fetches in particular -- call release/realloc
+  // as a manual pair directly, never going through FrameBufferLoan/
+  // NetworkBufferLoan at all. Locking only in the RAII wrapper left every one
+  // of those call sites unprotected against the render task landing on a
+  // null framebuffer mid-call -- hardware-confirmed via a real crash report
+  // even after the wrapper-only fix. Recursive: safe if the render task
+  // itself is the caller (e.g. EpubReaderActivity::render()'s own low-memory
+  // build-scratch reuse), already holding this lock via RenderLock.
+  lockFrameBufferMutex();
   // Lend the framebuffer's bytes IN PLACE: the allocation is never freed, so
   // it cannot move and repeated loans cannot fragment the heap (the previous
   // free+realloc model measurably decayed the max contiguous block over a
@@ -302,32 +313,35 @@ bool GfxRenderer::restoreFrameBufferAfterBuild() {
   buildscratch::reclaim();
   display.returnFrameBufferStorage();  // cannot fail: the allocation was never freed
   frameBuffer = display.getFrameBuffer();
-  return frameBuffer != nullptr;
+  const bool ok = frameBuffer != nullptr;
+  // Matches the take in releaseFrameBufferForBuild() -- always given back
+  // here regardless of ok, since every release() in this codebase is always
+  // eventually followed by exactly one matching restore()/realloc() call
+  // (verified across every call site before this change), including the
+  // manual pairs outside the RAII wrappers.
+  unlockFrameBufferMutex();
+  return ok;
 }
 
 GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
-  // Held for the whole loan window (recursive: safe if the render task itself
-  // constructs this, already holding the lock via RenderLock) so the render
-  // task can never land on a released/null framebuffer -- see frameBufferMutex_.
-  renderer_.lockFrameBufferMutex();
   // Nesting guard: if the framebuffer is already lent out (an outer loan),
   // stay inert so this end() cannot return storage the outer loan still owns.
+  // The mutex itself is taken/given inside releaseFrameBufferForBuild()/
+  // restoreFrameBufferAfterBuild() below, not here -- see those for why.
   if (!renderer_.hasFrameBuffer()) return;
   renderer_.releaseFrameBufferForBuild();
   active_ = true;
 }
 
 void GfxRenderer::FrameBufferLoan::end() {
-  if (active_) {
-    active_ = false;
-    if (!renderer_.restoreFrameBufferAfterBuild()) {
-      // Only reachable if the framebuffer never existed, which begin() already
-      // asserts against; kept as a backstop since running blind helps nobody.
-      LOG_ERR("GFX", "Framebuffer restore failed - restarting");
-      ESP.restart();
-    }
+  if (!active_) return;
+  active_ = false;
+  if (!renderer_.restoreFrameBufferAfterBuild()) {
+    // Only reachable if the framebuffer never existed, which begin() already
+    // asserts against; kept as a backstop since running blind helps nobody.
+    LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+    ESP.restart();
   }
-  renderer_.unlockFrameBufferMutex();
 }
 
 bool GfxRenderer::isFontCacheScanning() const { return fontCacheManager_ && fontCacheManager_->isScanning(); }
