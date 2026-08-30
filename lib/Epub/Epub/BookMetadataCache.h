@@ -24,6 +24,12 @@ class BookMetadataCache {
     // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookshelf),
     // read straight out of the EPUB's own OPF metadata -- no network call needed.
     std::string bookshelf;
+    std::string seriesName;   // calibre:series
+    std::string seriesIndex;  // calibre:series_index
+    // User's own Calibre custom column for content rating (Explicit/Mature/General/
+    // Teen/-), from calibre:user_metadata:#rating -- separate from Ao3Librarian's
+    // own AO3-preface-scraped rating (same values, different pipeline/storage).
+    std::string contentRating;
   };
 
   struct SpineEntry {

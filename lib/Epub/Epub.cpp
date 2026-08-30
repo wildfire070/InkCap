@@ -491,6 +491,9 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.ao3IsCompleted = opfParser.ao3IsCompleted;
 
   bookMetadata.bookshelf = opfParser.bookshelf;
+  bookMetadata.seriesName = opfParser.seriesName;
+  bookMetadata.seriesIndex = opfParser.seriesIndex;
+  bookMetadata.contentRating = opfParser.contentRating;
 
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;
@@ -1995,6 +1998,35 @@ const std::string& Epub::getBookshelf() const {
     return blank;
   }
   return bookMetadataCache->coreMetadata.bookshelf;
+}
+
+const std::string& Epub::getSeriesName() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.seriesName;
+}
+
+std::string Epub::getSeriesIndex() const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return {};
+  }
+  std::string index = bookMetadataCache->coreMetadata.seriesIndex;
+  // Calibre stores the index as a float ("1.0"); trim trailing zeros / dot for display.
+  if (index.find('.') != std::string::npos) {
+    while (!index.empty() && index.back() == '0') index.pop_back();
+    if (!index.empty() && index.back() == '.') index.pop_back();
+  }
+  return index;
+}
+
+const std::string& Epub::getContentRating() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.contentRating;
 }
 
 namespace {
