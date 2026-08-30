@@ -6,6 +6,8 @@
 #include <Logging.h>
 #include <WiFi.h>
 
+#include <algorithm>
+
 #include "BookFusionBookIdStore.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
@@ -232,22 +234,33 @@ void RefreshBookFusionMetadataActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, header, tr(STR_BF_REFRESH_METADATA));
 
   const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
-  const int top = (pageHeight - lineH) / 2;
+  // STR_BF_REFRESH_WARNING in particular is long enough to overflow a single centered line --
+  // drawCenteredText() doesn't wrap, so the overflow drew off the left edge of the screen instead
+  // of onto a second line. Wrap and draw as a vertically-centered block instead; the other
+  // messages here are normally short but wrap harmlessly if a future translation runs long.
+  const int maxTextWidth = std::max(1, static_cast<int>(pageWidth) - metrics.contentSidePadding * 2);
+  const auto drawWrappedCentered = [&](const char* text, bool black, EpdFontFamily::Style style) {
+    const auto lines = renderer.wrappedText(UI_10_FONT_ID, text, maxTextWidth, 6, style);
+    const int blockTop = (static_cast<int>(pageHeight) - static_cast<int>(lines.size()) * lineH) / 2;
+    for (size_t i = 0; i < lines.size(); i++) {
+      renderer.drawCenteredText(UI_10_FONT_ID, blockTop + static_cast<int>(i) * lineH, lines[i].c_str(), black, style);
+    }
+  };
 
   switch (state) {
     case WARNING:
-      renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BF_REFRESH_WARNING));
+      drawWrappedCentered(tr(STR_BF_REFRESH_WARNING), true, EpdFontFamily::REGULAR);
       break;
     case CONNECTING:
     case RUNNING:
-      renderer.drawCenteredText(UI_10_FONT_ID, top, statusMessage.c_str());
+      drawWrappedCentered(statusMessage.c_str(), true, EpdFontFamily::REGULAR);
       break;
     case SUCCESS:
-      renderer.drawCenteredText(UI_10_FONT_ID, top, statusMessage.c_str(), true, EpdFontFamily::BOLD);
+      drawWrappedCentered(statusMessage.c_str(), true, EpdFontFamily::BOLD);
       break;
     case ERROR:
     case WIFI_SELECTION:
-      renderer.drawCenteredText(UI_10_FONT_ID, top, errorMessage.c_str());
+      drawWrappedCentered(errorMessage.c_str(), true, EpdFontFamily::REGULAR);
       break;
   }
 
