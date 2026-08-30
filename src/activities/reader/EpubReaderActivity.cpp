@@ -2725,7 +2725,7 @@ void EpubReaderActivity::loop() {
       return;
     }
 
-    // Skips page turn if renderingMutex is busy
+    // Skips page turn if the framebuffer mutex is busy
     if (RenderLock::peek()) {
       lastPageTurnTime = millis();
       return;

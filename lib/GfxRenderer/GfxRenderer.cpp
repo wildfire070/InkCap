@@ -306,6 +306,10 @@ bool GfxRenderer::restoreFrameBufferAfterBuild() {
 }
 
 GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
+  // Held for the whole loan window (recursive: safe if the render task itself
+  // constructs this, already holding the lock via RenderLock) so the render
+  // task can never land on a released/null framebuffer -- see frameBufferMutex_.
+  renderer_.lockFrameBufferMutex();
   // Nesting guard: if the framebuffer is already lent out (an outer loan),
   // stay inert so this end() cannot return storage the outer loan still owns.
   if (!renderer_.hasFrameBuffer()) return;
@@ -314,14 +318,16 @@ GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_
 }
 
 void GfxRenderer::FrameBufferLoan::end() {
-  if (!active_) return;
-  active_ = false;
-  if (!renderer_.restoreFrameBufferAfterBuild()) {
-    // Only reachable if the framebuffer never existed, which begin() already
-    // asserts against; kept as a backstop since running blind helps nobody.
-    LOG_ERR("GFX", "Framebuffer restore failed - restarting");
-    ESP.restart();
+  if (active_) {
+    active_ = false;
+    if (!renderer_.restoreFrameBufferAfterBuild()) {
+      // Only reachable if the framebuffer never existed, which begin() already
+      // asserts against; kept as a backstop since running blind helps nobody.
+      LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+      ESP.restart();
+    }
   }
+  renderer_.unlockFrameBufferMutex();
 }
 
 bool GfxRenderer::isFontCacheScanning() const { return fontCacheManager_ && fontCacheManager_->isScanning(); }

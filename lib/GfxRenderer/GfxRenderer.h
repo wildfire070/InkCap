@@ -57,6 +57,15 @@ class GfxRenderer {
   std::map<int, EpdFontFamily> fontMap;
   // Shared bitmap row buffers. Every read/write must be inside BitmapScratchLock;
   // ensureBitmapScratchBuffers() asserts that contract before exposing them.
+  // Serializes framebuffer access across tasks: taken by RenderLock (ActivityManager)
+  // before any Activity::render() call, and by FrameBufferLoan below around the
+  // window where the framebuffer is released/reallocated -- draw calls never check
+  // for a null framebuffer, so without this a render() landing mid-loan dereferences
+  // a null pointer and crashes. Recursive because some FrameBufferLoan uses (e.g.
+  // EpubReaderActivity::render()'s low-memory build-scratch reuse) run on the render
+  // task itself, already holding this same lock via RenderLock -- a plain mutex would
+  // deadlock there; recursive re-entry from the same task is a no-op.
+  mutable SemaphoreHandle_t frameBufferMutex_ = nullptr;
   mutable SemaphoreHandle_t bitmapScratchMutex_ = nullptr;
   mutable uint8_t* bitmapScratchOutputRow_ = nullptr;
   mutable size_t bitmapScratchOutputRowSize_ = 0;
@@ -140,7 +149,9 @@ class GfxRenderer {
         renderMode(BW),
         orientation(Portrait),
         fadingFix(false),
+        frameBufferMutex_(xSemaphoreCreateRecursiveMutex()),
         bitmapScratchMutex_(xSemaphoreCreateMutex()) {
+    assert(frameBufferMutex_ != nullptr && "Failed to create GfxRenderer framebuffer mutex");
     assert(bitmapScratchMutex_ != nullptr && "Failed to create GfxRenderer bitmap scratch mutex");
   }
   GfxRenderer(const GfxRenderer&) = delete;
@@ -336,6 +347,13 @@ class GfxRenderer {
 
   // Font helpers
   const uint8_t* getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const;
+
+  // See frameBufferMutex_ above. RenderLock and FrameBufferLoan below take/give this
+  // symmetrically and recursively, so nesting (loan-in-loan, or the render task
+  // re-entering via a loan constructed inside its own render()) is always safe.
+  void lockFrameBufferMutex() const { xSemaphoreTakeRecursive(frameBufferMutex_, portMAX_DELAY); }
+  void unlockFrameBufferMutex() const { xSemaphoreGiveRecursive(frameBufferMutex_); }
+  TaskHandle_t frameBufferMutexHolder() const { return xSemaphoreGetMutexHolder(frameBufferMutex_); }
 
   // Lend the 48 KB framebuffer's bytes to a memory-hungry phase (chapter
   // builds) WITHOUT freeing the allocation, so it never moves and repeated
