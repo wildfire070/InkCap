@@ -797,10 +797,22 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         const bool useDashboardThumb = isDashboard && supportsExactHomeThumb;
         const bool useMinimalThumb = isMinimal && supportsExactHomeThumb;
         const bool useExactHomeThumb = useDashboardThumb || useMinimalThumb;
+        // Lyra/RoundedRaff/Lyra3Covers (the remaining themes) previously forced a fixed
+        // 2:3 crop here (getCoverThumbPath/generateThumbBmp), silently cropping any cover
+        // whose real aspect ratio differs enough -- confirmed on hardware with an AO3-style
+        // info-card cover. Same fallback dimensions as before (coverHeight*2/3 x coverHeight),
+        // just routed through the adaptive path/generator Dashboard and Minimal already use,
+        // which contains-fits instead of cropping once the source is too far from 2:3.
+        const bool useAdaptiveDefaultThumb = !useExactHomeThumb && FsHelpers::hasEpubExtension(book.path);
+        const int defaultThumbWidth = static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
         const std::string coverPath =
-            useDashboardThumb ? dashboardHomeCoverPath(book, coverHeight)
-                              : (useMinimalThumb ? minimalHomeCoverPath(book, coverHeight)
-                                                 : UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight));
+            useDashboardThumb
+                ? dashboardHomeCoverPath(book, coverHeight)
+                : (useMinimalThumb
+                       ? minimalHomeCoverPath(book, coverHeight)
+                       : (useAdaptiveDefaultThumb
+                              ? Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(defaultThumbWidth, coverHeight)
+                              : UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight)));
         if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
           if (FsHelpers::hasEpubExtension(book.path)) {
             Epub epub(book.path, "/.crosspoint");
@@ -821,7 +833,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                            ? epub.generateAdaptiveThumbBmp(minimalHomeCoverWidth(coverHeight),
                                                            minimalHomeCoverHeight(coverHeight), &renderer,
                                                            SETTINGS.getReaderFontId())
-                           : epub.generateThumbBmp(0, coverHeight, &renderer, SETTINGS.getReaderFontId()));
+                           : epub.generateAdaptiveThumbBmp(defaultThumbWidth, coverHeight, &renderer,
+                                                           SETTINGS.getReaderFontId()));
             if (!success) {
               if (!epub.hasCoverImage()) markCoverMissing(book);
             } else if (bookIdx < bookUpdated.size()) {

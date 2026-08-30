@@ -1,5 +1,7 @@
 #include "RoundedRaffTheme.h"
 
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -11,10 +13,12 @@
 #include <string>
 #include <vector>
 
+#include "BookFusionBookIdStore.h"
 #include "RecentBooksStore.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/icon_bookfusion.h"
 #include "fontIds.h"
 
 namespace {
@@ -144,8 +148,20 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
       if (coverPath.empty()) {
         hasCover = false;
       } else {
+        // Adaptive path/generation (see HomeActivity::loadRecentCovers) avoids forcing a
+        // fixed 2:3 crop on covers whose real aspect ratio is too far from it -- confirmed
+        // on hardware with an AO3-style info-card cover that was getting silently truncated.
+        // The stored bitmap's own height can come out shorter than homeCoverHeight in that
+        // case, so its draw (and the rounded-corner mask) is vertically centered within the
+        // fixed slot rather than stretched to fill it. XTC covers aren't part of this (no
+        // adaptive path for them yet), so they keep the existing fixed-ratio lookup.
+        const bool isEpub = FsHelpers::hasEpubExtension(book.path);
+        const int defaultThumbWidth =
+            static_cast<int>((static_cast<int64_t>(RoundedRaffMetrics::values.homeCoverHeight) * 2 + 1) / 3);
         const std::string coverBmpPath =
-            UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
+            isEpub ? Epub(book.path, "/.crosspoint")
+                         .getAdaptiveThumbBmpPath(defaultThumbWidth, RoundedRaffMetrics::values.homeCoverHeight)
+                   : UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
         HalFile file;
@@ -153,11 +169,11 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
             coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                RoundedRaffMetrics::values.homeCoverHeight);
-            renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                                   RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
-                                                   Color::LightGray);
+            const int drawHeight = std::min(bitmap.getHeight(), RoundedRaffMetrics::values.homeCoverHeight);
+            const int drawY = imgY + (RoundedRaffMetrics::values.homeCoverHeight - drawHeight) / 2;
+            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, drawY, coverWidth, drawHeight);
+            renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, drawY, coverWidth, drawHeight,
+                                                   kCoverRadius, Color::LightGray);
           } else {
             hasCover = false;
           }
@@ -177,6 +193,28 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
         renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
                                                RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
                                                Color::LightGray);
+      }
+
+      // BookFusion-linked books: bottom-left badge with white padding around
+      // the mark, inset from the cover corner. iconY snapped to a multiple of
+      // 8 because drawImageTransparent truncates the display-y via integer
+      // divide by 8 -- non-aligned values shift the icon relative to the
+      // white fill. Ported from InsiderPhD's fork (their LyraTheme.cpp), never
+      // carried over during the original BookFusion port; applied here to
+      // match Lyra's own port of the same badge.
+      if (BookFusionBookIdStore::hasBookId(book.path)) {
+        constexpr int BF_ICON_SIZE = 24;
+        constexpr int BF_PADDING = 4;
+        constexpr int BF_MARGIN = 4;
+        constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
+        const int coverX = tileX + (tileWidth - coverWidth) / 2;
+        const int coverDrawH = RoundedRaffMetrics::values.homeCoverHeight;
+        const int iconY = ((imgY + coverDrawH - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
+        const int badgeX = coverX + BF_MARGIN;
+        const int badgeY = iconY - BF_PADDING;
+        const int iconX = badgeX + BF_PADDING;
+        renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
+        drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
       }
 
       coverBufferStored = storeCoverBuffer();
