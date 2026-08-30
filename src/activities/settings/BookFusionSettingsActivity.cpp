@@ -8,7 +8,6 @@
 #include "BookFusionTokenStore.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
-#include "RefreshBookFusionMetadataActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -19,9 +18,8 @@
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int MENU_ITEMS = 4;
-const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_BROWSE_LIBRARY, StrId::STR_BF_ACCOUNT, StrId::STR_BF_AUTOSYNC,
-                                     StrId::STR_BF_REFRESH_METADATA};
+constexpr int MENU_ITEMS = 3;
+const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_BROWSE_LIBRARY, StrId::STR_BF_ACCOUNT, StrId::STR_BF_AUTOSYNC};
 constexpr StrId autosyncLabels[CrossPointSettings::AUTOSYNC_COUNT] = {
     StrId::STR_STATE_OFF, StrId::STR_BF_AUTOSYNC_EVERY_CHAPTER, StrId::STR_BF_AUTOSYNC_EVERY_5_PERCENT,
     StrId::STR_BF_AUTOSYNC_EVERY_10_PERCENT, StrId::STR_BF_AUTOSYNC_ON_EXIT};
@@ -121,10 +119,6 @@ void BookFusionSettingsActivity::handleSelection() {
     SETTINGS.autosyncMode = (SETTINGS.autosyncMode + 1) % CrossPointSettings::AUTOSYNC_COUNT;
     SETTINGS.saveToFile();
     requestUpdate();
-  } else if (selectedIndex == 3) {
-    // Refresh Metadata: handles the not-signed-in / no-books-linked cases itself.
-    startActivityForResult(std::make_unique<RefreshBookFusionMetadataActivity>(renderer, mappedInput),
-                           [this](const ActivityResult&) { requestUpdate(); });
   }
 }
 
@@ -145,7 +139,6 @@ void BookFusionSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
   values[1] = signedIn ? tr(STR_BF_SIGNED_IN) : tr(STR_BF_SIGNED_OUT);
   values[2] =
       I18N.get(autosyncLabels[SETTINGS.autosyncMode < CrossPointSettings::AUTOSYNC_COUNT ? SETTINGS.autosyncMode : 0]);
-  values[3] = signedIn ? "" : std::string("[") + tr(STR_BF_SIGN_IN_FIRST) + "]";
 
   std::vector<fui::ListItem> items;
   items.reserve(MENU_ITEMS);

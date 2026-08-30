@@ -1,7 +1,6 @@
 #include "BookFusionBrowserActivity.h"
 
 #include <Arduino.h>
-#include <Bitmap.h>
 #include <Epub.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -21,7 +20,6 @@
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
-#include "network/BookFusionCoverCache.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
 #include "util/StringUtils.h"
@@ -35,9 +33,6 @@ constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
-// Matches Epub's own kDefaultThumbHeight so a BookFusion-sourced cover looks
-// the same size as one generated from an embedded EPUB cover image.
-constexpr int COVER_THUMB_HEIGHT = 180;
 
 struct Category {
   StrId nameId;
@@ -545,28 +540,9 @@ void BookFusionBrowserActivity::buildDownloadScreen(UiApp::ScreenType& screen) {
   const int16_t lh = screen.target().lineHeight(centeredRegular.font);
   const int16_t gap = theme.spaceMd;
 
-  // Static info card (cover + title + author + filesize/estimate + status),
-  // no live progress bar -- matches InsiderPhD's fork's download screen
-  // rather than InkCap's previous progress-bar layout. The cover thumb is
-  // generated at a fixed height with auto width, so its width isn't known
-  // until the header is read; that's done once here to size the vertical
-  // centering below, then re-read just before drawing.
-  bool haveCover = false;
-  int coverW = 0;
-  int coverH = 0;
-  if (!downloadCoverPath.empty()) {
-    FsFile probeFile;
-    if (Storage.openFileForRead("BFBrowser", downloadCoverPath, probeFile)) {
-      Bitmap probeBmp(probeFile);
-      if (probeBmp.parseHeaders() == BmpReaderError::Ok && probeBmp.getWidth() > 0 && probeBmp.getHeight() > 0) {
-        haveCover = true;
-        coverW = probeBmp.getWidth();
-        coverH = probeBmp.getHeight();
-      }
-      probeFile.close();
-    }
-  }
-
+  // Static info card (title + author + filesize/estimate + status), no live
+  // progress bar -- matches InsiderPhD's fork's download screen rather than
+  // InkCap's previous progress-bar layout.
   char titleLine[192];
   snprintf(titleLine, sizeof(titleLine), tr(STR_DOWNLOAD_TITLE_FORMAT), downloadTitle.c_str());
   const bool haveAuthor = !downloadAuthor.empty();
@@ -590,23 +566,9 @@ void BookFusionBrowserActivity::buildDownloadScreen(UiApp::ScreenType& screen) {
     }
   }
 
-  const int16_t coverBlockH = haveCover ? static_cast<int16_t>(coverH + gap) : 0;
-  const int16_t blockH = static_cast<int16_t>(coverBlockH + lh + gap + (haveAuthor ? lh + gap : 0) +
-                                              (haveSize ? lh + gap : 0) + lh);
+  const int16_t blockH = static_cast<int16_t>(lh + gap + (haveAuthor ? lh + gap : 0) + (haveSize ? lh + gap : 0) + lh);
   const fui::Rect body = screen.body();
   if (body.height > blockH) screen.spacer(static_cast<int16_t>((body.height - blockH) / 2));
-
-  if (haveCover) {
-    const fui::Rect coverRect = screen.takeTop(static_cast<int16_t>(coverH), gap);
-    FsFile coverFile;
-    if (Storage.openFileForRead("BFBrowser", downloadCoverPath, coverFile)) {
-      Bitmap coverBmp(coverFile);
-      if (coverBmp.parseHeaders() == BmpReaderError::Ok) {
-        renderer.drawBitmap(coverBmp, coverRect.x + (coverRect.width - coverW) / 2, coverRect.y, coverW, coverH);
-      }
-      coverFile.close();
-    }
-  }
 
   screen.target().text(screen.takeTop(lh, gap), titleLine, centeredBold);
   if (haveAuthor) screen.target().text(screen.takeTop(lh, gap), authorLine, centeredRegular);
@@ -787,7 +749,6 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   state = BrowserState::DOWNLOADING;
   downloadTitle = book.title;
   downloadAuthor = book.author;
-  downloadCoverPath.clear();
   statusMessage = tr(STR_CONNECTING);
   downloadProgress = 0;
   // From the search API response, not the live transfer -- lets the
@@ -852,33 +813,16 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   LOG_DBG("BFBrowser", "Downloading book %lu -> %s", (unsigned long)book.bookId, filename.c_str());
 
   // Clear any stale cache from a previous file at this exact path before
-  // writing anything new into it -- including the cover pre-fetch just
-  // below, which must not get wiped out again after a successful download
-  // the way it would if this ran there instead (clearBookCache() doesn't
-  // preserve cover/thumb files, only progress/settings/bookfusion.json).
+  // writing anything new into it.
   clearBookCache(filename);
 
-  // Pre-fetch the cover now, before the EPUB transfer, so the download
-  // screen's static card can show it (matches InsiderPhD's fork -- InkCap
-  // previously fetched the cover only after a successful download, which
-  // meant it never appeared on this screen). Best-effort: a failed fetch
-  // just means the card renders without a cover, same as before.
-  if (!book.coverUrl.empty()) {
-    Epub coverEpub(filename, "/.crosspoint");
-    coverEpub.setupCacheDir();
-    // Keep the framebuffer released through both download() AND convert():
-    // the JPEG/PNG decoder needs a single large contiguous block (~53KB)
-    // that the still-allocated framebuffer was denying it, confirmed via
-    // "Not enough heap for JPEG decoder" on hardware when convert() ran
-    // after a premature realloc here.
-    GfxRenderer::NetworkBufferLoan fbLoan(renderer);
-    if (BookFusionCoverCache::download(book.coverUrl, coverEpub) &&
-        BookFusionCoverCache::convert(coverEpub, COVER_THUMB_HEIGHT)) {
-      downloadCoverPath = coverEpub.getThumbBmpPath(COVER_THUMB_HEIGHT);
-    } else {
-      LOG_ERR("BFBrowser", "Cover fetch failed for book %lu", (unsigned long)book.bookId);
-    }
-  }
+  // No cover fetch here (or anywhere else in BookFusion): the JPEG/PNG
+  // decoder needs a single large contiguous block (~53KB) that's chronically
+  // unavailable at this point in the flow (WiFi + a searchBooks() TLS
+  // round-trip have already fragmented the heap), consistently failing on
+  // hardware and taking the framebuffer's own post-fetch reallocation down
+  // with it -- confirmed via a reproducible restart loop. The download
+  // screen simply renders without a cover.
 
   statusMessage = tr(STR_DOWNLOAD_WAIT);
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
