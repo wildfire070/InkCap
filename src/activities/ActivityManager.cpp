@@ -762,7 +762,7 @@ RequestUpdateResult ActivityManager::requestUpdateAndWait() {
   // Atomic section to perform checks
   taskENTER_CRITICAL(&renderStateMux);
   auto currTaskHandler = xTaskGetCurrentTaskHandle();
-  auto mutexHolder = xSemaphoreGetMutexHolder(renderingMutex);
+  auto mutexHolder = renderer.frameBufferMutexHolder();
   bool isRenderTask = (currTaskHandler == renderTaskHandle);
   bool alreadyWaiting = (waitingTaskHandle != nullptr);
   bool holdingRenderLock = (mutexHolder == currTaskHandler);
@@ -795,34 +795,34 @@ RequestUpdateResult ActivityManager::requestUpdateAndWait() {
 // RenderLock
 
 RenderLock::RenderLock() {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
+  activityManager.renderer.lockFrameBufferMutex();
   isLocked = true;
 }
 
 RenderLock::RenderLock([[maybe_unused]] Activity&) {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
+  activityManager.renderer.lockFrameBufferMutex();
   isLocked = true;
 }
 
 RenderLock::~RenderLock() {
   if (isLocked) {
-    xSemaphoreGive(activityManager.renderingMutex);
+    activityManager.renderer.unlockFrameBufferMutex();
     isLocked = false;
   }
 }
 
 void RenderLock::unlock() {
   if (isLocked) {
-    xSemaphoreGive(activityManager.renderingMutex);
+    activityManager.renderer.unlockFrameBufferMutex();
     isLocked = false;
   }
 }
 
 /**
- * Checks if renderingMutex is held by any task, including the calling task.
+ * Checks if the framebuffer mutex is held by any task, including the calling task.
  *
- * @return true if renderingMutex has an owner (any task), false otherwise.
+ * @return true if the framebuffer mutex has an owner (any task), false otherwise.
  *
  * @note Must not be called from ISR context — xSemaphoreGetMutexHolder is not ISR-safe.
  */
-bool RenderLock::peek() { return xSemaphoreGetMutexHolder(activityManager.renderingMutex) != nullptr; }
+bool RenderLock::peek() { return activityManager.renderer.frameBufferMutexHolder() != nullptr; }
