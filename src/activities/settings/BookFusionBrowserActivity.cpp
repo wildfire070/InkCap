@@ -1,11 +1,14 @@
 #include "BookFusionBrowserActivity.h"
 
 #include <Arduino.h>
+#include <Bitmap.h>
+#include <Epub.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <strings.h>
 
 #include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
@@ -13,10 +16,12 @@
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "network/BookFusionCoverCache.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
 #include "util/StringUtils.h"
@@ -25,23 +30,35 @@ namespace fui = freeink::ui;
 
 namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
-constexpr fui::ActionId ACTION_CANCEL = 3;
+constexpr fui::ActionId ACTION_PREV_PAGE = 2;
+constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
+// Matches Epub's own kDefaultThumbHeight so a BookFusion-sourced cover looks
+// the same size as one generated from an embedded EPUB cover image.
+constexpr int COVER_THUMB_HEIGHT = 180;
 
 struct Category {
   StrId nameId;
   const char* list;  // BookFusion "list" filter, nullptr for "all books".
+  UIIcon icon;
+  const char* sort = nullptr;  // BookFusion sort key; nullptr defaults to "added_at-desc".
 };
 
-// list values match BookFusion's own book-list filters.
+// list values match BookFusion's own book-list filters. Icons match
+// InsiderPhD's fork's category-row icons (one per fixed category; shelves
+// get UIIcon::Folder as the visual delimiter between "categories" and
+// "shelves", same as there -- see buildCategoryScreen()). Currently Reading
+// sorts by last-read time rather than the default added-date, so the book
+// you're actually reading right now surfaces first, matching InsiderPhD's
+// fork -- every other category leaves sort at its default.
 constexpr Category CATEGORIES[] = {
-    {StrId::STR_BF_CURRENTLY_READING, "currently_reading"},
-    {StrId::STR_BF_FAVORITES, "favorites"},
-    {StrId::STR_BF_PLAN_TO_READ, "planned_to_read"},
-    {StrId::STR_BF_COMPLETED, "completed"},
-    {StrId::STR_BF_ALL_BOOKS, nullptr},
+    {StrId::STR_BF_CURRENTLY_READING, "currently_reading", UIIcon::Book, "last_read_at-desc"},
+    {StrId::STR_BF_FAVORITES, "favorites", UIIcon::Star},
+    {StrId::STR_BF_PLAN_TO_READ, "planned_to_read", UIIcon::Arrow},
+    {StrId::STR_BF_COMPLETED, "completed", UIIcon::Check},
+    {StrId::STR_BF_ALL_BOOKS, nullptr, UIIcon::Files},
 };
 constexpr int NUM_CATEGORIES = sizeof(CATEGORIES) / sizeof(CATEGORIES[0]);
 
@@ -50,12 +67,49 @@ std::string buildBookFilename(const BookFusionBook& book) {
   if (book.title.empty()) return book.author;
   return book.title + " - " + book.author;
 }
+
+// The device only has an EPUB reader (FileBrowserActivity's own allow-list is
+// EPUB/XTC/TXT/MD/BMP). Other BookFusion formats (PDF, audio, etc.) appear in
+// search results but can't be opened here, so those rows are disabled and a
+// direct download attempt is refused rather than silently mis-saving one
+// with a ".epub" extension it doesn't have.
+bool bookFusionFormatIsEpub(const BookFusionBook& book) {
+  return book.format.empty() || strcasecmp(book.format.c_str(), "epub") == 0;
+}
+
+// Image-heavy EPUBs strain the C3's ~380KB RAM and can slow or crash the
+// renderer. Above this size, confirm before spending the download on it.
+constexpr uint32_t LARGE_BOOK_WARN_BYTES = 10u * 1024 * 1024;  // 10 MB
+bool bookFusionBookIsLarge(const BookFusionBook& book) { return book.downloadSize >= LARGE_BOOK_WARN_BYTES; }
+
+// Same path construction downloadBook() uses to save the file, so the
+// "already downloaded" row icon (see buildBrowsingScreen()) reflects exactly
+// what a download would do, not an approximation of it.
+std::string resolveBookFilePath(const BookFusionBook& book) {
+  const char* downloadFolder = SETTINGS.opdsDownloadFolder;
+  std::string path;
+  path.reserve(96);
+  if (downloadFolder[0] != '\0') path += downloadFolder;
+  path += '/';
+  path += StringUtils::sanitizeFilename(buildBookFilename(book));
+  path += ".epub";
+  return path;
+}
 }  // namespace
 
 BookFusionBrowserActivity::BookFusionBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("BookFusionBrowser", renderer, mappedInput),
       uiTarget(makeUiTarget(renderer)),
-      app(uiTarget, uiTarget.deviceContext()) {}
+      app(uiTarget, uiTarget.deviceContext()) {
+  // Rebind just this activity's small-font slot to a genuinely smaller face
+  // (matches InsiderPhD's fork's SMALL_FONT_ID vs UI_10_FONT_ID size
+  // contrast for book-row author lines and the page indicator).
+  // makeUiTarget()'s app-wide default binds FONT_SMALL to the same font as
+  // FONT_BODY (see UIScale.h's documented "list labels and their values
+  // have the same visible size" convention) -- each activity owns its own
+  // GfxRendererTarget, so rebinding here doesn't affect any other screen.
+  uiTarget.setFont(fui::GfxRendererTarget::FONT_SMALL, SMALL_FONT_ID);
+}
 
 void BookFusionBrowserActivity::onEnter() {
   Activity::onEnter();
@@ -64,6 +118,10 @@ void BookFusionBrowserActivity::onEnter() {
   state = BrowserState::CHECK_WIFI;
   selectedCategory = 0;
   currentCategory = 0;
+  bookshelves = BookFusionBookshelfList{};
+  bookshelvesLoaded = false;
+  currentBookshelfId = 0;
+  currentBookshelfName.clear();
   page = BookFusionSearchResult{};
   selectorIndex = 0;
   errorMessage.clear();
@@ -73,7 +131,8 @@ void BookFusionBrowserActivity::onEnter() {
   visibleRows = 1;
   app.setTheme(uiThemeTokens(uiTarget));
   app.on(ACTION_ROW, &BookFusionBrowserActivity::onRowEvent, this);
-  app.on(ACTION_CANCEL, &BookFusionBrowserActivity::onCancelEvent, this);
+  app.on(ACTION_PREV_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
+  app.on(ACTION_NEXT_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
   app.setScreen(&BookFusionBrowserActivity::rootScreen, this);
   requestUpdate();
 
@@ -112,37 +171,40 @@ bool BookFusionBrowserActivity::preventAutoSleep() {
       return true;
     case BrowserState::CATEGORY_SELECTION:
     case BrowserState::BROWSING:
+    case BrowserState::DOWNLOAD_COMPLETE:
     case BrowserState::ERROR:
       return false;
   }
   return false;
 }
 
-// Row layout in BROWSING: [Previous Page?] [...books...] [Next Page?].
-// Returns the book index for a row, or -1 if the row is a page-nav row.
+// Total pages if BookFusion returned a Total-Count header, else 0 (unknown)
+// -- matches InsiderPhD's fork's fallback of leaving wrap-to-last-page as a
+// no-op when the total isn't known.
 namespace {
-int bookIndexForRow(const BookFusionSearchResult& page, int row) {
-  const int prevOffset = page.currentPage > 0 ? 1 : 0;
-  if (row < prevOffset) return -1;  // "Previous Page"
-  const int bookRow = row - prevOffset;
-  if (bookRow < static_cast<int>(page.books.size())) return bookRow;
-  return -1;  // "Next Page"
+int totalPagesFor(const BookFusionSearchResult& page) {
+  return page.totalCount > 0 ? (page.totalCount + BOOKFUSION_BOOKS_PER_PAGE - 1) / BOOKFUSION_BOOKS_PER_PAGE : 0;
 }
 }  // namespace
 
 void BookFusionBrowserActivity::activateSelected() {
-  const int prevOffset = page.currentPage > 0 ? 1 : 0;
-  const int rowCount = prevOffset + static_cast<int>(page.books.size()) + (page.hasMore ? 1 : 0);
-  if (selectorIndex < 0 || selectorIndex >= rowCount) return;
-
-  const int bookIndex = bookIndexForRow(page, selectorIndex);
-  if (bookIndex >= 0) {
-    downloadBook(page.books[bookIndex]);
-  } else if (selectorIndex < prevOffset) {
-    loadPage(page.currentPage - 1);
-  } else {
-    loadPage(page.currentPage + 1);
+  if (selectorIndex < 0 || selectorIndex >= static_cast<int>(page.books.size())) return;
+  const BookFusionBook book = page.books[selectorIndex];  // copy: page/selectorIndex may change before the callback
+  // Gate large image-heavy EPUBs behind a confirm screen -- the search API
+  // gives us download_size up front, so we can ask before spending the
+  // transfer. Non-EPUB formats are rejected inside downloadBook() directly,
+  // same as InsiderPhD's fork's ordering (format gates the size check, not
+  // the other way around -- no point warning about size for a file that
+  // can't be opened at all).
+  if (bookFusionFormatIsEpub(book) && bookFusionBookIsLarge(book)) {
+    startActivityForResult(
+        std::make_unique<ConfirmationActivity>(renderer, mappedInput, book.title, tr(STR_BF_LARGE_BOOK_WARNING)),
+        [this, book](const ActivityResult& result) {
+          if (!result.isCancelled) downloadBook(book);
+        });
+    return;
   }
+  downloadBook(book);
 }
 
 void BookFusionBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
@@ -150,24 +212,26 @@ void BookFusionBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* 
   self->app.clearTapFlash();
 
   if (self->state == BrowserState::CATEGORY_SELECTION) {
-    if (event.value < 0 || event.value >= NUM_CATEGORIES) return;
+    if (event.value < 0 || event.value >= self->totalMenuRows()) return;
     self->selectCategory(event.value);
     return;
   }
 
   if (self->state != BrowserState::BROWSING) return;
-  const int prevOffset = self->page.currentPage > 0 ? 1 : 0;
-  const int rowCount = prevOffset + static_cast<int>(self->page.books.size()) + (self->page.hasMore ? 1 : 0);
-  if (event.value < 0 || event.value >= rowCount) return;
+  if (event.value < 0 || event.value >= static_cast<int>(self->page.books.size())) return;
   self->selectorIndex = event.value;
   self->activateSelected();
 }
 
-void BookFusionBrowserActivity::onCancelEvent(const fui::ActionEvent&, void* user) {
+void BookFusionBrowserActivity::onPageButtonEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<BookFusionBrowserActivity*>(user);
-  if (self->state != BrowserState::DOWNLOADING) return;
+  if (self->state != BrowserState::BROWSING) return;
   self->app.clearTapFlash();
-  self->cancelDownload = true;
+  if (event.action == ACTION_PREV_PAGE && self->page.currentPage > 1) {
+    self->loadPage(self->page.currentPage - 1);
+  } else if (event.action == ACTION_NEXT_PAGE && self->page.hasMore) {
+    self->loadPage(self->page.currentPage + 1);
+  }
 }
 
 void BookFusionBrowserActivity::loop() {
@@ -193,6 +257,17 @@ void BookFusionBrowserActivity::loop() {
 
   if (state == BrowserState::DOWNLOADING) return;
 
+  if (state == BrowserState::DOWNLOAD_COMPLETE) {
+    int tx = 0;
+    int ty = 0;
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+        mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(tx, ty)) {
+      state = BrowserState::BROWSING;
+      requestUpdate();
+    }
+    return;
+  }
+
   if (state == BrowserState::CATEGORY_SELECTION) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       selectCategory(selectedCategory);
@@ -209,19 +284,18 @@ void BookFusionBrowserActivity::loop() {
       }
     }
     buttonNavigator.onNextRelease([this] {
-      selectedCategory = ButtonNavigator::nextIndex(selectedCategory, NUM_CATEGORIES);
+      selectedCategory = ButtonNavigator::nextIndex(selectedCategory, totalMenuRows());
       requestUpdate();
     });
     buttonNavigator.onPreviousRelease([this] {
-      selectedCategory = ButtonNavigator::previousIndex(selectedCategory, NUM_CATEGORIES);
+      selectedCategory = ButtonNavigator::previousIndex(selectedCategory, totalMenuRows());
       requestUpdate();
     });
     return;
   }
 
   if (state == BrowserState::BROWSING) {
-    const int prevOffset = page.currentPage > 0 ? 1 : 0;
-    const int rowCount = prevOffset + static_cast<int>(page.books.size()) + (page.hasMore ? 1 : 0);
+    const int bookCount = static_cast<int>(page.books.size());
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       state = BrowserState::CATEGORY_SELECTION;
@@ -229,7 +303,7 @@ void BookFusionBrowserActivity::loop() {
       return;
     }
 
-    if (rowCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (bookCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       activateSelected();
       return;
     }
@@ -244,16 +318,33 @@ void BookFusionBrowserActivity::loop() {
       }
     }
 
-    if (rowCount > 0) {
-      const auto moveSelection = [this, rowCount](const int index) {
+    // Dedicated page-turn buttons jump pages directly in one press, without
+    // needing to scroll to a row -- Previous/Next Page live in a fixed
+    // footer instead of the scrollable list (see buildBrowsingScreen()),
+    // which is also touch-tappable there via ACTION_PREV_PAGE/NEXT_PAGE.
+    if (page.currentPage > 1 && mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+      loadPage(page.currentPage - 1);
+      return;
+    }
+    if (page.hasMore && mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
+      loadPage(page.currentPage + 1);
+      return;
+    }
+
+    // Up/Down stay bounded to the current page's books -- no falling off
+    // either end into the adjacent page, since that's what the dedicated
+    // page-turn buttons above are for.
+    if (bookCount > 0) {
+      const auto moveSelection = [this, bookCount](const int index) {
         selectorIndex = index;
-        topIndex = followListSelection(selectorIndex, topIndex, visibleRows, rowCount);
+        topIndex = followListSelection(selectorIndex, topIndex, visibleRows, bookCount);
         requestUpdate();
       };
       buttonNavigator.onNextRelease(
-          [this, &moveSelection, rowCount] { moveSelection(ButtonNavigator::nextIndex(selectorIndex, rowCount)); });
-      buttonNavigator.onPreviousRelease(
-          [this, &moveSelection, rowCount] { moveSelection(ButtonNavigator::previousIndex(selectorIndex, rowCount)); });
+          [this, &moveSelection, bookCount] { moveSelection(ButtonNavigator::nextIndex(selectorIndex, bookCount)); });
+      buttonNavigator.onPreviousRelease([this, &moveSelection, bookCount] {
+        moveSelection(ButtonNavigator::previousIndex(selectorIndex, bookCount));
+      });
     }
   }
 }
@@ -269,6 +360,9 @@ void BookFusionBrowserActivity::rootScreen(UiApp::ScreenType& screen, void* user
       break;
     case BrowserState::DOWNLOADING:
       self->buildDownloadScreen(screen);
+      break;
+    case BrowserState::DOWNLOAD_COMPLETE:
+      self->buildDownloadCompleteScreen(screen);
       break;
     default:
       self->buildStatusScreen(screen);
@@ -289,12 +383,25 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
   screenHeader(screen, tr(STR_BF_BROWSE_LIBRARY));
 
   std::vector<fui::ListItem> items;
-  items.reserve(NUM_CATEGORIES);
+  items.reserve(totalMenuRows());
   for (int i = 0; i < NUM_CATEGORIES; i++) {
     fui::ListItem item;
     item.label = I18N.get(CATEGORIES[i].nameId);
     item.actionValue = static_cast<int16_t>(i);
+    item.icon = listIconFor(CATEGORIES[i].icon, 24);
     items.push_back(item);
+  }
+  if (bookshelvesLoaded) {
+    for (size_t i = 0; i < bookshelves.shelves.size(); i++) {
+      fui::ListItem item;
+      item.label = bookshelves.shelves[i].name.c_str();
+      item.actionValue = static_cast<int16_t>(NUM_CATEGORIES + i);
+      // Folder is the visual delimiter between fixed categories (above,
+      // each with its own icon) and the user's own shelves -- matches
+      // InsiderPhD's fork rather than adding a separator row.
+      item.icon = listIconFor(UIIcon::Folder, 24);
+      items.push_back(item);
+    }
   }
 
   fui::ListProps props;
@@ -303,42 +410,70 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
   props.selectedIndex = static_cast<int16_t>(selectedCategory);
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
+  // InkCap's ported Lyra theme (LyraTheme.h) sets listRowHeight=36, but
+  // InsiderPhD's original Lyra rows are 40px -- a real 4px/row drift, not a
+  // deliberate InkCap design choice. Match it here rather than in
+  // LyraTheme.h itself, since that constant is shared by ~30 other list
+  // screens app-wide and this is scoped to just this BookFusion menu.
+  // Lyra_3_Covers/Carousel are InkCap-only variants with their own
+  // independently-tuned row heights and no InsiderPhD equivalent to match,
+  // so this only applies to plain Lyra.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::LYRA) {
+    props.rowHeight = 40;
+  }
   const auto rows = configureUiList(props, screen.theme(), screen.body());
   visibleRows = rows > 0 ? rows : 1;
   screen.list(props);
 }
 
 void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
-  screenHeader(screen, I18N.get(CATEGORIES[currentCategory].nameId));
+  screenHeader(screen, currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
 
-  const int prevOffset = page.currentPage > 0 ? 1 : 0;
-  const int rowCount = prevOffset + static_cast<int>(page.books.size()) + (page.hasMore ? 1 : 0);
-  if (rowCount == 0) {
+  if (page.books.empty()) {
     screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
     return;
   }
 
+  // Footer strip: Previous Page (left) / "N / M" indicator (center) / Next
+  // Page (right), reserved from the bottom before the list claims the rest
+  // of the body. Previous/Next live here rather than as rows inside the
+  // scrollable list -- with 10 books per page they no longer fit alongside
+  // the books without scrolling, and putting them in a fixed footer means
+  // they're always reachable in one tap/button press regardless of scroll
+  // position (see loop()'s PageBack/PageForward handling for the button
+  // path). theme().smallText already carries the FONT_SMALL slot (a slot
+  // index, not a raw font ID -- see the constructor's slot rebind).
+  const auto& theme = screen.theme();
+  fui::TextStyle indicatorStyle = theme.smallText;
+  indicatorStyle.align = fui::TextAlign::Center;
+  const int16_t footerH = theme.rowHeight;
+  const fui::Rect footerRect = screen.takeBottom(footerH);
+  const int16_t navBtnW = static_cast<int16_t>(footerRect.width / 4);
+
+  // Every page shows exactly its books -- no "Previous/Next Page" rows
+  // mixed in (see loop()'s comment: those used to overflow the visible
+  // rows once pages grew to 10 books, and don't exist in InsiderPhD's fork
+  // at all, which pages by stepping off either end of the list instead).
   std::vector<fui::ListItem> items;
-  items.reserve(rowCount);
-  if (prevOffset > 0) {
-    fui::ListItem prevItem;
-    prevItem.label = tr(STR_PREV_PAGE);
-    prevItem.actionValue = 0;
-    items.push_back(prevItem);
-  }
+  items.reserve(page.books.size());
   for (size_t i = 0; i < page.books.size(); ++i) {
     const auto& book = page.books[i];
     fui::ListItem item;
     item.label = book.title.c_str();
     if (!book.author.empty()) item.subtitle = book.author.c_str();
-    item.actionValue = static_cast<int16_t>(prevOffset + i);
+    item.actionValue = static_cast<int16_t>(i);
+    // Check replaces the BookFusion mark once the file already exists
+    // locally -- matches InsiderPhD's fork's per-row "already downloaded"
+    // indicator, checked against the exact path a download would use.
+    const bool alreadyOnSd = Storage.exists(resolveBookFilePath(book).c_str());
+    item.icon = listIconFor(alreadyOnSd ? UIIcon::Check : UIIcon::BookFusion, 32);
+    // Non-EPUB rows (PDF, audio, etc.) are disabled rather than struck
+    // through -- InkCap's list widget has no per-row text-strike hook, and
+    // disabling both dims the row and blocks touch activation outright.
+    // downloadBook() also refuses these directly, since Confirm-button
+    // activation bypasses a disabled row's touch gating.
+    item.enabled = bookFusionFormatIsEpub(book);
     items.push_back(item);
-  }
-  if (page.hasMore) {
-    fui::ListItem nextItem;
-    nextItem.label = tr(STR_NEXT_PAGE);
-    nextItem.actionValue = static_cast<int16_t>(rowCount - 1);
-    items.push_back(nextItem);
   }
 
   fui::ListProps props;
@@ -348,46 +483,161 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
   props.valueInset = 8;
-  const auto rows = configureUiList(props, screen.theme(), screen.body(), UiListRowType::WithSubtitle);
+  // InkCap deliberately keeps list labels and subtitles the same size
+  // app-wide (UIScale.h: "so list labels and their values have the same
+  // visible size") -- InsiderPhD's fork instead uses a visibly smaller font
+  // for the author line (SMALL_FONT_ID vs UI_10_FONT_ID), which is what
+  // reads as the title looking bold even though neither actually is. This
+  // screen intentionally breaks from InkCap's own convention to match that.
+  // theme().smallText already carries the FONT_SMALL slot, rebound to
+  // SMALL_FONT_ID for this activity in the constructor.
+  props.subtitleText = theme.smallText;
+  const auto rows = configureUiList(props, theme, screen.body(), UiListRowType::WithSubtitle);
   visibleRows = rows > 0 ? rows : 1;
-  topIndex = scrollListBy(topIndex, 0, visibleRows, rowCount);
+  topIndex = scrollListBy(topIndex, 0, visibleRows, static_cast<int>(page.books.size()));
   props.topIndex = static_cast<uint16_t>(topIndex);
   screen.list(props);
+
+  if (page.currentPage > 1) {
+    fui::ButtonProps prevBtn;
+    prevBtn.label = tr(STR_PREV_PAGE);
+    prevBtn.action = ACTION_PREV_PAGE;
+    screen.button(prevBtn, fui::Rect{footerRect.x, footerRect.y, navBtnW, footerRect.height});
+  }
+  if (page.hasMore) {
+    fui::ButtonProps nextBtn;
+    nextBtn.label = tr(STR_NEXT_PAGE);
+    nextBtn.action = ACTION_NEXT_PAGE;
+    screen.button(nextBtn, fui::Rect{static_cast<int16_t>(footerRect.x + footerRect.width - navBtnW), footerRect.y,
+                                     navBtnW, footerRect.height});
+  }
+
+  char indicator[24];
+  if (page.totalCount > 0) {
+    const int totalPages = totalPagesFor(page);
+    snprintf(indicator, sizeof(indicator), "%d / %d", page.currentPage, totalPages);
+  } else if (page.hasMore) {
+    snprintf(indicator, sizeof(indicator), "%d / %d+", page.currentPage, page.currentPage);
+  } else {
+    snprintf(indicator, sizeof(indicator), "%d / %d", page.currentPage, page.currentPage);
+  }
+  const fui::Rect indicatorRect{static_cast<int16_t>(footerRect.x + navBtnW), footerRect.y,
+                                static_cast<int16_t>(footerRect.width - navBtnW * 2), footerRect.height};
+  screen.target().text(indicatorRect, indicator, indicatorStyle);
 }
 
 void BookFusionBrowserActivity::buildDownloadScreen(UiApp::ScreenType& screen) {
-  screenHeader(screen, tr(STR_DOWNLOADING));
+  // Keep the category/shelf name visible instead of switching to a generic
+  // "Downloading" bar -- matches InsiderPhD's fork, which never replaces the
+  // browsing screen's own header for this. Avoids the previous mismatch on
+  // the complete screen too, which kept saying "Downloading..." after the
+  // transfer had already finished.
+  screenHeader(screen,
+               currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
 
   const auto& theme = screen.theme();
-  fui::TextStyle centered = theme.bodyText;
-  centered.align = fui::TextAlign::Center;
-  const int16_t lh = screen.target().lineHeight(centered.font);
+  fui::TextStyle centeredBold = theme.bodyText;
+  centeredBold.align = fui::TextAlign::Center;
+  centeredBold.bold = true;
+  fui::TextStyle centeredRegular = theme.bodyText;
+  centeredRegular.align = fui::TextAlign::Center;
+
+  const int16_t lh = screen.target().lineHeight(centeredRegular.font);
   const int16_t gap = theme.spaceMd;
-  const int16_t barH = 16;
-  const int16_t btnH = theme.rowHeight;
-  const int16_t blockH = static_cast<int16_t>(lh * 2 + barH + btnH + gap * 3);
+
+  // Static info card (cover + title + author + filesize/estimate + status),
+  // no live progress bar -- matches InsiderPhD's fork's download screen
+  // rather than InkCap's previous progress-bar layout. The cover thumb is
+  // generated at a fixed height with auto width, so its width isn't known
+  // until the header is read; that's done once here to size the vertical
+  // centering below, then re-read just before drawing.
+  bool haveCover = false;
+  int coverW = 0;
+  int coverH = 0;
+  if (!downloadCoverPath.empty()) {
+    FsFile probeFile;
+    if (Storage.openFileForRead("BFBrowser", downloadCoverPath, probeFile)) {
+      Bitmap probeBmp(probeFile);
+      if (probeBmp.parseHeaders() == BmpReaderError::Ok && probeBmp.getWidth() > 0 && probeBmp.getHeight() > 0) {
+        haveCover = true;
+        coverW = probeBmp.getWidth();
+        coverH = probeBmp.getHeight();
+      }
+      probeFile.close();
+    }
+  }
+
+  char titleLine[192];
+  snprintf(titleLine, sizeof(titleLine), tr(STR_DOWNLOAD_TITLE_FORMAT), downloadTitle.c_str());
+  const bool haveAuthor = !downloadAuthor.empty();
+  char authorLine[192];
+  if (haveAuthor) snprintf(authorLine, sizeof(authorLine), tr(STR_DOWNLOAD_AUTHOR_FORMAT), downloadAuthor.c_str());
+
+  const bool haveSize = downloadTotal > 0;
+  char sizeLine[64];
+  if (haveSize) {
+    // Matches InsiderPhD's fork's estimate constant -- a measured throughput
+    // figure for this hardware/network class, not a live transfer rate.
+    constexpr size_t kEstimatedBytesPerSec = 30 * 1024;
+    const unsigned estSec =
+        static_cast<unsigned>((downloadTotal + kEstimatedBytesPerSec - 1) / kEstimatedBytesPerSec);
+    char sizeStr[16];
+    snprintf(sizeStr, sizeof(sizeStr), "%.1f MB", downloadTotal / (1024.0f * 1024.0f));
+    if (estSec > 90) {
+      snprintf(sizeLine, sizeof(sizeLine), tr(STR_DOWNLOAD_SIZE_MIN_FORMAT), sizeStr, (estSec + 59) / 60);
+    } else {
+      snprintf(sizeLine, sizeof(sizeLine), tr(STR_DOWNLOAD_SIZE_SEC_FORMAT), sizeStr, estSec);
+    }
+  }
+
+  const int16_t coverBlockH = haveCover ? static_cast<int16_t>(coverH + gap) : 0;
+  const int16_t blockH = static_cast<int16_t>(coverBlockH + lh + gap + (haveAuthor ? lh + gap : 0) +
+                                              (haveSize ? lh + gap : 0) + lh);
   const fui::Rect body = screen.body();
   if (body.height > blockH) screen.spacer(static_cast<int16_t>((body.height - blockH) / 2));
 
-  screen.target().text(screen.takeTop(lh, gap), tr(STR_DOWNLOADING), centered);
-  screen.target().text(screen.takeTop(lh, gap), statusMessage.c_str(), centered);
-
-  const fui::Rect bar = screen.takeTop(barH, gap).inset(fui::Insets{0, 50, 0, 50});
-  if (downloadTotal > 0) {
-    fui::ProgressBarProps progress;
-    progress.value = static_cast<int32_t>(downloadProgress);
-    progress.max = static_cast<int32_t>(downloadTotal);
-    progress.border = fui::Paint::solid(fui::Color::Black);
-    progress.borderWidth = 1;
-    fui::progressBar(screen.frame(), bar, progress);
+  if (haveCover) {
+    const fui::Rect coverRect = screen.takeTop(static_cast<int16_t>(coverH), gap);
+    FsFile coverFile;
+    if (Storage.openFileForRead("BFBrowser", downloadCoverPath, coverFile)) {
+      Bitmap coverBmp(coverFile);
+      if (coverBmp.parseHeaders() == BmpReaderError::Ok) {
+        renderer.drawBitmap(coverBmp, coverRect.x + (coverRect.width - coverW) / 2, coverRect.y, coverW, coverH);
+      }
+      coverFile.close();
+    }
   }
 
-  const fui::Rect btnArea = screen.takeTop(btnH);
-  const int16_t btnW = static_cast<int16_t>(btnArea.width / 3);
-  fui::ButtonProps cancel;
-  cancel.label = tr(STR_CANCEL);
-  cancel.action = ACTION_CANCEL;
-  screen.button(cancel, fui::Rect{static_cast<int16_t>(btnArea.x + (btnArea.width - btnW) / 2), btnArea.y, btnW, btnH});
+  screen.target().text(screen.takeTop(lh, gap), titleLine, centeredBold);
+  if (haveAuthor) screen.target().text(screen.takeTop(lh, gap), authorLine, centeredRegular);
+  if (haveSize) screen.target().text(screen.takeTop(lh, gap), sizeLine, centeredRegular);
+  screen.target().text(screen.takeTop(lh, gap), statusMessage.c_str(), centeredBold);
+}
+
+void BookFusionBrowserActivity::buildDownloadCompleteScreen(UiApp::ScreenType& screen) {
+  // Keep the category/shelf name visible instead of switching to a generic
+  // "Downloading" bar -- matches InsiderPhD's fork, which never replaces the
+  // browsing screen's own header for this. Avoids the previous mismatch on
+  // the complete screen too, which kept saying "Downloading..." after the
+  // transfer had already finished.
+  screenHeader(screen,
+               currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
+
+  const auto& theme = screen.theme();
+  fui::TextStyle centeredBold = theme.bodyText;
+  centeredBold.align = fui::TextAlign::Center;
+  centeredBold.bold = true;
+  fui::TextStyle centeredRegular = theme.bodyText;
+  centeredRegular.align = fui::TextAlign::Center;
+
+  const int16_t lh = screen.target().lineHeight(centeredRegular.font);
+  const int16_t gap = theme.spaceMd;
+  const int16_t blockH = static_cast<int16_t>(lh * 2 + gap);
+  const fui::Rect body = screen.body();
+  if (body.height > blockH) screen.spacer(static_cast<int16_t>((body.height - blockH) / 2));
+
+  screen.target().text(screen.takeTop(lh, gap), tr(STR_BF_DOWNLOAD_COMPLETE), centeredBold);
+  screen.target().text(screen.takeTop(lh, gap), downloadTitle.c_str(), centeredRegular);
 }
 
 void BookFusionBrowserActivity::buildStatusScreen(UiApp::ScreenType& screen) {
@@ -424,6 +674,9 @@ void BookFusionBrowserActivity::render(RenderLock&&) {
     case BrowserState::DOWNLOADING:
       labels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
       break;
+    case BrowserState::DOWNLOAD_COMPLETE:
+      labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+      break;
     case BrowserState::ERROR:
       labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
       break;
@@ -448,18 +701,32 @@ void BookFusionBrowserActivity::showLoadingBeforeFetch() {
   }
 }
 
+int BookFusionBrowserActivity::totalMenuRows() const {
+  return NUM_CATEGORIES + (bookshelvesLoaded ? static_cast<int>(bookshelves.shelves.size()) : 0);
+}
+
 void BookFusionBrowserActivity::selectCategory(int index) {
-  if (index < 0 || index >= NUM_CATEGORIES) return;
+  if (index < 0 || index >= totalMenuRows()) return;
   selectedCategory = index;
-  currentCategory = index;
+  if (index < NUM_CATEGORIES) {
+    currentCategory = index;
+    currentBookshelfId = 0;
+    currentBookshelfName.clear();
+  } else {
+    const size_t shelfIdx = static_cast<size_t>(index - NUM_CATEGORIES);
+    if (shelfIdx >= bookshelves.shelves.size()) return;
+    currentCategory = -1;
+    currentBookshelfId = bookshelves.shelves[shelfIdx].id;
+    currentBookshelfName = bookshelves.shelves[shelfIdx].name;
+  }
   selectorIndex = 0;
   topIndex = 0;
   showLoadingBeforeFetch();
-  loadPage(0);
+  loadPage(1);
 }
 
 void BookFusionBrowserActivity::loadPage(int pageIndex) {
-  if (pageIndex < 0) return;
+  if (pageIndex < 1) return;  // 1-indexed -- see BookFusionSyncClient::searchBooks().
   showLoadingBeforeFetch();
 
   // Release right before the real request, matching BookFusionAuthActivity/
@@ -482,7 +749,9 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   renderer.releaseFrameBuffersForNetwork();
 
   BookFusionSearchResult result;
-  const auto err = BookFusionSyncClient::searchBooks(pageIndex, CATEGORIES[currentCategory].list, result);
+  const char* listParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].list;
+  const char* sortParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].sort;
+  const auto err = BookFusionSyncClient::searchBooks(pageIndex, listParam, result, currentBookshelfId, sortParam);
 
   if (!renderer.reallocFrameBuffersAfterNetwork()) {
     LOG_ERR("BFBrowser", "Framebuffer realloc failed after network fetch");
@@ -504,10 +773,28 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
 }
 
 void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
+  // The row is already disabled for non-EPUB formats, but that only blocks
+  // touch activation -- the physical Confirm button reaches this function
+  // directly regardless of row state, so refuse here too rather than burn
+  // bandwidth on a file the device can't open.
+  if (!bookFusionFormatIsEpub(book)) {
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_BF_FORMAT_UNSUPPORTED);
+    requestUpdate();
+    return;
+  }
+
   state = BrowserState::DOWNLOADING;
-  statusMessage = book.title;
-  downloadProgress = downloadTotal = 0;
-  cancelDownload = false;
+  downloadTitle = book.title;
+  downloadAuthor = book.author;
+  downloadCoverPath.clear();
+  statusMessage = tr(STR_CONNECTING);
+  downloadProgress = 0;
+  // From the search API response, not the live transfer -- lets the
+  // filesize/estimate line show immediately (matches InsiderPhD's fork).
+  // The transfer's own progress callback overwrites this with the actual
+  // measured total once it starts, which is authoritative if it differs.
+  downloadTotal = book.downloadSize;
   goHomeAfterCancel = false;
 
   // Must actually wait for this render (not just requestUpdate(true), which
@@ -561,13 +848,43 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     return;
   }
 
-  std::string filename;
-  filename.reserve(96);
-  if (useDownloadFolder) filename += downloadFolder;
-  filename += '/';
-  filename += StringUtils::sanitizeFilename(buildBookFilename(book));
-  filename += ".epub";
+  const std::string filename = resolveBookFilePath(book);
   LOG_DBG("BFBrowser", "Downloading book %lu -> %s", (unsigned long)book.bookId, filename.c_str());
+
+  // Clear any stale cache from a previous file at this exact path before
+  // writing anything new into it -- including the cover pre-fetch just
+  // below, which must not get wiped out again after a successful download
+  // the way it would if this ran there instead (clearBookCache() doesn't
+  // preserve cover/thumb files, only progress/settings/bookfusion.json).
+  clearBookCache(filename);
+
+  // Pre-fetch the cover now, before the EPUB transfer, so the download
+  // screen's static card can show it (matches InsiderPhD's fork -- InkCap
+  // previously fetched the cover only after a successful download, which
+  // meant it never appeared on this screen). Best-effort: a failed fetch
+  // just means the card renders without a cover, same as before.
+  if (!book.coverUrl.empty()) {
+    Epub coverEpub(filename, "/.crosspoint");
+    coverEpub.setupCacheDir();
+    // Keep the framebuffer released through both download() AND convert():
+    // the JPEG/PNG decoder needs a single large contiguous block (~53KB)
+    // that the still-allocated framebuffer was denying it, confirmed via
+    // "Not enough heap for JPEG decoder" on hardware when convert() ran
+    // after a premature realloc here.
+    GfxRenderer::NetworkBufferLoan fbLoan(renderer);
+    if (BookFusionCoverCache::download(book.coverUrl, coverEpub) &&
+        BookFusionCoverCache::convert(coverEpub, COVER_THUMB_HEIGHT)) {
+      downloadCoverPath = coverEpub.getThumbBmpPath(COVER_THUMB_HEIGHT);
+    } else {
+      LOG_ERR("BFBrowser", "Cover fetch failed for book %lu", (unsigned long)book.bookId);
+    }
+  }
+
+  statusMessage = tr(STR_DOWNLOAD_WAIT);
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("BFBrowser", "Downloading screen could not be rendered before transfer");
+    requestUpdate(true);
+  }
 
   // Release again for the transfer itself: it's the same wolfSSL heap
   // pressure as the quick metadata calls above, just spread over a much
@@ -578,10 +895,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
 
   bool cancelRequested = false;
   auto pollCancel = [this, &cancelRequested] {
-    if (cancelRequested || cancelDownload) {
-      cancelRequested = true;
-      return true;
-    }
+    if (cancelRequested) return true;
     mappedInput.update();
     if (mappedInput.wasHomeGesture()) {
       goHomeAfterCancel = true;
@@ -650,9 +964,10 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   }
 
   if (result == HttpDownloader::OK) {
-    clearBookCache(filename);
+    // Cover was already fetched into this same cache path before the
+    // transfer started (see above) -- nothing left to do here for it.
     BookFusionBookIdStore::saveBookId(filename, book.bookId);
-    state = BrowserState::BROWSING;
+    state = BrowserState::DOWNLOAD_COMPLETE;
   } else if (result == HttpDownloader::ABORTED) {
     LOG_INF("BFBrowser", "Download cancelled");
     if (goHomeAfterCancel) {
@@ -670,11 +985,34 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
 
 void BookFusionBrowserActivity::checkAndConnectWifi() {
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    state = BrowserState::CATEGORY_SELECTION;
-    requestUpdate();
+    loadShelvesAndShowMenu();
     return;
   }
   launchWifiSelection();
+}
+
+void BookFusionBrowserActivity::loadShelvesAndShowMenu() {
+  showLoadingBeforeFetch();
+
+  sdFontSystem.releaseForNetwork(renderer);
+  renderer.releaseFrameBuffersForNetwork();
+
+  bookshelves = BookFusionBookshelfList{};
+  const auto err = BookFusionSyncClient::searchBookshelves(bookshelves);
+  // Best-effort: a failed fetch just means the menu shows categories only,
+  // same as if the user has no shelves at all -- not worth an error screen.
+  bookshelvesLoaded = err == BookFusionSyncClient::OK;
+  if (!bookshelvesLoaded) {
+    LOG_ERR("BFBrowser", "searchBookshelves failed: %s", BookFusionSyncClient::errorString(err).c_str());
+  }
+
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("BFBrowser", "Framebuffer realloc failed after network fetch");
+    ESP.restart();
+  }
+
+  state = BrowserState::CATEGORY_SELECTION;
+  requestUpdate();
 }
 
 void BookFusionBrowserActivity::launchWifiSelection() {
@@ -687,8 +1025,7 @@ void BookFusionBrowserActivity::launchWifiSelection() {
 
 void BookFusionBrowserActivity::onWifiSelectionComplete(const bool connected) {
   if (connected) {
-    state = BrowserState::CATEGORY_SELECTION;
-    requestUpdate();
+    loadShelvesAndShowMenu();
   } else {
     state = BrowserState::ERROR;
     errorMessage = tr(STR_WIFI_CONN_FAILED);

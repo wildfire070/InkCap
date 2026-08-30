@@ -466,6 +466,11 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdFontFamilyName[0] != '\0') doc["sdFontFamilyName"] = sdFontFamilyName;
   if (dictionarySdFontFamilyName[0] != '\0') doc["dictionaryFont"] = dictionarySdFontFamilyName;
   doc["dictionaryFontSize"] = dictionaryFontPointSize;
+  // Not in getBaseSettingsList() -- its row lives in BookFusionSettingsActivity's own
+  // hand-rolled menu, not the generic Settings list -- so it needs an explicit entry here.
+  doc["autosyncMode"] = autosyncMode;
+  // Same reasoning: koreaderAutosyncMode's row lives in KOReaderSettingsActivity's own menu.
+  doc["koreaderAutosyncMode"] = koreaderAutosyncMode;
   JsonArray quickActionSlotsJson = doc["quickActionSlots"].to<JsonArray>();
   for (const uint8_t action : quickActionSlots) {
     quickActionSlotsJson.add(action);
@@ -683,6 +688,10 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   strncpy(dictionarySdFontFamilyName, dictionaryFamily, sizeof(dictionarySdFontFamilyName) - 1);
   dictionarySdFontFamilyName[sizeof(dictionarySdFontFamilyName) - 1] = '\0';
   dictionaryFontPointSize = doc["dictionaryFontSize"] | static_cast<uint8_t>(0);
+  // Not in getBaseSettingsList() -- see the matching comment in toJson().
+  autosyncMode = clamp(doc["autosyncMode"] | static_cast<uint8_t>(AUTOSYNC_OFF), AUTOSYNC_COUNT, AUTOSYNC_OFF);
+  koreaderAutosyncMode =
+      clamp(doc["koreaderAutosyncMode"] | static_cast<uint8_t>(AUTOSYNC_OFF), AUTOSYNC_COUNT, AUTOSYNC_OFF);
   const JsonArrayConst quickActionSlotsJson = doc["quickActionSlots"].as<JsonArrayConst>();
   if (!quickActionSlotsJson.isNull()) {
     for (size_t i = 0; i < std::size(quickActionSlots); ++i) {

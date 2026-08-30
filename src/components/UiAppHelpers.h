@@ -10,6 +10,7 @@
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/icons/icon_bookfusion.h"
 #include "components/icons/listIcons.h"
 
 // Shared glue for activities hosting a FreeInkApp: the font-bound render
@@ -102,6 +103,16 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
         return freeink::ui::bitmapFromIcon(icon_lyra_library_32);
       case UIIcon::Hotspot:
         return freeink::ui::bitmapFromIcon(icon_radio_tower_32);
+      case UIIcon::BookFusion:
+        return freeink::ui::bitmapFromIcon(icon_bookfusion_32);
+      case UIIcon::Star:
+        return freeink::ui::bitmapFromIcon(icon_star_32);
+      case UIIcon::Check:
+        return freeink::ui::bitmapFromIcon(icon_check_32);
+      case UIIcon::Arrow:
+        return freeink::ui::bitmapFromIcon(icon_corner_down_right_32);
+      case UIIcon::Files:
+        return freeink::ui::bitmapFromIcon(icon_files_32);
       default:
         return {};
     }
@@ -123,6 +134,16 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
       return freeink::ui::bitmapFromIcon(icon_lyra_library_24);
     case UIIcon::Hotspot:
       return freeink::ui::bitmapFromIcon(icon_radio_tower_24);
+    case UIIcon::BookFusion:
+      return freeink::ui::bitmapFromIcon(icon_bookfusion_24);
+    case UIIcon::Star:
+      return freeink::ui::bitmapFromIcon(icon_star_24);
+    case UIIcon::Check:
+      return freeink::ui::bitmapFromIcon(icon_check_24);
+    case UIIcon::Arrow:
+      return freeink::ui::bitmapFromIcon(icon_corner_down_right_24);
+    case UIIcon::Files:
+      return freeink::ui::bitmapFromIcon(icon_files_24);
     default:
       return {};
   }
