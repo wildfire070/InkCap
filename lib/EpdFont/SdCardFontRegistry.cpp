@@ -7,6 +7,12 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+// Conservative headroom for growing a std::vector<SdCardFontFamilyInfo/FileInfo> plus its new
+// element's std::string members -- see the comments at each call site.
+constexpr size_t MIN_MAX_ALLOC_HEAP_FOR_GROWTH = 4096;
+}  // namespace
+
 // --- SdCardFontFamilyInfo helpers ---
 
 const SdCardFontFileInfo* SdCardFontFamilyInfo::findFile(uint8_t size, uint8_t style) const {
@@ -132,6 +138,16 @@ bool SdCardFontRegistry::scanDirectory(const char* dirPath, SdCardFontFamilyInfo
       continue;
     }
 
+    // See the matching comment in scanRoot(): this build compiles with -fno-exceptions, so a
+    // failed vector growth below can't be caught -- it's a full device abort() instead of an
+    // error return like the SD library's own allocationFailed() gives (confirmed on hardware:
+    // growing this vector under fragmented heap crashed the whole device instead of just failing
+    // this one scan). Check headroom before growing rather than after failing to.
+    if (ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP_FOR_GROWTH) {
+      LOG_ERR("SDREG", "Out of memory growing font file list scanning: %s", dirPath);
+      return false;
+    }
+
     SdCardFontFileInfo info;
     info.path = std::string(dirPath) + "/" + nameBuffer;
     info.pointSize = size;
@@ -191,6 +207,17 @@ bool SdCardFontRegistry::scanRoot(const char* rootPath, std::vector<SdCardFontFa
       if (!SdCardFontRegistry::scanDirectory(subDirPath.c_str(), family)) return false;
 
       if (!family.files.empty()) {
+        // out.reserve()'d capacity (see discover()) covers the common case, but a card with more
+        // distinct families than that needs out to grow here. This build compiles with
+        // -fno-exceptions, so a failed vector growth can't be caught -- it's a full device
+        // abort() instead of an error return like the SD library's own allocationFailed() gives
+        // (confirmed on hardware: growing this vector under fragmented heap crashed the whole
+        // device instead of just failing this one scan). Check headroom before growing rather
+        // than after failing to.
+        if (ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP_FOR_GROWTH) {
+          LOG_ERR("SDREG", "Out of memory growing font family list scanning: %s", rootPath);
+          return false;
+        }
         out.push_back(std::move(family));
       }
     } else {
