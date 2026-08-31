@@ -15,12 +15,19 @@
 #include "BookStatus.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/SortPopup.h"
 #include "util/ButtonNavigator.h"
 
 class FileBrowserActivity final : public Activity {
  public:
   // Picker modes return their selected path via ActivityResult.
   enum class Mode { Books, PickFirmware, PickDirectory };
+
+  // Metadata-based sort fields for Mode::Books, offered via SortPopup. Only applies to
+  // the fully-materialized `files` list (see usingIndex below) -- oversized folders keep
+  // the existing fixed alphabetical order regardless of SETTINGS.fileBrowserSortField.
+  enum class SortField : uint8_t { Title = 0, Author = 1, Status = 2, Rating = 3, Chapters = 4, DateUpdated = 5, LastOpened = 6 };
+  static constexpr int SORT_FIELD_COUNT = 7;
 
  private:
   // FreeInkApp hosts the file list (themed rows, icons, touch routing); the
@@ -111,6 +118,22 @@ class FileBrowserActivity final : public Activity {
   // as visibleStatusCache above (avoids an SD stat per row on every redraw/scroll).
   bool isBookFusionLinked(const std::string& path);
   std::map<size_t, bool> visibleBookFusionCache;
+
+  // Metadata sort (Mode::Books only). `files` already interleaves folders (natural-sorted,
+  // pinned first) and non-folder entries; sortFiles() re-derives that ordering, replacing
+  // FsHelpers::sortFileList's plain alphabetical pass with a metadata-keyed one when
+  // SETTINGS.fileBrowserSortField is set. Keyed by entry name (not index) since indices
+  // shift on every resort; cleared in loadFilesLocked() for a fresh folder.
+  SortPopup sortPopup;
+  Rect sortButtonRect{0, 0, 0, 0};
+  std::map<std::string, std::string> sortKeyCache[SORT_FIELD_COUNT];
+  bool sortCacheReady[SORT_FIELD_COUNT] = {};
+  void openSortPopup();
+  void sortFiles();
+  // Empty return means "no value for this field" -- always sorts to the end, regardless
+  // of direction, matching how every other missing-metadata case in this app is handled.
+  std::string computeSortKey(SortField field, const std::string& fullPath);
+  void ensureSortCache(SortField field, const std::vector<std::string>& nonDirEntries);
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
