@@ -109,7 +109,7 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
-  // BookFusion's "bookshelf" Calibre custom column (calibre:user_metadata:#bookshelf),
+  // BookFusion's "bookshelf" Calibre custom column (calibre:user_metadata:#bookfusionshelf),
   // written into the EPUB's own OPF metadata at export time -- no network call needed.
   std::string bookshelf;
 
@@ -120,6 +120,14 @@ class ContentOpfParser final : public Print {
   // Teen/-), distinct from Calibre's built-in numeric star-rating field and from
   // Ao3Librarian's own AO3-preface-scraped rating (same values, separate pipeline).
   std::string contentRating;  // calibre:user_metadata:#rating (#value# extracted)
+
+  std::string chapters;          // calibre:user_metadata:#chapters, e.g. "1/1"
+  std::string completionStatus;  // calibre:user_metadata:#completionstatus, e.g. "Completed"
+  // Story's own last-update date on AO3 (calibre:user_metadata:#updated), truncated to
+  // YYYY-MM-DD -- distinct from ao3UpdateDate above, which is the export timestamp.
+  std::string updatedDate;
+  bool liked = false;       // calibre:user_metadata:#like
+  bool readStatus = false;  // calibre:user_metadata:#readstatus
 
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache, const bool collectCssFiles = true)
