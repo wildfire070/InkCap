@@ -494,6 +494,11 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.seriesName = opfParser.seriesName;
   bookMetadata.seriesIndex = opfParser.seriesIndex;
   bookMetadata.contentRating = opfParser.contentRating;
+  bookMetadata.chapters = opfParser.chapters;
+  bookMetadata.completionStatus = opfParser.completionStatus;
+  bookMetadata.updatedDate = opfParser.updatedDate;
+  bookMetadata.liked = opfParser.liked;
+  bookMetadata.readStatus = opfParser.readStatus;
 
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;
@@ -2027,6 +2032,38 @@ const std::string& Epub::getContentRating() const {
     return blank;
   }
   return bookMetadataCache->coreMetadata.contentRating;
+}
+
+const std::string& Epub::getChapters() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.chapters;
+}
+
+const std::string& Epub::getCompletionStatus() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.completionStatus;
+}
+
+const std::string& Epub::getUpdatedDate() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.updatedDate;
+}
+
+bool Epub::isLiked() const {
+  return bookMetadataCache && bookMetadataCache->isLoaded() && bookMetadataCache->coreMetadata.liked;
+}
+
+bool Epub::getReadStatus() const {
+  return bookMetadataCache && bookMetadataCache->isLoaded() && bookMetadataCache->coreMetadata.readStatus;
 }
 
 namespace {
