@@ -204,6 +204,12 @@ class Epub {
   // AO3-preface-scraped rating.
   const std::string& getContentRating() const;
 
+  const std::string& getChapters() const;          // calibre:user_metadata:#chapters, e.g. "1/1"
+  const std::string& getCompletionStatus() const;   // calibre:user_metadata:#completionstatus
+  const std::string& getUpdatedDate() const;        // calibre:user_metadata:#updated (story's AO3 update date)
+  bool isLiked() const;                             // calibre:user_metadata:#like
+  bool getReadStatus() const;                       // calibre:user_metadata:#readstatus
+
  private:
   std::string getCachedCoverImagePath(const std::string& coverImageHref) const;
   bool ensureCachedCoverImage(const std::string& coverImageHref, std::string& outPath) const;

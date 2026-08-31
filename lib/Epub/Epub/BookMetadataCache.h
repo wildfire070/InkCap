@@ -17,7 +17,7 @@ class BookMetadataCache {
     std::string language;
     std::string coverItemHref;
     std::string textReferenceHref;
-    // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookshelf),
+    // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookfusionshelf),
     // read straight out of the EPUB's own OPF metadata -- no network call needed.
     std::string bookshelf;
     std::string seriesName;   // calibre:series
@@ -26,6 +26,11 @@ class BookMetadataCache {
     // Teen/-), from calibre:user_metadata:#rating -- separate from Ao3Librarian's
     // own AO3-preface-scraped rating (same values, different pipeline/storage).
     std::string contentRating;
+    std::string chapters;          // calibre:user_metadata:#chapters, e.g. "1/1"
+    std::string completionStatus;  // calibre:user_metadata:#completionstatus, e.g. "Completed"
+    std::string updatedDate;       // calibre:user_metadata:#updated -- story's own AO3 update date
+    bool liked = false;            // calibre:user_metadata:#like
+    bool readStatus = false;       // calibre:user_metadata:#readstatus
   };
 
   struct SpineEntry {
