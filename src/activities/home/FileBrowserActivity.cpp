@@ -9,6 +9,7 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -276,6 +277,8 @@ void FileBrowserActivity::loadFilesLocked() {
   fileListMemoryLimited = false;
   visibleStatusCache.clear();
   visibleBookFusionCache.clear();
+  for (auto& cache : sortKeyCache) cache.clear();
+  for (bool& ready : sortCacheReady) ready = false;
   fileListReadFailed = false;
   if (fileIndex) fileIndex->close();
 
@@ -285,7 +288,7 @@ void FileBrowserActivity::loadFilesLocked() {
   }
 
   if (!overflow || fileListMemoryLimited) {
-    FsHelpers::sortFileList(files);
+    sortFiles();
     return;
   }
 
@@ -317,7 +320,7 @@ void FileBrowserActivity::loadFilesLocked() {
           static_cast<unsigned>(INDEX_THRESHOLD));
   overflow = false;
   loadFilesIntoVector(INDEX_THRESHOLD, overflow);
-  FsHelpers::sortFileList(files);
+  sortFiles();
 }
 
 size_t FileBrowserActivity::entryCount() const {
@@ -857,8 +860,31 @@ void FileBrowserActivity::activateSelected() {
 }
 
 void FileBrowserActivity::loop() {
+  if (sortPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
   if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
     navigateBack();
+    return;
+  }
+
+  if (mode == Mode::Books && mappedInput.hasTouchHardware() && sortButtonRect.width > 0) {
+    int tx = 0;
+    int ty = 0;
+    if (mappedInput.wasScreenTapped(tx, ty) && tx >= sortButtonRect.x && tx < sortButtonRect.x + sortButtonRect.width &&
+        ty >= sortButtonRect.y && ty < sortButtonRect.y + sortButtonRect.height) {
+      openSortPopup();
+      return;
+    }
+  }
+
+  // Non-touch: PageBack/PageForward are otherwise unused on this screen (they're a
+  // distinct button pair from Up/Down/Left/Right's list navigation), so either one
+  // opens the sort popup -- no conflict with the existing long-press-Confirm context
+  // menu or long-press-Back hidden-files toggle.
+  if (mode == Mode::Books && !mappedInput.hasTouchHardware() &&
+      (mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
+       mappedInput.wasPressed(MappedInputManager::Button::PageForward))) {
+    openSortPopup();
     return;
   }
   if (pendingCompletedFeedback) {
@@ -1100,6 +1126,166 @@ bool FileBrowserActivity::isBookFusionLinked(const std::string& path) {
   return BookFusionBookIdStore::hasBookId(path);
 }
 
+std::string FileBrowserActivity::computeSortKey(SortField field, const std::string& fullPath) {
+  if (field == SortField::LastOpened) {
+    const auto& recentBooks = RECENT_BOOKS.getBooks();
+    for (size_t i = 0; i < recentBooks.size(); i++) {
+      if (recentBooks[i].path == fullPath) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%04zu", i);
+        return buf;
+      }
+    }
+    return "";  // never opened -- sorts to the end, same as any other missing key
+  }
+
+  if (!FsHelpers::hasEpubExtension(fullPath)) return "";
+
+  BookMetadataCache cache(Epub::cachePathForFilePath(fullPath, "/.crosspoint"));
+  if (!cache.load()) return "";
+
+  switch (field) {
+    case SortField::Title:
+      return cache.coreMetadata.title;
+    case SortField::Author:
+      return cache.coreMetadata.author;
+    case SortField::Status:
+      return cache.coreMetadata.completionStatus;
+    case SortField::Rating:
+      return cache.coreMetadata.contentRating;
+    case SortField::DateUpdated:
+      return cache.coreMetadata.updatedDate;  // ISO YYYY-MM-DD -- lexical order is chronological
+    case SortField::Chapters: {
+      // Posted count is the left side of "N/M" (or "N/?" for an open-ended WIP);
+      // zero-padded so lexical string comparison matches numeric order.
+      const std::string& raw = cache.coreMetadata.chapters;
+      const auto slash = raw.find('/');
+      const std::string posted = slash != std::string::npos ? raw.substr(0, slash) : raw;
+      if (posted.empty() || !std::all_of(posted.begin(), posted.end(), [](unsigned char c) { return isdigit(c); })) {
+        return "";
+      }
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%05d", atoi(posted.c_str()));
+      return buf;
+    }
+    default:
+      return "";
+  }
+}
+
+void FileBrowserActivity::ensureSortCache(SortField field, const std::vector<std::string>& nonDirEntries) {
+  const int idx = static_cast<int>(field);
+  if (sortCacheReady[idx]) return;
+  auto& cache = sortKeyCache[idx];
+  cache.clear();
+
+  // LastOpened's key comes from RecentBooksStore, not BookMetadataCache -- there's
+  // nothing to build for it.
+  const bool needsMetadataCache = field != SortField::LastOpened;
+  bool showingLoading = false;
+  Rect popupRect;
+  const int total = static_cast<int>(nonDirEntries.size());
+  int processed = 0;
+
+  // Same 80KB floor Ao3IndexActivity's own bulk book-processing pass checks before
+  // it starts building: the OPF/TOC build pass has an unguarded allocation deep
+  // inside that can abort the whole device on low heap (a known crash class in this
+  // codebase), not just fail this one book gracefully. Checked per-book rather than
+  // once up front -- each Epub is destroyed at the end of its own iteration (see
+  // below), so heap recovers between books, and a folder that starts out fine can
+  // still run low partway through a long batch of never-opened books.
+  static constexpr uint32_t kMinFreeHeapForBuild = 80 * 1024;
+
+  for (const auto& entry : nonDirEntries) {
+    const std::string fullPath = buildFullPath(basepath, entry);
+    // Skip the exists() check's own cost for books that already have a cache --
+    // computeSortKey() below reads those directly and cheaply. Only pay for a full
+    // Epub::load() (same lightweight, reader-free build RecentBooksGridActivity and
+    // HomeActivity already use for cover-thumb generation) on the ones that need it.
+    if (needsMetadataCache && FsHelpers::hasEpubExtension(fullPath) && ESP.getFreeHeap() >= kMinFreeHeapForBuild &&
+        !BookMetadataCache::exists(Epub::cachePathForFilePath(fullPath, "/.crosspoint"))) {
+      Epub epub(fullPath, "/.crosspoint");
+      if (epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip)) {
+        if (!showingLoading) {
+          showingLoading = true;
+          popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+        }
+        GUI.fillPopupProgress(renderer, popupRect, (processed * 100) / std::max(1, total));
+      }
+    }
+    cache[entry] = computeSortKey(field, fullPath);
+    processed++;
+  }
+  sortCacheReady[idx] = true;
+}
+
+void FileBrowserActivity::sortFiles() {
+  std::vector<std::string> dirs;
+  std::vector<std::string> nonDirs;
+  dirs.reserve(files.size());
+  nonDirs.reserve(files.size());
+  for (auto& entry : files) {
+    (entry.back() == '/' ? dirs : nonDirs).push_back(std::move(entry));
+  }
+  std::sort(dirs.begin(), dirs.end(), FsHelpers::naturalLess);
+
+  const uint8_t fieldRaw = SETTINGS.fileBrowserSortField;
+  if (mode != Mode::Books || fieldRaw >= SORT_FIELD_COUNT) {
+    std::sort(nonDirs.begin(), nonDirs.end(), FsHelpers::naturalLess);
+  } else {
+    const auto field = static_cast<SortField>(fieldRaw);
+    // nonDirs, not files -- files' contents were just std::move'd out into dirs/nonDirs
+    // above, so by this point every entry in files is a moved-from empty string.
+    ensureSortCache(field, nonDirs);
+    const auto& keyCache = sortKeyCache[fieldRaw];
+    const bool ascending = SETTINGS.fileBrowserSortAscending != 0;
+    std::sort(nonDirs.begin(), nonDirs.end(), [&](const std::string& a, const std::string& b) {
+      const auto itA = keyCache.find(a);
+      const auto itB = keyCache.find(b);
+      const std::string& keyA = itA != keyCache.end() ? itA->second : std::string();
+      const std::string& keyB = itB != keyCache.end() ? itB->second : std::string();
+      if (keyA.empty() != keyB.empty()) return keyB.empty();  // missing key always sorts to the end
+      if (keyA.empty() || keyA == keyB) return FsHelpers::naturalLess(a, b);  // both missing, or tie -- stable fallback
+      return ascending ? keyA < keyB : keyA > keyB;
+    });
+  }
+
+  files.clear();
+  files.reserve(dirs.size() + nonDirs.size());
+  for (auto& d : dirs) files.push_back(std::move(d));
+  for (auto& f : nonDirs) files.push_back(std::move(f));
+}
+
+void FileBrowserActivity::openSortPopup() {
+  // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
+  // a runtime variable, so this array/loop calls I18N.get() directly instead.
+  static const StrId kFieldLabelIds[SORT_FIELD_COUNT] = {
+      StrId::STR_TITLE,        StrId::STR_SORT_AUTHOR,       StrId::STR_SORT_STATUS, StrId::STR_SORT_RATING,
+      StrId::STR_SORT_CHAPTERS, StrId::STR_SORT_DATE_UPDATED, StrId::STR_SORT_LAST_OPENED};
+  std::vector<std::string> labels;
+  labels.reserve(SORT_FIELD_COUNT);
+  for (const StrId id : kFieldLabelIds) labels.emplace_back(I18N.get(id));
+
+  const uint8_t fieldRaw = SETTINGS.fileBrowserSortField;
+  const int activeField = fieldRaw < SORT_FIELD_COUNT ? static_cast<int>(fieldRaw) : -1;
+  const bool ascending = SETTINGS.fileBrowserSortAscending != 0;
+
+  sortPopup.show(
+      StrId::STR_SORT, std::move(labels), activeField, ascending,
+      [this](int field, bool asc) {
+        SETTINGS.fileBrowserSortField = static_cast<uint8_t>(field);
+        SETTINGS.fileBrowserSortAscending = asc ? 1 : 0;
+        SETTINGS.saveToFile();
+        RenderLock lock(*this);
+        sortFiles();
+        const std::string currentEntry = entryCount() > 0 ? entryNameAt(selectorIndex) : "";
+        selectorIndex = currentEntry.empty() ? 0 : findEntry(currentEntry);
+        topIndex = 0;
+        requestUpdate();
+      },
+      [this] { requestUpdate(); });
+}
+
 void FileBrowserActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<FileBrowserActivity*>(user)->buildListScreen(screen);
 }
@@ -1262,7 +1448,25 @@ void FileBrowserActivity::render(RenderLock&&) {
   // indicator; the rest of the screen renders through the app.
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware()) {
-    TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false);
+    // "Sort" lives in TouchHeaderBackButton's existing rightReserve gap (otherwise just
+    // battery-icon width) rather than changing that widely-shared component's API --
+    // FileBrowserActivity draws into and hit-tests its own corner of that reserved space.
+    if (mode == Mode::Books) {
+      constexpr int kDefaultRightReserve = 52;  // battery icon + padding, matches TouchHeaderBackButton's own
+      constexpr int kSortButtonPadding = 12;
+      const int sortLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
+      const int sortReserve = kDefaultRightReserve + kSortButtonPadding * 2 + sortLabelWidth;
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false, sortReserve);
+      const auto backLayout = TouchHeaderBackButton::layout(header);
+      sortButtonRect = Rect{header.x + header.width - sortReserve, header.y, sortReserve - kDefaultRightReserve,
+                            header.height};
+      renderer.drawText(SMALL_FONT_ID, sortButtonRect.x + kSortButtonPadding,
+                        backLayout.iconRect.y + (backLayout.iconRect.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2,
+                        tr(STR_SORT));
+    } else {
+      sortButtonRect = Rect{0, 0, 0, 0};
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false);
+    }
   } else {
     GUI.drawHeader(renderer, header, folderName.c_str());
   }
@@ -1305,6 +1509,7 @@ void FileBrowserActivity::render(RenderLock&&) {
     GUI.drawPopup(renderer, completedFeedbackIsFinished ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
   }
 
+  if (sortPopup.processRender(renderer, mappedInput)) return;
   renderer.displayBuffer();
 }
 

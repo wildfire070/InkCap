@@ -473,6 +473,12 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["autosyncMode"] = autosyncMode;
   // Same reasoning: koreaderAutosyncMode's row lives in KOReaderSettingsActivity's own menu.
   doc["koreaderAutosyncMode"] = koreaderAutosyncMode;
+  // Not in getBaseSettingsList() -- these live in FileBrowserActivity's and
+  // BookFusionBrowserActivity's own sort popups, not the generic Settings list.
+  doc["fileBrowserSortField"] = fileBrowserSortField;
+  doc["fileBrowserSortAscending"] = fileBrowserSortAscending;
+  doc["bookFusionSortField"] = bookFusionSortField;
+  doc["bookFusionSortAscending"] = bookFusionSortAscending;
   JsonArray quickActionSlotsJson = doc["quickActionSlots"].to<JsonArray>();
   for (const uint8_t action : quickActionSlots) {
     quickActionSlotsJson.add(action);
@@ -705,6 +711,12 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   autosyncMode = clamp(doc["autosyncMode"] | static_cast<uint8_t>(AUTOSYNC_OFF), AUTOSYNC_COUNT, AUTOSYNC_OFF);
   koreaderAutosyncMode =
       clamp(doc["koreaderAutosyncMode"] | static_cast<uint8_t>(AUTOSYNC_OFF), AUTOSYNC_COUNT, AUTOSYNC_OFF);
+  // Not clamped to a range -- 0xFF is a valid sentinel ("no sort chosen yet"), matching the
+  // INVALID_READER_FONT_SIZE precedent above rather than the enum-index clamp() helper.
+  fileBrowserSortField = doc["fileBrowserSortField"] | static_cast<uint8_t>(0xFF);
+  fileBrowserSortAscending = doc["fileBrowserSortAscending"] | static_cast<uint8_t>(1);
+  bookFusionSortField = doc["bookFusionSortField"] | static_cast<uint8_t>(0xFF);
+  bookFusionSortAscending = doc["bookFusionSortAscending"] | static_cast<uint8_t>(0);
   const JsonArrayConst quickActionSlotsJson = doc["quickActionSlots"].as<JsonArrayConst>();
   if (!quickActionSlotsJson.isNull()) {
     for (size_t i = 0; i < std::size(quickActionSlots); ++i) {

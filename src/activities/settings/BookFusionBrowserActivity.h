@@ -8,6 +8,7 @@
 
 #include "BookFusionSyncClient.h"
 #include "activities/Activity.h"
+#include "components/SortPopup.h"
 #include "util/ButtonNavigator.h"
 
 /**
@@ -18,6 +19,11 @@
  */
 class BookFusionBrowserActivity final : public Activity {
  public:
+  // Server-side sort fields for the BROWSING screen, offered via SortPopup. Order
+  // must match kFieldApiNames in loadPage().
+  enum class SortField : uint8_t { Date = 0, LastRead = 1, Author = 2, Title = 3 };
+  static constexpr int BOOKFUSION_SORT_FIELD_COUNT = 4;
+
   enum class BrowserState {
     CHECK_WIFI,
     WIFI_SELECTION,
@@ -72,10 +78,17 @@ class BookFusionBrowserActivity final : public Activity {
   int visibleRows = 1;
   int topIndex = 0;
 
+  // Sort popup (BROWSING screen only): touch via the header's trailing "Sort" button
+  // (ACTION_SORT/onSortEvent), non-touch via long-press Confirm (see loop()).
+  SortPopup sortPopup;
+  bool longPressConfirmHandled = false;
+  void openSortPopup();
+
   static void rootScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onPageButtonEvent(const freeink::ui::ActionEvent& event, void* user);
-  void screenHeader(UiApp::ScreenType& screen, const char* title);
+  static void onSortEvent(const freeink::ui::ActionEvent& event, void* user);
+  void screenHeader(UiApp::ScreenType& screen, const char* title, bool showSort = false);
   void buildCategoryScreen(UiApp::ScreenType& screen);
   void buildBrowsingScreen(UiApp::ScreenType& screen);
   void buildDownloadScreen(UiApp::ScreenType& screen);
