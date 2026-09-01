@@ -57,6 +57,7 @@ class HalDisplay {
   // base pass. X3 has a dedicated grayscale waveform and must stay blocking.
   bool supportsAsyncGrayscaleBase() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
+  bool isInverted() const;
 
   // Power management
   void deepSleep();

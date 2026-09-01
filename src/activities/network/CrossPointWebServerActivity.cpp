@@ -112,9 +112,9 @@ void CrossPointWebServerActivity::onExit() {
   // path still needs the explicit cleanup below.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (returnBookPath.empty()) {
-      silentRestart();
+      silentRestartAfterNetwork();
     } else {
-      silentRestartToReader();
+      silentRestartToReaderAfterNetwork();
     }
   }
 
@@ -343,9 +343,9 @@ void CrossPointWebServerActivity::startWebServer() {
 void CrossPointWebServerActivity::exitToOrigin() {
   if (networkBootReady) {
     if (returnBookPath.empty()) {
-      silentRestart();
+      silentRestartAfterNetwork();
     } else {
-      silentRestartToReader();
+      silentRestartToReaderAfterNetwork();
     }
     return;
   }

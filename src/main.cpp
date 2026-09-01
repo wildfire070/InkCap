@@ -308,6 +308,7 @@ constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_READER_CLEAN_IMAGE_BASE = 1U << 0;
+constexpr uint32_t SILENT_REBOOT_FOLLOW_LIGHT_WAKE_POLICY = 1U << 1;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_MAGIC = 0xC1EAB017;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_AUTO_TURN = 1U << 0;
 constexpr uint32_t NETWORK_RENDER_TASK_STACK_BYTES = 8192;
@@ -344,13 +345,13 @@ static void clearSilentRestartReaderPageBuild() {
   silentReaderPageBuildFlags = 0;
 }
 
-void silentRestart() {
+static void silentRestartToHome(const uint32_t payload, const char* const description) {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   clearSilentRestartReaderPageBuild();
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
-  silentRebootPayload = 0;
+  silentRebootPayload = payload;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=home)");
+  LOG_DBG("MAIN", "Silent restart (%s)", description);
   // E-ink retains the previous frame until Home's first paint lands (~2-3s).
   // Without an overlay, users don't see the reboot and fire input through to
   // Home. Select on the default selectorIndex=0 then opens the most-recent
@@ -358,6 +359,12 @@ void silentRestart() {
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   restartWithSilentToken();
+}
+
+void silentRestart() { silentRestartToHome(0, "target=home"); }
+
+void silentRestartAfterNetwork() {
+  silentRestartToHome(SILENT_REBOOT_FOLLOW_LIGHT_WAKE_POLICY, "target=home after network");
 }
 
 void restartToHomeAfterStorageHandoff() {
@@ -392,15 +399,23 @@ bool consumeSilentRestartReaderPageBuild(const std::string& bookPath, uint16_t& 
   return true;
 }
 
-void silentRestartToReader(const bool cleanImageBaseOnEntry) {
+static void silentRestartToReader(const bool cleanImageBaseOnEntry, const bool followsWakeLightPolicy) {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
-  silentRebootPayload = cleanImageBaseOnEntry ? SILENT_REBOOT_READER_CLEAN_IMAGE_BASE : 0;
+  silentRebootPayload = (cleanImageBaseOnEntry ? SILENT_REBOOT_READER_CLEAN_IMAGE_BASE : 0) |
+                        (followsWakeLightPolicy ? SILENT_REBOOT_FOLLOW_LIGHT_WAKE_POLICY : 0);
   silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=reader cleanImageBase=%d)", cleanImageBaseOnEntry ? 1 : 0);
+  LOG_DBG("MAIN", "Silent restart (target=reader cleanImageBase=%d wakeLightPolicy=%d)", cleanImageBaseOnEntry ? 1 : 0,
+          followsWakeLightPolicy ? 1 : 0);
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   restartWithSilentToken();
+}
+
+void silentRestartToReader(const bool cleanImageBaseOnEntry) { silentRestartToReader(cleanImageBaseOnEntry, false); }
+
+void silentRestartToReaderAfterNetwork(const bool cleanImageBaseOnEntry) {
+  silentRestartToReader(cleanImageBaseOnEntry, true);
 }
 
 void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t payload) {
@@ -422,7 +437,7 @@ bool isGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action) {
   return isPowerButtonActionAvailableOutsideReader(action);
 }
 
-bool startGlobalSyncProgress(const bool networkBootReady = false) {
+bool startGlobalSyncProgress(const bool networkBootReady) {
   if (activityManager.hasActivityNamed(KOReaderSyncActivity::NAME)) {
     LOG_DBG("MAIN", "Ignoring KOReader sync shortcut while sync is already active");
     return true;
@@ -897,6 +912,42 @@ bool shouldClearX4WakeGhosting() {
 #endif
 }
 
+// Wake validation runs before the SD card and its settings file are available.
+// Mirror the one setting that changes its behavior while entering sleep, so a
+// deliberate short sleep press can wake the device even after the button has
+// been released during boot. The write is skipped when the value is unchanged.
+constexpr char WAKE_NVS_NAMESPACE[] = "crosspoint";
+constexpr char WAKE_SHORT_PRESS_KEY[] = "wakeShortPr";
+
+bool readWakeShortPressFromNvs() {
+#ifdef SIMULATOR
+  return false;
+#else
+  nvs_handle_t handle;
+  if (nvs_open(WAKE_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return false;
+  uint8_t value = 0;
+  const esp_err_t result = nvs_get_u8(handle, WAKE_SHORT_PRESS_KEY, &value);
+  nvs_close(handle);
+  return result == ESP_OK && value != 0;
+#endif
+}
+
+void mirrorWakeShortPressToNvs() {
+#ifndef SIMULATOR
+  const uint8_t expected =
+      (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP || APP_STATE.quickLockResumePending) ? 1 : 0;
+  nvs_handle_t handle;
+  if (nvs_open(WAKE_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
+  uint8_t current = 0;
+  const bool hasCurrent = nvs_get_u8(handle, WAKE_SHORT_PRESS_KEY, &current) == ESP_OK;
+  if (!hasCurrent || current != expected) {
+    nvs_set_u8(handle, WAKE_SHORT_PRESS_KEY, expected);
+    nvs_commit(handle);
+  }
+  nvs_close(handle);
+#endif
+}
+
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
@@ -940,6 +991,7 @@ void enterDeepSleep(bool fromTimeout) {
 
   putTiltSensorToSleepForDeepSleep();
   display.deepSleep();
+  mirrorWakeShortPressToNvs();
   LOG_DBG("MAIN", "Entering deep sleep");
 
   powerManager.startDeepSleep(gpio);
@@ -966,6 +1018,7 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   display.begin(seamless);
 #endif
   renderer.begin();
+  display.setInverted(SETTINGS.screenInverted != 0);
   // FreeInkUI headers need more than 4 KB once the render loop and nested
   // screen builders share the task stack. KOReader Sync and OPDS need the
   // reader stack on S3 devices because their deferred Wi-Fi transitions can
@@ -1048,10 +1101,12 @@ void setup() {
   const bool isValidSilentTarget =
       silentRebootTarget <= SILENT_REBOOT_TARGET_READER || isNetworkBootTargetValue(silentRebootTarget);
   const uint32_t snapshotTarget = (isSilentReboot && isValidSilentTarget) ? silentRebootTarget : 0;
-  const uint32_t snapshotPayload = isSilentReboot ? silentRebootPayload : 0;
+  const uint32_t snapshotPayload = (isSilentReboot && isValidSilentTarget) ? silentRebootPayload : 0;
   const bool cleanImageBaseOnEntry =
       snapshotTarget == SILENT_REBOOT_TARGET_READER && (snapshotPayload & SILENT_REBOOT_READER_CLEAN_IMAGE_BASE) != 0;
   const bool isNetworkResume = snapshotTarget >= static_cast<uint32_t>(NetworkBootTarget::OTA);
+  const bool followsWakeLightPolicy =
+      isNetworkResume || (snapshotPayload & SILENT_REBOOT_FOLLOW_LIGHT_WAKE_POLICY) != 0;
   // KOReader Sync, OPDS, and File Transfer can render their parent screens
   // while a deferred Wi-Fi child is completing. On S3 devices, keep the
   // reader-sized render stack without loading the rest of the reader
@@ -1078,7 +1133,8 @@ void setup() {
 
   const auto wakeupReason = gpio.getWakeupReason();
 #ifndef SIMULATOR
-  if (wakeupReason == HalGPIO::WakeupReason::PowerButton && !gpio.verifyPowerButtonWakeup()) {
+  const bool shortPressWakes = readWakeShortPressFromNvs();
+  if (wakeupReason == HalGPIO::WakeupReason::PowerButton && !gpio.verifyPowerButtonWakeup(shortPressWakes)) {
     LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
     powerManager.startDeepSleep(gpio);
   }
@@ -1144,6 +1200,7 @@ void setup() {
   SETTINGS.loadFromFile();
   Storage.installDateTimeCallback(&SETTINGS.clockUtcOffsetQ);
   APP_STATE.loadFromFile();
+  mirrorWakeShortPressToNvs();
   // Needs SETTINGS for the clock's UTC offset, so it cannot run any earlier.
   BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Wake);
   const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
@@ -1163,12 +1220,14 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
-  // A silent restart is a process-level recovery rather than a user wake, so
-  // retain the current light state. On real wakes, Restore on Wake restores a
-  // prior on state; a prior off state falls through to the local-time schedule.
+  // Internal silent restarts retain the current light state. Network entry and
+  // exit restarts must honor Restore on Wake like a normal user wake.
   const bool wasLightOnBeforeSleep = SETTINGS.frontlightOn != 0;
-  bool restoreLightOn = wasLightOnBeforeSleep && (isSilentReboot || SETTINGS.frontlightRestoreOnWake != 0);
-  if (FrontlightSchedule::shouldApplyOnWakeSchedule(isSilentReboot, SETTINGS.frontlightRestoreOnWake != 0,
+  const bool preserveLightAcrossRestart =
+      FrontlightSchedule::shouldPreserveLightAcrossRestart(isSilentReboot, followsWakeLightPolicy);
+  bool restoreLightOn = FrontlightSchedule::shouldRestoreLightOnStart(
+      preserveLightAcrossRestart, SETTINGS.frontlightRestoreOnWake != 0, wasLightOnBeforeSleep);
+  if (FrontlightSchedule::shouldApplyOnWakeSchedule(preserveLightAcrossRestart, SETTINGS.frontlightRestoreOnWake != 0,
                                                     wasLightOnBeforeSleep) &&
       FrontlightSchedule::hasCompleteWindow(SETTINGS.frontlightScheduleEnabled != 0, SETTINGS.frontlightScheduleStart,
                                             SETTINGS.frontlightScheduleEnd)) {
@@ -1208,6 +1267,7 @@ void setup() {
     APP_STATE.quickLockResumePending = false;
     APP_STATE.quickLockResumeTrigger = static_cast<uint8_t>(QuickLockTrigger::None);
     APP_STATE.saveToFile();
+    mirrorWakeShortPressToNvs();
   }
   const BootResume resume = isNetworkResume                            ? BootResume::Network
                             : isSilentReboot                           ? BootResume::Silent
@@ -1342,7 +1402,7 @@ void setup() {
     }
     if (!launched) {
       LOG_ERR("MAIN", "Minimal network boot target failed; returning home");
-      silentRestart();
+      silentRestartAfterNetwork();
     }
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
