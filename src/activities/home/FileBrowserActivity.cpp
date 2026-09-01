@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Epub.h>
+#include <FreeInkUIIcon.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -23,6 +24,7 @@
 #include "MappedInputManager.h"
 #include "activities/boot_sleep/SleepImageIndex.h"
 #include "activities/reader/EpubReaderActivity.h"
+#include "activities/settings/SettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/OptionSelectionActivity.h"
 #include "components/CompactHeader.h"
@@ -30,6 +32,7 @@
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/listIcons.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
 
@@ -41,6 +44,7 @@ constexpr unsigned long COMPLETED_FEEDBACK_MS = 1000;
 constexpr int ROOT_HINT_GAP = 20;
 constexpr size_t NAME_BUFFER_SIZE = 500;
 constexpr fui::ActionId ACTION_ROW = 1;
+constexpr fui::ActionId ACTION_SETTINGS = 2;
 constexpr size_t INDEX_THRESHOLD = 200;
 constexpr size_t MAX_VIRTUAL_LIST_ENTRIES = static_cast<size_t>(std::numeric_limits<int16_t>::max());
 constexpr uint32_t FILE_BROWSER_APPEND_MIN_FREE_AFTER_ALLOC = 48U * 1024U;
@@ -406,6 +410,7 @@ void FileBrowserActivity::onEnter() {
   listNav.visibleRows = visibleRows;
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &FileBrowserActivity::onRowEvent, this);
+  app.on(ACTION_SETTINGS, &FileBrowserActivity::onSettingsEvent, this);
   app.setScreen(&FileBrowserActivity::listScreen, this);
   requestUpdate();
 }
@@ -813,6 +818,39 @@ void FileBrowserActivity::onRowEvent(const fui::ActionEvent& event, void* user) 
   // row on the next list.
   self->app.clearTapFlash();
   self->activateSelected();
+}
+
+void FileBrowserActivity::onSettingsEvent(const fui::ActionEvent&, void* user) {
+  auto* self = static_cast<FileBrowserActivity*>(user);
+  if (self->mode != Mode::Books || !self->mappedInput.hasTouchHardware()) return;
+  self->app.clearTapFlash();
+  self->openSettings();
+}
+
+void FileBrowserActivity::openSettings() {
+  const std::string selectedEntry =
+      entryCount() > 0 && selectorIndex < entryCount() ? entryNameAt(selectorIndex) : std::string();
+  startActivityForResult(
+      std::make_unique<SettingsActivity>(renderer, mappedInput, false, true, SettingsActivity::View::FileBrowser),
+      [this, selectedEntry](const ActivityResult&) {
+        {
+          RenderLock lock(*this);
+          if (!SETTINGS.showHiddenFiles && containsHiddenPathSegment(basepath)) {
+            basepath = "/";
+          }
+          loadFilesLocked();
+          selectorIndex = selectedEntry.empty() ? 0 : findEntry(selectedEntry);
+          if (entryCount() > 0 && selectorIndex >= entryCount()) {
+            selectorIndex = entryCount() - 1;
+          }
+          topIndex =
+              followListSelection(static_cast<int>(selectorIndex), 0, visibleRows, static_cast<int>(entryCount()));
+          listNav.reset(static_cast<int>(selectorIndex));
+          listNav.top = topIndex;
+          listNav.visibleRows = visibleRows;
+        }
+        requestUpdate();
+      });
 }
 
 void FileBrowserActivity::activateSelected() {
@@ -1296,6 +1334,26 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.setContentMargin(
       fui::Insets{static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput)), 0,
                   static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+
+  if (mode == Mode::Books && mappedInput.hasTouchHardware()) {
+    const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+    const auto backLayout = TouchHeaderBackButton::layout(header);
+    const fui::Rect settingsRect{static_cast<int16_t>(header.x + header.width - backLayout.iconRect.width),
+                                 static_cast<int16_t>(backLayout.iconRect.y),
+                                 static_cast<int16_t>(backLayout.iconRect.width),
+                                 static_cast<int16_t>(backLayout.iconRect.height)};
+    fui::ButtonProps settings;
+    settings.action = ACTION_SETTINGS;
+    settings.styles = fui::plainStyles(fui::Paint::solid(fui::Color::Black));
+    settings.minTouchSize = screen.theme().minTouchSize;
+    screen.button(settings, settingsRect);
+    const auto icon = fui::bitmapFromIcon(icon_sliders_horizontal_24);
+    const int16_t iconX = static_cast<int16_t>(settingsRect.x + (settingsRect.width - icon.width) / 2);
+    const int16_t iconY = static_cast<int16_t>(backLayout.iconRect.y + TouchHeaderBackButton::TITLE_VERTICAL_OFFSET +
+                                               (backLayout.iconRect.height - icon.height) / 2);
+    screen.target().bitmap(fui::Rect{iconX, iconY, icon.width, icon.height}, icon, fui::BitmapMode::Center,
+                           fui::Paint::solid(fui::Color::Black));
+  }
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // Full path band at the bottom: separator on top, left-truncated so the
@@ -1448,17 +1506,19 @@ void FileBrowserActivity::render(RenderLock&&) {
   // indicator; the rest of the screen renders through the app.
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware()) {
-    // "Sort" lives in TouchHeaderBackButton's existing rightReserve gap (otherwise just
-    // battery-icon width) rather than changing that widely-shared component's API --
-    // FileBrowserActivity draws into and hit-tests its own corner of that reserved space.
+    // "Sort" lives in TouchHeaderBackButton's existing rightReserve gap, to the left of the
+    // settings icon buildListScreen() draws flush-right in its own settingsRect (that icon's
+    // touch region is independent of rightReserve -- rightReserve only affects where the title
+    // text truncates -- so Sort's own reserve/position must additionally clear the icon's own
+    // backLayout.iconRect.width + 8 footprint, matching what buildListScreen() reserves for it).
     if (mode == Mode::Books) {
-      constexpr int kDefaultRightReserve = 52;  // battery icon + padding, matches TouchHeaderBackButton's own
       constexpr int kSortButtonPadding = 12;
-      const int sortLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
-      const int sortReserve = kDefaultRightReserve + kSortButtonPadding * 2 + sortLabelWidth;
-      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false, sortReserve);
       const auto backLayout = TouchHeaderBackButton::layout(header);
-      sortButtonRect = Rect{header.x + header.width - sortReserve, header.y, sortReserve - kDefaultRightReserve,
+      const int settingsIconReserve = backLayout.iconRect.width + 8;
+      const int sortLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
+      const int sortReserve = settingsIconReserve + kSortButtonPadding * 2 + sortLabelWidth;
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false, sortReserve);
+      sortButtonRect = Rect{header.x + header.width - sortReserve, header.y, sortReserve - settingsIconReserve,
                             header.height};
       renderer.drawText(SMALL_FONT_ID, sortButtonRect.x + kSortButtonPadding,
                         backLayout.iconRect.y + (backLayout.iconRect.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2,
