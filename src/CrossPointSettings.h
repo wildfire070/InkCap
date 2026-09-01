@@ -401,6 +401,19 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
 
+  // Silent KOReader progress push while reading, with no UI interaction -- see
+  // KOReaderAutoSync. Push-only: never applies a remote position. This branch has
+  // no BookFusion, so unlike InkCap/InkCapO3/Capy this enum only ever backs
+  // koreaderAutosyncMode below, not a BookFusion counterpart.
+  enum AUTOSYNC : uint8_t {
+    AUTOSYNC_OFF = 0,
+    AUTOSYNC_EVERY_CHAPTER = 1,
+    AUTOSYNC_EVERY_5_PERCENT = 2,
+    AUTOSYNC_EVERY_10_PERCENT = 3,
+    AUTOSYNC_ON_EXIT = 4,
+    AUTOSYNC_COUNT
+  };
+
   // UI scale for list-style screens: sizes list fonts and row heights
   // together so touch targets grow uniformly.
   enum UI_SCALE { UI_SCALE_SMALL = 0, UI_SCALE_LARGE = 1, UI_SCALE_COUNT };
@@ -617,6 +630,19 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char deviceName[21] = "";
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
+  // Off by default -- matches upstream's own choice; the user opts in. No BookFusion
+  // autosyncMode counterpart on this branch (no BookFusion feature at all).
+  uint8_t koreaderAutosyncMode = AUTOSYNC_OFF;
+  uint8_t getKoreaderAutosyncPercentStep() const {
+    switch (koreaderAutosyncMode) {
+      case AUTOSYNC_EVERY_5_PERCENT:
+        return 5;
+      case AUTOSYNC_EVERY_10_PERCENT:
+        return 10;
+      default:
+        return 0;
+    }
+  }
 #ifdef CROSSINK_ENABLE_READING_STATS_TOGGLE
   // Debug/test builds can disable stat writes so navigation tests do not affect personal reading stats.
   uint8_t trackReadingStats = 1;

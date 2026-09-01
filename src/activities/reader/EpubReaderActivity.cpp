@@ -70,6 +70,7 @@
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/Dictionary.h"
+#include "util/KOReaderAutoSync.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -101,6 +102,11 @@ constexpr unsigned long TRANSIENT_FEEDBACK_MS = 1000UL;
 constexpr unsigned long IDLE_SD_FONT_PREWARM_DELAY_MS = 400UL;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_FREE = 64U * 1024U;
 constexpr uint32_t IDLE_SD_FONT_PREWARM_MIN_MAX_ALLOC = 40U * 1024U;
+// Longer settle delay than the SD-font prewarm above: a silent WiFi
+// connect + HTTP round trip blocks the input/render loop for a few
+// seconds, so only attempt it once the reader has been genuinely idle for
+// a while, not just between two quick page turns.
+constexpr unsigned long AUTOSYNC_IDLE_DELAY_MS = 3000UL;
 constexpr unsigned long MIN_READING_STATS_PAGE_MS = 2000UL;
 constexpr uint32_t MIN_READING_PACE_SAMPLE_SECONDS = 2;
 constexpr uint16_t MIN_STORED_TIME_LEFT_PACE_SAMPLE_COUNT = 3;
@@ -2198,6 +2204,7 @@ void EpubReaderActivity::onEnter() {
   // Load reading stats and record session start time.
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
+  KOReaderAutoSync::resetSessionBaseline();
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
   const uint32_t cumulativeAvgSeconds =
       stats.totalPagesTurned > 0 ? stats.totalReadingSeconds / stats.totalPagesTurned : 0;
@@ -2283,6 +2290,26 @@ void EpubReaderActivity::onExit() {
       stats.save(epub->getCachePath());
     }
     globalStats.save();
+  }
+
+  // AUTOSYNC_ON_EXIT's trigger. Blocking (WiFi connect + HTTP round trip) --
+  // unavoidable here, this is the last moment before whatever comes next
+  // (Home, sleep) tears down the network anyway. Must run before section
+  // resets and epub is released just below, but doesn't touch either of
+  // them itself, so it's safe even though it blocks for a few seconds with
+  // both still "open".
+  // Background indexing of the rest of the chapter can keep section->isBuilding() true well past
+  // the point where the current page is actually readable (see the buildSomeMore() tick loop
+  // above) -- gating on that outright meant on-exit sync almost never fired during casual
+  // reading. activeBuildHasCaughtReadablePages() is the same "is pageCount/currentPage trustworthy
+  // right now" check the reader itself uses elsewhere, regardless of whether background build of
+  // later pages is still ongoing.
+  const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  const bool sectionReadableForAutosync = section && section->activeBuildHasCaughtReadablePages();
+  if (koreaderAutosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
+    LOG_INF("ERS", "Skipping on-exit KOReader auto-sync: no active section to read progress from");
+  } else if (epub && sectionReadableForAutosync) {
+    KOReaderAutoSync::runOnExit(renderer, epub, currentSpineIndex, section->currentPage, section->pageCount);
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
@@ -2468,6 +2495,29 @@ void EpubReaderActivity::idlePrewarmNextPage() {
   page->renderText(renderer, renderFontId, 0, 0);
   scope.endScanAndPrewarm();
   LOG_DBG("ERS", "Idle SD font prewarm: spine=%d page=%d in %lums", currentSpineIndex, nextPage, millis() - startedAt);
+}
+
+void EpubReaderActivity::maybeRunAutoSync() {
+  // Cheap early-out before any of the gates below: nothing pending. No BookFusion
+  // counterpart to gate on here -- this branch has no BookFusion feature.
+  if (!KOReaderAutoSync::isArmed()) return;
+
+  // See the matching comment in onExit()'s AUTOSYNC_ON_EXIT block: isBuilding() alone stays true
+  // through background indexing of later pages, long after the current page is actually
+  // readable, so it's not the right gate here either.
+  if (!section || !section->activeBuildHasCaughtReadablePages() || activeFootnotePreview ||
+      automaticPageTurnActive || !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
+      (millis() - lastRenderCompleteMs) < AUTOSYNC_IDLE_DELAY_MS) {
+    return;
+  }
+
+  const int pageNumber = section->currentPage;
+  const int pageCount = section->pageCount;
+  const float chapterProgress =
+      pageCount > 0 ? static_cast<float>(pageNumber + 1) / static_cast<float>(pageCount) : 0.0f;
+  const float bookPercent = epub->calculateProgress(currentSpineIndex, chapterProgress);
+
+  KOReaderAutoSync::runIfArmed(renderer, epub, currentSpineIndex, pageNumber, pageCount, bookPercent);
 }
 
 // One dismissal rule for every transient reader confirmation: it clears when its
@@ -3003,6 +3053,7 @@ void EpubReaderActivity::loop() {
   prevTriggered = prevTriggered || shortPowerPrevious || releasedLongPowerPrevious;
   if (!prevTriggered && !nextTriggered) {
     idlePrewarmNextPage();
+    maybeRunAutoSync();
     return;
   }
 
@@ -5198,6 +5249,19 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
       }
       stats.totalPagesTurned++;
       globalStats.totalPagesTurned++;
+    }
+    // Cheap and non-blocking: just records whether the configured autosync
+    // threshold was crossed. section may be null right after a chapter-
+    // boundary advance (reset a few lines up), landing on page 0 in that
+    // case. The actual network push, if armed, happens later from loop()
+    // at a moment it chooses to be safe -- see maybeRunAutoSync().
+    {
+      float chapterProgress = 0.0f;
+      if (section && section->pageCount > 0) {
+        chapterProgress = static_cast<float>(section->currentPage + 1) / static_cast<float>(section->pageCount);
+      }
+      const float bookPercent = epub ? epub->calculateProgress(currentSpineIndex, chapterProgress) : 0.0f;
+      KOReaderAutoSync::armIfThresholdCrossed(currentSpineIndex, bookPercent);
     }
   } else {
     recordCurrentPageReadingTime(source);

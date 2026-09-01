@@ -472,6 +472,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // popup, not the generic Settings list.
   doc["fileBrowserSortField"] = fileBrowserSortField;
   doc["fileBrowserSortAscending"] = fileBrowserSortAscending;
+  // Not in getBaseSettingsList() -- its row lives in KOReaderSettingsActivity's own menu.
+  doc["koreaderAutosyncMode"] = koreaderAutosyncMode;
   JsonArray quickActionSlotsJson = doc["quickActionSlots"].to<JsonArray>();
   for (const uint8_t action : quickActionSlots) {
     quickActionSlotsJson.add(action);
@@ -704,6 +706,9 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // INVALID_READER_FONT_SIZE precedent above rather than the enum-index clamp() helper.
   fileBrowserSortField = doc["fileBrowserSortField"] | static_cast<uint8_t>(0xFF);
   fileBrowserSortAscending = doc["fileBrowserSortAscending"] | static_cast<uint8_t>(1);
+  // Not in getBaseSettingsList() -- see the matching comment in toJson().
+  koreaderAutosyncMode =
+      clamp(doc["koreaderAutosyncMode"] | static_cast<uint8_t>(AUTOSYNC_OFF), AUTOSYNC_COUNT, AUTOSYNC_OFF);
   const JsonArrayConst quickActionSlotsJson = doc["quickActionSlots"].as<JsonArrayConst>();
   if (!quickActionSlotsJson.isNull()) {
     for (size_t i = 0; i < std::size(quickActionSlots); ++i) {
