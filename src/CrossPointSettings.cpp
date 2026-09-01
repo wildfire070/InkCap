@@ -468,6 +468,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdFontFamilyName[0] != '\0') doc["sdFontFamilyName"] = sdFontFamilyName;
   if (dictionarySdFontFamilyName[0] != '\0') doc["dictionaryFont"] = dictionarySdFontFamilyName;
   doc["dictionaryFontSize"] = dictionaryFontPointSize;
+  // Not in getBaseSettingsList() -- this lives in FileBrowserActivity's own sort
+  // popup, not the generic Settings list.
+  doc["fileBrowserSortField"] = fileBrowserSortField;
+  doc["fileBrowserSortAscending"] = fileBrowserSortAscending;
   JsonArray quickActionSlotsJson = doc["quickActionSlots"].to<JsonArray>();
   for (const uint8_t action : quickActionSlots) {
     quickActionSlotsJson.add(action);
@@ -696,6 +700,10 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   strncpy(dictionarySdFontFamilyName, dictionaryFamily, sizeof(dictionarySdFontFamilyName) - 1);
   dictionarySdFontFamilyName[sizeof(dictionarySdFontFamilyName) - 1] = '\0';
   dictionaryFontPointSize = doc["dictionaryFontSize"] | static_cast<uint8_t>(0);
+  // Not clamped to a range -- 0xFF is a valid sentinel ("no sort chosen yet"), matching the
+  // INVALID_READER_FONT_SIZE precedent above rather than the enum-index clamp() helper.
+  fileBrowserSortField = doc["fileBrowserSortField"] | static_cast<uint8_t>(0xFF);
+  fileBrowserSortAscending = doc["fileBrowserSortAscending"] | static_cast<uint8_t>(1);
   const JsonArrayConst quickActionSlotsJson = doc["quickActionSlots"].as<JsonArrayConst>();
   if (!quickActionSlotsJson.isNull()) {
     for (size_t i = 0; i < std::size(quickActionSlots); ++i) {

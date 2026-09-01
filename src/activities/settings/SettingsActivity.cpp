@@ -16,6 +16,7 @@
 #include "AppVersion.h"
 #include "BackupStatsActivity.h"
 #include "ButtonRemapActivity.h"
+#include "CacheAllBooksActivity.h"
 #include "ClearCacheActivity.h"
 #include "ClockOffsetActivity.h"
 #include "ClockSyncActivity.h"
@@ -32,6 +33,7 @@
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/home/Ao3FolderPickerActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -1039,6 +1041,30 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::CacheAllBooks:
+        startActivityForResult(std::make_unique<CacheAllBooksActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::CacheExclusions: {
+        // Reuses the same MULTI-select folder picker AO3 library exclusions
+        // already use; the two exclusion lists are independent (own JSON file
+        // each), since "skip for AO3 indexing" and "skip for cache building"
+        // are different concerns that don't have to agree.
+        auto exclusionsHandler = [this](const ActivityResult& result) {
+          if (!result.isCancelled) {
+            if (const auto* pickerRes = std::get_if<FolderPickerResult>(&result.data)) {
+              if (pickerRes->isMulti) {
+                CacheAllBooksActivity::saveExclusions(pickerRes->multiPaths);
+              }
+            }
+          }
+          requestUpdate();
+        };
+        startActivityForResult(
+            std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, tr(STR_SELECT_EXCLUDED_FOLDERS),
+                                                       PickerMode::MULTI, CacheAllBooksActivity::loadExclusions()),
+            exclusionsHandler);
+        break;
+      }
       case SettingAction::CheckForUpdates:
         silentRestartToNetwork(NetworkBootTarget::OTA);
         break;

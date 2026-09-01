@@ -621,6 +621,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Debug/test builds can disable stat writes so navigation tests do not affect personal reading stats.
   uint8_t trackReadingStats = 1;
 #endif
+  // FileBrowserSortField value (see SortPopup.h); 0xFF = none chosen yet, falls back to the
+  // existing fixed alphabetical sort. No bookFusionSortField counterpart -- this branch has
+  // no BookFusion browse screen to sort.
+  uint8_t fileBrowserSortField = 0xFF;
+  uint8_t fileBrowserSortAscending = 1;
 
   ~CrossPointSettings() = default;
 
