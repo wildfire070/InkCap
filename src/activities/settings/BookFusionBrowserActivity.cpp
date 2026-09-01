@@ -30,6 +30,10 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_PREV_PAGE = 2;
 constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
+constexpr fui::ActionId ACTION_SORT = 4;
+// Long-press threshold for the non-touch Sort entry point (Confirm's short-press
+// already downloads the highlighted book on this screen).
+constexpr unsigned long SORT_LONG_PRESS_MS = 600;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
@@ -128,6 +132,7 @@ void BookFusionBrowserActivity::onEnter() {
   app.on(ACTION_ROW, &BookFusionBrowserActivity::onRowEvent, this);
   app.on(ACTION_PREV_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
   app.on(ACTION_NEXT_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
+  app.on(ACTION_SORT, &BookFusionBrowserActivity::onSortEvent, this);
   app.setScreen(&BookFusionBrowserActivity::rootScreen, this);
   requestUpdate();
 
@@ -229,7 +234,16 @@ void BookFusionBrowserActivity::onPageButtonEvent(const fui::ActionEvent& event,
   }
 }
 
+void BookFusionBrowserActivity::onSortEvent(const fui::ActionEvent&, void* user) {
+  auto* self = static_cast<BookFusionBrowserActivity*>(user);
+  if (self->state != BrowserState::BROWSING) return;
+  self->app.clearTapFlash();
+  self->openSortPopup();
+}
+
 void BookFusionBrowserActivity::loop() {
+  if (sortPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
   if (state == BrowserState::WIFI_SELECTION) return;
 
   if (state == BrowserState::ERROR) {
@@ -298,7 +312,19 @@ void BookFusionBrowserActivity::loop() {
       return;
     }
 
+    if (!mappedInput.hasTouchHardware() && !longPressConfirmHandled &&
+        mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        mappedInput.getHeldTime() >= SORT_LONG_PRESS_MS) {
+      longPressConfirmHandled = true;
+      openSortPopup();
+      return;
+    }
+
     if (bookCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      if (longPressConfirmHandled) {
+        longPressConfirmHandled = false;
+        return;
+      }
       activateSelected();
       return;
     }
@@ -365,11 +391,18 @@ void BookFusionBrowserActivity::rootScreen(UiApp::ScreenType& screen, void* user
   }
 }
 
-void BookFusionBrowserActivity::screenHeader(UiApp::ScreenType& screen, const char* title) {
+void BookFusionBrowserActivity::screenHeader(UiApp::ScreenType& screen, const char* title, const bool showSort) {
   screen.takeBottom(static_cast<int16_t>(UITheme::getInstance().getMetrics().buttonHintsHeight));
   fui::HeaderProps header;
   header.title = title;
   header.borderEdges = fui::EdgeBottom;
+  if (showSort) {
+    // Same trailingLabel/trailingAction mechanism OpdsBookBrowserActivity's header
+    // search button already uses -- touch dispatches through ACTION_SORT below; a
+    // non-touch entry point (long-press Confirm) is handled separately in loop().
+    header.trailingLabel = tr(STR_SORT);
+    header.trailingAction = ACTION_SORT;
+  }
   screen.header(header);
   screen.spacer(static_cast<int16_t>(UITheme::getInstance().getMetrics().verticalSpacing));
 }
@@ -422,7 +455,8 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
 }
 
 void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
-  screenHeader(screen, currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
+  screenHeader(screen, currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId),
+              /*showSort=*/true);
 
   if (page.books.empty()) {
     screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
@@ -651,6 +685,7 @@ void BookFusionBrowserActivity::render(RenderLock&&) {
   uiReady = false;
   app.render();
   uiReady = true;
+  if (sortPopup.processRender(renderer, mappedInput)) return;
   renderer.displayBuffer();
 }
 
@@ -687,6 +722,33 @@ void BookFusionBrowserActivity::selectCategory(int index) {
   loadPage(1);
 }
 
+void BookFusionBrowserActivity::openSortPopup() {
+  // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
+  // a runtime variable, so this array/loop calls I18N.get() directly instead.
+  static const StrId kFieldLabelIds[BOOKFUSION_SORT_FIELD_COUNT] = {
+      StrId::STR_SORT_DATE, StrId::STR_SORT_LAST_READ, StrId::STR_SORT_AUTHOR, StrId::STR_TITLE};
+  std::vector<std::string> labels;
+  labels.reserve(BOOKFUSION_SORT_FIELD_COUNT);
+  for (const StrId id : kFieldLabelIds) labels.emplace_back(I18N.get(id));
+
+  const uint8_t fieldRaw = SETTINGS.bookFusionSortField;
+  const int activeField = fieldRaw < BOOKFUSION_SORT_FIELD_COUNT ? static_cast<int>(fieldRaw) : -1;
+  const bool ascending = SETTINGS.bookFusionSortAscending != 0;
+
+  sortPopup.show(
+      StrId::STR_SORT, std::move(labels), activeField, ascending,
+      [this](int field, bool asc) {
+        SETTINGS.bookFusionSortField = static_cast<uint8_t>(field);
+        SETTINGS.bookFusionSortAscending = asc ? 1 : 0;
+        SETTINGS.saveToFile();
+        selectorIndex = 0;
+        topIndex = 0;
+        showLoadingBeforeFetch();
+        loadPage(1);
+      },
+      [this] { requestUpdate(); });
+}
+
 void BookFusionBrowserActivity::loadPage(int pageIndex) {
   if (pageIndex < 1) return;  // 1-indexed -- see BookFusionSyncClient::searchBooks().
   showLoadingBeforeFetch();
@@ -712,7 +774,20 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
 
   BookFusionSearchResult result;
   const char* listParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].list;
-  const char* sortParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].sort;
+  // A user-chosen sort applies regardless of category vs. shelf browsing -- unlike the
+  // fixed per-category defaults below, which only ever applied to the fixed categories
+  // and left shelf browsing on the server's own default ("added_at-desc").
+  std::string userSortParam;
+  const char* sortParam;
+  if (SETTINGS.bookFusionSortField < BOOKFUSION_SORT_FIELD_COUNT) {
+    static constexpr const char* kFieldApiNames[BOOKFUSION_SORT_FIELD_COUNT] = {"added_at", "last_read_at", "author",
+                                                                                "title"};
+    userSortParam = std::string(kFieldApiNames[SETTINGS.bookFusionSortField]) +
+                    (SETTINGS.bookFusionSortAscending ? "-asc" : "-desc");
+    sortParam = userSortParam.c_str();
+  } else {
+    sortParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].sort;
+  }
   const auto err = BookFusionSyncClient::searchBooks(pageIndex, listParam, result, currentBookshelfId, sortParam);
 
   if (!renderer.reallocFrameBuffersAfterNetwork()) {

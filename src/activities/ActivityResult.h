@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 struct WifiResult {
   bool connected = false;
@@ -133,11 +134,17 @@ struct ClippingJumpResult {
   bool settingsChanged = false;
 };
 
+struct FolderPickerResult {
+  std::string singlePath;               // populated in SINGLE mode
+  std::vector<std::string> multiPaths;  // populated in MULTI mode
+  bool isMulti = false;
+};
+
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
                  OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult, NetworkModeResult, FootnoteResult,
                  BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
-                 ClippingResult, DictionaryClippingRequest, ClippingJumpResult>;
+                 ClippingResult, DictionaryClippingRequest, ClippingJumpResult, FolderPickerResult>;
 
 struct ActivityResult {
   bool isCancelled = false;
