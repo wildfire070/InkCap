@@ -794,8 +794,15 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         // info-card cover. Same fallback dimensions as before (coverHeight*2/3 x coverHeight),
         // just routed through the adaptive path/generator Dashboard and Minimal already use,
         // which contains-fits instead of cropping once the source is too far from 2:3.
+        // Lyra alone now uses a 3:4 box instead (its own render code -- LyraTheme.cpp --
+        // computes this same width when looking the generated file back up by path; the two
+        // must match, since the width is baked into the cache filename). RoundedRaff and
+        // Lyra3Covers keep 2:3 -- not tested/requested yet.
         const bool useAdaptiveDefaultThumb = !useExactHomeThumb && FsHelpers::hasEpubExtension(book.path);
-        const int defaultThumbWidth = static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
+        const bool isLyra = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA;
+        const int defaultThumbWidth = isLyra
+                                          ? static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4)
+                                          : static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
         const std::string coverPath =
             useDashboardThumb
                 ? dashboardHomeCoverPath(book, coverHeight)
