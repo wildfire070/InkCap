@@ -52,6 +52,86 @@ std::string extractAo3WorkId(const std::string& text) {
   return cleanId;
 }
 
+// Calibre embeds custom-column data as a JSON blob in a <meta> content attribute.
+// Pull out just the "#value#" field without a full JSON parser: handles a quoted
+// string ("#value#": "Shelf"), a list ("#value#": ["A","B"] -> "A, B"), or a
+// datetime-type column's wrapped object ("#value#": {"__class__": "datetime.datetime",
+// "__value__": "2026-07-06T04:00:00+00:00"} -> the ISO string, __class__ ignored).
+// Returns empty for null/absent. Bounded -- only the extracted value is copied out,
+// not the blob.
+std::string extractCalibreCustomValue(const char* json) {
+  if (!json) return {};
+  const std::string_view sv{json};
+  const auto key = sv.find("\"#value#\"");
+  if (key == std::string_view::npos) return {};
+
+  size_t i = key + 9;  // past the key token
+  while (i < sv.size() && (sv[i] == ' ' || sv[i] == ':' || sv[i] == '\t')) i++;
+  if (i >= sv.size()) return {};
+
+  const auto readQuoted = [&](size_t pos, std::string& out) -> size_t {
+    // pos points at the opening quote; appends unescaped contents to out, returns
+    // index just past the closing quote (or npos on malformed input).
+    pos++;
+    while (pos < sv.size()) {
+      const char c = sv[pos];
+      if (c == '\\' && pos + 1 < sv.size()) {
+        out.push_back(sv[pos + 1]);
+        pos += 2;
+        continue;
+      }
+      if (c == '"') return pos + 1;
+      out.push_back(c);
+      pos++;
+    }
+    return std::string_view::npos;
+  };
+
+  std::string value;
+  if (sv[i] == '"') {
+    readQuoted(i, value);
+  } else if (sv[i] == '[') {
+    i++;
+    while (i < sv.size() && sv[i] != ']') {
+      if (sv[i] == '"') {
+        std::string item;
+        i = readQuoted(i, item);
+        if (i == std::string_view::npos) break;
+        if (!value.empty()) value.append(", ");
+        value.append(item);
+      } else {
+        i++;
+      }
+    }
+  } else if (sv[i] == '{') {
+    // Datetime-type custom column: {"__class__": "datetime.datetime", "__value__": "..."}.
+    // Pull just __value__'s ISO string, ignoring __class__ and any other keys.
+    const auto valueKey = sv.find("\"__value__\"", i);
+    if (valueKey != std::string_view::npos) {
+      size_t j = valueKey + 11;  // past the key token
+      while (j < sv.size() && (sv[j] == ' ' || sv[j] == ':' || sv[j] == '\t')) j++;
+      if (j < sv.size() && sv[j] == '"') {
+        readQuoted(j, value);
+      }
+    }
+  }
+  return value;
+}
+
+// Same "#value#" lookup as above, but for a bool-datatype custom column: Calibre writes
+// a bare JSON true/false/null literal there, not a quoted string or object. Returns true
+// only if the literal is exactly "true"; false for null, false, or an absent column/key.
+bool extractCalibreBoolValue(const char* json) {
+  if (!json) return false;
+  const std::string_view sv{json};
+  const auto key = sv.find("\"#value#\"");
+  if (key == std::string_view::npos) return false;
+
+  size_t i = key + 9;
+  while (i < sv.size() && (sv[i] == ' ' || sv[i] == ':' || sv[i] == '\t')) i++;
+  return sv.compare(i, 4, "true") == 0;
+}
+
 bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches) {
   uint32_t storedLength = 0;
   if (!serialization::tryReadPod(file, storedLength)) {
@@ -329,6 +409,31 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
         // AO3 support: FanFicFare/Calibre stamp the export date here; take the date portion.
         std::string ts = contentAttr;
         self->ao3UpdateDate = (ts.size() >= 10) ? ts.substr(0, 10) : ts;
+      } else if (strcmp(nameAttr, "calibre:series") == 0) {
+        // Calibre's custom series metadata. EPUB3-only belongs-to-collection is not
+        // handled here; Calibre always writes the calibre:* pair for back-compat.
+        self->seriesName = contentAttr;
+      } else if (strcmp(nameAttr, "calibre:series_index") == 0) {
+        self->seriesIndex = contentAttr;
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#rating") == 0) {
+        // User's own custom column for content rating (Explicit/Mature/General/
+        // Teen/-), same "#value#" JSON-blob shape as the fields below.
+        self->contentRating = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#chapters") == 0) {
+        // FanFicFare's posted/total chapter count, e.g. "1/1" or "3/7".
+        self->chapters = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#completionstatus") == 0) {
+        self->completionStatus = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#updated") == 0) {
+        // The story's own last-update date on AO3 -- distinct from calibre:timestamp
+        // (the Calibre/FanFicFare export timestamp, tracked above as ao3UpdateDate).
+        // Datetime-type column; extractCalibreCustomValue unwraps the __value__ ISO string.
+        const std::string val = extractCalibreCustomValue(contentAttr);
+        self->updatedDate = (val.size() >= 10) ? val.substr(0, 10) : val;
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#like") == 0) {
+        self->liked = extractCalibreBoolValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#readstatus") == 0) {
+        self->readStatus = extractCalibreBoolValue(contentAttr);
       }
     }
     return;

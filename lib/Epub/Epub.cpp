@@ -490,6 +490,15 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.ao3UpdateDate = opfParser.ao3UpdateDate;
   bookMetadata.ao3IsCompleted = opfParser.ao3IsCompleted;
 
+  bookMetadata.seriesName = opfParser.seriesName;
+  bookMetadata.seriesIndex = opfParser.seriesIndex;
+  bookMetadata.contentRating = opfParser.contentRating;
+  bookMetadata.chapters = opfParser.chapters;
+  bookMetadata.completionStatus = opfParser.completionStatus;
+  bookMetadata.updatedDate = opfParser.updatedDate;
+  bookMetadata.liked = opfParser.liked;
+  bookMetadata.readStatus = opfParser.readStatus;
+
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;
   }
@@ -2074,6 +2083,67 @@ class PublisherParser final : public Print {
   }
 };
 }  // namespace
+
+const std::string& Epub::getSeriesName() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.seriesName;
+}
+
+std::string Epub::getSeriesIndex() const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return {};
+  }
+  std::string index = bookMetadataCache->coreMetadata.seriesIndex;
+  // Calibre stores the index as a float ("1.0"); trim trailing zeros / dot for display.
+  if (index.find('.') != std::string::npos) {
+    while (!index.empty() && index.back() == '0') index.pop_back();
+    if (!index.empty() && index.back() == '.') index.pop_back();
+  }
+  return index;
+}
+
+const std::string& Epub::getContentRating() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.contentRating;
+}
+
+const std::string& Epub::getChapters() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.chapters;
+}
+
+const std::string& Epub::getCompletionStatus() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.completionStatus;
+}
+
+const std::string& Epub::getUpdatedDate() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.updatedDate;
+}
+
+bool Epub::isLiked() const {
+  return bookMetadataCache && bookMetadataCache->isLoaded() && bookMetadataCache->coreMetadata.liked;
+}
+
+bool Epub::getReadStatus() const {
+  return bookMetadataCache && bookMetadataCache->isLoaded() && bookMetadataCache->coreMetadata.readStatus;
+}
 
 std::string Epub::sniffPublisher() const {
   std::string opfPath;

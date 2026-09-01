@@ -21,6 +21,17 @@ class BookMetadataCache {
     std::string ao3WorkId;
     std::string ao3UpdateDate;
     bool ao3IsCompleted = false;
+    std::string seriesName;   // calibre:series
+    std::string seriesIndex;  // calibre:series_index
+    // User's own Calibre custom column for content rating (Explicit/Mature/General/
+    // Teen/-), from calibre:user_metadata:#rating -- separate from Ao3Librarian's
+    // own AO3-preface-scraped rating (same values, different pipeline/storage).
+    std::string contentRating;
+    std::string chapters;          // calibre:user_metadata:#chapters, e.g. "1/1"
+    std::string completionStatus;  // calibre:user_metadata:#completionstatus, e.g. "Completed"
+    std::string updatedDate;       // calibre:user_metadata:#updated -- story's own AO3 update date
+    bool liked = false;            // calibre:user_metadata:#like
+    bool readStatus = false;       // calibre:user_metadata:#readstatus
   };
 
   struct SpineEntry {

@@ -109,6 +109,20 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
+  // Calibre custom-column metadata, parsed straight from the EPUB's own OPF --
+  // no network call needed.
+  std::string seriesName;   // calibre:series
+  std::string seriesIndex;  // calibre:series_index
+  // User's own Calibre custom column for content rating (Explicit/Mature/General/
+  // Teen/-), from calibre:user_metadata:#rating -- separate from Ao3Librarian's
+  // own AO3-preface-scraped rating (same values, different pipeline/storage).
+  std::string contentRating;
+  std::string chapters;          // calibre:user_metadata:#chapters, e.g. "1/1"
+  std::string completionStatus;  // calibre:user_metadata:#completionstatus, e.g. "Completed"
+  std::string updatedDate;       // calibre:user_metadata:#updated -- story's own AO3 update date
+  bool liked = false;            // calibre:user_metadata:#like
+  bool readStatus = false;       // calibre:user_metadata:#readstatus
+
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache, const bool collectCssFiles = true)
       : cachePath(cachePath),
