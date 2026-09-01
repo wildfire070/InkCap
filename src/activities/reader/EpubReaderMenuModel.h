@@ -14,6 +14,7 @@ enum class EpubReaderMenuAction : uint8_t {
   DISPLAY_QR,
   GO_HOME,
   SYNC,
+  BOOKFUSION_SYNC,
   NEARBY_POSITION_SYNC,
   SEND_NEARBY_BOOK,
   DELETE_STATS,
