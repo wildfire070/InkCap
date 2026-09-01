@@ -1,24 +1,20 @@
 #include "AO3SyncActivity.h"
 
-#include <HTTPClient.h>
+#include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <NetworkClientSecure.h>
+#include <SecureHttpClient.h>
 #include <WiFi.h>
 #include <ZipFile.h>
-#include <esp_crt_bundle.h>
 
 #include "HalStorage.h"
+#include "SdCardFontSystem.h"
 #include "activities/ActivityResult.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/StringUtils.h"
-
-extern "C" {
-extern esp_err_t esp_crt_bundle_attach(void* conf);
-}
 
 namespace {
 // The update check runs a TLS session + streamed HTTP download alongside the 48 KB
@@ -33,6 +29,17 @@ constexpr uint32_t AO3_SYNC_MIN_MAX_ALLOC = 32 * 1024;
 void AO3SyncActivity::onEnter() {
   Activity::onEnter();
 
+  if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
+    // A loaded SD custom font can be the difference here; release it and
+    // recheck before giving up. (Not releasing the framebuffer too: render()
+    // runs on a separate task, and nothing guarantees whatever render got
+    // queued getting into this activity has actually finished — releasing
+    // while it's still in flight is a confirmed crash, not a hypothetical
+    // one; see BookFusionBrowserActivity::downloadBook()'s fix. The
+    // streaming-read release further down is safe because it's preceded by
+    // a genuinely-waited requestUpdateAndWait(), not just requestUpdate().)
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
     LOG_ERR("AO3", "Insufficient heap for update check: free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     errorMessage = "Not enough memory";
@@ -93,154 +100,83 @@ void AO3SyncActivity::performSearch() {
     return;
   }
 
-  usingOrgFallback = false;
-  const std::string searchUrls[] = {"https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true",
-                                    "https://archiveofourown.org/works/" + cleanWorkId + "?view_adult=true"};
+  // Release right before the real request: the Wi-Fi selection screen and the
+  // "Searching" status screen render on the way here and can lazily reload the
+  // SD font, so releasing any earlier doesn't reliably free memory for TLS.
+  sdFontSystem.releaseForNetwork(renderer);
+
+  // .org is the official domain and the one most likely to resolve/connect
+  // reliably; .gay is an unofficial mirror, kept only as a fallback for when
+  // .org is unreachable or blocks the request.
+  usingGayFallback = false;
+  const std::string searchUrls[] = {"https://archiveofourown.org/works/" + cleanWorkId + "?view_adult=true",
+                                    "https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true"};
+
+  // AO3 is Cloudflare-fronted. The mbedTLS-based clients this used to use
+  // (Arduino's HTTPClient/NetworkClientSecure, then ESP-IDF's esp_http_client
+  // for downloads) got their connections silently dropped by Cloudflare's TLS
+  // fingerprinting — no clean rejection, just a ~2-minute hang before a
+  // transport error, confirmed on real hardware on a network that reaches AO3
+  // fine from a browser. wolfSSL is the stack BookFusion already gets through
+  // comparable protection with on the same device/network, so every AO3
+  // network call now goes through the same freeink::SecureHttpClient.
+  const auto shouldAbort = [this] {
+    mappedInput.update();
+    return mappedInput.wasReleased(MappedInputManager::Button::Back);
+  };
 
   int status_code = 0;
+  bool userAborted = false;
   for (int urlIdx = 0; urlIdx < 2; urlIdx++) {
     if (urlIdx == 1) {
-      usingOrgFallback = true;
+      usingGayFallback = true;
       requestUpdateAndWait();
       delay(1000);
     }
-    std::string currentUrl = searchUrls[urlIdx];
+    const std::string& currentUrl = searchUrls[urlIdx];
     int max_retries = 3;
-    HTTPClient http;
-    std::unique_ptr<NetworkClient> netClient;
-
-    while (max_retries > 0) {
-      auto* secureClient = new NetworkClientSecure();
-      secureClient->setInsecure();  // Skip strict cert validation
-#ifndef SIMULATOR
-      secureClient->setTimeout(20);  // 20s network read timeout
-
-      // Set ALPN to http/1.1 to help Cloudflare routing
-      const char* alpn_protos[] = {"http/1.1", nullptr};
-      secureClient->setAlpnProtocols(alpn_protos);
-#endif  // crossink-simulator's NetworkClientSecure has no read-timeout/ALPN knobs; the
-        // simulator's plain TCP transport doesn't need Cloudflare TLS routing hints.
-
-      netClient.reset(secureClient);
-
-      http.begin(*netClient, currentUrl.c_str());
-      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-      http.setTimeout(20000);  // 20 seconds HTTP timeout
-      http.addHeader("User-Agent",
-                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                     "Chrome/120.0.0.0 Safari/537.36");
-      http.addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
-      http.addHeader("Accept-Language", "en-US,en;q=0.5");
-      http.addHeader("Connection", "keep-alive");
-
-      status_code = http.GET();
-
-      if (status_code == HTTP_CODE_OK || status_code == 403 || status_code == 404) {
-        break;  // Success or definite non-retryable error
-      }
-
-      LOG_INF("AO3", "HTTP error %d, retries left: %d", status_code, max_retries - 1);
-      http.end();
-      max_retries--;
-
-      if (max_retries > 0) {
-        // Check if user wants to cancel while retrying
-        mappedInput.update();
-        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-          errorMessage = "Search Aborted";
-          state = AO3SyncState::ERROR;
-          requestUpdate();
-          return;
-        }
-        delay(1500);  // Wait before retry
-      }
-    }
-
-    if (status_code == 403) {
-      http.end();
-      if (urlIdx == 0) continue;  // try .org
-      errorMessage = tr(STR_AO3_ERROR_LOCKED);
-      state = AO3SyncState::ERROR;
-      return;
-    } else if (status_code == 429) {
-      errorMessage = "AO3 Rate Limit: Try later";
-      http.end();
-      state = AO3SyncState::ERROR;
-      return;
-    } else if (status_code == 404) {
-      errorMessage = "Work Deleted/Not Found";
-      http.end();
-      state = AO3SyncState::ERROR;
-      return;
-    } else if (status_code != HTTP_CODE_OK) {
-      if (status_code < 0) {
-        errorMessage = "Err: " + std::string(http.errorToString(status_code).c_str());
-      } else {
-        errorMessage = "Error: " + std::to_string(status_code);
-      }
-      http.end();
-      state = AO3SyncState::ERROR;
-      return;
-    }
-
-    // crossink-simulator's HTTPClient::getStreamPtr() returns the base Stream* (its
-    // response body is not backed by a WiFiClient); real hardware returns WiFiClient*,
-    // which is itself a Stream, so the rest of this loop only needs Stream's interface.
-#ifdef SIMULATOR
-    Stream* stream = http.getStreamPtr();
-#else
-    WiFiClient* stream = http.getStreamPtr();
-#endif
-    if (!stream) {
-      errorMessage = "Stream Failed";
-      http.end();
-      state = AO3SyncState::ERROR;
-      return;
-    }
-
-    char* buffer = (char*)malloc(1024);
-    if (!buffer) {
-      errorMessage = "Out of Memory";
-      http.end();
-      state = AO3SyncState::ERROR;
-      return;
-    }
 
     std::string htmlAcc;
     bool foundDate = false;
     bool foundChapters = false;
-    bytesProcessed = 0;
 
-    while (bytesProcessed < 100000 && http.connected()) {
-      // Allow user to abort
-      mappedInput.update();
-      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-        LOG_INF("AO3", "Search aborted by user");
-        errorMessage = "Search Aborted";
-        foundDate = false;  // Force failure
-        break;
-      }
+    while (max_retries > 0) {
+      freeink::SecureHttpClient http;
+      http.setInsecure();  // Skip strict cert validation, matching the old client's behavior
+      http.setTimeout(20000);
+      http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36");
+      http.setFollowRedirects(5);
 
-      size_t available = stream->available();
-      if (available > 0) {
-        int toRead = std::min(available, (size_t)1024);
-        // crossink-simulator's Stream::read() is the single-byte overload only; use the
-        // buffered readBytes() helper there instead of the multi-arg Client::read() used
-        // on real hardware.
-#ifdef SIMULATOR
-        int read = stream->readBytes((uint8_t*)buffer, toRead);
-#else
-        int read = stream->read((uint8_t*)buffer, toRead);
-#endif
-        if (read > 0) {
-          bytesProcessed += read;
-          std::string chunk(buffer, read);
-          htmlAcc += chunk;
+      htmlAcc.clear();
+      foundDate = false;
+      foundChapters = false;
+      bytesProcessed = 0;
 
-          // Maintain small window for markers (Fast Discard)
-          if (htmlAcc.size() > 2048) {
-            htmlAcc = htmlAcc.substr(htmlAcc.size() - 1024);
-          }
+      if (!http.begin(currentUrl)) {
+        status_code = -1;
+      } else {
+        http.addHeader("Accept",
+                       "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+        http.addHeader("Accept-Language", "en-US,en;q=0.5");
+        // AO3's redirect from /works/<id> to /works/<id>/chapters/<id> drops
+        // the ?view_adult=true query string, and SecureHttpClient has no
+        // cookie jar to carry the Set-Cookie it issues instead - without this,
+        // the redirected request lands on the age-confirmation interstitial
+        // rather than the real chapter page. Headers persist across redirect
+        // hops in this client, so sending the cookie explicitly survives it.
+        http.addHeader("Cookie", "view_adult=true");
+
+        // Release the e-ink framebuffer(s) for the whole request: the TLS
+        // handshake is the tightest heap moment (see the framebuffer-release
+        // work elsewhere in this file/BookFusionBrowserActivity), and nothing
+        // in shouldAbort/onData below renders, so it's safe to hold released
+        // for the connect, headers, and streamed body alike. Reallocates
+        // automatically when this scope ends, on every exit path.
+        GfxRenderer::NetworkBufferLoan fbLoan(renderer);
+        const auto onData = [this, &htmlAcc, &foundDate, &foundChapters](const uint8_t* data, size_t len) {
+          bytesProcessed += len;
+          htmlAcc.append(reinterpret_cast<const char*>(data), len);
 
           // Search for date
           if (!foundDate) {
@@ -265,26 +201,81 @@ void AO3SyncActivity::performSearch() {
                 if (slashPos != std::string::npos) {
                   std::string current = chapStr.substr(0, slashPos);
                   std::string total = chapStr.substr(slashPos + 1);
-                  if (total != "?" && current == total) {
-                    scrapedIsCompleted = true;
-                  } else {
-                    scrapedIsCompleted = false;
-                  }
+                  scrapedIsCompleted = total != "?" && current == total;
                   foundChapters = true;
                 }
               }
             }
           }
 
-          if (foundDate && foundChapters) break;
+          // Bound memory growth now that both markers have been searched for
+          // in the full buffer. Keep a tail long enough to catch a marker
+          // that straddles this chunk boundary and the next one.
+          if (htmlAcc.size() > 4096) {
+            htmlAcc = htmlAcc.substr(htmlAcc.size() - 256);
+          }
+
+          // Stop once we have both markers, or as a safety cap matching the
+          // old loop's 100 KB ceiling.
+          return !(foundDate && foundChapters) && bytesProcessed < 100000;
+        };
+
+        status_code = http.GET(onData, shouldAbort);
+        LOG_INF("AO3", "GET %s -> status=%d bytes=%u aborted=%d", currentUrl.c_str(), status_code,
+                (unsigned)bytesProcessed, http.aborted());
+        if (http.aborted()) {
+          // shouldAbort() already consumed the Back-release event, so the
+          // between-retries check below would never see it — capture the
+          // abort here instead of letting it look like a generic failure.
+          userAborted = true;
         }
-      } else {
-        delay(10);  // Wait for more data
+      }
+
+      if (userAborted) break;
+
+      if (status_code == 200 || status_code == 403 || status_code == 404) {
+        break;  // Success or definite non-retryable error
+      }
+
+      LOG_INF("AO3", "HTTP error %d, retries left: %d", status_code, max_retries - 1);
+      max_retries--;
+
+      if (max_retries > 0) {
+        // Check if user wants to cancel while retrying
+        mappedInput.update();
+        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+          userAborted = true;
+          break;
+        }
+        delay(1500);  // Wait before retry
       }
     }
 
-    free(buffer);
-    http.end();
+    if (userAborted) {
+      errorMessage = "Search Aborted";
+      state = AO3SyncState::ERROR;
+      requestUpdate();
+      return;
+    }
+
+    if (status_code == 403) {
+      if (urlIdx == 0) continue;  // try .gay
+      errorMessage = tr(STR_AO3_ERROR_LOCKED);
+      state = AO3SyncState::ERROR;
+      return;
+    } else if (status_code == 429) {
+      errorMessage = "AO3 Rate Limit: Try later";
+      state = AO3SyncState::ERROR;
+      return;
+    } else if (status_code == 404) {
+      errorMessage = "Work Deleted/Not Found";
+      state = AO3SyncState::ERROR;
+      return;
+    } else if (status_code != 200) {
+      errorMessage = "Err: " + std::to_string(status_code);
+      state = AO3SyncState::ERROR;
+      return;
+    }
 
     if (foundDate && foundChapters) {
       if (scrapedDate > currentLocalDate) {
@@ -292,9 +283,9 @@ void AO3SyncActivity::performSearch() {
       } else {
         state = AO3SyncState::UP_TO_DATE;
       }
-    } else if (errorMessage == "Search Aborted") {
-      state = AO3SyncState::ERROR;
     } else {
+      LOG_INF("AO3", "Parse failed: status=%d bytes=%u foundDate=%d foundChapters=%d",
+              status_code, (unsigned)bytesProcessed, foundDate, foundChapters);
       errorMessage = tr(STR_AO3_ERROR_GENERIC);
       state = AO3SyncState::ERROR;
     }
@@ -308,29 +299,70 @@ void AO3SyncActivity::performDownload() {
   errorMessage = "";
   downloadProgress = 0;
   downloadTotal = 0;
-  requestUpdate();
+  // Must actually wait (not just requestUpdate()): the framebuffer release
+  // just below frees the buffer this render may still be reading from
+  // mid-flight otherwise — the same null-framebuffer store fault found and
+  // fixed in BookFusionBrowserActivity::downloadBook().
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("AO3", "Downloading screen could not be rendered before fetch");
+    requestUpdate(true);
+  }
 
-  std::string downloadUrl = "https://archiveofourown.gay/downloads/" + workId + "/work.epub?v=" + scrapedDate;
+  // Same reasoning as performSearch(): release right before the real request.
+  sdFontSystem.releaseForNetwork(renderer);
+
+  // Same reasoning as performSearch(): .org first, .gay only as a fallback.
+  std::string downloadUrl = "https://archiveofourown.org/downloads/" + workId + "/work.epub?v=" + scrapedDate;
   std::string tempPath = bookPath + ".tmp";
 
   LOG_INF("AO3", "Downloading: %s -> %s", downloadUrl.c_str(), tempPath.c_str());
 
-  auto result = HttpDownloader::downloadToFile(downloadUrl, tempPath, [this](size_t downloaded, size_t total) {
+  // Same framebuffer reasoning as BookFusionBrowserActivity::downloadBook():
+  // free it for the whole transfer, reacquiring only to draw each throttled
+  // progress update.
+  const auto progressCallback = [this](size_t downloaded, size_t total) {
     downloadProgress = downloaded;
     downloadTotal = total;
-    requestUpdate(true);
-  });
+    if (!renderer.reallocFrameBuffersAfterNetwork()) {
+      LOG_ERR("AO3", "Framebuffer realloc failed during download progress");
+      ESP.restart();
+    }
+    if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+      LOG_ERR("AO3", "Download progress screen could not be rendered");
+      requestUpdate(true);
+    }
+    renderer.releaseFrameBuffersForNetwork();
+  };
+
+  // Same reasoning as performSearch(): AO3 is Cloudflare-fronted, and
+  // Cloudflare's TLS fingerprinting silently drops connections from the
+  // default ESP_HTTP (mbedTLS) transport. WOLFSSL is the transport
+  // BookFusion already gets through comparable protection with.
+  HttpDownloader::DownloadOptions downloadOptions;
+  downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
+
+  renderer.releaseFrameBuffersForNetwork();
+  auto result = HttpDownloader::downloadToFile(downloadUrl, tempPath, progressCallback, nullptr, "", "", downloadOptions);
 
   if (result == HttpDownloader::HTTP_ERROR) {
-    usingOrgFallback = true;
+    usingGayFallback = true;
+    if (!renderer.reallocFrameBuffersAfterNetwork()) {
+      LOG_ERR("AO3", "Framebuffer realloc failed before gay fallback");
+      ESP.restart();
+    }
     requestUpdateAndWait();
     delay(1000);
-    downloadUrl = "https://archiveofourown.org/downloads/" + workId + "/work.epub?v=" + scrapedDate;
-    result = HttpDownloader::downloadToFile(downloadUrl, tempPath, [this](size_t downloaded, size_t total) {
-      downloadProgress = downloaded;
-      downloadTotal = total;
-      requestUpdate(true);
-    });
+    downloadUrl = "https://archiveofourown.gay/downloads/" + workId + "/work.epub?v=" + scrapedDate;
+    renderer.releaseFrameBuffersForNetwork();
+    result = HttpDownloader::downloadToFile(downloadUrl, tempPath, progressCallback, nullptr, "", "", downloadOptions);
+  }
+
+  // The buffer is left released by progressCallback regardless of how the
+  // transfer ended; bring it back before any of the result-handling below
+  // renders.
+  if (!renderer.reallocFrameBuffersAfterNetwork()) {
+    LOG_ERR("AO3", "Framebuffer realloc failed after download");
+    ESP.restart();
   }
 
   if (result == HttpDownloader::OK) {
@@ -443,8 +475,8 @@ void AO3SyncActivity::renderSearching() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto top = (pageHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
 
-  if (usingOrgFallback) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, "Retrying on .org domain...");
+  if (usingGayFallback) {
+    renderer.drawCenteredText(UI_10_FONT_ID, top, "Retrying on .gay domain...");
   } else {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_AO3_SEARCHING));
   }

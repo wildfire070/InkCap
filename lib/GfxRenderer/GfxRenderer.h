@@ -55,17 +55,17 @@ class GfxRenderer {
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
+  // Serializes framebuffer access across tasks: taken by RenderLock (ActivityManager)
+  // before any Activity::render() call, and by NetworkBufferLoan/FrameBufferLoan below
+  // around the window where the framebuffer is released/reallocated -- draw calls
+  // never check for a null framebuffer, so without this a render() landing mid-loan
+  // dereferences a null pointer and crashes. Recursive because some FrameBufferLoan
+  // uses (e.g. EpubReaderActivity::render()'s low-memory build-scratch reuse) run on
+  // the render task itself, already holding this same lock via RenderLock -- a plain
+  // mutex would deadlock there; recursive re-entry from the same task is a no-op.
+  mutable SemaphoreHandle_t frameBufferMutex_ = nullptr;
   // Shared bitmap row buffers. Every read/write must be inside BitmapScratchLock;
   // ensureBitmapScratchBuffers() asserts that contract before exposing them.
-  // Serializes framebuffer access across tasks: taken by RenderLock (ActivityManager)
-  // before any Activity::render() call, and by FrameBufferLoan below around the
-  // window where the framebuffer is released/reallocated -- draw calls never check
-  // for a null framebuffer, so without this a render() landing mid-loan dereferences
-  // a null pointer and crashes. Recursive because some FrameBufferLoan uses (e.g.
-  // EpubReaderActivity::render()'s low-memory build-scratch reuse) run on the render
-  // task itself, already holding this same lock via RenderLock -- a plain mutex would
-  // deadlock there; recursive re-entry from the same task is a no-op.
-  mutable SemaphoreHandle_t frameBufferMutex_ = nullptr;
   mutable SemaphoreHandle_t bitmapScratchMutex_ = nullptr;
   mutable uint8_t* bitmapScratchOutputRow_ = nullptr;
   mutable size_t bitmapScratchOutputRowSize_ = 0;
@@ -348,7 +348,7 @@ class GfxRenderer {
   // Font helpers
   const uint8_t* getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const;
 
-  // See frameBufferMutex_ above. RenderLock and FrameBufferLoan below take/give this
+  // See frameBufferMutex_ above. RenderLock and every loan below take/give this
   // symmetrically and recursively, so nesting (loan-in-loan, or the render task
   // re-entering via a loan constructed inside its own render()) is always safe.
   void lockFrameBufferMutex() const { xSemaphoreTakeRecursive(frameBufferMutex_, portMAX_DELAY); }
@@ -377,6 +377,37 @@ class GfxRenderer {
     void end();
     FrameBufferLoan(const FrameBufferLoan&) = delete;
     FrameBufferLoan& operator=(const FrameBufferLoan&) = delete;
+
+   private:
+    GfxRenderer& renderer_;
+    bool active_ = false;
+  };
+
+  // Free the framebuffer(s) back to the general heap (unlike the build loan
+  // above, which only lends the bytes as scratch) so a network operation's
+  // TLS buffers have a real contiguous block to allocate from. Between
+  // release and a successful realloc NOTHING may draw or display — the
+  // panel keeps showing its last refreshed image. realloc returns the
+  // buffer white, so the caller must redraw the full screen; it returns
+  // false if the heap could not supply the buffers back (release itself
+  // cannot fail).
+  void releaseFrameBuffersForNetwork();
+  bool reallocFrameBuffersAfterNetwork();
+
+  // RAII form of the pair above, for network calls with several early-return
+  // error paths (a manual release/realloc pair would need one at every
+  // return). Reallocates on scope exit; a realloc failure there restarts the
+  // device (running blind with no framebuffer helps nobody), matching
+  // FrameBufferLoan's own backstop. Display the status screen the panel
+  // should hold BEFORE constructing one. Nesting-safe: inert if the
+  // framebuffer is already released.
+  class NetworkBufferLoan {
+   public:
+    explicit NetworkBufferLoan(GfxRenderer& renderer);
+    ~NetworkBufferLoan() { end(); }
+    void end();
+    NetworkBufferLoan(const NetworkBufferLoan&) = delete;
+    NetworkBufferLoan& operator=(const NetworkBufferLoan&) = delete;
 
    private:
     GfxRenderer& renderer_;

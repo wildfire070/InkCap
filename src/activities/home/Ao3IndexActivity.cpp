@@ -9,6 +9,7 @@
 
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
+#include "SdCardFontSystem.h"
 
 namespace {
 
@@ -46,6 +47,16 @@ void Ao3IndexActivity::onEnter() {
 }
 
 void Ao3IndexActivity::runHeapCheck() {
+  if (ESP.getFreeHeap() < 80 * 1024) {
+    // A loaded SD custom font can be the difference here; release it and
+    // recheck before giving up. (Not releasing the framebuffer too: render()
+    // runs on a separate task, and nothing here guarantees the render that
+    // requestUpdate(true) queued on the way into this activity has actually
+    // finished — releasing while it's still in flight is a real crash, not
+    // a hypothetical one; see BookFusionBrowserActivity::downloadBook()'s
+    // fix for the confirmed case.)
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < 80 * 1024) {
     state = State::ERROR;
     errorMessage = "Insufficient memory to run indexing (need 80KB free heap).";
@@ -266,6 +277,12 @@ void Ao3IndexActivity::tickSingleSniffing() {
 
 void Ao3IndexActivity::tickSingleScraping() {
   if (ESP.getFreeHeap() < 80 * 1024) {
+    // Not releasing the framebuffer here: the state transition into this
+    // tick used requestUpdate(true) (non-waiting), so there's no guarantee
+    // the render task has finished with it yet.
+    sdFontSystem.releaseForNetwork(renderer);
+  }
+  if (ESP.getFreeHeap() < 80 * 1024) {
     yield();
     return;  // defer tick
   }
@@ -464,6 +481,12 @@ void Ao3IndexActivity::startDirIndexing() {
 }
 
 void Ao3IndexActivity::tickDirIndexing() {
+  if (ESP.getFreeHeap() < 80 * 1024) {
+    // Not releasing the framebuffer here: same reasoning as
+    // tickSingleScraping() — the state transition into this tick used a
+    // non-waiting requestUpdate(true).
+    sdFontSystem.releaseForNetwork(renderer);
+  }
   if (ESP.getFreeHeap() < 80 * 1024) {
     yield();
     return;  // defer
