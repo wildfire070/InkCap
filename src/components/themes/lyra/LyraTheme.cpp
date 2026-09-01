@@ -484,7 +484,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
   const int tileY = rect.y;
   const bool hasContinueReading = !recentBooks.empty();
   if (coverWidth == 0) {
-    coverWidth = LyraMetrics::values.homeCoverHeight * 2 / 3;
+    coverWidth = LyraMetrics::values.homeCoverHeight * 3 / 4;
   }
 
   // Draw book card regardless, fill with message based on `hasContinueReading`
@@ -504,19 +504,21 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         hasCover = false;
       } else {
         // Adaptive path/generation (see HomeActivity::loadRecentCovers) avoids forcing a
-        // fixed 2:3 crop on covers whose real aspect ratio is too far from it -- confirmed
+        // fixed 3:4 crop on covers whose real aspect ratio is too far from it -- confirmed
         // on hardware with an AO3-style info-card cover that was getting silently truncated.
         // The stored bitmap's own height can come out shorter than homeCoverHeight in that
         // case, so its draw is vertically centered within the fixed slot below rather than
-        // stretched to fill it. XTC covers aren't part of this (no adaptive path for them
-        // yet), so they keep the existing fixed-ratio lookup.
+        // stretched to fill it. XTC covers aren't part of the adaptive build, but still use
+        // this same 3:4 box via the explicit width+height overload -- getCoverThumbPath's own
+        // single-height overload defaults to 2:3, which is shared by other themes and must
+        // stay untouched here.
         const bool isEpub = FsHelpers::hasEpubExtension(book.path);
         const int defaultThumbWidth =
-            static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 2 + 1) / 3);
+            static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 3 + 2) / 4);
         const std::string coverBmpPath =
             isEpub ? Epub(book.path, "/.crosspoint")
                          .getAdaptiveThumbBmpPath(defaultThumbWidth, LyraMetrics::values.homeCoverHeight)
-                   : UITheme::getCoverThumbPath(coverPath, LyraMetrics::values.homeCoverHeight);
+                   : UITheme::getCoverThumbPath(coverPath, defaultThumbWidth, LyraMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
         HalFile file;
@@ -531,6 +533,12 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
             hasCover = false;
           }
           file.close();
+        } else {
+          // Thumbnail not generated yet (or its path no longer matches what actually got
+          // built -- exactly how the 3:4 dimension mismatch above manifested) -- without
+          // this branch hasCover stayed true by default, so neither the cover nor the
+          // fallback placeholder drew: a blank bordered box with no icon at all.
+          hasCover = false;
         }
       }
 
