@@ -134,7 +134,12 @@ def inject_version(env):
     project_dir = env['PROJECT_DIR']
     pioenv = env['PIOENV']
 
-    if pioenv in ('default', 'sticky', 'x4-pro'):
+    # Not using upstream's get_hardware_version() here -- this branch deliberately
+    # dropped embedding the branch/device name into CROSSINK_VERSION (see the
+    # inline else-branch below); CROSSINK_FIRMWARE_DEVICE_TYPE (set per env in
+    # platformio.ini) already carries that distinction. x4-classic just needs to
+    # be in this set to get a version string at all.
+    if pioenv in ('default', 'sticky', 'x4-pro', 'x4-classic'):
         if os.environ.get('CROSSINK_RC_HASH'):
             version_string = get_release_candidate_version(project_dir)
             print(f'CrossInk RC build version: {version_string}')
@@ -177,7 +182,7 @@ def inject_version(env):
         ])
         print(f'CrossInk test build version: {ci_version}{suffix}')
 
-    elif pioenv == 'x4-pro-debug':
+    elif pioenv in {'x4-pro-debug', 'x4-classic-debug'}:
         branch = get_git_branch(project_dir)
         short_hash = get_git_short_hash(project_dir)
         ci_version = get_crossink_version(project_dir)
