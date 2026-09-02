@@ -1486,25 +1486,14 @@ void FileBrowserActivity::render(RenderLock&&) {
   // indicator; the rest of the screen renders through the app.
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware()) {
-    // "Sort" lives in TouchHeaderBackButton's existing rightReserve gap, to the left of the
-    // settings icon buildListScreen() draws flush-right in its own settingsRect (that icon's
-    // touch region is independent of rightReserve -- rightReserve only affects where the title
-    // text truncates -- so Sort's own reserve/position must additionally clear the icon's own
-    // backLayout.iconRect.width + 8 footprint, matching what buildListScreen() reserves for it).
+    // Sort now lives in the persistent edge tab drawn below (after app.render(), so
+    // it overlays the list), not the header -- only the settings icon's own reserve
+    // (drawn by buildListScreen()) needs accounting for here.
     if (mode == Mode::Books) {
-      constexpr int kSortButtonPadding = 12;
       const auto backLayout = TouchHeaderBackButton::layout(header);
       const int settingsIconReserve = backLayout.iconRect.width + 8;
-      const int sortLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
-      const int sortReserve = settingsIconReserve + kSortButtonPadding * 2 + sortLabelWidth;
-      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false, sortReserve);
-      sortButtonRect = Rect{header.x + header.width - sortReserve, header.y, sortReserve - settingsIconReserve,
-                            header.height};
-      renderer.drawText(SMALL_FONT_ID, sortButtonRect.x + kSortButtonPadding,
-                        backLayout.iconRect.y + (backLayout.iconRect.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2,
-                        tr(STR_SORT));
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false, settingsIconReserve);
     } else {
-      sortButtonRect = Rect{0, 0, 0, 0};
       TouchHeaderBackButton::draw(renderer, uiTarget, header, folderName.c_str(), false);
     }
   } else {
@@ -1517,6 +1506,31 @@ void FileBrowserActivity::render(RenderLock&&) {
     if (!listNav.consumeRebuildNeeded()) break;
   }
   uiReady = true;
+
+  // Persistent "Sort" edge tab: visible on every device (not gated on touch hardware,
+  // unlike the old header-only button this replaces), so button-only readers can see
+  // sorting exists at all -- previously only reachable via an undiscoverable PageBack/
+  // PageForward binding (see loop()), with zero on-screen hint. Overlays the list (drawn
+  // after app.render(), with an opaque fill behind it) rather than reserving list width,
+  // matching InsiderPhD's fork's fixed vertical edge-tab convention. Touch-only devices
+  // still use sortButtonRect as the tap target; button-only devices get the same visual
+  // with no touch handling attached (loop() only checks it under hasTouchHardware()).
+  if (mode == Mode::Books) {
+    constexpr int kSortTabPadding = 6;
+    constexpr int kSortTabWidth = 22;
+    const int sortLabelLen = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
+    const int sortTabHeight = sortLabelLen + kSortTabPadding * 2;
+    const int sortTabX = pageWidth - kSortTabWidth;
+    const int sortTabY = header.y + header.height + metrics.verticalSpacing * 3;
+    sortButtonRect = Rect{sortTabX, sortTabY, kSortTabWidth, sortTabHeight};
+    renderer.fillRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, false);
+    renderer.drawRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight);
+    const int textX = sortTabX + (kSortTabWidth - renderer.getTextHeight(SMALL_FONT_ID)) / 2;
+    const int textY = sortTabY + (sortTabHeight + sortLabelLen) / 2;
+    renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, tr(STR_SORT));
+  } else {
+    sortButtonRect = Rect{0, 0, 0, 0};
+  }
 
   const size_t visibleEntries = entryCount();
   const auto backLabel = (basepath == "/") ? (mode == Mode::Books ? mappedInput.withBackArrow(tr(STR_HOME))
