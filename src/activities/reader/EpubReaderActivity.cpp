@@ -2371,7 +2371,22 @@ void EpubReaderActivity::onExit() {
   // right now" check the reader itself uses elsewhere, regardless of whether background build of
   // later pages is still ongoing.
   const bool autosyncOnExitConfigured = SETTINGS.autosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
+  const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
   const bool sectionReadableForAutosync = section && section->activeBuildHasCaughtReadablePages();
+  // Both pushes below block for a WiFi connect + HTTP round trip with zero visual
+  // feedback otherwise -- from the reader's perspective the device just stops
+  // responding for a few seconds. One popup covers both (they may both fire from
+  // the same exit), drawn once up front since each push's own NetworkBufferLoan
+  // releases the framebuffer this draw needs. Gated on the mode toggle + a
+  // readable section, same as the blocks below; runOnExit() itself still no-ops
+  // silently if the book turns out not to be linked/configured, in which case
+  // this flashes briefly for nothing -- accepted rather than duplicating that
+  // per-push linkage check just to skip a popup on an already-uncommon path.
+  if ((autosyncOnExitConfigured || koreaderAutosyncOnExitConfigured) && epub && sectionReadableForAutosync &&
+      renderer.hasFrameBuffer()) {
+    GUI.drawPopup(renderer, tr(STR_SYNCING));
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  }
   if (autosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
     LOG_INF("ERS", "Skipping on-exit BookFusion auto-sync: no active section to read progress from");
   } else if (epub && sectionReadableForAutosync) {
@@ -2396,7 +2411,6 @@ void EpubReaderActivity::onExit() {
 
   // KOReader's independent AUTOSYNC_ON_EXIT trigger -- separate credentials, separate document
   // identity, same blocking-is-fine reasoning as the BookFusion block above.
-  const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
   if (koreaderAutosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
     LOG_INF("ERS", "Skipping on-exit KOReader auto-sync: no active section to read progress from");
   } else if (epub && sectionReadableForAutosync) {
