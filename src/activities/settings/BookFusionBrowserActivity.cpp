@@ -85,7 +85,7 @@ bool bookFusionBookIsLarge(const BookFusionBook& book) { return book.downloadSiz
 // "already downloaded" row icon (see buildBrowsingScreen()) reflects exactly
 // what a download would do, not an approximation of it.
 std::string resolveBookFilePath(const BookFusionBook& book) {
-  const char* downloadFolder = SETTINGS.opdsDownloadFolder;
+  const char* downloadFolder = SETTINGS.bookFusionDownloadFolder;
   std::string path;
   path.reserve(96);
   if (downloadFolder[0] != '\0') path += downloadFolder;
@@ -874,7 +874,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     return;
   }
 
-  const char* downloadFolder = SETTINGS.opdsDownloadFolder;
+  const char* downloadFolder = SETTINGS.bookFusionDownloadFolder;
   const bool useDownloadFolder = downloadFolder[0] != '\0';
   if (useDownloadFolder && !Storage.exists(downloadFolder) && !Storage.mkdir(downloadFolder)) {
     LOG_ERR("BFBrowser", "Could not create download folder %s", downloadFolder);

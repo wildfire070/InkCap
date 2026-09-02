@@ -1,13 +1,18 @@
 #include "BookFusionSettingsActivity.h"
 
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
+
+#include <cstring>
 
 #include "BookFusionAuthActivity.h"
 #include "BookFusionBrowserActivity.h"
 #include "BookFusionTokenStore.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "activities/ActivityResult.h"
+#include "activities/home/Ao3FolderPickerActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -18,8 +23,9 @@
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int MENU_ITEMS = 3;
-const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_BROWSE_LIBRARY, StrId::STR_BF_ACCOUNT, StrId::STR_BF_AUTOSYNC};
+constexpr int MENU_ITEMS = 4;
+const StrId menuNames[MENU_ITEMS] = {StrId::STR_BF_BROWSE_LIBRARY, StrId::STR_BF_ACCOUNT, StrId::STR_BF_AUTOSYNC,
+                                     StrId::STR_BF_DOWNLOAD_FOLDER};
 constexpr StrId autosyncLabels[CrossPointSettings::AUTOSYNC_COUNT] = {
     StrId::STR_STATE_OFF, StrId::STR_BF_AUTOSYNC_EVERY_CHAPTER, StrId::STR_BF_AUTOSYNC_EVERY_5_PERCENT,
     StrId::STR_BF_AUTOSYNC_EVERY_10_PERCENT, StrId::STR_BF_AUTOSYNC_ON_EXIT};
@@ -119,6 +125,24 @@ void BookFusionSettingsActivity::handleSelection() {
     SETTINGS.autosyncMode = (SETTINGS.autosyncMode + 1) % CrossPointSettings::AUTOSYNC_COUNT;
     SETTINGS.saveToFile();
     requestUpdate();
+  } else if (selectedIndex == 3) {
+    // Download Folder: same picker/persistence pattern as AO3's library folder
+    // setting (Ao3LibrarySettingsActivity) -- reused as-is rather than adding a
+    // second near-identical picker component.
+    const std::string startPath =
+        Storage.exists(SETTINGS.bookFusionDownloadFolder) ? SETTINGS.bookFusionDownloadFolder : "/";
+    startActivityForResult(
+        std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, tr(STR_BF_DOWNLOAD_FOLDER),
+                                                   PickerMode::SINGLE, std::vector<std::string>{}, startPath),
+        [this](const ActivityResult& result) {
+          if (const auto* pickerRes = std::get_if<FolderPickerResult>(&result.data)) {
+            strncpy(SETTINGS.bookFusionDownloadFolder, pickerRes->singlePath.c_str(),
+                    sizeof(SETTINGS.bookFusionDownloadFolder) - 1);
+            SETTINGS.bookFusionDownloadFolder[sizeof(SETTINGS.bookFusionDownloadFolder) - 1] = '\0';
+            SETTINGS.saveToFile();
+          }
+          requestUpdate();
+        });
   }
 }
 
@@ -139,6 +163,7 @@ void BookFusionSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
   values[1] = signedIn ? tr(STR_BF_SIGNED_IN) : tr(STR_BF_SIGNED_OUT);
   values[2] =
       I18N.get(autosyncLabels[SETTINGS.autosyncMode < CrossPointSettings::AUTOSYNC_COUNT ? SETTINGS.autosyncMode : 0]);
+  values[3] = SETTINGS.bookFusionDownloadFolder[0] ? SETTINGS.bookFusionDownloadFolder : tr(STR_OPDS_SD_ROOT);
 
   std::vector<fui::ListItem> items;
   items.reserve(MENU_ITEMS);
