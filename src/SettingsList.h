@@ -787,6 +787,9 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     // the on-device editor lives under System > OPDS Servers.
     add(SettingInfo::String(StrId::STR_OPDS_DOWNLOAD_FOLDER, SETTINGS.opdsDownloadFolder,
                             sizeof(SETTINGS.opdsDownloadFolder), "opdsDownloadFolder"));
+    // Persisted here, but edited from BookFusion Settings' folder picker.
+    add(SettingInfo::String(StrId::STR_BF_DOWNLOAD_FOLDER, SETTINGS.bookFusionDownloadFolder,
+                            sizeof(SETTINGS.bookFusionDownloadFolder), "bookFusionDownloadFolder"));
     // Persisted here, but edited from the nearby receive screen's folder picker.
     add(SettingInfo::String(StrId::STR_NEARBY_RECEIVE_FOLDER, SETTINGS.nearbyReceiveFolder,
                             sizeof(SETTINGS.nearbyReceiveFolder), "nearbyReceiveFolder"));
