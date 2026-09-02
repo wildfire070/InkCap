@@ -2335,6 +2335,16 @@ void EpubReaderActivity::onExit() {
   // later pages is still ongoing.
   const bool koreaderAutosyncOnExitConfigured = SETTINGS.koreaderAutosyncMode == CrossPointSettings::AUTOSYNC_ON_EXIT;
   const bool sectionReadableForAutosync = section && section->activeBuildHasCaughtReadablePages();
+  // The push below blocks for a WiFi connect + HTTP round trip with zero visual
+  // feedback otherwise -- from the reader's perspective the device just stops
+  // responding for a few seconds. Gated the same as the block below; runOnExit()
+  // itself still no-ops silently if KOReader sync turns out not to be configured
+  // with credentials, in which case this flashes briefly for nothing -- accepted
+  // rather than duplicating that check just to skip a popup on an uncommon path.
+  if (koreaderAutosyncOnExitConfigured && epub && sectionReadableForAutosync && renderer.hasFrameBuffer()) {
+    GUI.drawPopup(renderer, tr(STR_SYNCING));
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  }
   if (koreaderAutosyncOnExitConfigured && (!epub || !sectionReadableForAutosync)) {
     LOG_INF("ERS", "Skipping on-exit KOReader auto-sync: no active section to read progress from");
   } else if (epub && sectionReadableForAutosync) {
