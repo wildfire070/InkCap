@@ -544,6 +544,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char opdsPassword[64] = "";
   // OPDS download destination (empty = SD root). Edited from the OPDS server list.
   char opdsDownloadFolder[64] = "";
+  // BookFusion download destination. Independent of opdsDownloadFolder above --
+  // sharing one setting between the two features would mean picking a BookFusion
+  // folder silently redirects OPDS downloads too. Defaults to a folder (not SD
+  // root) so a fresh setup doesn't scatter downloads into the root directory;
+  // created on first download if missing. Edited from BookFusion Settings.
+  char bookFusionDownloadFolder[64] = "BookFusion";
   // Nearby file receive destination (empty = SD root).
   char nearbyReceiveFolder[64] = "";
   // Hide battery percentage
