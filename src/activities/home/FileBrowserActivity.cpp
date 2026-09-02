@@ -1538,10 +1538,11 @@ void FileBrowserActivity::render(RenderLock&&) {
   if (mode == Mode::Books) {
     constexpr int kSortTabPadding = 6;
     constexpr int kSortTabWidth = 22;
+    constexpr int kSortTabMargin = 4;
     const int sortLabelLen = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
     const int sortTabHeight = sortLabelLen + kSortTabPadding * 2;
-    const int sortTabX = pageWidth - kSortTabWidth;
-    const int sortTabY = header.y + header.height + metrics.verticalSpacing * 3;
+    const int sortTabX = pageWidth - kSortTabWidth - kSortTabMargin;
+    const int sortTabY = header.y + header.height + kSortTabMargin;
     sortButtonRect = Rect{sortTabX, sortTabY, kSortTabWidth, sortTabHeight};
     renderer.fillRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, false);
     renderer.drawRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight);
