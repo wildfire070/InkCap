@@ -17,6 +17,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "BookActions.h"
+#include "BookDetailsActivity.h"
 #include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -47,6 +48,15 @@ constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_SETTINGS = 2;
 constexpr size_t INDEX_THRESHOLD = 200;
 constexpr size_t MAX_VIRTUAL_LIST_ENTRIES = static_cast<size_t>(std::numeric_limits<int16_t>::max());
+
+// Persistent "Sort" edge tab (see the header/render-time comment in
+// FileBrowserActivity::render() for the full rationale). Shared between
+// render() (draws it) and buildListScreen() (reserves room for it in the list
+// rect so a wide tab can't cover a row's own right edge / value column).
+constexpr int kSortTabPadding = 6;
+constexpr int kSortTabWidth = 30;
+constexpr int kSortTabTopMargin = 4;
+constexpr int kSortTabCornerRadius = 6;
 constexpr uint32_t FILE_BROWSER_APPEND_MIN_FREE_AFTER_ALLOC = 48U * 1024U;
 constexpr uint32_t FILE_BROWSER_APPEND_MIN_MAX_ALLOC_AFTER_ALLOC = 16U * 1024U;
 
@@ -654,6 +664,11 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
 
         const auto action = static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
         switch (action) {
+          case FileBrowserAction::BookInfo:
+            startActivityForResult(
+                std::make_unique<BookDetailsActivity>(renderer, mappedInput, fullPath, "", ""),
+                [this](const ActivityResult&) { requestUpdate(); });
+            return;
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(fullPath, false);
             return;
@@ -1152,6 +1167,31 @@ std::string getFileExtension(const std::string& filename) {
 // BookStatus::START (no status set) renders as nothing to avoid cluttering
 // the common case of non-AO3 books.
 const char* ao3StatusGlance(BookStatus status) { return status == BookStatus::START ? "" : getStatusLabel(status); }
+
+// Case-folds a sort key so e.g. a stylised lowercase AO3 title ("// devotion")
+// doesn't sort after every ordinarily-capitalized title just because uppercase
+// letters precede lowercase ones in byte order -- a plain std::string compare
+// otherwise clusters every such title at one end of the list instead of where
+// a human reading it alphabetically would expect it.
+std::string toLowerAscii(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+
+// Library-catalogue convention: "The Great Gatsby" sorts under G, not T. `lower`
+// must already be lowercased. Only strips a genuine leading word (one followed
+// by a space, with something left after it), so "A-Team" or "Anew" aren't
+// touched, and a title that's just "The" isn't stripped down to nothing.
+std::string stripLeadingArticleForSort(const std::string& lower) {
+  static constexpr const char* kArticles[] = {"the ", "an ", "a "};
+  for (const char* article : kArticles) {
+    const size_t len = strlen(article);
+    if (lower.size() > len && lower.compare(0, len, article) == 0) {
+      return lower.substr(len);
+    }
+  }
+  return lower;
+}
 }  // namespace
 
 BookStatus FileBrowserActivity::getBookStatus(const std::string& path) {
@@ -1184,13 +1224,13 @@ std::string FileBrowserActivity::computeSortKey(SortField field, const std::stri
 
   switch (field) {
     case SortField::Title:
-      return cache.coreMetadata.title;
+      return stripLeadingArticleForSort(toLowerAscii(cache.coreMetadata.title));
     case SortField::Author:
-      return cache.coreMetadata.author;
+      return toLowerAscii(cache.coreMetadata.author);
     case SortField::Status:
-      return cache.coreMetadata.completionStatus;
+      return toLowerAscii(cache.coreMetadata.completionStatus);
     case SortField::Rating:
-      return cache.coreMetadata.contentRating;
+      return toLowerAscii(cache.coreMetadata.contentRating);
     case SortField::DateUpdated:
       return cache.coreMetadata.updatedDate;  // ISO YYYY-MM-DD -- lexical order is chronological
     case SortField::Chapters: {
@@ -1401,7 +1441,14 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto rowType = twoLineRows ? UiListRowType::WithSubtitle : UiListRowType::SingleLine;
   props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = twoLineRows ? 2 : 1;
-  const fui::Rect listRect = screen.body();
+  fui::Rect listRect = screen.body();
+  // Reserve room for the persistent Sort edge tab (drawn in render(), after this
+  // list) on every row, not just the one or two rows it happens to sit beside --
+  // otherwise a row's own right edge / value column (e.g. the ".epub" extension)
+  // could end up under the tab instead of next to it.
+  if (mode == Mode::Books) {
+    listRect.width = static_cast<int16_t>(std::max(0, listRect.width - kSortTabWidth));
+  }
   const auto rows = configureUiList(props, screen.theme(), listRect, rowType);
   visibleRows = rows > 0 ? rows : 1;
   const bool usesVirtualList = totalEntries <= MAX_VIRTUAL_LIST_ENTRIES;
@@ -1530,22 +1577,31 @@ void FileBrowserActivity::render(RenderLock&&) {
   // Persistent "Sort" edge tab: visible on every device (not gated on touch hardware,
   // unlike the old header-only button this replaces), so button-only readers can see
   // sorting exists at all -- previously only reachable via an undiscoverable PageBack/
-  // PageForward binding (see loop()), with zero on-screen hint. Overlays the list (drawn
-  // after app.render(), with an opaque fill behind it) rather than reserving list width,
-  // matching InsiderPhD's fork's fixed vertical edge-tab convention. Touch-only devices
-  // still use sortButtonRect as the tap target; button-only devices get the same visual
-  // with no touch handling attached (loop() only checks it under hasTouchHardware()).
+  // PageForward binding (see loop()), with zero on-screen hint. Drawn after app.render()
+  // so it overlays the list, matching InsiderPhD's fork's fixed vertical edge-tab
+  // convention -- but buildListScreen() also reserves kSortTabWidth of list width on
+  // every row (not just the ones the tab happens to sit beside), so the opaque overlay
+  // never actually needs to cover live row content; it only ever paints over the blank
+  // margin reserved for it. Touch-only devices still use sortButtonRect as the tap
+  // target; button-only devices get the same visual with no touch handling attached
+  // (loop() only checks it under hasTouchHardware()).
   if (mode == Mode::Books) {
-    constexpr int kSortTabPadding = 6;
-    constexpr int kSortTabWidth = 22;
-    constexpr int kSortTabMargin = 4;
     const int sortLabelLen = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
     const int sortTabHeight = sortLabelLen + kSortTabPadding * 2;
-    const int sortTabX = pageWidth - kSortTabWidth - kSortTabMargin;
-    const int sortTabY = header.y + header.height + kSortTabMargin;
+    const int sortTabX = pageWidth - kSortTabWidth;
+    const int sortTabY = header.y + header.height + kSortTabTopMargin;
     sortButtonRect = Rect{sortTabX, sortTabY, kSortTabWidth, sortTabHeight};
-    renderer.fillRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, false);
-    renderer.drawRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight);
+    // Flush against the right edge and open there -- rounded only on the left,
+    // same technique (and the same radius) the bottom button hints use to sit
+    // open against the screen's bottom edge: the two corners toward the edge
+    // stay square and that whole edge segment goes undrawn, rather than a fully
+    // enclosed box floating away from the edge.
+    renderer.fillRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, kSortTabCornerRadius,
+                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                             /*roundBottomRight=*/false, Color::White);
+    renderer.drawRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, 1, kSortTabCornerRadius,
+                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                             /*roundBottomRight=*/false, /*state=*/true);
     const int textX = sortTabX + (kSortTabWidth - renderer.getTextHeight(SMALL_FONT_ID)) / 2;
     const int textY = sortTabY + (sortTabHeight + sortLabelLen) / 2;
     renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, tr(STR_SORT));
