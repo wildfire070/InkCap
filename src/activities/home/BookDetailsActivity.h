@@ -1,0 +1,55 @@
+#pragma once
+
+#include <string>
+
+#include "../Activity.h"
+#include "util/ButtonNavigator.h"
+
+// Full-page "Book Info" panel: cover on the left, a label/value metadata table on
+// the right (series, content rating, completion status, chapters, updated date,
+// progress), and the story description (dc:description in the EPUB's OPF, read
+// on demand via Epub::getDescription() -- not cached inline with the other
+// fields since it's comparatively large and only this screen needs it) below,
+// scrollable a page at a time when it overflows the screen. Ported from
+// InsiderPhD's crosspoint-reader BookDetailsActivity, trimmed to the metadata
+// this branch's own Calibre-column EPUB parsing actually exposes -- no
+// bookshelf (BookFusion-only, no BookFusion here), publisher/tags/star-rating
+// fields, and no sibling prev/next book navigation (would require new plumbing
+// at every call site).
+class BookDetailsActivity final : public Activity {
+  ButtonNavigator buttonNavigator;
+  std::string bookPath;
+  std::string title;
+  std::string author;
+  std::string seriesName;
+  std::string seriesIndex;
+  std::string contentRating;
+  std::string completionStatus;
+  std::string chapters;
+  std::string updatedDate;
+  std::string description;
+  float progressPercent = -1.0f;
+
+  std::string coverPath;
+  int coverWidthPx = 0;           // 0 = use the 3:4 fallback (no cover to size against yet)
+  int descScrollOffset = 0;      // first visible description line
+  int descVisibleLines = 1;      // updated each render; used for page-step scrolling
+  bool loading = false;
+  bool waitForConfirmRelease = false;
+  bool waitForBackRelease = false;
+
+  void loadMetadata();
+
+ public:
+  explicit BookDetailsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
+                               std::string title, std::string author)
+      : Activity("BookDetails", renderer, mappedInput),
+        bookPath(std::move(bookPath)),
+        title(std::move(title)),
+        author(std::move(author)) {}
+
+  void onEnter() override;
+  void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
+};

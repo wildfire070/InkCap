@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "BookActions.h"
+#include "BookDetailsActivity.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
@@ -260,6 +261,11 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
         }
 
         switch (static_cast<FileBrowserAction>(actionResult->action)) {
+          case FileBrowserAction::BookInfo:
+            startActivityForResult(
+                std::make_unique<BookDetailsActivity>(renderer, mappedInput, book.path, book.title, book.author),
+                [this](const ActivityResult&) { reloadAfterBookAction(); });
+            return;
           case FileBrowserAction::Delete:
             promptDeleteBook(book);
             return;

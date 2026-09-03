@@ -154,6 +154,15 @@ class Epub {
   // ratios, depending on the source image dimensions.
   bool generateAdaptiveThumbBmp(int width, int height, const GfxRenderer* renderer = nullptr,
                                 int readerFontId = 0) const;
+  // Picks whichever of the two standard portrait cover ratios (3:4 or 2:3) this
+  // book's actual embedded cover art is closer to, and returns the width to
+  // pair with `height` at that ratio -- e.g. for use with
+  // getAdaptiveThumbBmpPath()/generateAdaptiveThumbBmp(), so a cover that's
+  // genuinely 2:3 gets a 2:3 box instead of being cropped to fit a 3:4 one.
+  // Reads only the cover image's header (no full decode). Requires load() to
+  // have already found the cover's item href; falls back to the 3:4 width when
+  // there's no cover to peek, or its dimensions can't be read.
+  int pickCoverThumbWidth(int height) const;
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize,
@@ -200,6 +209,13 @@ class Epub {
   bool isAo3Completed() const;
   void saveAo3Info(const std::string& workId, const std::string& date, bool completed) const;
   std::string sniffPublisher() const;
+  // Story summary, from dc:description in the OPF. FanFicFare (AO3 exports) wraps
+  // it as HTML escaped a second level deep -- e.g. "&lt;div class=&quot;userstuff&quot;
+  // &gt;&lt;p&gt;...&lt;/p&gt;&lt;/div&gt;" -- so once the outer XML parse decodes that
+  // one level, what's left is real markup around the actual text; this strips
+  // those tags and collapses whitespace down to plain, single-paragraph text.
+  // Empty if the book has no dc:description.
+  std::string getDescription() const;
 
   const std::string& getSeriesName() const;
   // Calibre stores the index as a float ("1.0"); trailing zeros/dot trimmed for display.
@@ -220,4 +236,17 @@ class Epub {
   bool ensureCachedCoverImage(const std::string& coverImageHref, std::string& outPath) const;
   bool generateThumbBmpInternal(int width, int height, bool adaptiveContain, const GfxRenderer* renderer,
                                 int readerFontId) const;
+  // Path of a cover image file that may sit beside the book on the SD card
+  // ("/Libby/Title.epub" -> "/Libby/Title.jpg"), for `ext` including the dot.
+  std::string sidecarCoverPath(const char* ext) const;
+  // Build the thumbnail from that sidecar, if one is there and converts.
+  //
+  // A book cannot be assumed to carry usable artwork of its own: an encrypted
+  // library loan's embedded cover is unreadable, and plenty of sideloaded EPUBs
+  // (AO3 downloads included) simply have none. Whoever put the book on the card
+  // fetches the artwork from the catalogue that has it and drops it next to the
+  // book. Tried only after the embedded cover has failed or is absent, so a
+  // book that already has usable artwork of its own keeps using that.
+  bool generateThumbBmpFromSidecar(int width, int height, bool adaptiveContain, const std::string& thumbPath,
+                                   const GfxRenderer* renderer, int readerFontId) const;
 };
