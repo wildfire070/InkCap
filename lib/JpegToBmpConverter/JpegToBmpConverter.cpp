@@ -802,3 +802,22 @@ bool JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(FsFile& jpegFile, Print
                                                          int targetMaxHeight, bool adaptiveContain) {
   return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, adaptiveContain);
 }
+
+// Header-only read: just the source pixel dimensions, no pixel decode. JPEGDEC's
+// open() already parses the SOF marker to answer getWidth()/getHeight(); this
+// stops there instead of going on to decode(), so picking a thumbnail's target
+// aspect ratio from the real cover art doesn't cost a full decode pass.
+bool JpegToBmpConverter::peekDimensions(FsFile& jpegFile, int* outWidth, int* outHeight) {
+  s_jpegFile = &jpegFile;
+  const auto jpeg = makeUniqueNoThrow<JPEGDEC>();
+  if (!jpeg) return false;
+  const int rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, bmpDrawCallback);
+  if (rc != 1) return false;
+  const int width = jpeg->getWidth();
+  const int height = jpeg->getHeight();
+  jpeg->close();
+  if (width <= 0 || height <= 0) return false;
+  *outWidth = width;
+  *outHeight = height;
+  return true;
+}
