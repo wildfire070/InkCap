@@ -144,6 +144,11 @@ void XtcReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& sc
   }
   fui::ListProps props;
   props.labelText = screen.theme().bodyText;
+  // screen.list() would otherwise also draw its own default-styled scroll
+  // indicator; fui::drawListScrollIndicator() below already draws the real
+  // one, themed via listScrollWidth/Side/Inset (see FileBrowserActivity's
+  // identical fix for the full history of why this needs suppressing).
+  props.scrollIndicator = false;
   const auto rows = configureUiList(props, screen.theme(), screen.body());
   visibleRows = rows > 0 ? rows : 1;
   const int totalItems = static_cast<int>(chapterCount);

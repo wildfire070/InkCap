@@ -926,6 +926,11 @@ void EpubReaderTouchMenuActivity::buildDictionaryPane(UiApp::ScreenType& screen)
   buildPaneHeader(screen);
   const int total = static_cast<int>(dictionaryLabels.size());
   fui::ListProps props;
+  // screen.list() would otherwise also draw its own default-styled scroll
+  // indicator; fui::drawListScrollIndicator() below already draws the real
+  // one, themed via listScrollWidth/Side/Inset (see FileBrowserActivity's
+  // identical fix for the full history of why this needs suppressing).
+  props.scrollIndicator = false;
   visibleRows = configureDrawerList(props, screen.theme(), screen.body());
   const int top = std::clamp<int>(state.paneTopIndex, 0, std::max(0, total - visibleRows));
   state.paneTopIndex = static_cast<int16_t>(top);
@@ -956,6 +961,11 @@ void EpubReaderTouchMenuActivity::buildFontFamilyPane(UiApp::ScreenType& screen)
   // the tab row when scrolling.
   props.rowHeight = std::max<int16_t>(
       screen.theme().minTouchSize, static_cast<int16_t>(screen.theme().rowHeight - FONT_FAMILY_ROW_HEIGHT_REDUCTION));
+  // screen.list() would otherwise also draw its own default-styled scroll
+  // indicator; fui::drawListScrollIndicator() below already draws the real
+  // one, themed via listScrollWidth/Side/Inset (see FileBrowserActivity's
+  // identical fix for the full history of why this needs suppressing).
+  props.scrollIndicator = false;
   visibleRows = configureDrawerList(props, screen.theme(), listBounds);
   const int top = std::clamp<int>(state.paneTopIndex, 0, std::max(0, total - visibleRows));
   state.paneTopIndex = static_cast<int16_t>(top);
@@ -1001,6 +1011,11 @@ void EpubReaderTouchMenuActivity::buildEnumOptionsPane(UiApp::ScreenType& screen
   const int total = static_cast<int>(enumOptionLabels.size());
   const fui::Rect listBounds = screen.body();
   fui::ListProps props;
+  // screen.list() would otherwise also draw its own default-styled scroll
+  // indicator; fui::drawListScrollIndicator() below already draws the real
+  // one, themed via listScrollWidth/Side/Inset (see FileBrowserActivity's
+  // identical fix for the full history of why this needs suppressing).
+  props.scrollIndicator = false;
   visibleRows = configureDrawerList(props, screen.theme(), listBounds);
   const int top = std::clamp<int>(state.paneTopIndex, 0, std::max(0, total - visibleRows));
   state.paneTopIndex = static_cast<int16_t>(top);
