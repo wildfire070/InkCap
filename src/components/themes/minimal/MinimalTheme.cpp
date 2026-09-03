@@ -761,6 +761,18 @@ void MinimalTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, cons
   renderer.setOrientation(origOrientation);
 }
 
+Rect MinimalTheme::buttonHintRect(const GfxRenderer& renderer, int index) const {
+  const int pageHeight = renderer.getScreenHeight();
+  const int screenWidth = renderer.getScreenWidth();
+  constexpr int buttonWidth = 80;
+  constexpr int buttonHeight = MinimalMetrics::values.buttonHintsHeight;
+  constexpr int buttonY = MinimalMetrics::values.buttonHintsHeight;
+  constexpr int x4ButtonPositions[] = {58, 146, 254, 342};
+  constexpr int x3ButtonPositions[] = {65, 157, 291, 383};
+  const int* buttonPositions = screenWidth > 500 ? x3ButtonPositions : x4ButtonPositions;
+  return Rect(buttonPositions[index], pageHeight - buttonY, buttonWidth, buttonHeight);
+}
+
 void MinimalTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                        int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                        bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,

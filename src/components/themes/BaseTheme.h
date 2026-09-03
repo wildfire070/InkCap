@@ -280,6 +280,11 @@ class BaseTheme {
   // background without drawing or registering a target.
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                const char* btn4, bool allowInvertedText = false) const;
+  // Where drawButtonHints (non-inverted) puts button `index` (0=btn1..3=btn4)
+  // on screen -- the same box drawButtonHints itself fills/outlines, exposed
+  // so other UI (e.g. a caption that needs to sit exactly over one of these
+  // hints) can ask the active theme instead of guessing its geometry.
+  virtual Rect buttonHintRect(const GfxRenderer& renderer, int index) const;
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   virtual int getMenuRowHeight(const GfxRenderer& renderer) const;
   // Height the drawn menu actually occupies inside `rect`, gaps included.

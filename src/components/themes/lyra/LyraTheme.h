@@ -110,6 +110,7 @@ class LyraTheme : public BaseTheme {
                 bool showSelection = true) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
                        bool allowInvertedText = false) const override;
+  Rect buttonHintRect(const GfxRenderer& renderer, int index) const override;
   void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
   int getMenuContentHeight(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   HomeCompanionLayout getHomeCompanionLayout(const GfxRenderer& renderer, Rect menuRect, Rect coverRect,

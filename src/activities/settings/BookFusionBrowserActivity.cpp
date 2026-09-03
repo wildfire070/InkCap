@@ -481,8 +481,7 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
     return;
   }
 
-  // Footer strip: Previous Page (left) / "N / M" indicator (center) / Next
-  // Page (right), reserved from the bottom before the list claims the rest
+  // Footer strip, reserved from the bottom before the list claims the rest
   // of the body. Previous/Next live here rather than as rows inside the
   // scrollable list -- with 10 books per page they no longer fit alongside
   // the books without scrolling, and putting them in a fixed footer means
@@ -490,7 +489,20 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   // position (see loop()'s PageBack/PageForward handling for the button
   // path). theme().smallText already carries the FONT_SMALL slot (a slot
   // index, not a raw font ID -- see the constructor's slot rebind).
+  //
+  // Touch: Prev Page (left, tappable) / "N / M" indicator (center) / Next
+  // Page (right, tappable) -- unchanged layout, just a shorter Prev label so
+  // it no longer truncates to "Previous P...".
+  //
+  // Non-touch: the tappable-looking Prev/Next boxes are actually
+  // unreachable here -- Up/Down only ever move the list selection (see
+  // loop()), never focus this footer -- so drawing them is misleading.
+  // Instead the indicator moves to the left (out of "selectable row" shape)
+  // and a small hint naming the real trigger (long-press Left/Right, see
+  // loop()'s PAGE_TURN_LONG_PRESS_MS handling) sits on the right, roughly
+  // over the Up/Down button hints at the very bottom of the screen.
   const auto& theme = screen.theme();
+  const bool touch = mappedInput.hasTouchHardware();
   fui::TextStyle indicatorStyle = theme.smallText;
   indicatorStyle.align = fui::TextAlign::Center;
   const int16_t footerH = theme.rowHeight;
@@ -545,18 +557,20 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   props.topIndex = static_cast<uint16_t>(topIndex);
   screen.list(props);
 
-  if (page.currentPage > 1) {
-    fui::ButtonProps prevBtn;
-    prevBtn.label = tr(STR_PREV_PAGE);
-    prevBtn.action = ACTION_PREV_PAGE;
-    screen.button(prevBtn, fui::Rect{footerRect.x, footerRect.y, navBtnW, footerRect.height});
-  }
-  if (page.hasMore) {
-    fui::ButtonProps nextBtn;
-    nextBtn.label = tr(STR_NEXT_PAGE);
-    nextBtn.action = ACTION_NEXT_PAGE;
-    screen.button(nextBtn, fui::Rect{static_cast<int16_t>(footerRect.x + footerRect.width - navBtnW), footerRect.y,
-                                     navBtnW, footerRect.height});
+  if (touch) {
+    if (page.currentPage > 1) {
+      fui::ButtonProps prevBtn;
+      prevBtn.label = tr(STR_BF_PREV_PAGE_SHORT);
+      prevBtn.action = ACTION_PREV_PAGE;
+      screen.button(prevBtn, fui::Rect{footerRect.x, footerRect.y, navBtnW, footerRect.height});
+    }
+    if (page.hasMore) {
+      fui::ButtonProps nextBtn;
+      nextBtn.label = tr(STR_NEXT_PAGE);
+      nextBtn.action = ACTION_NEXT_PAGE;
+      screen.button(nextBtn, fui::Rect{static_cast<int16_t>(footerRect.x + footerRect.width - navBtnW), footerRect.y,
+                                       navBtnW, footerRect.height});
+    }
   }
 
   char indicator[24];
@@ -568,9 +582,90 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   } else {
     snprintf(indicator, sizeof(indicator), "%d / %d", page.currentPage, page.currentPage);
   }
-  const fui::Rect indicatorRect{static_cast<int16_t>(footerRect.x + navBtnW), footerRect.y,
-                                static_cast<int16_t>(footerRect.width - navBtnW * 2), footerRect.height};
-  screen.target().text(indicatorRect, indicator, indicatorStyle);
+
+  if (touch) {
+    const fui::Rect indicatorRect{static_cast<int16_t>(footerRect.x + navBtnW), footerRect.y,
+                                  static_cast<int16_t>(footerRect.width - navBtnW * 2), footerRect.height};
+    screen.target().text(indicatorRect, indicator, indicatorStyle);
+  } else {
+    // Left edge lines up with the header title's own left inset, so "N / M"
+    // reads as part of the same left column as "All Books" above it.
+    fui::TextStyle leftStyle = indicatorStyle;
+    leftStyle.align = fui::TextAlign::Left;
+    const int16_t leftPad = theme.headerSidePadding;
+    const fui::Rect indicatorRect{static_cast<int16_t>(footerRect.x + leftPad), footerRect.y,
+                                  static_cast<int16_t>(footerRect.width / 2), footerRect.height};
+    screen.target().text(indicatorRect, indicator, leftStyle);
+
+    if (page.currentPage > 1 || page.hasMore) {
+      // Asks the *active* theme where it actually put the "Up"/"Down" hint
+      // boxes (index 2/3, matching MappedInputManager::mapLabels' previous/
+      // next slots) rather than assuming one theme's layout -- Base, Lyra,
+      // Minimal, and RoundedRaff each place/size these differently (see
+      // each theme's own buttonHintRect()).
+      const Rect upRect = GUI.buttonHintRect(renderer, 2);
+      const Rect downRect = GUI.buttonHintRect(renderer, 3);
+      const int16_t upCenter = static_cast<int16_t>(upRect.x + upRect.width / 2);
+      const int16_t downCenter = static_cast<int16_t>(downRect.x + downRect.width / 2);
+
+      fui::TextStyle hintTextStyle = indicatorStyle;
+      hintTextStyle.align = fui::TextAlign::Left;
+      const char* prefixText = tr(STR_BF_PAGE_HOLD_PREFIX);
+      const int16_t prefixWidth =
+          static_cast<int16_t>(screen.target().measureText(indicatorStyle.font, prefixText, indicatorStyle).width);
+      constexpr int16_t kHoldPrefixGap = 4;
+
+      const auto drawLeftAt = [&](int16_t x, const char* text) -> int16_t {
+        const int16_t width =
+            static_cast<int16_t>(screen.target().measureText(indicatorStyle.font, text, indicatorStyle).width);
+        screen.target().text(fui::Rect{x, footerRect.y, static_cast<int16_t>(width + 1), footerRect.height}, text,
+                             hintTextStyle);
+        return width;
+      };
+
+      if (page.currentPage > 1 && page.hasMore) {
+        // "Prev Page | Next Page" -- the "|" glyph itself is centered
+        // exactly midway between the Up/Down button centers; "Prev Page"
+        // and "Next Page" fall out to either side of it rather than the
+        // whole string being centered as one block (their widths aren't
+        // guaranteed equal in a proportional font). The gap on each side of
+        // "|" is an explicit constant, not the string's own embedded
+        // spaces -- measureText's bounding box doesn't count a leading/
+        // trailing space's advance width the same way drawText renders it,
+        // which left the two gaps visibly uneven.
+        std::string full = I18n::getInstance().get(StrId::STR_BF_PAGE_HOLD_HINT_BOTH);
+        const size_t pipePos = full.find('|');
+        std::string leftPart = pipePos == std::string::npos ? full : full.substr(0, pipePos);
+        std::string rightPart = pipePos == std::string::npos ? "" : full.substr(pipePos + 1);
+        while (!leftPart.empty() && leftPart.back() == ' ') leftPart.pop_back();
+        while (!rightPart.empty() && rightPart.front() == ' ') rightPart.erase(rightPart.begin());
+        constexpr int16_t kPipeSideGap = 4;
+        const int16_t midX = static_cast<int16_t>((upCenter + downCenter) / 2);
+        const int16_t pipeWidth =
+            static_cast<int16_t>(screen.target().measureText(indicatorStyle.font, "|", indicatorStyle).width);
+        const int16_t leftWidth = static_cast<int16_t>(
+            screen.target().measureText(indicatorStyle.font, leftPart.c_str(), indicatorStyle).width);
+        const int16_t pipeX = static_cast<int16_t>(midX - pipeWidth / 2);
+        const int16_t leftX = static_cast<int16_t>(pipeX - kPipeSideGap - leftWidth);
+        const int16_t rightX = static_cast<int16_t>(pipeX + pipeWidth + kPipeSideGap);
+        const int16_t prefixX = static_cast<int16_t>(leftX - kHoldPrefixGap - prefixWidth);
+        drawLeftAt(prefixX, prefixText);
+        drawLeftAt(leftX, leftPart.c_str());
+        drawLeftAt(pipeX, "|");
+        drawLeftAt(rightX, rightPart.c_str());
+      } else {
+        const StrId directionId = page.currentPage > 1 ? StrId::STR_BF_PREV_PAGE_SHORT : StrId::STR_NEXT_PAGE;
+        const int16_t buttonCenterX = page.currentPage > 1 ? upCenter : downCenter;
+        const char* directionText = I18n::getInstance().get(directionId);
+        const int16_t directionWidth = static_cast<int16_t>(
+            screen.target().measureText(indicatorStyle.font, directionText, indicatorStyle).width);
+        const int16_t directionX = static_cast<int16_t>(buttonCenterX - directionWidth / 2);
+        const int16_t prefixX = static_cast<int16_t>(directionX - kHoldPrefixGap - prefixWidth);
+        drawLeftAt(prefixX, prefixText);
+        drawLeftAt(directionX, directionText);
+      }
+    }
+  }
 }
 
 void BookFusionBrowserActivity::buildDownloadScreen(UiApp::ScreenType& screen) {

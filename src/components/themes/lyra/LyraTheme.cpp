@@ -421,6 +421,17 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(orig_orientation);
 }
 
+Rect LyraTheme::buttonHintRect(const GfxRenderer& renderer, int index) const {
+  const int pageHeight = renderer.getScreenHeight();
+  constexpr int buttonWidth = 80;
+  constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
+  constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;
+  constexpr int narrowButtonPositions[] = {58, 146, 254, 342};
+  constexpr int wideButtonPositions[] = {65, 157, 291, 383};
+  const int* buttonPositions = renderer.getScreenWidth() >= 528 ? wideButtonPositions : narrowButtonPositions;
+  return Rect(buttonPositions[index], pageHeight - buttonY, buttonWidth, buttonHeight);
+}
+
 void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
   if (gpio.hasTouch()) return;
 
