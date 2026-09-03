@@ -47,6 +47,14 @@ class FileBrowserActivity final : public Activity {
   bool isPreferredSleepFolder(const std::string& fullPath) const;
   bool isSleepFavoriteFolder(const std::string& fullPath) const;
   void showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease = false);
+  // Nearest non-folder row to `fromRow` moving toward Left/Right's own direction
+  // (forward=true is Right/next), skipping folders; SIZE_MAX if none -- used for
+  // Book Info's Previous/Next Book, via entryNameAt()/entryCount() so it works
+  // the same whether or not the folder is large enough to be in index mode.
+  size_t findAdjacentBookRow(size_t fromRow, bool forward);
+  // Opens Book Info for the file at `row`, wiring Left/Right = Previous/Next Book
+  // via findAdjacentBookRow() above.
+  void openBookDetails(size_t row);
 
   ButtonNavigator buttonNavigator;
 

@@ -529,7 +529,7 @@ void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool
   startActivityForResult(
       std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, book.title, std::move(items),
                                                   ignoreInitialConfirmRelease),
-      [this, book](const ActivityResult& result) {
+      [this, book, bookIndex](const ActivityResult& result) {
         longPressFired = false;
         if (result.isCancelled) {
           return;
@@ -543,9 +543,7 @@ void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool
 
         switch (static_cast<FileBrowserAction>(actionResult->action)) {
           case FileBrowserAction::BookInfo:
-            startActivityForResult(
-                std::make_unique<BookDetailsActivity>(renderer, mappedInput, book.path, book.title, book.author),
-                [this](const ActivityResult&) { reloadAfterBookAction(); });
+            openBookDetails(bookIndex);
             return;
           case FileBrowserAction::Delete:
             promptDeleteBook(book);
@@ -644,6 +642,31 @@ void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool
           case FileBrowserAction::DeleteClippings:
             return;
         }
+      });
+}
+
+void RecentBooksGridActivity::openBookDetails(const int bookIndex) {
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(recentBooks.size())) return;
+  const RecentBook& book = recentBooks[bookIndex].book;
+  const bool hasPrevious = bookIndex > 0;
+  const bool hasNext = bookIndex + 1 < static_cast<int>(recentBooks.size());
+  startActivityForResult(
+      std::make_unique<BookDetailsActivity>(renderer, mappedInput, book.path, book.title, book.author, hasPrevious,
+                                            hasNext),
+      [this, bookIndex, hasPrevious, hasNext](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          if (const auto* nav = std::get_if<BookDetailsNavResult>(&result.data)) {
+            if (nav->next && hasNext) {
+              openBookDetails(bookIndex + 1);
+              return;
+            }
+            if (!nav->next && hasPrevious) {
+              openBookDetails(bookIndex - 1);
+              return;
+            }
+          }
+        }
+        reloadAfterBookAction();
       });
 }
 

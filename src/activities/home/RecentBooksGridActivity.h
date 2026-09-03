@@ -43,5 +43,10 @@ class RecentBooksGridActivity final : public Activity {
   void promptDeleteBook(const RecentBook& book);
   void promptRemoveBook(const std::string& path, const std::string& title);
   void showBookActionMenu(int bookIndex, bool ignoreInitialConfirmRelease = false);
+  // Opens Book Info for recentBooks[bookIndex], wiring Left/Right = Previous/Next
+  // Book against recentBooks itself (not reloaded between hops, so indices stay
+  // stable while the user pages through -- reloadAfterBookAction() only runs on
+  // the final exit, once BookDetailsActivity finishes without a nav result).
+  void openBookDetails(int bookIndex);
   int bookIndexFromPoint(int x, int y);
 };
