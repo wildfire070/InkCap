@@ -71,6 +71,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
 
@@ -139,6 +140,35 @@ static bool wakePowerReleasePending = false;
 
 namespace {
 constexpr unsigned long X4PRO_HOME_KEY_DOUBLE_TAP_MS = 300;
+
+struct QuickLockBadgeBackdrop {
+  static constexpr int SIZE = 40;
+  // A 40 px square can straddle at most six 1-bit framebuffer bytes per row.
+  static constexpr size_t MAX_BYTES = 6 * SIZE;
+
+  std::array<uint8_t, MAX_BYTES> pixels{};
+  int x = 0;
+  int y = 0;
+  size_t size = 0;
+  GfxRenderer::Orientation orientation = GfxRenderer::Portrait;
+  bool valid = false;
+
+  void save(GfxRenderer& renderer, const int savedX, const int savedY) {
+    x = savedX;
+    y = savedY;
+    orientation = renderer.getOrientation();
+    size = renderer.getRegionByteSize(x, y, SIZE, SIZE);
+    valid = size > 0 && size <= pixels.size() && renderer.copyRegionToBuffer(x, y, SIZE, SIZE, pixels.data(), size);
+  }
+
+  bool restore(GfxRenderer& renderer) {
+    if (!valid || renderer.getOrientation() != orientation) return false;
+    valid = false;
+    return renderer.copyBufferToRegion(x, y, SIZE, SIZE, pixels.data(), size);
+  }
+};
+
+QuickLockBadgeBackdrop quickLockBadgeBackdrop;
 }  // namespace
 
 static void logBootHeap(const char* stage) {
@@ -435,11 +465,20 @@ void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t paylo
 
 void silentRestartToManageFonts() { silentRestartToNetwork(NetworkBootTarget::MANAGE_FONTS); }
 
+static uint32_t encodeKOReaderSyncOrientation(const uint8_t orientation) {
+  return orientation < CrossPointSettings::ORIENTATION_COUNT ? static_cast<uint32_t>(orientation) + 1 : 0;
+}
+
+static uint8_t decodeKOReaderSyncOrientation(const uint32_t payload) {
+  return payload > 0 && payload <= CrossPointSettings::ORIENTATION_COUNT ? static_cast<uint8_t>(payload - 1)
+                                                                         : CrossPointSettings::ORIENTATION_COUNT;
+}
+
 bool isGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action) {
   return isPowerButtonActionAvailableOutsideReader(action);
 }
 
-bool startGlobalSyncProgress(const bool networkBootReady) {
+bool startGlobalSyncProgress(const bool networkBootReady, const uint8_t readerOrientation) {
   if (activityManager.hasActivityNamed(KOReaderSyncActivity::NAME)) {
     LOG_DBG("MAIN", "Ignoring KOReader sync shortcut while sync is already active");
     return true;
@@ -460,13 +499,13 @@ bool startGlobalSyncProgress(const bool networkBootReady) {
   }
 
   if (!networkBootReady) {
-    silentRestartToNetwork(NetworkBootTarget::KOREADER_SYNC);
+    silentRestartToNetwork(NetworkBootTarget::KOREADER_SYNC, encodeKOReaderSyncOrientation(readerOrientation));
     return true;
   }
 
   const DocumentMatchMethod matchMethod = KOREADER_STORE.getMatchMethod();
-  auto syncActivity =
-      makeUniqueNoThrow<KOReaderSyncActivity>(renderer, mappedInputManager, std::move(epubPath), matchMethod);
+  auto syncActivity = makeUniqueNoThrow<KOReaderSyncActivity>(renderer, mappedInputManager, std::move(epubPath),
+                                                              matchMethod, readerOrientation);
   if (!syncActivity) {
     LOG_ERR("MAIN", "OOM: KOReader sync activity (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     return false;
@@ -503,35 +542,49 @@ CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
   return action;
 }
 
-void notifyQuickLockChanged() {
+void notifyQuickLockChanged(const bool restoringAfterWake = false) {
   const bool locked = buttonShortcutController.isQuickLocked();
   mappedInputManager.clearInjectedReleases();
   LOG_DBG("MAIN", "Quick Lock %s", locked ? "enabled" : "disabled");
   if (locked) {
+    if (!restoringAfterWake) {
+      APP_STATE.quickLockRestoreFrontlight = Frontlight.isOn();
+    }
+    Frontlight.setOn(false);
     activityManager.notifyInputLockChanged(true);
     int top = 0;
     int right = 0;
     int bottom = 0;
     int left = 0;
     renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
-    constexpr int badgeSize = 40;
-    const int x = std::max(left, renderer.getScreenWidth() - right - badgeSize);
-    const int y = std::max(top, renderer.getScreenHeight() - bottom - badgeSize);
+    const int x = std::max(left, renderer.getScreenWidth() - right - QuickLockBadgeBackdrop::SIZE);
+    const int y = std::max(top, renderer.getScreenHeight() - bottom - QuickLockBadgeBackdrop::SIZE);
     // ActivityManager applies Night Mode at the display boundary, so direct
     // framebuffer writes retain the normal palette.
     constexpr bool background = false;
     constexpr bool foreground = true;
     RenderLock lock;
-    renderer.fillRect(x, y, badgeSize, badgeSize, background);
+    quickLockBadgeBackdrop.save(renderer, x, y);
+    renderer.fillRect(x, y, QuickLockBadgeBackdrop::SIZE, QuickLockBadgeBackdrop::SIZE, background);
     freeink::ui::GfxRendererTarget target(renderer);
-    target.bitmap(
-        freeink::ui::Rect{x + (badgeSize - icon_tabler_lock_28.w) / 2, y + (badgeSize - icon_tabler_lock_28.h) / 2,
-                          icon_tabler_lock_28.w, icon_tabler_lock_28.h},
-        freeink::ui::bitmapFromIcon(icon_tabler_lock_28), freeink::ui::BitmapMode::Center,
-        freeink::ui::Paint::solid(foreground ? freeink::ui::Color::Black : freeink::ui::Color::White));
+    target.bitmap(freeink::ui::Rect{x + (QuickLockBadgeBackdrop::SIZE - icon_tabler_lock_28.w) / 2,
+                                    y + (QuickLockBadgeBackdrop::SIZE - icon_tabler_lock_28.h) / 2,
+                                    icon_tabler_lock_28.w, icon_tabler_lock_28.h},
+                  freeink::ui::bitmapFromIcon(icon_tabler_lock_28), freeink::ui::BitmapMode::Center,
+                  freeink::ui::Paint::solid(foreground ? freeink::ui::Color::Black : freeink::ui::Color::White));
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   } else {
-    (void)activityManager.requestUpdateAndWait();
+    bool restoredBadgeBackdrop = false;
+    {
+      RenderLock lock;
+      restoredBadgeBackdrop = quickLockBadgeBackdrop.restore(renderer);
+      if (restoredBadgeBackdrop) renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
+    if (APP_STATE.quickLockRestoreFrontlight) {
+      Frontlight.setOn(true);
+      APP_STATE.quickLockRestoreFrontlight = false;
+    }
+    if (!restoredBadgeBackdrop) (void)activityManager.requestUpdateAndWait();
     activityManager.notifyInputLockChanged(false);
   }
 }
@@ -626,6 +679,12 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
 }
 
 bool dispatchShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  // An EPUB reader may have a per-book orientation that is restored during
+  // teardown. Let it hand off Sync Progress before the global restart drops
+  // that transient setting.
+  if (action == CrossPointSettings::SHORT_PWRBTN::SYNC_PROGRESS && activityManager.handleShortcutAction(action)) {
+    return true;
+  }
   return handleGlobalPowerButtonAction(action) || activityManager.handleShortcutAction(action);
 }
 
@@ -774,6 +833,10 @@ bool executeX4ProHomeButtonAction(const uint8_t action) {
   }
 
   const auto powerAction = static_cast<CrossPointSettings::SHORT_PWRBTN>(action);
+  if (powerAction == CrossPointSettings::SHORT_PWRBTN::SYNC_PROGRESS) {
+    dispatchShortcutAction(powerAction);
+    return true;
+  }
   if (handleGlobalPowerButtonAction(powerAction)) {
     return true;
   }
@@ -990,6 +1053,9 @@ void enterDeepSleep(bool fromTimeout) {
   // Last chance to sample: startDeepSleep() cuts the SD rail on X3, so nothing
   // can be written again until the next wake.
   BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Sleep);
+  // All sleep-time file writes are complete. Stop SDMMC before the power path
+  // cuts peripheral rails and isolates the bus pads; SPI boards are a no-op.
+  Storage.shutdown();
 
   putTiltSensorToSleepForDeepSleep();
   display.deepSleep();
@@ -1211,11 +1277,10 @@ void setup() {
   BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Wake);
   const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
+  // Normal boot store deferral adapted from Sichroteph/YACP commit
+  // 20af8aee8d3e1d560456753b08d1f52e5488621f (MIT). Accessors load these
+  // stores when Home, reader bookkeeping, or sync actually need them.
   if (!isNetworkResume) {
-    RECENT_BOOKS.loadFromFile();
-    logBootHeap("settings and recent books loaded");
-    KOREADER_STORE.loadFromFile();
-    logBootHeap("sync credentials loaded");
     Dictionary::isValidDictionary();
   } else if (snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_SYNC) ||
              snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_AUTH) ||
@@ -1225,6 +1290,10 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
+  // X4 Pro wakes through a POWERON reset, so keep its frontlight off until
+  // the saved Quick Lock is explicitly unlocked below.
+  const bool restoreQuickLockAfterWake = APP_STATE.quickLockResumePending && isSleepWake && !recoveryFirmwareMode &&
+                                         !rebootedFromPanic && !isNetworkResume && !isSilentReboot;
   // Internal silent restarts retain the current light state. Network entry and
   // exit restarts must honor Restore on Wake like a normal user wake.
   const bool wasLightOnBeforeSleep = SETTINGS.frontlightOn != 0;
@@ -1246,6 +1315,9 @@ void setup() {
       restoreLightOn = false;
     }
   }
+  if (restoreQuickLockAfterWake) {
+    restoreLightOn = false;
+  }
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   if (recoveryFirmwareMode) {
@@ -1264,8 +1336,6 @@ void setup() {
   // X4 Pro cuts its switched rails during sleep and wakes with a POWERON reset,
   // while C3 boards normally report DEEPSLEEP. HalGPIO normalizes both hardware
   // paths to PowerButton, so use that route with the one-shot persisted flag.
-  const bool restoreQuickLockAfterWake = APP_STATE.quickLockResumePending && isSleepWake && !recoveryFirmwareMode &&
-                                         !rebootedFromPanic && !isNetworkResume && !isSilentReboot;
   const auto quickLockResumeTrigger = static_cast<QuickLockTrigger>(APP_STATE.quickLockResumeTrigger);
   if (APP_STATE.quickLockResumePending) {
     // Consume this before routing so a later cold boot cannot inherit a stale
@@ -1376,7 +1446,7 @@ void setup() {
         launched = activityManager.goToOpdsServer(snapshotPayload, true);
         break;
       case NetworkBootTarget::KOREADER_SYNC:
-        launched = startGlobalSyncProgress(true);
+        launched = startGlobalSyncProgress(true, decodeKOReaderSyncOrientation(snapshotPayload));
         break;
       case NetworkBootTarget::KOREADER_AUTH: {
         const auto mode =
@@ -1455,7 +1525,7 @@ void setup() {
     // restored lock immediately.
     (void)activityManager.requestUpdateAndWait();
     buttonShortcutController.restoreQuickLock(millis(), quickLockResumeTrigger);
-    notifyQuickLockChanged();
+    notifyQuickLockChanged(true);
   }
 
   allowSleepAt = millis() + 2000;
@@ -1664,7 +1734,12 @@ void loop() {
   // repaint it (gauge boards like the X4 Pro report SoC continuously), so poll
   // for a change once a minute. Off-charger the percent moves too slowly to
   // justify unsolicited e-ink refreshes.
-  if (gpio.isUsbConnected()) {
+#ifdef SIMULATOR
+  const bool usbConnected = gpio.isUsbConnected();
+#else
+  const bool usbConnected = gpio.isUsbConnectedCached();
+#endif
+  if (usbConnected) {
     static unsigned long lastBatteryPollTime = 0UL;
     static uint16_t lastBatteryPercent = 0xFFFF;
     if (millis() - lastBatteryPollTime >= 60000UL) {
