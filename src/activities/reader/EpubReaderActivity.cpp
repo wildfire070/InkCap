@@ -6089,6 +6089,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               section->pageCount, activeSectionFontId, static_cast<unsigned>(usedRenderMode), ESP.getFreeHeap(),
               ESP.getMaxAllocHeap());
     }
+    // The free/maxAlloc numbers above don't show block count, so a free-bytes-
+    // identical build that changed allocation *shape* (e.g. fewer, larger
+    // blocks) wouldn't show up there -- logHeapShape's allocatedBlocks does.
+    MemoryBudget::logHeapShape("reader.section");
 
     activeFootnotePreview = buildingFootnotePreview;
 
