@@ -5,8 +5,13 @@
 #include "components/themes/lyra/LyraTheme.h"
 
 namespace MinimalMetrics {
+// 3:4 -- the wider of the two ratios HomeActivity::loadRecentCovers picks
+// between (see Epub::pickCoverThumbWidth) for this theme's cover, same as
+// Lyra/Dashboard. This sizes the *frame* (coverRectForScreen/homeCoverWidth
+// below); a book whose actual art is 2:3 instead gets letterboxed within it
+// by fittedBitmapRect() rather than stretched to fill it.
 constexpr int coverWidthForHeight(const int coverHeight) {
-  return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5);
+  return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4);
 }
 
 constexpr ThemeMetrics makeValues() {
