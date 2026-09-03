@@ -510,10 +510,24 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         const bool isEpub = FsHelpers::hasEpubExtension(book.path);
         const int defaultThumbWidth =
             static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 3 + 2) / 4);
-        const std::string coverBmpPath =
+        std::string coverBmpPath =
             isEpub ? Epub(book.path, "/.crosspoint")
                          .getAdaptiveThumbBmpPath(defaultThumbWidth, LyraMetrics::values.homeCoverHeight)
                    : UITheme::getCoverThumbPath(coverPath, defaultThumbWidth, LyraMetrics::values.homeCoverHeight);
+        // Not every cover is 3:4 -- some are genuinely 2:3 (HomeActivity::loadRecentCovers
+        // picks whichever a book's actual art is closer to when it generates the
+        // thumbnail). No Epub::load() here (this runs on every render), so this is a
+        // second, alternate-ratio Storage.exists() check rather than re-deriving the
+        // choice from the source image.
+        if (isEpub && !Storage.exists(coverBmpPath.c_str())) {
+          const int altThumbWidth =
+              static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 2 + 1) / 3);
+          const std::string altCoverBmpPath =
+              Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altThumbWidth, LyraMetrics::values.homeCoverHeight);
+          if (Storage.exists(altCoverBmpPath.c_str())) {
+            coverBmpPath = altCoverBmpPath;
+          }
+        }
 
         // First time: load cover from SD and render
         HalFile file;

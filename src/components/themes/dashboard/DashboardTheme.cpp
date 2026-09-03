@@ -87,6 +87,18 @@ std::string coverPathForRect(const RecentBook& book, const Rect& imageRect) {
     if (Storage.exists(adaptivePath.c_str())) {
       return adaptivePath;
     }
+    // imageRect is sized to 2:3 (this theme's own fixed box); some covers are
+    // genuinely 3:4 instead and get thumbed at that width by
+    // HomeActivity::loadRecentCovers (see pickCoverThumbWidth). No Epub::load()
+    // here (this runs on every render), so this is a second, alternate-ratio
+    // Storage.exists() check rather than re-deriving the choice from the source
+    // image -- fittedBitmapRect() below still letterboxes it into imageRect
+    // either way, so an exact width match isn't required for this to look right.
+    const int altWidth = static_cast<int>((static_cast<int64_t>(imageRect.height) * 3 + 2) / 4);
+    const std::string altPath = Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altWidth, imageRect.height);
+    if (Storage.exists(altPath.c_str())) {
+      return altPath;
+    }
   }
   return UITheme::getCoverThumbPath(book.coverBmpPath, imageRect.width, imageRect.height);
 }
