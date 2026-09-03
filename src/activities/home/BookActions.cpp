@@ -46,7 +46,10 @@ std::string bookStatsCachePath(const std::string& path) {
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(includeRemoveFromRecents ? 7 : 6);
+  items.reserve(includeRemoveFromRecents ? 8 : 7);
+  if (FsHelpers::hasEpubExtension(fullPath)) {
+    items.push_back({FileBrowserAction::BookInfo, StrId::STR_BOOK_INFO});
+  }
   items.push_back({FileBrowserAction::Delete, StrId::STR_DELETE});
   if (hasClearableBookCache(fullPath)) {
     items.push_back({FileBrowserAction::DeleteCache, StrId::STR_DELETE_CACHE});

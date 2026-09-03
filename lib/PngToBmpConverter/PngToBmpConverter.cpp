@@ -915,3 +915,26 @@ bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(FsFile& pngFile, Print& b
                                                        int targetMaxHeight, bool adaptiveContain) {
   return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, adaptiveContain);
 }
+
+// Header-only read: signature + IHDR's width/height, nothing past that (no IDAT/
+// pixel decode) -- for picking a thumbnail target aspect ratio before generating
+// one.
+bool PngToBmpConverter::peekDimensions(FsFile& pngFile, int* outWidth, int* outHeight) {
+  pngFile.seek(0);
+  uint8_t sig[8];
+  if (pngFile.read(sig, 8) != 8 || memcmp(sig, PNG_SIGNATURE, 8) != 0) return false;
+
+  uint32_t ihdrLen;
+  if (!readBE32(pngFile, ihdrLen)) return false;
+
+  uint8_t ihdrType[4];
+  if (pngFile.read(ihdrType, 4) != 4 || memcmp(ihdrType, "IHDR", 4) != 0) return false;
+
+  uint32_t width, height;
+  if (!readBE32(pngFile, width) || !readBE32(pngFile, height)) return false;
+  if (width == 0 || height == 0) return false;
+
+  *outWidth = static_cast<int>(width);
+  *outHeight = static_cast<int>(height);
+  return true;
+}

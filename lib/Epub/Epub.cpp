@@ -1152,6 +1152,208 @@ bool Epub::generateAdaptiveThumbBmp(int width, int height, const GfxRenderer* re
   return generateThumbBmpInternal(width, height, true, renderer, readerFontId);
 }
 
+int Epub::pickCoverThumbWidth(const int height) const {
+  const int width34 = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 4);
+  if (height <= 0 || !bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return width34;
+  }
+
+  const auto& coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
+  if (coverImageHref.empty()) {
+    return width34;
+  }
+
+  std::string coverPath;
+  if (!ensureCachedCoverImage(coverImageHref, coverPath)) {
+    return width34;
+  }
+
+  FsFile coverFile;
+  if (!Storage.openFileForRead("EBP", coverPath, coverFile)) {
+    return width34;
+  }
+  int srcWidth = 0;
+  int srcHeight = 0;
+  bool peeked = false;
+  if (FsHelpers::hasJpgExtension(coverImageHref)) {
+    peeked = JpegToBmpConverter::peekDimensions(coverFile, &srcWidth, &srcHeight);
+  } else if (FsHelpers::hasPngExtension(coverImageHref)) {
+    peeked = PngToBmpConverter::peekDimensions(coverFile, &srcWidth, &srcHeight);
+  }
+  coverFile.close();
+  if (!peeked) {
+    return width34;
+  }
+
+  const int width23 = static_cast<int>((static_cast<int64_t>(height) * 2 + 1) / 3);
+
+  // Relative deviation of the source aspect from each candidate, cross-multiplied
+  // to avoid floating point (same technique shouldContainAdaptive uses in the
+  // converters) -- whichever candidate the source is closer to wins.
+  const int64_t srcW = srcWidth;
+  const int64_t srcH = srcHeight;
+  const int64_t a34 = srcW * 4;
+  const int64_t b34 = srcH * 3;
+  const int64_t diff34 = (a34 > b34 ? a34 - b34 : b34 - a34) * 100 / std::max<int64_t>(1, b34);
+  const int64_t a23 = srcW * 3;
+  const int64_t b23 = srcH * 2;
+  const int64_t diff23 = (a23 > b23 ? a23 - b23 : b23 - a23) * 100 / std::max<int64_t>(1, b23);
+
+  return diff34 <= diff23 ? width34 : width23;
+}
+
+namespace {
+// Strips the HTML tags dc:description's own text wraps around the summary (the
+// outer XML parse has already decoded the escaping, so what characterData()
+// hands us is real "<div>...<p>...</p>...</div>" markup at this point, not
+// escaped text) and collapses all whitespace/tag boundaries to single spaces,
+// producing plain, single-paragraph text to display.
+std::string stripHtmlAndCollapseWhitespace(const std::string& raw) {
+  std::string result;
+  result.reserve(raw.size());
+  bool inTag = false;
+  bool pendingSpace = false;
+  for (const char c : raw) {
+    if (inTag) {
+      if (c == '>') inTag = false;
+      continue;
+    }
+    if (c == '<') {
+      inTag = true;
+      pendingSpace = !result.empty();
+      continue;
+    }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      pendingSpace = !result.empty();
+      continue;
+    }
+    if (pendingSpace) {
+      result.push_back(' ');
+      pendingSpace = false;
+    }
+    result.push_back(c);
+  }
+  return result;
+}
+
+class DescriptionParser final : public Print {
+  enum ParserState { START, IN_PACKAGE, IN_METADATA, IN_DC_DESCRIPTION };
+  // Bounds a runaway/malformed field; real AO3/FanFicFare summaries are far smaller.
+  static constexpr size_t kMaxRawBytes = 4096;
+
+  size_t remainingSize;
+  XML_Parser parser = nullptr;
+  ParserState state = START;
+
+  static void startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
+    auto* self = static_cast<DescriptionParser*>(userData);
+    (void)atts;
+    if (self->state == START && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
+      self->state = IN_PACKAGE;
+      return;
+    }
+    if (self->state == IN_PACKAGE && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
+      self->state = IN_METADATA;
+      return;
+    }
+    if (self->state == IN_METADATA && strcmp(name, "dc:description") == 0) {
+      self->state = IN_DC_DESCRIPTION;
+      return;
+    }
+  }
+
+  static void characterData(void* userData, const XML_Char* s, int len) {
+    auto* self = static_cast<DescriptionParser*>(userData);
+    if (self->state == IN_DC_DESCRIPTION && self->description.size() < kMaxRawBytes) {
+      const size_t room = kMaxRawBytes - self->description.size();
+      self->description.append(s, std::min(static_cast<size_t>(len), room));
+    }
+  }
+
+  static void endElement(void* userData, const XML_Char* name) {
+    auto* self = static_cast<DescriptionParser*>(userData);
+    if (self->state == IN_DC_DESCRIPTION && strcmp(name, "dc:description") == 0) {
+      self->state = IN_METADATA;
+    } else if (self->state == IN_METADATA && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
+      self->state = IN_PACKAGE;
+    } else if (self->state == IN_PACKAGE && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
+      self->state = START;
+    }
+  }
+
+ public:
+  std::string description;
+
+  explicit DescriptionParser(const size_t xmlSize) : remainingSize(xmlSize) {}
+  ~DescriptionParser() override {
+    if (parser) {
+      XML_StopParser(parser, XML_FALSE);
+      XML_SetElementHandler(parser, nullptr, nullptr);
+      XML_SetCharacterDataHandler(parser, nullptr);
+      XML_ParserFree(parser);
+      parser = nullptr;
+    }
+  }
+
+  bool setup() {
+    parser = XML_ParserCreate(nullptr);
+    if (!parser) return false;
+    XML_SetUserData(parser, this);
+    XML_SetElementHandler(parser, startElement, endElement);
+    XML_SetCharacterDataHandler(parser, characterData);
+    return true;
+  }
+
+  size_t write(uint8_t data) override { return write(&data, 1); }
+  size_t write(const uint8_t* buffer, size_t size) override {
+    if (!parser) return 0;
+    const uint8_t* currentBufferPos = buffer;
+    auto remainingInBuffer = size;
+    while (remainingInBuffer > 0) {
+      void* const buf = XML_GetBuffer(parser, 1024);
+      if (!buf) return 0;
+      const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
+      memcpy(buf, currentBufferPos, toRead);
+      if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
+        return 0;
+      }
+      currentBufferPos += toRead;
+      remainingInBuffer -= toRead;
+      remainingSize -= toRead;
+    }
+    return size;
+  }
+};
+}  // namespace
+
+std::string Epub::getDescription() const {
+  std::string opfPath;
+  if (!findContentOpfFile(&opfPath)) {
+    return "";
+  }
+
+  size_t opfSize;
+  if (!getItemSize(opfPath, &opfSize)) {
+    return "";
+  }
+
+  DescriptionParser parser(opfSize);
+  if (!parser.setup()) {
+    return "";
+  }
+
+  // 1024, not opfSize -- matches parseContentOpf()'s own readItemContentsToStream
+  // call: with opfSize as the chunk size, a field far enough into a large
+  // content.opf came back silently empty (confirmed on-device with a
+  // BookFusion-linked book's large custom-column metadata block sitting before
+  // dc:description).
+  if (!readItemContentsToStream(opfPath, parser, 1024)) {
+    return "";
+  }
+
+  return stripHtmlAndCollapseWhitespace(parser.description);
+}
+
 std::string Epub::getCachedCoverImagePath(const std::string& coverImageHref) const {
   if (FsHelpers::hasJpgExtension(coverImageHref)) {
     return getCachePath() + "/cover_src.jpg";
@@ -1222,7 +1424,8 @@ bool Epub::generateThumbBmpInternal(int width, int height, const bool adaptiveCo
 
   const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
   if (coverImageHref.empty()) {
-    LOG_DBG("EBP", "No known cover image for thumbnail");
+    LOG_DBG("EBP", "No known cover image for thumbnail; trying a cover sidecar beside the book");
+    return generateThumbBmpFromSidecar(width, height, adaptiveContain, thumbPath, renderer, readerFontId);
   } else if (FsHelpers::hasJpgExtension(coverImageHref)) {
     std::string coverJpgPath;
     if (!ensureCachedCoverImage(coverImageHref, coverJpgPath)) {
@@ -1248,11 +1451,13 @@ bool Epub::generateThumbBmpInternal(int width, int height, const bool adaptiveCo
     coverJpg.close();
     thumbBmp.close();
 
-    if (!success) {
-      LOG_ERR("EBP", "Failed to generate thumb BMP from JPG cover image");
-      Storage.remove(thumbPath.c_str());
-    }
-    return success;
+    if (success) return true;
+    LOG_ERR("EBP", "Failed to generate thumb BMP from JPG cover image");
+    Storage.remove(thumbPath.c_str());
+    // An encrypted library loan has a cover entry in its OPF like any other
+    // book, but the bytes behind it decode to nothing -- fall through to
+    // whatever artwork was left beside it.
+    return generateThumbBmpFromSidecar(width, height, adaptiveContain, thumbPath, renderer, readerFontId);
   } else if (FsHelpers::hasPngExtension(coverImageHref)) {
     std::string coverPngPath;
     if (!ensureCachedCoverImage(coverImageHref, coverPngPath)) {
@@ -1278,13 +1483,66 @@ bool Epub::generateThumbBmpInternal(int width, int height, const bool adaptiveCo
     coverPng.close();
     thumbBmp.close();
 
-    if (!success) {
-      LOG_ERR("EBP", "Failed to generate thumb BMP from PNG cover image");
-      Storage.remove(thumbPath.c_str());
-    }
-    return success;
+    if (success) return true;
+    LOG_ERR("EBP", "Failed to generate thumb BMP from PNG cover image");
+    Storage.remove(thumbPath.c_str());
+    return generateThumbBmpFromSidecar(width, height, adaptiveContain, thumbPath, renderer, readerFontId);
   } else {
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
+  }
+
+  return generateThumbBmpFromSidecar(width, height, adaptiveContain, thumbPath, renderer, readerFontId);
+}
+
+std::string Epub::sidecarCoverPath(const char* ext) const {
+  const std::string& book = getPath();
+  const size_t dot = book.find_last_of('.');
+  const size_t slash = book.find_last_of('/');
+  // No extension to replace (or the only dot is in a directory name): append.
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+    return book + ext;
+  }
+  return book.substr(0, dot) + ext;
+}
+
+bool Epub::generateThumbBmpFromSidecar(const int width, const int height, const bool adaptiveContain,
+                                       const std::string& thumbPath, const GfxRenderer* renderer,
+                                       const int readerFontId) const {
+  static constexpr const char* kExtensions[] = {".jpg", ".jpeg", ".png"};
+
+  for (const char* ext : kExtensions) {
+    const std::string sourcePath = sidecarCoverPath(ext);
+    if (!Storage.exists(sourcePath.c_str())) continue;
+
+    FsFile source;
+    if (!Storage.openFileForRead("EBP", sourcePath, source)) continue;
+
+    FsFile thumbBmp;
+    if (!Storage.openFileForWrite("EBP", thumbPath, thumbBmp)) {
+      source.close();
+      return false;
+    }
+
+    releaseReaderSdFontCachesBeforeCoverDecode(renderer, readerFontId, "thumbnail sidecar decode");
+    const bool success = FsHelpers::hasPngExtension(sourcePath)
+                             ? PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height,
+                                                                                adaptiveContain)
+                             : JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height,
+                                                                                  adaptiveContain);
+
+    source.close();
+    thumbBmp.close();
+
+    if (!success) {
+      // Leave nothing half-written for the next extension to trip over, or for
+      // the library to draw as a cover.
+      LOG_ERR("EBP", "Cover sidecar would not convert: %s", sourcePath.c_str());
+      Storage.remove(thumbPath.c_str());
+      continue;
+    }
+
+    LOG_DBG("EBP", "Generated thumb BMP from cover sidecar %s", sourcePath.c_str());
+    return true;
   }
 
   return false;
