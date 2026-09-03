@@ -37,8 +37,11 @@ constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
 constexpr unsigned long PAGE_TURN_LONG_PRESS_MS = 600;
 // How long a PageForward press waits before opening Sort, giving a Power
 // press that lands a frame or two later (Power+Down screenshot combo) time
-// to cancel it. See pendingSortFromPageForwardMs's own comment.
-constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 150;
+// to cancel it. See pendingSortFromPageForwardMs's own comment. Measured via
+// serial capture: the real Down-vs-Power debounce race is ~17ms (hardware
+// debounce itself is 5ms -- InputManager::DEBOUNCE_DELAY); 60ms keeps a ~3.5x
+// margin over the measured race without the perceptible delay 150ms had.
+constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 60;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
