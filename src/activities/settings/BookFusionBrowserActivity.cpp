@@ -30,10 +30,11 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_PREV_PAGE = 2;
 constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
-constexpr fui::ActionId ACTION_SORT = 4;
-// Long-press threshold for the non-touch Sort entry point (Confirm's short-press
-// already downloads the highlighted book on this screen).
-constexpr unsigned long SORT_LONG_PRESS_MS = 600;
+// Long-press threshold for the non-touch page-turn entry point: Left/Right
+// otherwise scroll the list one row at a time (see loop()), so holding past
+// this jumps a whole page instead. Same value File Browser's own long-press
+// gestures use.
+constexpr unsigned long PAGE_TURN_LONG_PRESS_MS = 600;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
@@ -132,7 +133,6 @@ void BookFusionBrowserActivity::onEnter() {
   app.on(ACTION_ROW, &BookFusionBrowserActivity::onRowEvent, this);
   app.on(ACTION_PREV_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
   app.on(ACTION_NEXT_PAGE, &BookFusionBrowserActivity::onPageButtonEvent, this);
-  app.on(ACTION_SORT, &BookFusionBrowserActivity::onSortEvent, this);
   app.setScreen(&BookFusionBrowserActivity::rootScreen, this);
   requestUpdate();
 
@@ -234,13 +234,6 @@ void BookFusionBrowserActivity::onPageButtonEvent(const fui::ActionEvent& event,
   }
 }
 
-void BookFusionBrowserActivity::onSortEvent(const fui::ActionEvent&, void* user) {
-  auto* self = static_cast<BookFusionBrowserActivity*>(user);
-  if (self->state != BrowserState::BROWSING) return;
-  self->app.clearTapFlash();
-  self->openSortPopup();
-}
-
 void BookFusionBrowserActivity::loop() {
   if (sortPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
@@ -312,21 +305,50 @@ void BookFusionBrowserActivity::loop() {
       return;
     }
 
-    if (!mappedInput.hasTouchHardware() && !longPressConfirmHandled &&
-        mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-        mappedInput.getHeldTime() >= SORT_LONG_PRESS_MS) {
-      longPressConfirmHandled = true;
+    // Non-touch: PageBack/PageForward (the side buttons) open Sort -- same
+    // trigger as File Browser, so it's consistent across both screens. These
+    // buttons used to jump pages directly; that moved to a long-press on
+    // Left/Right below, since PageBack/PageForward were the only buttons free
+    // to make the two screens match.
+    if (!mappedInput.hasTouchHardware() &&
+        (mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
+         mappedInput.wasPressed(MappedInputManager::Button::PageForward))) {
       openSortPopup();
       return;
     }
 
-    if (bookCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (longPressConfirmHandled) {
-        longPressConfirmHandled = false;
+    // Non-touch: holding Left/Right past the threshold jumps a whole page,
+    // instead of their short-press row-scroll below. longPressPageTurnHandled
+    // swallows the release that follows a hold that already fired, so it
+    // doesn't also move the row selection.
+    if (!mappedInput.hasTouchHardware() && !longPressPageTurnHandled) {
+      if (page.currentPage > 1 && mappedInput.isPressed(MappedInputManager::Button::Left) &&
+          mappedInput.getHeldTime() >= PAGE_TURN_LONG_PRESS_MS) {
+        longPressPageTurnHandled = true;
+        loadPage(page.currentPage - 1);
         return;
       }
+      if (page.hasMore && mappedInput.isPressed(MappedInputManager::Button::Right) &&
+          mappedInput.getHeldTime() >= PAGE_TURN_LONG_PRESS_MS) {
+        longPressPageTurnHandled = true;
+        loadPage(page.currentPage + 1);
+        return;
+      }
+    }
+
+    if (bookCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       activateSelected();
       return;
+    }
+
+    if (mappedInput.hasTouchHardware() && sortButtonRect.width > 0) {
+      int tx = 0;
+      int ty = 0;
+      if (mappedInput.wasScreenTapped(tx, ty) && tx >= sortButtonRect.x && tx < sortButtonRect.x + sortButtonRect.width &&
+          ty >= sortButtonRect.y && ty < sortButtonRect.y + sortButtonRect.height) {
+        openSortPopup();
+        return;
+      }
     }
 
     if (uiReady) {
@@ -339,31 +361,34 @@ void BookFusionBrowserActivity::loop() {
       }
     }
 
-    // Dedicated page-turn buttons jump pages directly in one press, without
-    // needing to scroll to a row -- Previous/Next Page live in a fixed
-    // footer instead of the scrollable list (see buildBrowsingScreen()),
-    // which is also touch-tappable there via ACTION_PREV_PAGE/NEXT_PAGE.
-    if (page.currentPage > 1 && mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
-      loadPage(page.currentPage - 1);
-      return;
-    }
-    if (page.hasMore && mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
-      loadPage(page.currentPage + 1);
-      return;
-    }
+    // Page-turn also stays touch-tappable via the fixed footer (see
+    // buildBrowsingScreen()) through ACTION_PREV_PAGE/NEXT_PAGE -- only the
+    // non-touch trigger moved, from PageBack/PageForward above to the
+    // long-press on Left/Right below.
 
-    // Up/Down stay bounded to the current page's books -- no falling off
-    // either end into the adjacent page, since that's what the dedicated
-    // page-turn buttons above are for.
+    // Up/Down/Left/Right stay bounded to the current page's books -- no falling
+    // off either end into the adjacent page, since that's what page-turn above
+    // is for. longPressPageTurnHandled swallows the release that follows a
+    // Left/Right hold that already jumped a page (see above), so that release
+    // doesn't also move the row selection.
     if (bookCount > 0) {
       const auto moveSelection = [this, bookCount](const int index) {
         selectorIndex = index;
         topIndex = followListSelection(selectorIndex, topIndex, visibleRows, bookCount);
         requestUpdate();
       };
-      buttonNavigator.onNextRelease(
-          [this, &moveSelection, bookCount] { moveSelection(ButtonNavigator::nextIndex(selectorIndex, bookCount)); });
+      buttonNavigator.onNextRelease([this, &moveSelection, bookCount] {
+        if (longPressPageTurnHandled) {
+          longPressPageTurnHandled = false;
+          return;
+        }
+        moveSelection(ButtonNavigator::nextIndex(selectorIndex, bookCount));
+      });
       buttonNavigator.onPreviousRelease([this, &moveSelection, bookCount] {
+        if (longPressPageTurnHandled) {
+          longPressPageTurnHandled = false;
+          return;
+        }
         moveSelection(ButtonNavigator::previousIndex(selectorIndex, bookCount));
       });
     }
@@ -391,18 +416,11 @@ void BookFusionBrowserActivity::rootScreen(UiApp::ScreenType& screen, void* user
   }
 }
 
-void BookFusionBrowserActivity::screenHeader(UiApp::ScreenType& screen, const char* title, const bool showSort) {
+void BookFusionBrowserActivity::screenHeader(UiApp::ScreenType& screen, const char* title) {
   screen.takeBottom(static_cast<int16_t>(UITheme::getInstance().getMetrics().buttonHintsHeight));
   fui::HeaderProps header;
   header.title = title;
   header.borderEdges = fui::EdgeBottom;
-  if (showSort) {
-    // Same trailingLabel/trailingAction mechanism OpdsBookBrowserActivity's header
-    // search button already uses -- touch dispatches through ACTION_SORT below; a
-    // non-touch entry point (long-press Confirm) is handled separately in loop().
-    header.trailingLabel = tr(STR_SORT);
-    header.trailingAction = ACTION_SORT;
-  }
   screen.header(header);
   screen.spacer(static_cast<int16_t>(UITheme::getInstance().getMetrics().verticalSpacing));
 }
@@ -455,8 +473,8 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
 }
 
 void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
-  screenHeader(screen, currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId),
-              /*showSort=*/true);
+  screenHeader(screen,
+              currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
 
   if (page.books.empty()) {
     screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
@@ -685,6 +703,37 @@ void BookFusionBrowserActivity::render(RenderLock&&) {
   uiReady = false;
   app.render();
   uiReady = true;
+
+  // Persistent "Sort" edge tab, matching FileBrowserActivity's: visible on every
+  // device (not gated on touch hardware) so a button-only reader can see sorting
+  // exists at all. Non-touch trigger is PageBack/PageForward, same as
+  // FileBrowserActivity (see loop()); this tab is the on-screen hint for that
+  // (and the touch tap target).
+  if (state == BrowserState::BROWSING) {
+    constexpr int kSortTabPadding = 6;
+    constexpr int kSortTabWidth = 30;
+    constexpr int kSortTabTopMargin = 4;
+    constexpr int kSortTabCornerRadius = 6;
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int pageWidth = renderer.getScreenWidth();
+    const int sortLabelLen = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
+    const int sortTabHeight = sortLabelLen + kSortTabPadding * 2;
+    const int sortTabX = pageWidth - kSortTabWidth;
+    const int sortTabY = metrics.topPadding + metrics.headerHeight + kSortTabTopMargin;
+    sortButtonRect = Rect{sortTabX, sortTabY, kSortTabWidth, sortTabHeight};
+    renderer.fillRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, kSortTabCornerRadius,
+                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                             /*roundBottomRight=*/false, Color::White);
+    renderer.drawRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, 1, kSortTabCornerRadius,
+                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                             /*roundBottomRight=*/false, /*state=*/true);
+    const int textX = sortTabX + (kSortTabWidth - renderer.getTextHeight(SMALL_FONT_ID)) / 2;
+    const int textY = sortTabY + (sortTabHeight + sortLabelLen) / 2;
+    renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, tr(STR_SORT));
+  } else {
+    sortButtonRect = Rect{0, 0, 0, 0};
+  }
+
   if (sortPopup.processRender(renderer, mappedInput)) return;
   renderer.displayBuffer();
 }

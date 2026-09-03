@@ -78,17 +78,23 @@ class BookFusionBrowserActivity final : public Activity {
   int visibleRows = 1;
   int topIndex = 0;
 
-  // Sort popup (BROWSING screen only): touch via the header's trailing "Sort" button
-  // (ACTION_SORT/onSortEvent), non-touch via long-press Confirm (see loop()).
+  // Sort popup (BROWSING screen only): the persistent edge tab (touch tap
+  // target, and a visible hint for non-touch devices -- see
+  // FileBrowserActivity's own tab for the same rationale), non-touch trigger
+  // is PageBack/PageForward -- same as File Browser, for a consistent gesture
+  // across both screens (see loop()). That freed page-turn (PageBack/
+  // PageForward's old job here) onto a long-press of Left/Right instead, since
+  // those were the only buttons left; longPressPageTurnHandled swallows the
+  // row-scroll release that follows a hold that already jumped a page.
   SortPopup sortPopup;
-  bool longPressConfirmHandled = false;
+  bool longPressPageTurnHandled = false;
+  Rect sortButtonRect{0, 0, 0, 0};
   void openSortPopup();
 
   static void rootScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onPageButtonEvent(const freeink::ui::ActionEvent& event, void* user);
-  static void onSortEvent(const freeink::ui::ActionEvent& event, void* user);
-  void screenHeader(UiApp::ScreenType& screen, const char* title, bool showSort = false);
+  void screenHeader(UiApp::ScreenType& screen, const char* title);
   void buildCategoryScreen(UiApp::ScreenType& screen);
   void buildBrowsingScreen(UiApp::ScreenType& screen);
   void buildDownloadScreen(UiApp::ScreenType& screen);
