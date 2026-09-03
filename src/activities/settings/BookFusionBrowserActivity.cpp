@@ -35,6 +35,10 @@ constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
 // this jumps a whole page instead. Same value File Browser's own long-press
 // gestures use.
 constexpr unsigned long PAGE_TURN_LONG_PRESS_MS = 600;
+// How long a PageForward press waits before opening Sort, giving a Power
+// press that lands a frame or two later (Power+Down screenshot combo) time
+// to cancel it. See pendingSortFromPageForwardMs's own comment.
+constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 150;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
@@ -310,11 +314,33 @@ void BookFusionBrowserActivity::loop() {
     // buttons used to jump pages directly; that moved to a long-press on
     // Left/Right below, since PageBack/PageForward were the only buttons free
     // to make the two screens match.
-    if (!mappedInput.hasTouchHardware() &&
-        (mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
-         mappedInput.wasPressed(MappedInputManager::Button::PageForward))) {
-      openSortPopup();
-      return;
+    if (!mappedInput.hasTouchHardware()) {
+      if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+        openSortPopup();
+        return;
+      }
+      if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+        // PageForward shares BTN_DOWN with the Power+Down screenshot combo --
+        // hold this one open briefly rather than firing immediately, in case
+        // Power is on its way (see pendingSortFromPageForwardMs's comment).
+        pendingSortFromPageForwardMs = millis();
+      }
+    }
+    // Consumed every loop(), not just while a Sort trigger is pending: while the
+    // screenshot chord is actively consuming input, main.cpp returns before this
+    // Activity's loop() ever runs, so this flag (see its own comment) is the
+    // only way this code can learn a chord happened across however many frames
+    // it was frozen for -- isPressed(Power) alone can't, since by the time
+    // loop() runs again Power has already been released.
+    const bool chordJustConsumed = mappedInput.consumeScreenshotChordFlag();
+    if (pendingSortFromPageForwardMs != 0) {
+      if (chordJustConsumed || mappedInput.isPressed(MappedInputManager::Button::Power)) {
+        pendingSortFromPageForwardMs = 0;  // Was a screenshot combo, not a Sort request.
+      } else if (millis() - pendingSortFromPageForwardMs >= PAGE_FORWARD_SORT_GUARD_MS) {
+        pendingSortFromPageForwardMs = 0;
+        openSortPopup();
+        return;
+      }
     }
 
     // Non-touch: holding Left/Right past the threshold jumps a whole page,
@@ -867,6 +893,10 @@ void BookFusionBrowserActivity::selectCategory(int index) {
 }
 
 void BookFusionBrowserActivity::openSortPopup() {
+  // Whichever path opened this (touch tap, PageBack, or PageForward's own
+  // guard expiry), a pending PageForward guard is now moot -- clear it so a
+  // stale timestamp can't fire a second, unwanted open later.
+  pendingSortFromPageForwardMs = 0;
   // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
   // a runtime variable, so this array/loop calls I18N.get() directly instead.
   static const StrId kFieldLabelIds[BOOKFUSION_SORT_FIELD_COUNT] = {
