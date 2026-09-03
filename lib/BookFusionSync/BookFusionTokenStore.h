@@ -30,7 +30,10 @@ class BookFusionTokenStore : public PersistableStore<BookFusionTokenStore> {
   bool fromJson(JsonVariantConst doc);
 
   void setTokens(const std::string& access);
-  const std::string& getAccessToken() const { return accessToken; }
+  const std::string& getAccessToken() const {
+    ensureLoaded();
+    return accessToken;
+  }
 
   bool hasToken() const;
   void clearTokens();
