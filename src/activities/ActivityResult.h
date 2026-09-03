@@ -172,12 +172,22 @@ struct Ao3IndexResult {
   bool successfullyIndexed = false;
 };
 
+// BookDetailsActivity's Left/Right = Previous/Next Book. The caller (whichever
+// screen has the actual book list -- File Browser, Recent Books, Recent Books
+// Grid) already knows how to find the adjacent book, including the harder
+// cases (File Browser's index-mode for large folders), so BookDetailsActivity
+// just reports which direction was pressed and lets the caller re-launch
+// itself for the new book rather than owning any list logic of its own.
+struct BookDetailsNavResult {
+  bool next = false;  // true = Right (next book), false = Left (previous book)
+};
+
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
                  OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult, NetworkModeResult, FootnoteResult,
                  BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
                  ClippingResult, DictionaryClippingRequest, ClippingJumpResult, BookActionResult, AO3Result,
-                 FolderPickerResult, Ao3IndexResult, FrontlightPanelResult>;
+                 FolderPickerResult, Ao3IndexResult, FrontlightPanelResult, BookDetailsNavResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

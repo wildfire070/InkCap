@@ -159,6 +159,26 @@ void BookDetailsActivity::loop() {
     return;
   }
 
+  // Left/Right = Previous/Next Book (see the class comment): finish() with a
+  // BookDetailsNavResult and let the caller re-launch this Activity for the
+  // adjacent book. Checked before the description scroll below so it takes
+  // priority over Left/Right's old scroll binding -- description paging now
+  // lives on Up/Down (still press-and-hold-to-repeat) and swipe only.
+  if (hasNextBook && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    BookDetailsNavResult res;
+    res.next = true;
+    setResult(ActivityResult(std::move(res)));
+    finish();
+    return;
+  }
+  if (hasPreviousBook && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    BookDetailsNavResult res;
+    res.next = false;
+    setResult(ActivityResult(std::move(res)));
+    finish();
+    return;
+  }
+
   // Page-at-a-time scroll through the description (clamped against maxScrollOffset
   // in render()); a no-op when there's no description or it all fits on screen.
   const int pageStep = std::max(1, descVisibleLines - 1);
@@ -170,8 +190,8 @@ void BookDetailsActivity::loop() {
     descScrollOffset = std::max(0, descScrollOffset - pageStep);
     requestUpdate();
   };
-  buttonNavigator.onNext(scrollDown);
-  buttonNavigator.onPrevious(scrollUp);
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, scrollDown);
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, scrollUp);
   switch (mappedInput.wasSwipe()) {
     case MappedInputManager::SwipeDir::Up:
       scrollDown();
@@ -292,7 +312,9 @@ void BookDetailsActivity::render(RenderLock&&) {
   }
 
   const char* confirmLabel = Storage.exists(bookPath.c_str()) ? tr(STR_OPEN) : "";
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
+  const char* prevLabel = hasPreviousBook ? tr(STR_BOOK_INFO_PREV_BOOK) : "";
+  const char* nextLabel = hasNextBook ? tr(STR_BOOK_INFO_NEXT_BOOK) : "";
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, prevLabel, nextLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
