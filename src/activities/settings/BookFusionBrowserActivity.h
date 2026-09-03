@@ -89,6 +89,14 @@ class BookFusionBrowserActivity final : public Activity {
   SortPopup sortPopup;
   bool longPressPageTurnHandled = false;
   Rect sortButtonRect{0, 0, 0, 0};
+  // PageForward shares its physical button with the Power+Down screenshot
+  // combo (see ButtonShortcutController::updatePowerDown); the two presses
+  // rarely land in the same debounce window, so a screenshot attempt's Down
+  // edge can register -- and open Sort -- a frame or two before Power does.
+  // 0 = no pending Sort trigger; otherwise the millis() timestamp PageForward
+  // was pressed, held for PAGE_FORWARD_SORT_GUARD_MS before actually opening
+  // Sort, so a Power press arriving in that window can cancel it instead.
+  unsigned long pendingSortFromPageForwardMs = 0;
   void openSortPopup();
 
   static void rootScreen(UiApp::ScreenType& screen, void* user);

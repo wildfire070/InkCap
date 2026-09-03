@@ -82,6 +82,16 @@ class MappedInputManager {
   bool wasReleased(Button button) const;
   void injectRelease(Button button) const { injectedReleases[static_cast<size_t>(button)] = true; }
   void clearInjectedReleases() const { injectedReleases.fill(false); }
+  // See screenshotChordConsumedPending's own comment. markScreenshotChordConsumed()
+  // is for main.cpp to call on every chord-consuming frame; consumeScreenshotChordFlag()
+  // is for an Activity to check-and-clear once per loop() before trusting an
+  // elapsed-time-based guard around a button the chord also uses.
+  void markScreenshotChordConsumed() const { screenshotChordConsumedPending = true; }
+  bool consumeScreenshotChordFlag() const {
+    const bool was = screenshotChordConsumedPending;
+    screenshotChordConsumedPending = false;
+    return was;
+  }
   bool isPressed(Button button) const;
   const GfxRenderer& getRenderer() const { return renderer; }
   enum class RowTouch : uint8_t { None, Down, Tap };
@@ -260,6 +270,13 @@ class MappedInputManager {
   // One-frame synthetic releases let a chord route through the existing
   // activity navigation path without allocating an event object.
   mutable std::array<bool, BUTTON_COUNT> injectedReleases{};
+  // Set on every frame the Power+Down screenshot chord consumes input (main.cpp
+  // returns before any Activity's loop() runs on those frames, so an Activity
+  // can never observe Power directly during a real screenshot -- this is the
+  // only signal that reaches it). Sticky until consumeScreenshotChordFlag()
+  // is called, so an Activity that only resumes running after the whole chord
+  // has come and gone still sees it on its next loop().
+  mutable bool screenshotChordConsumedPending = false;
 #if CROSSINK_APP_CAP_TOUCH
   mutable bool suppressTouchTap = false;
   mutable bool deferredHomeGesture = false;

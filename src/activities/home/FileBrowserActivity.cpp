@@ -7,6 +7,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <Memory.h>
 
 #include <algorithm>
@@ -48,6 +49,10 @@ constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_SETTINGS = 2;
 constexpr size_t INDEX_THRESHOLD = 200;
 constexpr size_t MAX_VIRTUAL_LIST_ENTRIES = static_cast<size_t>(std::numeric_limits<int16_t>::max());
+// How long a PageForward press waits before opening Sort, giving a Power
+// press that lands a frame or two later (Power+Down screenshot combo) time
+// to cancel it. See pendingSortFromPageForwardMs's own comment.
+constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 150;
 
 // Persistent "Sort" edge tab (see the header/render-time comment in
 // FileBrowserActivity::render() for the full rationale). Shared between
@@ -930,15 +935,38 @@ void FileBrowserActivity::loop() {
     }
   }
 
-  // Non-touch: PageBack/PageForward are otherwise unused on this screen (they're a
-  // distinct button pair from Up/Down/Left/Right's list navigation), so either one
-  // opens the sort popup -- no conflict with the existing long-press-Confirm context
-  // menu or long-press-Back hidden-files toggle.
-  if (mode == Mode::Books && !mappedInput.hasTouchHardware() &&
-      (mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
-       mappedInput.wasPressed(MappedInputManager::Button::PageForward))) {
-    openSortPopup();
-    return;
+  // Non-touch: PageBack/PageForward open the sort popup -- no conflict with the
+  // existing long-press-Confirm context menu or long-press-Back hidden-files
+  // toggle. PageForward physically shares BTN_DOWN with the Power+Down
+  // screenshot combo (and PageBack shares BTN_UP) on every side-button
+  // layout this device supports -- see pendingSortFromPageForwardMs's own
+  // comment for how that's handled.
+  if (mode == Mode::Books && !mappedInput.hasTouchHardware()) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+      openSortPopup();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+      // Hold this one open briefly rather than firing immediately, in case
+      // Power is on its way (see pendingSortFromPageForwardMs's comment).
+      pendingSortFromPageForwardMs = millis();
+    }
+  }
+  // Consumed every loop(), not just while a Sort trigger is pending: while the
+  // screenshot chord is actively consuming input, main.cpp returns before this
+  // Activity's loop() ever runs, so this flag (see its own comment) is the
+  // only way this code can learn a chord happened across however many frames
+  // it was frozen for -- isPressed(Power) alone can't, since by the time
+  // loop() runs again Power has already been released.
+  const bool chordJustConsumed = mappedInput.consumeScreenshotChordFlag();
+  if (pendingSortFromPageForwardMs != 0) {
+    if (chordJustConsumed || mappedInput.isPressed(MappedInputManager::Button::Power)) {
+      pendingSortFromPageForwardMs = 0;  // Was a screenshot combo, not a Sort request.
+    } else if (millis() - pendingSortFromPageForwardMs >= PAGE_FORWARD_SORT_GUARD_MS) {
+      pendingSortFromPageForwardMs = 0;
+      openSortPopup();
+      return;
+    }
   }
   if (pendingCompletedFeedback) {
     const bool timedOut = (millis() - completedFeedbackShowTime) >= COMPLETED_FEEDBACK_MS;
@@ -1335,6 +1363,10 @@ void FileBrowserActivity::sortFiles() {
 }
 
 void FileBrowserActivity::openSortPopup() {
+  // Whichever path opened this (touch tap, PageBack, or PageForward's own
+  // guard expiry), a pending PageForward guard is now moot -- clear it so a
+  // stale timestamp can't fire a second, unwanted open later.
+  pendingSortFromPageForwardMs = 0;
   // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
   // a runtime variable, so this array/loop calls I18N.get() directly instead.
   static const StrId kFieldLabelIds[SORT_FIELD_COUNT] = {

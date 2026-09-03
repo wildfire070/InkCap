@@ -1625,6 +1625,13 @@ void loop() {
   const bool screenshotActionBlocked = modalOwnsInput || buttonShortcutController.isQuickLocked();
   const auto screenshotChordResult = buttonShortcutController.updatePowerDown(
       gpio.isPressed(HalGPIO::BTN_POWER), gpio.isPressed(HalGPIO::BTN_DOWN), screenshotActionBlocked);
+  if (screenshotChordResult.consumeInput) {
+    // See MappedInputManager::screenshotChordConsumedPending's comment: this
+    // Activity-visible frame is the only place that can tell an Activity a
+    // Power+Down screenshot chord just ran, since every frame it actually
+    // consumes returns before activityManager.loop() below ever executes.
+    mappedInputManager.markScreenshotChordConsumed();
+  }
   if (screenshotChordResult.event == ButtonShortcutController::Event::Screenshot) {
     RenderLock lock;
     ScreenshotUtil::takeScreenshot(renderer);
