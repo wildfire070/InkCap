@@ -538,3 +538,32 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
 
   renderer.setOrientation(origOrientation);
 }
+
+Rect RoundedRaffTheme::buttonHintRect(const GfxRenderer& renderer, int index) const {
+  // Mirrors drawButtonHints' own (non-inverted) group geometry: two rounded
+  // groups (Back+Confirm, Up+Down), each split outer/inner -- there's no
+  // gap between the two buttons within a group here, unlike Base/Lyra/
+  // Minimal's four separately-spaced boxes.
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int sidePadding = 20;
+  const int groupGap = 10;
+  const int bottomMargin = 10;
+  const int hintHeight = RoundedRaffMetrics::values.buttonHintsHeight - 10;
+  const int groupWidth = (pageWidth - sidePadding * 2 - groupGap) / 2;
+  const int outlineY = pageHeight - hintHeight - bottomMargin;
+  const int leftGroupX = sidePadding;
+  const int rightGroupX = leftGroupX + groupWidth + groupGap;
+  const int outerButtonWidth = groupWidth / 2;
+  const int innerButtonWidth = groupWidth - outerButtonWidth;
+  switch (index) {
+    case 0:
+      return Rect(leftGroupX, outlineY, outerButtonWidth, hintHeight);
+    case 1:
+      return Rect(leftGroupX + outerButtonWidth, outlineY, innerButtonWidth, hintHeight);
+    case 2:
+      return Rect(rightGroupX, outlineY, outerButtonWidth, hintHeight);
+    default:
+      return Rect(rightGroupX + outerButtonWidth, outlineY, innerButtonWidth, hintHeight);
+  }
+}
