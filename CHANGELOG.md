@@ -20,6 +20,9 @@
 ### Changed
 
 - Firmware rebranded from CrossInk to InkCap. User-visible product name, boot/sleep screens, About label, and the on-device web portal now say "InkCap"; internal `CrossPoint`-prefixed identifiers, the `.crosspoint` cache directory, network-facing User-Agent strings, and `CROSSINK_*` build macros are unchanged.
+- Automatic reading-stat backups no longer rewrite an identical same-day file before sleep.
+- Reader resumes now defer Recent Books, KOReader credential, and BookFusion token loading until needed and avoid unchanged recent-book writes.
+- X3 readers now reuse a one-second USB power sample instead of repeatedly querying the battery gauge while idle.
 - Holding a word-selection direction now repeats, touch Settings tabs have a larger target, and OPDS pickers can add a server in place.
 - Font prewarming now uses a bounded fixed buffer instead of growing temporary strings, reducing heap churn while rendering mixed-style pages.
 - Built-in fonts now use smaller sparse kerning data and stronger offline compression, leaving more firmware flash available without changing text layout.
@@ -42,6 +45,7 @@
 
 ### Fixed
 
+- Long-press Menu and Back shortcuts no longer pass their release into reader screens opened by the shortcut.
 - Mixed-direction EPUB paragraphs now retain their block reading direction when inline spans change direction.
 - End-of-book suggestions now receive input before reader shortcuts and automatic page turns.
 - Arabic and Persian text no longer lets font ligatures reprocess letters that were already shaped for display.
@@ -60,6 +64,7 @@
 - Boards with unverified power-button wiring no longer treat every battery cold boot as a held power-button wake, preventing immediate re-sleep after flashing or USB detection gaps.
 - USB Drive now disconnects the host and restarts safely after an SD-card I/O error instead of remaining in a broken raw-storage session.
 - KOReader authentication and progress sync now keep Wi-Fi awake during their short network requests, avoiding modem-sleep timeouts.
+- KOReader Sync now keeps its loading, Wi-Fi, and progress screens aligned with the reader's orientation on non-touch devices.
 - S3 devices without a USB-detect pin can now recognize power-only chargers through battery charging state.
 - Power-latch pins now stay asserted during deep sleep on S3 devices, preventing battery-only wakes from becoming slow cold boots.
 - Sticky and X4 Pro readers now reject firmware files built for the other device before SD-card or over-the-air updates write the OTA partition.

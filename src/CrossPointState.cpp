@@ -103,6 +103,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["showBootScreen"] = showBootScreen;
   doc["quickLockResumePending"] = quickLockResumePending;
   doc["quickLockResumeTrigger"] = quickLockResumeTrigger;
+  doc["quickLockRestoreFrontlight"] = quickLockRestoreFrontlight;
   doc["pendingOverlayOrigin"] = static_cast<uint8_t>(pendingOverlayResume.origin);
   doc["pendingOverlayType"] = static_cast<uint8_t>(pendingOverlayResume.overlay);
   doc["pendingOverlayTab"] = pendingOverlayResume.tab;
@@ -146,6 +147,7 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   showBootScreen = doc["showBootScreen"] | true;
   quickLockResumePending = doc["quickLockResumePending"] | false;
   quickLockResumeTrigger = doc["quickLockResumeTrigger"] | static_cast<uint8_t>(0);
+  quickLockRestoreFrontlight = doc["quickLockRestoreFrontlight"] | false;
   pendingOverlayResume.origin =
       static_cast<PendingOverlayOrigin>(doc["pendingOverlayOrigin"] | static_cast<uint8_t>(0));
   pendingOverlayResume.overlay = static_cast<PendingOverlayType>(doc["pendingOverlayType"] | static_cast<uint8_t>(0));

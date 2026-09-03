@@ -28,6 +28,7 @@
 #include "components/icons/book24.h"
 #include "components/icons/icon_bookfusion.h"
 #include "components/icons/evening.h"
+#include "components/icons/icon_bookfusion.h"
 #include "components/icons/morning.h"
 #include "components/icons/night.h"
 #include "components/icons/streak.h"

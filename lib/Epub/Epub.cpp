@@ -484,6 +484,15 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   }
 
   bookMetadata.textReferenceHref = opfParser.textReferenceHref;
+  bookMetadata.bookshelf = opfParser.bookshelf;
+  bookMetadata.seriesName = opfParser.seriesName;
+  bookMetadata.seriesIndex = opfParser.seriesIndex;
+  bookMetadata.contentRating = opfParser.contentRating;
+  bookMetadata.chapters = opfParser.chapters;
+  bookMetadata.completionStatus = opfParser.completionStatus;
+  bookMetadata.updatedDate = opfParser.updatedDate;
+  bookMetadata.liked = opfParser.liked;
+  bookMetadata.readStatus = opfParser.readStatus;
 
   // AO3 support
   bookMetadata.ao3WorkId = opfParser.ao3WorkId;
