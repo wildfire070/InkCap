@@ -51,6 +51,11 @@ class RecentBooksActivity final : public Activity {
   // Show an OK/Cancel prompt to remove the given book from the Recent Books list.
   void promptRemoveBook(const std::string& path, const std::string& title);
   void showBookActionMenu(size_t bookIndex, bool ignoreInitialConfirmRelease = false);
+  // Opens Book Info for recentBooks[bookIndex], wiring Left/Right = Previous/Next
+  // Book against recentBooks itself (not reloaded between hops, so indices stay
+  // stable while the user pages through -- reloadAfterBookAction() only runs on
+  // the final exit, once BookDetailsActivity finishes without a nav result).
+  void openBookDetails(size_t bookIndex);
 
  public:
   explicit RecentBooksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);

@@ -374,6 +374,23 @@ const char* FileBrowserActivity::entryNameAt(size_t row) {
   return indexCachedNames[cacheSlot].c_str();
 }
 
+size_t FileBrowserActivity::findAdjacentBookRow(size_t fromRow, bool forward) {
+  const size_t count = entryCount();
+  if (count == 0) return SIZE_MAX;
+  size_t row = fromRow;
+  for (;;) {
+    if (forward) {
+      if (row + 1 >= count) return SIZE_MAX;
+      row++;
+    } else {
+      if (row == 0) return SIZE_MAX;
+      row--;
+    }
+    const std::string name = entryNameAt(row);
+    if (!name.empty() && name.back() != '/') return row;
+  }
+}
+
 void FileBrowserActivity::onEnter() {
   Activity::onEnter();
 
@@ -644,6 +661,10 @@ bool FileBrowserActivity::isSleepFavoriteFolder(const std::string& fullPath) con
 }
 
 void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease) {
+  // selectorIndex is already the row this menu was opened for at both call
+  // sites (set just before either one), so it's safe to snapshot here for
+  // Book Info's Previous/Next Book rather than needing a new parameter.
+  const size_t bookRow = selectorIndex;
   const std::string fullPath = buildFullPath(basepath, entry);
   std::vector<FileBrowserActionActivity::MenuItem> items = BookActions::buildBookActionItems(fullPath, false);
 
@@ -661,7 +682,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
   startActivityForResult(
       std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, getFileName(entry), std::move(items),
                                                   ignoreInitialConfirmRelease),
-      [this, fullPath, entry](const ActivityResult& result) {
+      [this, fullPath, entry, bookRow](const ActivityResult& result) {
         longPressConfirmHandled = false;
         if (result.isCancelled) {
           return;
@@ -670,9 +691,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
         const auto action = static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
         switch (action) {
           case FileBrowserAction::BookInfo:
-            startActivityForResult(
-                std::make_unique<BookDetailsActivity>(renderer, mappedInput, fullPath, "", ""),
-                [this](const ActivityResult&) { requestUpdate(); });
+            openBookDetails(bookRow);
             return;
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(fullPath, false);
@@ -787,6 +806,32 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::DeleteClippings:
             return;
         }
+      });
+}
+
+void FileBrowserActivity::openBookDetails(const size_t row) {
+  if (row >= entryCount()) return;
+  const std::string entry = entryNameAt(row);
+  const std::string fullPath = buildFullPath(basepath, entry);
+  const size_t prevRow = findAdjacentBookRow(row, /*forward=*/false);
+  const size_t nextRow = findAdjacentBookRow(row, /*forward=*/true);
+  startActivityForResult(
+      std::make_unique<BookDetailsActivity>(renderer, mappedInput, fullPath, "", "", prevRow != SIZE_MAX,
+                                            nextRow != SIZE_MAX),
+      [this, prevRow, nextRow](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          if (const auto* nav = std::get_if<BookDetailsNavResult>(&result.data)) {
+            if (nav->next && nextRow != SIZE_MAX) {
+              openBookDetails(nextRow);
+              return;
+            }
+            if (!nav->next && prevRow != SIZE_MAX) {
+              openBookDetails(prevRow);
+              return;
+            }
+          }
+        }
+        requestUpdate();
       });
 }
 
