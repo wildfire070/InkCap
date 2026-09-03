@@ -50,8 +50,11 @@ constexpr size_t INDEX_THRESHOLD = 200;
 constexpr size_t MAX_VIRTUAL_LIST_ENTRIES = static_cast<size_t>(std::numeric_limits<int16_t>::max());
 // How long a PageForward press waits before opening Sort, giving a Power
 // press that lands a frame or two later (Power+Down screenshot combo) time
-// to cancel it. See pendingSortFromPageForwardMs's own comment.
-constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 150;
+// to cancel it. See pendingSortFromPageForwardMs's own comment. Measured via
+// serial capture: the real Down-vs-Power debounce race is ~17ms (hardware
+// debounce itself is 5ms -- InputManager::DEBOUNCE_DELAY); 60ms keeps a ~3.5x
+// margin over the measured race without the perceptible delay 150ms had.
+constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 60;
 
 // Persistent "Sort" edge tab (see the header/render-time comment in
 // FileBrowserActivity::render() for the full rationale). Shared between
