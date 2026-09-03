@@ -17,6 +17,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <MemoryBudget.h>
 #include <SPI.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
@@ -1458,6 +1459,14 @@ void setup() {
   }
 
   allowSleepAt = millis() + 2000;
+
+  // Baseline for the heap attribution ladder: framebuffer, fonts, settings and
+  // i18n are up, no book, no radios. Every later MemoryBudget::logHeapShape tag
+  // is read as a delta from this line. Reuses the existing MemoryBudget
+  // diagnostics (ported from InsiderPhD's crosspoint-reader HeapReport concept,
+  // which duplicates this module almost field-for-field) rather than adding a
+  // second heap-logging module.
+  MemoryBudget::logHeapShape("boot.done");
 }
 
 void loop() {
