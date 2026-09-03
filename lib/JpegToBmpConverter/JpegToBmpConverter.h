@@ -17,4 +17,7 @@ class JpegToBmpConverter {
   // Convert to 1-bit BMP (black and white only, no grays) for fast home screen rendering
   static bool jpegFileTo1BitBmpStreamWithSize(FsFile& jpegFile, Print& bmpOut, int targetMaxWidth, int targetMaxHeight,
                                               bool adaptiveContain = false);
+  // Source pixel dimensions only, no pixel decode -- for picking a thumbnail
+  // target aspect ratio before generating one.
+  static bool peekDimensions(FsFile& jpegFile, int* outWidth, int* outHeight);
 };
