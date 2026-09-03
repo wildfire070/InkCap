@@ -1521,6 +1521,15 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto rowType = twoLineRows ? UiListRowType::WithSubtitle : UiListRowType::SingleLine;
   props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = twoLineRows ? 2 : 1;
+  // Deliberately kept on screen.list()'s own auto-drawn scroll indicator here
+  // (unlike the other FreeInkUI list screens, which suppress it in favor of a
+  // manually positioned one) -- on this screen the indicator draws at the
+  // unadjusted body width, i.e. under the Sort tab's reserved column rather
+  // than left of it, which is the on-screen position wanted for this list.
+  // The tradeoff: on X4 Pro/Classic this loses the theme's listScrollInset
+  // (the SDK default here is a hardcoded width=3/inset=0, not theme-driven),
+  // and the indicator is hidden for the vertical span the Sort tab itself
+  // covers (the tab draws after/on top of the list), only visible below it.
   fui::Rect listRect = screen.body();
   // Reserve room for the persistent Sort edge tab (drawn in render(), after this
   // list) on every row, not just the one or two rows it happens to sit beside --
@@ -1612,9 +1621,6 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.partialTrailingRow = false;
   screen.list(props);
   if (usesVirtualList) topIndex = listNav.top;
-  fui::drawListScrollIndicator(screen.target(), listRect, totalEntries, visibleRows, topIndex,
-                               screen.theme().listScrollWidth, screen.theme().listScrollSide,
-                               screen.theme().listScrollInset);
 }
 
 void FileBrowserActivity::render(RenderLock&&) {
