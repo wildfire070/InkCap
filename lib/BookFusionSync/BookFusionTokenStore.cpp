@@ -24,7 +24,10 @@ bool BookFusionTokenStore::fromJson(JsonVariantConst doc) {
 
 void BookFusionTokenStore::setTokens(const std::string& access) { accessToken = access; }
 
-bool BookFusionTokenStore::hasToken() const { return !accessToken.empty(); }
+bool BookFusionTokenStore::hasToken() const {
+  ensureLoaded();
+  return !accessToken.empty();
+}
 
 void BookFusionTokenStore::clearTokens() {
   accessToken.clear();

@@ -131,6 +131,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   if (wantedFamily[0] == '\0') {
     if (!currentFamily.empty()) {
+      LOG_INF("SDFS", "No SD font wanted; unloading resident family: %s", currentFamily.c_str());
       manager_.unloadAll(renderer);
       loadedFontPointSize_ = 0;
     }
@@ -139,6 +140,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   if (!registryWasDirty && currentFamily == wantedFamily && loadedFontPointSize_ == targetPointSize &&
       SETTINGS.legacySdFontSizeStep == UINT8_MAX) {
+    LOG_INF("SDFS", "ensureLoaded: %s already resident at %u pt, no-op", wantedFamily, targetPointSize);
     return;
   }
 
@@ -163,7 +165,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   bool familyMatches = (currentFamily == wantedFamily);
   if (familyMatches) {
     if (!family) {
-      LOG_DBG("SDFS", "SD font family disappeared: %s (clearing)", wantedFamily);
+      LOG_ERR("SDFS", "SD font family disappeared: %s (clearing, falling back to built-in)", wantedFamily);
       manager_.unloadAll(renderer);
       SETTINGS.sdFontFamilyName[0] = '\0';
       SETTINGS.saveToFile();
@@ -172,7 +174,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     const auto* wantedFile = family->findClosestFile(targetPointSize);
     uint8_t wantedPt = wantedFile ? wantedFile->pointSize : 0;
     if (!registryWasDirty && wantedPt == manager_.currentPointSize()) return;
-    LOG_DBG("SDFS", "Reloading %s: size %u -> %u (target %u)%s", wantedFamily, manager_.currentPointSize(), wantedPt,
+    LOG_INF("SDFS", "Reloading %s: size %u -> %u (target %u)%s", wantedFamily, manager_.currentPointSize(), wantedPt,
             targetPointSize, registryWasDirty ? " [registry dirty]" : "");
   }
 
@@ -184,14 +186,14 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     if (manager_.loadFamilyClosest(*family, renderer, targetPointSize)) {
       loadedFontPointSize_ = targetPointSize;
       setupUiFallbacks(renderer);
-      LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
+      LOG_INF("SDFS", "Loaded SD font family: %s", wantedFamily);
     } else {
-      LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
+      LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing, falling back to built-in)", wantedFamily);
       SETTINGS.sdFontFamilyName[0] = '\0';
       SETTINGS.saveToFile();
     }
   } else {
-    LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
+    LOG_ERR("SDFS", "SD font family not found: %s (clearing, falling back to built-in)", wantedFamily);
     SETTINGS.sdFontFamilyName[0] = '\0';
     SETTINGS.saveToFile();
   }

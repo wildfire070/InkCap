@@ -1655,19 +1655,22 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   // Read glyph metadata into temporary
   HalFile file;
   if (!Storage.openFileForRead("SDCF", self->filePath_, file)) {
-    LOG_ERR("SDCF", "Overflow: failed to open .cpfont");
+    LOG_ERR("SDCF", "Overflow: failed to open .cpfont for U+%04X style %u (free=%u maxAlloc=%u) -- rendering as %s",
+            codepoint, styleIdx, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
     return nullptr;
   }
 
   EpdGlyph tempGlyph = {};
   uint32_t glyphFileOff = s.glyphsFileOffset + static_cast<uint32_t>(globalIdx) * sizeof(EpdGlyph);
   if (!file.seekSet(glyphFileOff)) {
-    LOG_ERR("SDCF", "Overflow: failed to seek to glyph for U+%04X style %u", codepoint, styleIdx);
-    file.close();
+    LOG_ERR("SDCF", "Overflow: failed to seek to glyph for U+%04X style %u (free=%u maxAlloc=%u) -- rendering as %s",
+            codepoint, styleIdx, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
     return nullptr;
   }
   if (file.read(reinterpret_cast<uint8_t*>(&tempGlyph), sizeof(EpdGlyph)) != sizeof(EpdGlyph)) {
-    LOG_ERR("SDCF", "Overflow: failed to read glyph metadata for U+%04X style %u", codepoint, styleIdx);
+    LOG_ERR("SDCF",
+            "Overflow: failed to read glyph metadata for U+%04X style %u (free=%u maxAlloc=%u) -- rendering as %s",
+            codepoint, styleIdx, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
     return nullptr;
   }
 
@@ -1676,17 +1679,27 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   if (tempGlyph.dataLength > 0) {
     tempBitmap = new (std::nothrow) uint8_t[tempGlyph.dataLength];
     if (!tempBitmap) {
-      LOG_ERR("SDCF", "Overflow: failed to allocate %u bytes for U+%04X bitmap", tempGlyph.dataLength, codepoint);
+      // This is the low-heap glyph-substitution path: the on-demand overflow
+      // load for a codepoint outside the page's prewarmed mini cache failed
+      // to allocate its (typically tiny) bitmap buffer, so the caller
+      // (EpdFont::getGlyph) silently substitutes the U+FFFD replacement
+      // glyph. If this fires, that's the "weird characters" symptom -- the
+      // heap context here is what confirms it's a low-heap substitution
+      // rather than a genuinely unsupported codepoint.
+      LOG_ERR("SDCF", "Overflow: failed to allocate %u bytes for U+%04X bitmap (free=%u maxAlloc=%u) -- rendering as %s",
+              tempGlyph.dataLength, codepoint, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
       return nullptr;
     }
     if (!file.seekSet(s.bitmapFileOffset + tempGlyph.dataOffset)) {
-      LOG_ERR("SDCF", "Overflow: failed to seek to bitmap for U+%04X", codepoint);
+      LOG_ERR("SDCF", "Overflow: failed to seek to bitmap for U+%04X (free=%u maxAlloc=%u) -- rendering as %s",
+              codepoint, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
       delete[] tempBitmap;
       file.close();
       return nullptr;
     }
     if (file.read(tempBitmap, tempGlyph.dataLength) != static_cast<int>(tempGlyph.dataLength)) {
-      LOG_ERR("SDCF", "Overflow: failed to read bitmap for U+%04X", codepoint);
+      LOG_ERR("SDCF", "Overflow: failed to read bitmap for U+%04X (free=%u maxAlloc=%u) -- rendering as %s", codepoint,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
       delete[] tempBitmap;
       return nullptr;
     }

@@ -5,6 +5,7 @@
 #include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <SdCardFontRegistry.h>
 
 #include <algorithm>
@@ -134,53 +135,51 @@ inline uint8_t closestBuiltinFontSizeIndex(const uint8_t targetPointSize) {
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
 // are appended after the built-in fonts. Otherwise only built-in fonts are listed.
 inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
-  // Built-in font labels (StrId)
-  std::vector<StrId> enumValues = {StrId::STR_LEXEND_DECA, StrId::STR_BITTER};
-  // Runtime string labels for SD card fonts
-  std::vector<std::string> enumStringValues;
-
-  // Reserve: first CrossPointSettings::BUILTIN_FONT_COUNT entries use StrId, rest use strings
-  if (registry) {
-    const auto& families = registry->getFamilies();
-    enumStringValues.reserve(families.size());
-    std::transform(families.begin(), families.end(), std::back_inserter(enumStringValues),
-                   [](const SdCardFontFamilyInfo& f) { return fontFamilyLabel(f.name, fontFamilyPointSizeRange(f)); });
-  }
-
-  // Capture the SD font count for the lambdas
-  const int sdFontCount = static_cast<int>(enumStringValues.size());
-
-  // Total option count = built-in + SD card families
-  // For the combined enumStringValues: we need all entries as strings (built-in names + SD names)
-  // The render code checks enumStringValues first, then enumValues. So we build enumStringValues
-  // with all options when SD fonts are present.
-  std::vector<std::string> allStringValues;
-  if (sdFontCount > 0) {
-    constexpr FontFamilyPointSizeRange builtinRange{10, 16};
-    allStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange));
-    allStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange));
-    allStringValues.insert(allStringValues.end(), enumStringValues.begin(), enumStringValues.end());
-  }
-
   SettingInfo s;
   s.nameId = StrId::STR_FONT_FAMILY;
   s.type = SettingType::ENUM;
-  s.enumValues = std::move(enumValues);
-  s.enumStringValues = std::move(allStringValues);
+  // Built-in font labels (StrId). The render code checks enumStringValues first, falling
+  // back to these only when enumStringValues is empty (no SD families) -- see below.
+  s.enumValues = {StrId::STR_LEXEND_DECA, StrId::STR_BITTER};
   s.key = "fontFamily";
   s.category = StrId::STR_CAT_READER;
 
-  // Capture registry families by copy for the lambdas
+  // Capture registry families by copy for the lambdas: SdCardFontRegistry is deliberately
+  // ephemeral (SdCardFontSystem discovers it, uses it, then calls releaseRegistry() to avoid
+  // keeping the catalog resident -- see SdCardFontSystem.cpp), so valueGetter/valueSetter can't
+  // hold a reference to it; they need their own copy of whatever they'll need once the user
+  // actually opens this setting, which may be long after this function returns.
   std::vector<std::string> sdFamilyNames;
   std::vector<std::vector<uint8_t>> sdFamilySizes;
   if (registry) {
     const auto& families = registry->getFamilies();
-    sdFamilyNames.reserve(families.size());
-    sdFamilySizes.reserve(families.size());
-    std::transform(families.begin(), families.end(), std::back_inserter(sdFamilyNames),
-                   [](const SdCardFontFamilyInfo& f) { return f.name; });
-    std::transform(families.begin(), families.end(), std::back_inserter(sdFamilySizes),
-                   [](const SdCardFontFamilyInfo& f) { return f.availableSizes(); });
+    // A heap-tight moment (long reading session, prior downloads) plus a large-enough
+    // font library used to abort() outright here: this function used to build the SD-only
+    // label list, then copy it wholesale into a second combined list, on top of the
+    // separate sdFamilyNames/sdFamilySizes copies below -- three uncaught-allocation
+    // passes over the same data with no heap check. Skip SD fonts (built-ins still work)
+    // rather than crash if there's not enough headroom for one pass over them.
+    constexpr uint32_t MIN_FREE_HEAP = 24576;
+    constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
+    const bool hasHeap = ESP.getFreeHeap() >= MIN_FREE_HEAP && ESP.getMaxAllocHeap() >= MIN_MAX_ALLOC_HEAP;
+    if (!hasHeap) {
+      LOG_ERR("SETL", "Skipping SD font family list: %u free (need %u), %u max alloc (need %u)", ESP.getFreeHeap(),
+              MIN_FREE_HEAP, ESP.getMaxAllocHeap(), MIN_MAX_ALLOC_HEAP);
+    } else if (!families.empty()) {
+      sdFamilyNames.reserve(families.size());
+      sdFamilySizes.reserve(families.size());
+      // Build the combined display-label list (built-in + SD) in one pass instead of a
+      // separate SD-only pass copied wholesale into a second combined one afterward.
+      constexpr FontFamilyPointSizeRange builtinRange{10, 16};
+      s.enumStringValues.reserve(families.size() + CrossPointSettings::BUILTIN_FONT_COUNT);
+      s.enumStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange));
+      s.enumStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange));
+      for (const auto& f : families) {
+        s.enumStringValues.push_back(fontFamilyLabel(f.name, fontFamilyPointSizeRange(f)));
+        sdFamilyNames.push_back(f.name);
+        sdFamilySizes.push_back(f.availableSizes());
+      }
+    }
   }
 
   s.valueGetter = [sdFamilyNames]() -> uint8_t {
@@ -617,6 +616,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                              StrId::STR_CAT_DISPLAY));
 
     // --- Reader ---
+    // BookFusion Auto-Sync and Refresh Metadata live in BookFusionSettingsActivity
+    // instead of here, alongside Account/Browse Library where they're discoverable.
     // Built-in font-family entry. Replaced per-call with a registry-aware
     // version when SD fonts are installed.
     add(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
