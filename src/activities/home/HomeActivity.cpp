@@ -814,7 +814,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         const int defaultThumbWidth = isLyra
                                           ? static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4)
                                           : static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
-        const std::string coverPath =
+        std::string coverPath =
             useDashboardThumb
                 ? dashboardHomeCoverPath(book, coverHeight)
                 : (useMinimalThumb
@@ -822,6 +822,42 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                        : (useAdaptiveDefaultThumb
                               ? Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(defaultThumbWidth, coverHeight)
                               : UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight)));
+        // Lyra's own cover art isn't always 3:4 -- some of it is genuinely 2:3, the
+        // other common portrait ratio. pickCoverThumbWidth() (below, once the EPUB is
+        // loaded) picks whichever a given book's art actually is, so a book already
+        // thumbed under the other ratio by an earlier run should be found here too,
+        // rather than treated as missing and regenerated under the 3:4 assumption.
+        if (isLyra && useAdaptiveDefaultThumb && !Storage.exists(coverPath.c_str())) {
+          const int altThumbWidth = static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
+          const std::string altCoverPath =
+              Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altThumbWidth, coverHeight);
+          if (Storage.exists(altCoverPath.c_str())) {
+            coverPath = altCoverPath;
+          }
+        }
+        // Dashboard's own fixed box (296x444) is exactly 2:3; same reasoning as Lyra
+        // above -- some covers are genuinely 3:4 instead, so check that alternate
+        // width too before deciding the thumbnail needs (re)generating.
+        if (useDashboardThumb && !Storage.exists(coverPath.c_str())) {
+          const int dashHeight = dashboardHomeCoverHeight(coverHeight);
+          const int altThumbWidth = static_cast<int>((static_cast<int64_t>(dashHeight) * 3 + 2) / 4);
+          const std::string altCoverPath =
+              Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altThumbWidth, dashHeight);
+          if (Storage.exists(altCoverPath.c_str())) {
+            coverPath = altCoverPath;
+          }
+        }
+        // Minimal's frame (minimalHomeCoverWidth/Height above) is sized to 3:4; the
+        // alternate here is 2:3, the other way round from Dashboard above.
+        if (useMinimalThumb && !Storage.exists(coverPath.c_str())) {
+          const int minimalHeight = minimalHomeCoverHeight(coverHeight);
+          const int altThumbWidth = static_cast<int>((static_cast<int64_t>(minimalHeight) * 2 + 1) / 3);
+          const std::string altCoverPath =
+              Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altThumbWidth, minimalHeight);
+          if (Storage.exists(altCoverPath.c_str())) {
+            coverPath = altCoverPath;
+          }
+        }
         if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
           if (FsHelpers::hasEpubExtension(book.path)) {
             Epub epub(book.path, "/.crosspoint");
@@ -833,16 +869,24 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               progress++;
               continue;
             }
+            // Re-derive Lyra's/Dashboard's/Minimal's width from this book's actual cover
+            // art now that the EPUB is loaded -- defaultThumbWidth/dashboardHomeCoverWidth/
+            // minimalHomeCoverWidth above were only ever a same-for-every-book guess used
+            // to probe the cache path before paying for a load().
+            const int lyraThumbWidth = isLyra ? epub.pickCoverThumbWidth(coverHeight) : defaultThumbWidth;
+            const int dashboardThumbWidth =
+                useDashboardThumb ? epub.pickCoverThumbWidth(dashboardHomeCoverHeight(coverHeight))
+                                  : dashboardHomeCoverWidth(coverHeight);
+            const int minimalThumbWidth = useMinimalThumb ? epub.pickCoverThumbWidth(minimalHomeCoverHeight(coverHeight))
+                                                          : minimalHomeCoverWidth(coverHeight);
             const bool success =
                 useDashboardThumb
-                    ? epub.generateAdaptiveThumbBmp(dashboardHomeCoverWidth(coverHeight),
-                                                    dashboardHomeCoverHeight(coverHeight), &renderer,
-                                                    SETTINGS.getReaderFontId())
+                    ? epub.generateAdaptiveThumbBmp(dashboardThumbWidth, dashboardHomeCoverHeight(coverHeight),
+                                                    &renderer, SETTINGS.getReaderFontId())
                     : (useExactHomeThumb
-                           ? epub.generateAdaptiveThumbBmp(minimalHomeCoverWidth(coverHeight),
-                                                           minimalHomeCoverHeight(coverHeight), &renderer,
-                                                           SETTINGS.getReaderFontId())
-                           : epub.generateAdaptiveThumbBmp(defaultThumbWidth, coverHeight, &renderer,
+                           ? epub.generateAdaptiveThumbBmp(minimalThumbWidth, minimalHomeCoverHeight(coverHeight),
+                                                           &renderer, SETTINGS.getReaderFontId())
+                           : epub.generateAdaptiveThumbBmp(lyraThumbWidth, coverHeight, &renderer,
                                                            SETTINGS.getReaderFontId()));
             if (!success) {
               if (!epub.hasCoverImage()) markCoverMissing(book);

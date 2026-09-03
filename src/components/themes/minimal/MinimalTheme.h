@@ -5,8 +5,13 @@
 #include "components/themes/lyra/LyraTheme.h"
 
 namespace MinimalMetrics {
+// 3:4 -- the wider of the two ratios HomeActivity::loadRecentCovers picks
+// between (see Epub::pickCoverThumbWidth) for this theme's cover, same as
+// Lyra/Dashboard. This sizes the *frame* (coverRectForScreen/homeCoverWidth
+// below); a book whose actual art is 2:3 instead gets letterboxed within it
+// by fittedBitmapRect() rather than stretched to fill it.
 constexpr int coverWidthForHeight(const int coverHeight) {
-  return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5);
+  return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4);
 }
 
 constexpr ThemeMetrics makeValues() {
@@ -19,13 +24,11 @@ constexpr ThemeMetrics makeValues() {
   // Dashboard's footer does, so every pixel gained above it matters more
   // there than it does on X4 Pro.
   v.homeTopPadding = 36;
-  // Was 583, taller than the cover art itself ever renders (capped at
-  // homeCoverImageHeight, 525 below) -- the difference was pure letterboxing
-  // above and below the cover, plus that much less room for the companion
-  // strip beneath it. Trimmed further to 480 (proportionally narrower too,
-  // via coverWidthForHeight) for the same reason: X3/X4 have no touch-based
-  // slack anywhere else to give the companion, so the cover is the only
-  // remaining lever for them specifically.
+  // Was 583, taller than the cover art itself ever needed to render -- the
+  // difference was pure letterboxing above and below the cover, plus that much
+  // less room for the companion strip beneath it. Trimmed to 480 for the same
+  // reason: X3/X4 have no touch-based slack anywhere else to give the
+  // companion, so the cover is the only remaining lever for them specifically.
   v.homeCoverHeight = 480;
   v.homeCoverTileHeight = 690;
   v.homeRecentBooksCount = 1;
@@ -38,7 +41,13 @@ constexpr ThemeMetrics makeValues() {
 constexpr ThemeMetrics values = makeValues();
 constexpr int homeCoverWidth = coverWidthForHeight(values.homeCoverHeight);
 constexpr int homeCoverImageWidth = homeCoverWidth;
-constexpr int homeCoverImageHeight = 525;
+// Was 525, taller than coverRectForScreen's own frame (homeCoverHeight, 480)
+// ever lets coverImageRectForFrame's min() pass through -- a stray generation
+// vs. render-time mismatch (525 vs. 480) that meant an EPUB's adaptively
+// generated thumbnail was cached under a size render time never actually
+// looked up, silently falling back to no cover on every book. Matches
+// homeCoverHeight now so generation and lookup agree.
+constexpr int homeCoverImageHeight = values.homeCoverHeight;
 }  // namespace MinimalMetrics
 
 struct GlobalReadingStats;
