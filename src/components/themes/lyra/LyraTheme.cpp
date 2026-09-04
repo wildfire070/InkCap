@@ -23,6 +23,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/chart.h"
+#include "components/icons/icon_ao3.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -74,6 +75,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_book_marked_24;
       case UIIcon::File:
         return &icon_file_24;
+      case UIIcon::Ao3:
+        return &icon_ao3_24;
       default:
         return nullptr;
     }
@@ -95,6 +98,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_wifi_32;
       case UIIcon::Hotspot:
         return &icon_radio_tower_32;
+      case UIIcon::Ao3:
+        return &icon_ao3_32;
       default:
         return nullptr;
     }

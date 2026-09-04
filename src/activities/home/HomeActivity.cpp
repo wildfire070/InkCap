@@ -273,7 +273,7 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
   }
   if (hasAo3Library) {
-    items.push({tr(STR_AO3_LIBRARY), Library, HomeMenuAction::Ao3Library});
+    items.push({tr(STR_AO3_LIBRARY), Ao3, HomeMenuAction::Ao3Library});
   }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
@@ -302,7 +302,7 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, b
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
   }
   if (hasAo3Library) {
-    items.push({tr(STR_AO3_LIBRARY), Library, HomeMenuAction::Ao3Library});
+    items.push({tr(STR_AO3_LIBRARY), Ao3, HomeMenuAction::Ao3Library});
   }
   if (hasBookmarks || hasClippings) {
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
