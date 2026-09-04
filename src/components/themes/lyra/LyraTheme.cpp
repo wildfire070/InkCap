@@ -24,6 +24,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/chart.h"
+#include "components/icons/icon_ao3.h"
 #include "components/icons/icon_bookfusion.h"
 #include "fontIds.h"
 
@@ -78,6 +79,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_file_24;
       case UIIcon::BookFusion:
         return &icon_bookfusion_24;
+      case UIIcon::Ao3:
+        return &icon_ao3_24;
       default:
         return nullptr;
     }
@@ -101,6 +104,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_radio_tower_32;
       case UIIcon::BookFusion:
         return &icon_bookfusion_32;
+      case UIIcon::Ao3:
+        return &icon_ao3_32;
       default:
         return nullptr;
     }

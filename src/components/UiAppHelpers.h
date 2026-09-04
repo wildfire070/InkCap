@@ -10,6 +10,7 @@
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/icons/icon_ao3.h"
 #include "components/icons/icon_bookfusion.h"
 #include "components/icons/listIcons.h"
 
@@ -105,6 +106,8 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
         return freeink::ui::bitmapFromIcon(icon_radio_tower_32);
       case UIIcon::BookFusion:
         return freeink::ui::bitmapFromIcon(icon_bookfusion_32);
+      case UIIcon::Ao3:
+        return freeink::ui::bitmapFromIcon(icon_ao3_32);
       case UIIcon::Star:
         return freeink::ui::bitmapFromIcon(icon_star_32);
       case UIIcon::Check:
@@ -136,6 +139,8 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
       return freeink::ui::bitmapFromIcon(icon_radio_tower_24);
     case UIIcon::BookFusion:
       return freeink::ui::bitmapFromIcon(icon_bookfusion_24);
+    case UIIcon::Ao3:
+      return freeink::ui::bitmapFromIcon(icon_ao3_24);
     case UIIcon::Star:
       return freeink::ui::bitmapFromIcon(icon_star_24);
     case UIIcon::Check:
