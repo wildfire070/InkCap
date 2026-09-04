@@ -631,7 +631,8 @@ BookFusionSyncClient::Error BookFusionSyncClient::pollForToken(const std::string
 }
 
 BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const char* list, BookFusionSearchResult& out,
-                                                              uint32_t bookshelfId, const char* sort) {
+                                                              uint32_t bookshelfId, const char* sort,
+                                                              const char* query) {
   if (!BOOKFUSION_STORE.hasToken()) return NO_TOKEN;
 
   const std::string url = std::string(BASE_URL) + "/api/user/books/search";
@@ -650,6 +651,9 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
     reqDoc["bookshelf_id"] = bookshelfId;
   } else if (list != nullptr) {
     reqDoc["list"] = list;
+  }
+  if (query != nullptr && query[0] != '\0') {
+    reqDoc["query"] = query;
   }
   std::string body;
   serializeJson(reqDoc, body);
