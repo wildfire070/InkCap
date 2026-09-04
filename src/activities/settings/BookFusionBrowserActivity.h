@@ -93,11 +93,45 @@ class BookFusionBrowserActivity final : public Activity {
   // combo (see ButtonShortcutController::updatePowerDown); the two presses
   // rarely land in the same debounce window, so a screenshot attempt's Down
   // edge can register -- and open Sort -- a frame or two before Power does.
-  // 0 = no pending Sort trigger; otherwise the millis() timestamp PageForward
-  // was pressed, held for PAGE_FORWARD_SORT_GUARD_MS before actually opening
-  // Sort, so a Power press arriving in that window can cancel it instead.
+  // 0 = no pending PageForward action; otherwise the millis() timestamp
+  // PageForward was pressed. While pending: a Power press/screenshot-chord
+  // flag cancels it outright (see updatePageForwardSortAndSearch()); holding
+  // past SEARCH_LONG_PRESS_MS opens Search instead of Sort; releasing before
+  // that opens Sort. Sort firing on release (not while held, as it used to)
+  // is what makes room for the long-press-Search escalation -- there's no way
+  // to know a hold is "long" until it either keeps going or ends.
   unsigned long pendingSortFromPageForwardMs = 0;
+  // True once this pending press has already opened Search (long-press),
+  // so the release that follows doesn't also open Sort.
+  bool searchLongPressHandled = false;
   void openSortPopup();
+
+  // Search (BROWSING and CATEGORY_SELECTION screens): a free-text query sent
+  // to BookFusion's own /api/user/books/search "query" field -- confirmed via
+  // BookFusion's official KOReader plugin (bf_browser.lua), which sends this
+  // alongside list/bookshelf_id for an in-list search, or alone for a global
+  // one from the top-level categories screen. Touch entry point is a second
+  // edge tab below Sort's (Search tab alone on CATEGORY_SELECTION, since Sort
+  // doesn't apply there); non-touch is a long-press on PageForward -- the
+  // same button as Sort's short-press trigger, via
+  // updatePageForwardSortAndSearch() (see pendingSortFromPageForwardMs).
+  std::string activeSearchQuery;  // empty = no search filter active
+  // True when the active search has no category/shelf filter (launched from
+  // CATEGORY_SELECTION); false when it's scoped to whatever category/shelf
+  // was open when Search was launched (launched from BROWSING).
+  bool searchIsGlobal = false;
+  Rect searchButtonRect{0, 0, 0, 0};
+  // Runs PageForward's shared Sort(short-press)/Search(long-press) state
+  // machine for one loop() call; returns true only when it actually opened
+  // Sort or Search this frame, in which case the caller should return
+  // immediately, same as every other input branch here. A screenshot-combo
+  // cancellation returns false (nothing happened -- unlike Sort/Search, it
+  // isn't an action the rest of loop() needs to skip a frame for).
+  // `allowSort` is false on CATEGORY_SELECTION, where Sort doesn't apply and
+  // PageForward's short-press does nothing.
+  bool updatePageForwardSortAndSearch(bool allowSort, bool launchesGlobalSearch);
+  void launchSearch(bool global);
+  void performSearch(const std::string& query, bool global);
 
   static void rootScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);

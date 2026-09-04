@@ -16,6 +16,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
@@ -35,13 +36,12 @@ constexpr fui::ActionId ACTION_NEXT_PAGE = 3;
 // this jumps a whole page instead. Same value File Browser's own long-press
 // gestures use.
 constexpr unsigned long PAGE_TURN_LONG_PRESS_MS = 600;
-// How long a PageForward press waits before opening Sort, giving a Power
-// press that lands a frame or two later (Power+Down screenshot combo) time
-// to cancel it. See pendingSortFromPageForwardMs's own comment. Measured via
-// serial capture: the real Down-vs-Power debounce race is ~17ms (hardware
-// debounce itself is 5ms -- InputManager::DEBOUNCE_DELAY); 60ms keeps a ~3.5x
-// margin over the measured race without the perceptible delay 150ms had.
-constexpr unsigned long PAGE_FORWARD_SORT_GUARD_MS = 60;
+// PageForward's short-press action (Sort, or nothing on CATEGORY_SELECTION)
+// fires on release rather than immediately, so a hold has a chance to become
+// the long-press Search trigger instead -- see
+// BookFusionBrowserActivity::updatePageForwardSortAndSearch(). Same threshold
+// as the Left/Right page-turn long-press above, for consistency.
+constexpr unsigned long SEARCH_LONG_PRESS_MS = 600;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
@@ -284,6 +284,23 @@ void BookFusionBrowserActivity::loop() {
       finishAfterBackPress();
       return;
     }
+    // Non-touch: long-press PageForward opens a global search from here (no
+    // category/shelf filter), same button and threshold as BROWSING's Sort/
+    // Search split -- PageForward's short-press does nothing on this screen
+    // (allowSort=false), since Sort doesn't apply to the category list itself.
+    if (!mappedInput.hasTouchHardware()) {
+      if (updatePageForwardSortAndSearch(/*allowSort=*/false, /*launchesGlobalSearch=*/true)) return;
+    }
+    if (mappedInput.hasTouchHardware() && searchButtonRect.width > 0) {
+      int tx = 0;
+      int ty = 0;
+      if (mappedInput.wasScreenTapped(tx, ty) && tx >= searchButtonRect.x &&
+          tx < searchButtonRect.x + searchButtonRect.width && ty >= searchButtonRect.y &&
+          ty < searchButtonRect.y + searchButtonRect.height) {
+        launchSearch(/*global=*/true);
+        return;
+      }
+    }
     if (uiReady) {
       const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
       if (snap.touchPressed || snap.touchReleased) {
@@ -312,38 +329,15 @@ void BookFusionBrowserActivity::loop() {
       return;
     }
 
-    // Non-touch: PageBack/PageForward (the side buttons) open Sort -- same
-    // trigger as File Browser, so it's consistent across both screens. These
-    // buttons used to jump pages directly; that moved to a long-press on
-    // Left/Right below, since PageBack/PageForward were the only buttons free
-    // to make the two screens match.
+    // Non-touch: PageBack opens Sort directly, same as File Browser; PageForward
+    // is shared between Sort (short-press) and Search (long-press) -- see
+    // updatePageForwardSortAndSearch().
     if (!mappedInput.hasTouchHardware()) {
       if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
         openSortPopup();
         return;
       }
-      if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
-        // PageForward shares BTN_DOWN with the Power+Down screenshot combo --
-        // hold this one open briefly rather than firing immediately, in case
-        // Power is on its way (see pendingSortFromPageForwardMs's comment).
-        pendingSortFromPageForwardMs = millis();
-      }
-    }
-    // Consumed every loop(), not just while a Sort trigger is pending: while the
-    // screenshot chord is actively consuming input, main.cpp returns before this
-    // Activity's loop() ever runs, so this flag (see its own comment) is the
-    // only way this code can learn a chord happened across however many frames
-    // it was frozen for -- isPressed(Power) alone can't, since by the time
-    // loop() runs again Power has already been released.
-    const bool chordJustConsumed = mappedInput.consumeScreenshotChordFlag();
-    if (pendingSortFromPageForwardMs != 0) {
-      if (chordJustConsumed || mappedInput.isPressed(MappedInputManager::Button::Power)) {
-        pendingSortFromPageForwardMs = 0;  // Was a screenshot combo, not a Sort request.
-      } else if (millis() - pendingSortFromPageForwardMs >= PAGE_FORWARD_SORT_GUARD_MS) {
-        pendingSortFromPageForwardMs = 0;
-        openSortPopup();
-        return;
-      }
+      if (updatePageForwardSortAndSearch(/*allowSort=*/true, /*launchesGlobalSearch=*/false)) return;
     }
 
     // Non-touch: holding Left/Right past the threshold jumps a whole page,
@@ -376,6 +370,17 @@ void BookFusionBrowserActivity::loop() {
       if (mappedInput.wasScreenTapped(tx, ty) && tx >= sortButtonRect.x && tx < sortButtonRect.x + sortButtonRect.width &&
           ty >= sortButtonRect.y && ty < sortButtonRect.y + sortButtonRect.height) {
         openSortPopup();
+        return;
+      }
+    }
+
+    if (mappedInput.hasTouchHardware() && searchButtonRect.width > 0) {
+      int tx = 0;
+      int ty = 0;
+      if (mappedInput.wasScreenTapped(tx, ty) && tx >= searchButtonRect.x &&
+          tx < searchButtonRect.x + searchButtonRect.width && ty >= searchButtonRect.y &&
+          ty < searchButtonRect.y + searchButtonRect.height) {
+        launchSearch(/*global=*/false);
         return;
       }
     }
@@ -502,8 +507,22 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
 }
 
 void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
-  screenHeader(screen,
-              currentBookshelfId != 0 ? currentBookshelfName.c_str() : I18N.get(CATEGORIES[currentCategory].nameId));
+  // A global search (see performSearch()) has no category/shelf of its own --
+  // currentCategory is -1 in that case, so CATEGORIES[] must not be indexed.
+  std::string title;
+  if (!activeSearchQuery.empty() && searchIsGlobal) {
+    title = tr(STR_SEARCH);
+  } else if (currentBookshelfId != 0) {
+    title = currentBookshelfName;
+  } else {
+    title = I18N.get(CATEGORIES[currentCategory].nameId);
+  }
+  if (!activeSearchQuery.empty()) {
+    title += ": \"";
+    title += activeSearchQuery;
+    title += "\"";
+  }
+  screenHeader(screen, title.c_str());
 
   if (page.books.empty()) {
     screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
@@ -828,34 +847,48 @@ void BookFusionBrowserActivity::render(RenderLock&&) {
   app.render();
   uiReady = true;
 
-  // Persistent "Sort" edge tab, matching FileBrowserActivity's: visible on every
-  // device (not gated on touch hardware) so a button-only reader can see sorting
-  // exists at all. Non-touch trigger is PageBack/PageForward, same as
-  // FileBrowserActivity (see loop()); this tab is the on-screen hint for that
-  // (and the touch tap target).
-  if (state == BrowserState::BROWSING) {
-    constexpr int kSortTabPadding = 6;
-    constexpr int kSortTabWidth = 30;
-    constexpr int kSortTabTopMargin = 4;
-    constexpr int kSortTabCornerRadius = 6;
+  // Persistent "Sort"/"Search" edge tabs: visible on every device (not gated
+  // on touch hardware) so a button-only reader can see they exist at all.
+  // Non-touch triggers are PageBack (Sort) and a long-press of PageForward
+  // (Search) -- see loop()'s updatePageForwardSortAndSearch(). These tabs are
+  // the on-screen hint for that (and the touch tap targets). Sort only makes
+  // sense once a category/shelf's book list is open; Search works from there
+  // too (scoped to that list) or straight from the categories screen (global).
+  {
+    constexpr int kEdgeTabPadding = 6;
+    constexpr int kEdgeTabWidth = 30;
+    constexpr int kEdgeTabTopMargin = 4;
+    constexpr int kEdgeTabCornerRadius = 6;
+    constexpr int kEdgeTabGap = 4;  // between Sort and Search when both are stacked
     const auto& metrics = UITheme::getInstance().getMetrics();
     const int pageWidth = renderer.getScreenWidth();
-    const int sortLabelLen = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_SORT));
-    const int sortTabHeight = sortLabelLen + kSortTabPadding * 2;
-    const int sortTabX = pageWidth - kSortTabWidth;
-    const int sortTabY = metrics.topPadding + metrics.headerHeight + kSortTabTopMargin;
-    sortButtonRect = Rect{sortTabX, sortTabY, kSortTabWidth, sortTabHeight};
-    renderer.fillRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, kSortTabCornerRadius,
-                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
-                             /*roundBottomRight=*/false, Color::White);
-    renderer.drawRoundedRect(sortTabX, sortTabY, kSortTabWidth, sortTabHeight, 1, kSortTabCornerRadius,
-                             /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
-                             /*roundBottomRight=*/false, /*state=*/true);
-    const int textX = sortTabX + (kSortTabWidth - renderer.getTextHeight(SMALL_FONT_ID)) / 2;
-    const int textY = sortTabY + (sortTabHeight + sortLabelLen) / 2;
-    renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, tr(STR_SORT));
-  } else {
-    sortButtonRect = Rect{0, 0, 0, 0};
+    const auto drawEdgeTab = [&](const char* label, const int topY) {
+      const int labelLen = renderer.getTextWidth(SMALL_FONT_ID, label);
+      const int tabHeight = labelLen + kEdgeTabPadding * 2;
+      const int tabX = pageWidth - kEdgeTabWidth;
+      renderer.fillRoundedRect(tabX, topY, kEdgeTabWidth, tabHeight, kEdgeTabCornerRadius,
+                               /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                               /*roundBottomRight=*/false, Color::White);
+      renderer.drawRoundedRect(tabX, topY, kEdgeTabWidth, tabHeight, 1, kEdgeTabCornerRadius,
+                               /*roundTopLeft=*/true, /*roundTopRight=*/false, /*roundBottomLeft=*/true,
+                               /*roundBottomRight=*/false, /*state=*/true);
+      const int textX = tabX + (kEdgeTabWidth - renderer.getTextHeight(SMALL_FONT_ID)) / 2;
+      const int textY = topY + (tabHeight + labelLen) / 2;
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, label);
+      return Rect{tabX, topY, kEdgeTabWidth, tabHeight};
+    };
+
+    const int topTabY = metrics.topPadding + metrics.headerHeight + kEdgeTabTopMargin;
+    if (state == BrowserState::BROWSING) {
+      sortButtonRect = drawEdgeTab(tr(STR_SORT), topTabY);
+      searchButtonRect = drawEdgeTab(tr(STR_SEARCH), sortButtonRect.y + sortButtonRect.height + kEdgeTabGap);
+    } else if (state == BrowserState::CATEGORY_SELECTION) {
+      sortButtonRect = Rect{0, 0, 0, 0};
+      searchButtonRect = drawEdgeTab(tr(STR_SEARCH), topTabY);
+    } else {
+      sortButtonRect = Rect{0, 0, 0, 0};
+      searchButtonRect = Rect{0, 0, 0, 0};
+    }
   }
 
   if (sortPopup.processRender(renderer, mappedInput)) return;
@@ -878,6 +911,10 @@ int BookFusionBrowserActivity::totalMenuRows() const {
 void BookFusionBrowserActivity::selectCategory(int index) {
   if (index < 0 || index >= totalMenuRows()) return;
   selectedCategory = index;
+  // A search from a previous category/shelf (or a global one) shouldn't
+  // silently carry over onto this newly picked one.
+  activeSearchQuery.clear();
+  searchIsGlobal = false;
   if (index < NUM_CATEGORIES) {
     currentCategory = index;
     currentBookshelfId = 0;
@@ -904,18 +941,36 @@ void BookFusionBrowserActivity::openSortPopup() {
   // a runtime variable, so this array/loop calls I18N.get() directly instead.
   static const StrId kFieldLabelIds[BOOKFUSION_SORT_FIELD_COUNT] = {
       StrId::STR_SORT_DATE, StrId::STR_SORT_LAST_READ, StrId::STR_SORT_AUTHOR, StrId::STR_TITLE};
+  // Popup display order (Title, Author, Date, Last Read) -- deliberately
+  // separate from the storage/API index above (SortField enum order, also
+  // kFieldApiNames in loadPage()), so a value already saved to
+  // SETTINGS.bookFusionSortField keeps meaning the same field after this
+  // reorder rather than silently pointing at a different one.
+  static constexpr SortField kDisplayOrder[BOOKFUSION_SORT_FIELD_COUNT] = {
+      SortField::Title, SortField::Author, SortField::Date, SortField::LastRead};
   std::vector<std::string> labels;
   labels.reserve(BOOKFUSION_SORT_FIELD_COUNT);
-  for (const StrId id : kFieldLabelIds) labels.emplace_back(I18N.get(id));
+  for (const SortField field : kDisplayOrder) {
+    labels.emplace_back(I18N.get(kFieldLabelIds[static_cast<int>(field)]));
+  }
 
   const uint8_t fieldRaw = SETTINGS.bookFusionSortField;
-  const int activeField = fieldRaw < BOOKFUSION_SORT_FIELD_COUNT ? static_cast<int>(fieldRaw) : -1;
+  int activeDisplayPos = -1;
+  if (fieldRaw < BOOKFUSION_SORT_FIELD_COUNT) {
+    for (int i = 0; i < BOOKFUSION_SORT_FIELD_COUNT; ++i) {
+      if (kDisplayOrder[i] == static_cast<SortField>(fieldRaw)) {
+        activeDisplayPos = i;
+        break;
+      }
+    }
+  }
   const bool ascending = SETTINGS.bookFusionSortAscending != 0;
 
   sortPopup.show(
-      StrId::STR_SORT, std::move(labels), activeField, ascending,
-      [this](int field, bool asc) {
-        SETTINGS.bookFusionSortField = static_cast<uint8_t>(field);
+      StrId::STR_SORT, std::move(labels), activeDisplayPos, ascending,
+      [this](int displayPos, bool asc) {
+        if (displayPos < 0 || displayPos >= BOOKFUSION_SORT_FIELD_COUNT) return;
+        SETTINGS.bookFusionSortField = static_cast<uint8_t>(kDisplayOrder[displayPos]);
         SETTINGS.bookFusionSortAscending = asc ? 1 : 0;
         SETTINGS.saveToFile();
         selectorIndex = 0;
@@ -924,6 +979,106 @@ void BookFusionBrowserActivity::openSortPopup() {
         loadPage(1);
       },
       [this] { requestUpdate(); });
+  // sortPopup.handleInput() (see loop()) runs before this state-specific branch
+  // every frame, so it already saw active=false this frame and did nothing --
+  // nothing else on this frame schedules a repaint. PageBack's/the old
+  // PageForward's press-triggered open got this for free from the button's own
+  // release moments later (aliased to the same pins ButtonNavigator treats as
+  // row-nav, which handleInput()'s Up/Down branch explicitly requests one
+  // for); this one fires exactly at release, so there's no leftover release
+  // left to do that -- request explicitly instead of relying on one.
+  requestUpdate();
+}
+
+bool BookFusionBrowserActivity::updatePageForwardSortAndSearch(const bool allowSort, const bool launchesGlobalSearch) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+    pendingSortFromPageForwardMs = millis();
+    searchLongPressHandled = false;
+  }
+  // Consumed every loop(), not just while a press is pending: while the
+  // screenshot chord is actively consuming input, main.cpp returns before this
+  // Activity's loop() ever runs, so this flag (see its own comment) is the
+  // only way this code can learn a chord happened across however many frames
+  // it was frozen for -- isPressed(Power) alone can't, since by the time
+  // loop() runs again Power has already been released.
+  const bool chordJustConsumed = mappedInput.consumeScreenshotChordFlag();
+  if (pendingSortFromPageForwardMs == 0) return false;
+
+  if (chordJustConsumed || mappedInput.isPressed(MappedInputManager::Button::Power)) {
+    pendingSortFromPageForwardMs = 0;  // Was a screenshot combo, not a PageForward request at all.
+    searchLongPressHandled = false;
+    return false;
+  }
+
+  if (!searchLongPressHandled && millis() - pendingSortFromPageForwardMs >= SEARCH_LONG_PRESS_MS) {
+    searchLongPressHandled = true;
+    pendingSortFromPageForwardMs = 0;
+    launchSearch(launchesGlobalSearch);
+    return true;
+  }
+
+  if (!mappedInput.isPressed(MappedInputManager::Button::PageForward)) {
+    // Released before the long-press threshold, and not a screenshot combo --
+    // a genuine short press.
+    pendingSortFromPageForwardMs = 0;
+    searchLongPressHandled = false;
+    if (allowSort) {
+      openSortPopup();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void BookFusionBrowserActivity::launchSearch(const bool global) {
+  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), activeSearchQuery);
+  startActivityForResult(std::move(keyboard), [this, global](const ActivityResult& result) {
+    if (!result.isCancelled) {
+      performSearch(std::get<KeyboardResult>(result.data).text, global);
+    } else {
+      requestUpdate();
+    }
+  });
+}
+
+void BookFusionBrowserActivity::performSearch(const std::string& query, const bool global) {
+  if (query.empty()) {
+    const bool wasGlobal = searchIsGlobal;
+    activeSearchQuery.clear();
+    searchIsGlobal = false;
+    if (wasGlobal) {
+      // A global search has no category/shelf of its own to fall back to --
+      // land back on the categories screen rather than an arbitrary list.
+      state = BrowserState::CATEGORY_SELECTION;
+      requestUpdate();
+      return;
+    }
+    if (state != BrowserState::BROWSING) {
+      requestUpdate();
+      return;
+    }
+    selectorIndex = 0;
+    topIndex = 0;
+    showLoadingBeforeFetch();
+    loadPage(1);
+    return;
+  }
+
+  activeSearchQuery = query;
+  searchIsGlobal = global;
+  if (global) {
+    // No category/shelf filter for a global search -- clear whatever was
+    // current so loadPage() doesn't intersect it with one.
+    currentCategory = -1;
+    currentBookshelfId = 0;
+    currentBookshelfName.clear();
+  }
+  state = BrowserState::BROWSING;
+  selectorIndex = 0;
+  topIndex = 0;
+  showLoadingBeforeFetch();
+  loadPage(1);
 }
 
 void BookFusionBrowserActivity::loadPage(int pageIndex) {
@@ -950,7 +1105,13 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   renderer.releaseFrameBuffersForNetwork();
 
   BookFusionSearchResult result;
-  const char* listParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].list;
+  // A global search (see performSearch()) has no category/shelf of its own --
+  // currentCategory is -1 in that case, so CATEGORIES[] must not be indexed.
+  const bool globalSearch = !activeSearchQuery.empty() && searchIsGlobal;
+  const char* listParam = globalSearch                     ? nullptr
+                          : currentBookshelfId != 0 ? nullptr
+                                                     : CATEGORIES[currentCategory].list;
+  const uint32_t bookshelfIdParam = globalSearch ? 0 : currentBookshelfId;
   // A user-chosen sort applies regardless of category vs. shelf browsing -- unlike the
   // fixed per-category defaults below, which only ever applied to the fixed categories
   // and left shelf browsing on the server's own default ("added_at-desc").
@@ -962,10 +1123,14 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
     userSortParam = std::string(kFieldApiNames[SETTINGS.bookFusionSortField]) +
                     (SETTINGS.bookFusionSortAscending ? "-asc" : "-desc");
     sortParam = userSortParam.c_str();
+  } else if (globalSearch) {
+    sortParam = nullptr;  // server default (added_at-desc)
   } else {
     sortParam = currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].sort;
   }
-  const auto err = BookFusionSyncClient::searchBooks(pageIndex, listParam, result, currentBookshelfId, sortParam);
+  const char* queryParam = activeSearchQuery.empty() ? nullptr : activeSearchQuery.c_str();
+  const auto err =
+      BookFusionSyncClient::searchBooks(pageIndex, listParam, result, bookshelfIdParam, sortParam, queryParam);
 
   if (!renderer.reallocFrameBuffersAfterNetwork()) {
     LOG_ERR("BFBrowser", "Framebuffer realloc failed after network fetch");

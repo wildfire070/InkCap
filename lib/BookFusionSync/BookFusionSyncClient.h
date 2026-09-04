@@ -116,9 +116,12 @@ class BookFusionSyncClient {
    *                    shelf is browsed on its own, not intersected with a category.
    * @param sort Optional BookFusion sort key (e.g. "last_read_at-desc"); defaults to
    *             "added_at-desc" when null.
+   * @param query Optional free-text search query, intersected with list/bookshelfId when both
+   *             are set (confirmed via BookFusion's own KOReader plugin, which sends this
+   *             alongside list/bookshelf_id for an in-list search, or alone for a global one).
    */
   static Error searchBooks(int page, const char* list, BookFusionSearchResult& out, uint32_t bookshelfId = 0,
-                           const char* sort = nullptr);
+                           const char* sort = nullptr, const char* query = nullptr);
 
   /** Fetch the user's bookshelves (id + name only), up to BookFusionBookshelfList::MAX_SHELVES. */
   static Error searchBookshelves(BookFusionBookshelfList& out);
