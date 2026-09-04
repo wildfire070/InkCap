@@ -17,6 +17,11 @@ void ButtonNavigator::onPressAndContinuous(const Buttons& buttons, const Callbac
   onContinuous(buttons, callback);
 }
 
+void ButtonNavigator::onPressAndContinuous(const Button button, const Callback& callback) {
+  onPress(button, callback);
+  onContinuous(button, callback);
+}
+
 void ButtonNavigator::onNextPress(const Callback& callback) { onPress(getNextButtons(), callback); }
 
 void ButtonNavigator::onPreviousPress(const Callback& callback) { onPress(getPreviousButtons(), callback); }
@@ -39,6 +44,12 @@ void ButtonNavigator::onPress(const Buttons& buttons, const Callback& callback) 
   }
 }
 
+void ButtonNavigator::onPress(const Button button, const Callback& callback) {
+  if (mappedInput != nullptr && mappedInput->wasPressed(button)) {
+    callback();
+  }
+}
+
 void ButtonNavigator::onRelease(const Buttons& buttons, const Callback& callback) {
   const bool wasReleased = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->wasReleased(button);
@@ -53,12 +64,29 @@ void ButtonNavigator::onRelease(const Buttons& buttons, const Callback& callback
   }
 }
 
+void ButtonNavigator::onRelease(const Button button, const Callback& callback) {
+  if (mappedInput != nullptr && mappedInput->wasReleased(button)) {
+    if (lastContinuousNavTime == 0) {
+      callback();
+    }
+
+    lastContinuousNavTime = 0;
+  }
+}
+
 void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callback) {
   const bool isPressed = std::any_of(buttons.begin(), buttons.end(), [this](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously();
   });
 
   if (isPressed) {
+    callback();
+    lastContinuousNavTime = millis();
+  }
+}
+
+void ButtonNavigator::onContinuous(const Button button, const Callback& callback) {
+  if (mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously()) {
     callback();
     lastContinuousNavTime = millis();
   }
