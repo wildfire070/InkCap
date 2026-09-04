@@ -146,6 +146,7 @@ enum UIIcon {
   Hotspot,
   Chart,
   BookFusion,
+  Ao3,
   Star,
   Check,
   Arrow,
