@@ -64,6 +64,13 @@ constexpr int kSortTabPadding = 6;
 constexpr int kSortTabWidth = 30;
 constexpr int kSortTabTopMargin = 4;
 constexpr int kSortTabCornerRadius = 6;
+// How far from the right edge row content (and the row highlight background,
+// a separate rect from the row-wrap width below -- see buildListScreen()'s
+// own comment) is pulled in from the Sort tab. Chosen by eye against the
+// device screen, not derived from kSortTabWidth -- smaller than the tab
+// itself, so the highlight still runs partway under it; larger values
+// (tried up to kSortTabWidth+2) looked like too big a gap in practice.
+constexpr int16_t kListRightClearance = 15;
 constexpr uint32_t FILE_BROWSER_APPEND_MIN_FREE_AFTER_ALLOC = 48U * 1024U;
 constexpr uint32_t FILE_BROWSER_APPEND_MIN_MAX_ALLOC_AFTER_ALLOC = 16U * 1024U;
 
@@ -1514,23 +1521,32 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto rowType = twoLineRows ? UiListRowType::WithSubtitle : UiListRowType::SingleLine;
   props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = twoLineRows ? 2 : 1;
-  // Deliberately kept on screen.list()'s own auto-drawn scroll indicator here
-  // (unlike the other FreeInkUI list screens, which suppress it in favor of a
-  // manually positioned one) -- on this screen the indicator draws at the
-  // unadjusted body width, i.e. under the Sort tab's reserved column rather
-  // than left of it, which is the on-screen position wanted for this list.
-  // The tradeoff: on X4 Pro/Classic this loses the theme's listScrollInset
-  // (the SDK default here is a hardcoded width=3/inset=0, not theme-driven),
-  // and the indicator is hidden for the vertical span the Sort tab itself
-  // covers (the tab draws after/on top of the list), only visible below it.
-  fui::Rect listRect = screen.body();
-  // Reserve room for the persistent Sort edge tab (drawn in render(), after this
-  // list) on every row, not just the one or two rows it happens to sit beside --
-  // otherwise a row's own right edge / value column (e.g. the ".epub" extension)
-  // could end up under the tab instead of next to it.
+  // screen.list() would otherwise also draw its own default-styled scroll
+  // indicator, at the row area's rect (narrowed for the Sort tab below) --
+  // suppressed in favor of the manual draw at the end of this function,
+  // which uses wideBody instead so the scrollbar's own position doesn't
+  // move when the row/highlight width is narrowed for the tab.
+  props.scrollIndicator = false;
+  // The manual scrollbar draw below is kept at the wider, unadjusted body
+  // width deliberately -- close to the true edge, the on-screen position
+  // wanted for this list -- captured here before insetContent() below
+  // narrows the screen's own content rect (and so screen.list()'s row/
+  // highlight background) to clear the Sort tab. Without this separate
+  // capture, the scrollbar would get pulled in by the same amount, undoing
+  // that positioning choice.
+  const fui::Rect wideBody = screen.body();
+  // Reserve room for the persistent Sort edge tab (drawn in render(), after
+  // this list) on every row, not just the one or two rows it happens to sit
+  // beside -- otherwise a row's own right edge / value column (e.g. the
+  // ".epub" extension), and the row highlight background screen.list()
+  // itself draws (a separate rect from listRect below -- see
+  // screen.list()'s own content_ vs. the caller-computed listRect passed
+  // only to configureUiList()/listNav), could end up under the tab instead
+  // of next to it.
   if (mode == Mode::Books) {
-    listRect.width = static_cast<int16_t>(std::max(0, listRect.width - kSortTabWidth));
+    screen.insetContent(fui::Insets{0, kListRightClearance, 0, 0});
   }
+  fui::Rect listRect = screen.body();
   const auto rows = configureUiList(props, screen.theme(), listRect, rowType);
   visibleRows = rows > 0 ? rows : 1;
   const bool usesVirtualList = totalEntries <= MAX_VIRTUAL_LIST_ENTRIES;
@@ -1607,6 +1623,9 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.partialTrailingRow = false;
   screen.list(props);
   if (usesVirtualList) topIndex = listNav.top;
+  fui::drawListScrollIndicator(screen.target(), wideBody, totalEntries, visibleRows, topIndex,
+                               screen.theme().listScrollWidth, screen.theme().listScrollSide,
+                               screen.theme().listScrollInset);
 }
 
 void FileBrowserActivity::render(RenderLock&&) {
