@@ -24,7 +24,7 @@
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
-#include "activities/boot_sleep/SleepImageIndex.h"
+#include "activities/boot_sleep/ImageFolderIndex.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/settings/SettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -96,6 +96,9 @@ bool isDefaultSleepFolderPath(const std::string& path) {
 bool isSleepImageFile(const std::string& path) {
   return FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path);
 }
+
+// Boot screens draw directly with no PNG-overlay path, so only BMP is pinnable.
+bool isBootImageFile(const std::string& path) { return FsHelpers::hasBmpExtension(path); }
 
 bool isMacOSMetadataEntry(std::string_view filename) {
   return filename.rfind("._", 0) == 0 || filename == ".DS_Store" || filename == ".Spotlight-V100" ||
@@ -478,10 +481,13 @@ void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const st
       LOG_ERR("FileBrowser", "Failed to delete file: %s", fullPath.c_str());
       return;
     }
-    SleepImageIndex::invalidateForPath(fullPath.c_str());
+    ImageFolderIndex::invalidateForPath(fullPath.c_str());
 
     if (isPinnedSleepFavorite(fullPath)) {
       unpinSleepFavorite();
+    }
+    if (isPinnedBootFavorite(fullPath)) {
+      unpinBootFavorite();
     }
 
     {
@@ -518,7 +524,7 @@ void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, con
       LOG_ERR("FileBrowser", "Failed to delete directory: %s", dirPath.c_str());
       return;
     }
-    SleepImageIndex::invalidateForPath(dirPath.c_str());
+    ImageFolderIndex::invalidateForPath(dirPath.c_str());
 
     for (const auto& metadataPath : metadataPaths) {
       BookActions::clearFileMetadata(metadataPath);
@@ -527,6 +533,9 @@ void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, con
     const std::string favoritePrefix = dirPath + "/";
     if (!APP_STATE.favoriteSleepImagePath.empty() && APP_STATE.favoriteSleepImagePath.rfind(favoritePrefix, 0) == 0) {
       unpinSleepFavorite();
+    }
+    if (!APP_STATE.favoriteBootImagePath.empty() && APP_STATE.favoriteBootImagePath.rfind(favoritePrefix, 0) == 0) {
+      unpinBootFavorite();
     }
     if (isPreferredSleepFolder(dirPath)) {
       clearPreferredSleepFolder();
@@ -585,6 +594,8 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::RemoveFromRecents:
                              case FileBrowserAction::PinFavorite:
                              case FileBrowserAction::UnpinFavorite:
+                             case FileBrowserAction::PinBootFavorite:
+                             case FileBrowserAction::UnpinBootFavorite:
                              case FileBrowserAction::ViewBookmarks:
                              case FileBrowserAction::ViewClippings:
                              case FileBrowserAction::DeleteBookmarks:
@@ -635,7 +646,7 @@ void FileBrowserActivity::setPreferredSleepFolder(const std::string& fullPath) {
 
   APP_STATE.preferredSleepFolderPath = nextPath;
   APP_STATE.clearRecentSleepHistory();
-  SleepImageIndex::invalidate();
+  ImageFolderIndex::invalidate();
   if (!APP_STATE.saveToFile()) {
     LOG_ERR("FileBrowser", "Failed to save preferred sleep folder path: %s", normalizedPath.c_str());
     return;
@@ -652,7 +663,7 @@ void FileBrowserActivity::clearPreferredSleepFolder() {
 
   APP_STATE.preferredSleepFolderPath.clear();
   APP_STATE.clearRecentSleepHistory();
-  SleepImageIndex::invalidate();
+  ImageFolderIndex::invalidate();
   if (!APP_STATE.saveToFile()) {
     LOG_ERR("FileBrowser", "Failed to clear preferred sleep folder path");
     return;
@@ -668,6 +679,34 @@ bool FileBrowserActivity::isPreferredSleepFolder(const std::string& fullPath) co
 bool FileBrowserActivity::isSleepFavoriteFolder(const std::string& fullPath) const {
   const std::string normalizedPath = normalizeDirectoryPath(fullPath);
   return isDefaultSleepFolderPath(normalizedPath) || isPreferredSleepFolder(normalizedPath);
+}
+
+void FileBrowserActivity::pinBootFavorite(const std::string& fullPath) {
+  APP_STATE.favoriteBootImagePath = fullPath;
+  if (!APP_STATE.saveToFile()) {
+    LOG_ERR("FileBrowser", "Failed to save favorite boot image path: %s", fullPath.c_str());
+    return;
+  }
+  LOG_INF("FileBrowser", "Pinned favorite boot image: %s", fullPath.c_str());
+  requestUpdate();
+}
+
+void FileBrowserActivity::unpinBootFavorite() {
+  if (APP_STATE.favoriteBootImagePath.empty()) {
+    return;
+  }
+
+  APP_STATE.favoriteBootImagePath.clear();
+  if (!APP_STATE.saveToFile()) {
+    LOG_ERR("FileBrowser", "Failed to clear favorite boot image path");
+    return;
+  }
+  LOG_INF("FileBrowser", "Cleared favorite boot image");
+  requestUpdate();
+}
+
+bool FileBrowserActivity::isPinnedBootFavorite(const std::string& fullPath) const {
+  return APP_STATE.favoriteBootImagePath == fullPath;
 }
 
 void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease) {
@@ -687,6 +726,13 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
     items.push_back(
         {isPinnedSleepFavorite(fullPath) ? FileBrowserAction::UnpinFavorite : FileBrowserAction::PinFavorite,
          isPinnedSleepFavorite(fullPath) ? StrId::STR_UNPIN_AS_FAVORITE : StrId::STR_PIN_AS_FAVORITE});
+  }
+
+  const bool canPinBootFavorite = isBootImageFile(entry);
+  if (canPinBootFavorite) {
+    items.push_back(
+        {isPinnedBootFavorite(fullPath) ? FileBrowserAction::UnpinBootFavorite : FileBrowserAction::PinBootFavorite,
+         isPinnedBootFavorite(fullPath) ? StrId::STR_CLEAR_BOOT_SCREEN : StrId::STR_SET_AS_BOOT_SCREEN});
   }
 
   startActivityForResult(
@@ -806,6 +852,12 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
             return;
           case FileBrowserAction::UnpinFavorite:
             unpinSleepFavorite();
+            return;
+          case FileBrowserAction::PinBootFavorite:
+            pinBootFavorite(fullPath);
+            return;
+          case FileBrowserAction::UnpinBootFavorite:
+            unpinBootFavorite();
             return;
           case FileBrowserAction::SetSleepFolder:
           case FileBrowserAction::ClearSleepFolder:
