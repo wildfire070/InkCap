@@ -183,7 +183,6 @@ class EpubReaderActivity final : public Activity {
   uint16_t pendingClippingIndex = UINT16_MAX;
   bool pendingScreenshot = false;
   bool pendingSyncSaveError = false;
-  bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
   // Session-only display toggle. Layout continues to reserve the same status
   // lane, so switching it never changes the EPUB's page breaks.
@@ -428,7 +427,6 @@ class EpubReaderActivity final : public Activity {
   void beginGlobalSettingsEdit();
   void endGlobalSettingsEdit();
   static void saveReaderOptionsForBook(void* ctx);
-  static void setAutoPageTurnIntervalForBookReader(void* ctx, uint16_t seconds);
   static void saveDictionaryFontForBookReader(void* ctx, const char* familyName, uint8_t pointSize);
   static void saveGlobalSettingsForBookReader(void* ctx);
   static void beginGlobalSettingsEditForBookReader(void* ctx);
@@ -458,7 +456,6 @@ class EpubReaderActivity final : public Activity {
   void openWordSelect(bool framebufferContainsPage, int initialTouchX = -1, int initialTouchY = -1,
                       bool autoLookupInitialWord = false);
   std::unique_ptr<Page> reloadDictionaryLookupPage(int pageOffset = 0);
-  void renderDictionaryLookupBackground();
   static std::unique_ptr<Page> reloadDictionaryLookupPageCallback(void* context, int pageOffset);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, bool returnToReaderMenu = false,
                            const PendingOverlayResume* replacementResume = nullptr);

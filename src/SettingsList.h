@@ -499,8 +499,6 @@ inline uint8_t shortcutRawValue(const ShortcutOptionCatalog catalog, const Cross
         case Action::TOGGLE_TILT_PAGE_TURN:
         case Action::TOGGLE_HOME_BUTTON_IN_READER:
         case Action::TOGGLE_FRONTLIGHT:
-        case Action::TOGGLE_TOUCHSCREEN:
-        case Action::QUICK_LOCK:
           return SHORTCUT_OPTION_UNAVAILABLE;
         default:
           return static_cast<uint8_t>(action);
@@ -1059,53 +1057,6 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.insert(insertPos, buildDictionarySetting(dictRegistry));
   }
   return v;
-}
-
-inline std::vector<SettingInfo> buildGroupedReaderSettingsList(const std::vector<SettingInfo>& allSettings) {
-  std::vector<SettingInfo> readerSettings;
-  readerSettings.reserve(23);
-
-  auto addReaderSetting = [&](StrId nameId) {
-    const auto it = std::find_if(allSettings.begin(), allSettings.end(),
-                                 [nameId](const auto& setting) { return setting.nameId == nameId; });
-    if (it != allSettings.end()) {
-      readerSettings.push_back(*it);
-    }
-  };
-
-  readerSettings.push_back(SettingInfo::SectionHeader(StrId::STR_READER_FONT_OPTIONS));
-  addReaderSetting(StrId::STR_FONT_FAMILY);
-  addReaderSetting(StrId::STR_FONT_SIZE);
-  addReaderSetting(StrId::STR_DICTIONARY_FONT);
-  addReaderSetting(StrId::STR_DICTIONARY_FONT_SIZE);
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_DOWNLOAD_FONTS, SettingAction::DownloadFonts));
-  addReaderSetting(StrId::STR_SD_FONT_SIZE_RANGE);
-
-  readerSettings.push_back(SettingInfo::SectionHeader(StrId::STR_READER_PAGE_LAYOUT));
-  addReaderSetting(StrId::STR_LINE_SPACING);
-  addReaderSetting(StrId::STR_WORD_SPACING);
-  addReaderSetting(StrId::STR_SCREEN_MARGIN);
-  addReaderSetting(StrId::STR_PARA_ALIGNMENT);
-  addReaderSetting(StrId::STR_EXTRA_SPACING);
-  addReaderSetting(StrId::STR_FORCE_PARAGRAPH_INDENTS);
-
-  readerSettings.push_back(SettingInfo::SectionHeader(StrId::STR_READER_BOOK_STYLING));
-  addReaderSetting(StrId::STR_EMBEDDED_STYLE);
-  addReaderSetting(StrId::STR_HYPHENATION);
-  addReaderSetting(StrId::STR_TEXT_AA);
-  addReaderSetting(StrId::STR_IMAGES);
-
-  readerSettings.push_back(SettingInfo::SectionHeader(StrId::STR_READER_READING_AIDS));
-  addReaderSetting(StrId::STR_BIONIC_READING);
-  addReaderSetting(StrId::STR_GUIDE_READING);
-
-  readerSettings.push_back(SettingInfo::SectionHeader(StrId::STR_READER_UI));
-  addReaderSetting(StrId::STR_ORIENTATION);
-  addReaderSetting(StrId::STR_PUBLISHER_PAGE_NUMBERS);
-  addReaderSetting(StrId::STR_DISABLE_TOUCHSCREEN);
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-
-  return readerSettings;
 }
 
 inline void addSettingByName(std::vector<SettingInfo>& target, const std::vector<SettingInfo>& allSettings,
