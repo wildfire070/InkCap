@@ -90,6 +90,18 @@ def get_git_short_sha(project_dir):
     )
 
 
+def get_git_dirty(project_dir):
+    try:
+        status = subprocess.check_output(
+            ['git', 'status', '--porcelain', '--untracked-files=no'],
+            text=True, stderr=subprocess.PIPE, cwd=project_dir
+        )
+        return '1' if status.strip() else '0'
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        warn(f'Could not read git working-tree state: {e}; state will be "unknown"')
+        return 'unknown'
+
+
 def _read_ini(project_dir):
     ini_path = os.path.join(project_dir, 'platformio.ini')
     local_ini_path = os.path.join(project_dir, 'platformio.local.ini')
@@ -133,6 +145,13 @@ def get_production_version(project_dir):
 def inject_version(env):
     project_dir = env['PROJECT_DIR']
     pioenv = env['PIOENV']
+    # Keep build provenance separate from CROSSINK_VERSION: production versions
+    # intentionally omit the source revision, while diagnostics need the base
+    # commit and whether the compiled tree had tracked modifications.
+    env.Append(CPPDEFINES=[
+        ('CROSSINK_GIT_SHA', f'\\"{get_git_short_sha(project_dir)}\\"'),
+        ('CROSSINK_GIT_DIRTY', f'\\"{get_git_dirty(project_dir)}\\"'),
+    ])
 
     # Not using upstream's get_hardware_version() here -- this branch deliberately
     # dropped embedding the branch/device name into CROSSINK_VERSION (see the

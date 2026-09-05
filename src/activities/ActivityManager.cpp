@@ -66,49 +66,63 @@ std::string fileNameFromPath(const std::string& path) {
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+bool isNearbyTransferFile(const std::string& path) {
+  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path);
+}
+
 FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRenderer& renderer,
                                                    MappedInputManager& mappedInput) {
   FrontlightPanelContext context;
   context.sourceActivity = &activity;
   const std::string currentPath = activity.getCurrentBookPath();
-  const bool currentValid = FsHelpers::hasEpubExtension(currentPath) && Storage.exists(currentPath.c_str());
+  const bool currentBookValid = isNearbyTransferFile(currentPath) && Storage.exists(currentPath.c_str());
+  const bool currentEpubValid = FsHelpers::hasEpubExtension(currentPath) && currentBookValid;
   const bool lastValid = !APP_STATE.openEpubPath.empty() && FsHelpers::hasEpubExtension(APP_STATE.openEpubPath) &&
                          Storage.exists(APP_STATE.openEpubPath.c_str());
-  const FrontlightBookSource source =
-      chooseFrontlightBookSource(activity.isEpubReaderActivity(), currentValid, lastValid);
-  context.activeEpub = source == FrontlightBookSource::CurrentBook;
-  if (context.activeEpub) {
+  context.activeReaderBook = hasFrontlightActiveReaderBook(activity.isReaderActivity(), currentBookValid);
+  if (context.activeReaderBook) {
     context.bookTitle = activity.getCurrentBookTitle();
     context.bookPath = currentPath;
-    context.showReaderDetails = hasStickyReaderDetailsPanel() && !Frontlight.present();
-    if (context.showReaderDetails && activity.getFrontlightPanelBookDetails(context.bookDetails)) {
+    context.activeEpub = activity.isEpubReaderActivity() && currentEpubValid;
+    if (shouldShowStickyReaderDetails(hasStickyReaderDetailsPanel(), Frontlight.present(), context.activeReaderBook) &&
+        activity.getFrontlightPanelBookDetails(context.bookDetails)) {
+      context.showReaderDetails = true;
       context.bookTitle = context.bookDetails.title;
     }
     context.readingStatsActivity = activity.createFrontlightReadingStatsActivity();
-    return context;
+    if (context.activeEpub) {
+      context.bookPath = currentPath;
+      return context;
+    }
+    if (context.readingStatsActivity) return context;
   }
+
+  const FrontlightBookSource source = chooseFrontlightBookSource(false, false, lastValid);
 
   const GlobalReadingStats global = GlobalReadingStats::load();
   std::string cachePath;
+  std::string statsTitle;
   BookReadingStats bookStats;
   float progress = -1.0f;
   if (source == FrontlightBookSource::LastBook) {
     context.bookPath = APP_STATE.openEpubPath;
     context.bookTitle = fileNameFromPath(context.bookPath);
+    statsTitle = context.bookTitle;
     cachePath = Epub::cachePathForFilePath(context.bookPath, "/.crosspoint");
     bookStats = BookReadingStats::load(cachePath);
     const RecentBook book{context.bookPath, context.bookTitle, {}, {}};
     progress = RecentBookProgress::loadCachedEpubPercent(book);
   } else {
-    context.bookTitle = tr(STR_READING_STATS);
+    statsTitle = tr(STR_READING_STATS);
+    if (!context.activeReaderBook) context.bookTitle = statsTitle;
   }
   if (GlobalReadingStats::hasSyncedStats()) {
     context.readingStatsActivity =
-        makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, context.bookTitle, cachePath, bookStats, progress,
-                                             false, 0, global, GlobalReadingStats::loadAggregated(global));
+        makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress, false,
+                                             0, global, GlobalReadingStats::loadAggregated(global));
   } else {
-    context.readingStatsActivity = makeUniqueNoThrow<BookStatsActivity>(
-        renderer, mappedInput, context.bookTitle, cachePath, bookStats, progress, false, 0, global);
+    context.readingStatsActivity = makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath,
+                                                                        bookStats, progress, false, 0, global);
   }
   return context;
 }
@@ -341,19 +355,6 @@ void ActivityManager::loop() {
 
         if (closedFrontlightPanel) currentActivity->onFrontlightPanelClosed();
 
-        if (openReaderMenuAfterPop) {
-          openReaderMenuAfterPop = false;
-          // Reader menu implementations may acquire RenderLock.
-          lock.unlock();
-          if (currentActivity->openReaderSettingsMenu()) {
-            continue;
-          }
-          // TXT is a reader without a settings menu; retain the icon's
-          // existing Global Settings fallback for that case.
-          goToSettings(true);
-          continue;
-        }
-
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           // Move it here to avoid the case where handler calling another startActivityForResult()
@@ -525,17 +526,6 @@ bool ActivityManager::handleHomeButtonBackOrHome() {
 
 bool ActivityManager::openReaderMenuFromShortcut() {
   return currentActivity && pendingAction == PendingAction::None && currentActivity->openReaderSettingsMenu();
-}
-
-bool ActivityManager::openReaderMenuAfterClosingOverlay() {
-  if (!currentActivity || pendingAction != PendingAction::None || stackActivities.empty() ||
-      !stackActivities.back()->isReaderActivity()) {
-    return false;
-  }
-
-  openReaderMenuAfterPop = true;
-  popActivity();
-  return true;
 }
 
 bool ActivityManager::handleShortcutAction(const uint8_t action) {

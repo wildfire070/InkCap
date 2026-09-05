@@ -25,7 +25,6 @@ struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
   bool settingsChanged = false;
-  uint8_t pageTurnOption = 0;
   ReaderDrawerState drawerState{};
   ReaderSettingsChangeMask changeMask = ReaderSettingsChangeMask::None;
   bool reopenDrawer = false;
@@ -104,19 +103,13 @@ struct ReadingStatsResult {
 
 struct ClippingResult {
   std::string text;
-  int fromWordIdx = -1;
-  int toWordIdx = -1;
   uint16_t sectionPage = 0;
   uint16_t endSectionPage = 0;
   uint16_t sectionPageCount = 1;
   uint16_t startPageWordIndex = 0;
   uint16_t endPageWordIndex = 0;
   uint16_t paragraphIndex = UINT16_MAX;
-  std::string startText;
-  std::string endText;
-  std::string beforeStartText;
-  std::string afterEndText;
-  std::string midText;
+  uint16_t tableSelection = UINT16_MAX;
   uint16_t wordCount = 0;
 };
 

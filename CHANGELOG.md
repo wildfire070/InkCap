@@ -8,7 +8,7 @@
 - Frontlit readers can choose Never for periodic full-screen refreshes, and Night Mode now applies system-wide for ESP32-S3 devices.
 - Tapping the reader status bar on touch devices now toggles it for the current reading session without changing the page layout.
 - Quick Actions provides a menu of favorite reader commands, assignable to Power + Up and, on X4 Pro, Home-button gestures.
-- A new Quick Lock shortcut locks the device without putting it to sleep; it uses the regular sleep timeout and can be assigned to Power + Up, long-press Back, or long-press Menu.
+- A new Quick Lock shortcut locks the device without putting it to sleep; it uses the regular sleep timeout and can be assigned to Power + Up, long-press Back or Menu, or any X4 Pro Home-button shortcut.
 - Shortcuts can now go to the previous page or start Nearby Position Sync from an EPUB reader.
 - Dictionary lookups can now save the selected word or phrase directly as a clipping.
 - Readers can configure an Up + Down side-button shortcut; on touchscreen devices, while the reader touchscreen is disabled, the same chord always opens the reader menu so it can be restored.
@@ -73,10 +73,11 @@
 - Minimal and Dashboard Home screens no longer highlight front-button hints when pressing the side Up or Down buttons.
 - Declining an alternate dictionary-form lookup now returns to the reader instead of leaving the selected word active.
 - Starting a clipping with buttons now highlights a word near the middle of the current page instead of the first word.
-- Saving a clipping that spans pages now keeps the reader on the page where the selection ended.
+- Saving a clipping that spans pages now keeps the reader on the page where the selection ended, including drag selection.
 - Quick Actions now consumes its own taps and button releases without blocking unrelated Power shortcuts in reader menus.
 - Quick Lock can be unlocked again with its assigned long-press Menu or Back shortcut on X3/X4 readers.
 - Custom sleep images retain their grayscale detail, and newer X3 devices no longer retain or stripe the sleep screen after waking.
+- Custom sleep wallpapers now resize before grayscale dithering, preventing visible grid artifacts on X3 screens.
 - Directory listings now report SD read failures instead of silently hiding later files, and newly created folders are verified as visible before file-transfer clients receive success.
 - KOReader Sync shows Upload and Cancel touch buttons when no remote reading position is found.
 - The Refresh Screen shortcut on X4 now uses its less disruptive clean refresh waveform.
