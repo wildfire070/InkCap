@@ -42,6 +42,11 @@ constexpr unsigned long PAGE_TURN_LONG_PRESS_MS = 600;
 // BookFusionBrowserActivity::updatePageForwardSortAndSearch(). Same threshold
 // as the Left/Right page-turn long-press above, for consistency.
 constexpr unsigned long SEARCH_LONG_PRESS_MS = 600;
+// How far from the right edge row content (and screen.list()'s own row
+// highlight background) is pulled in from the Sort/Search edge tabs (see
+// render()). Chosen by eye against the device screen, matching
+// FileBrowserActivity's identical kListRightClearance value.
+constexpr int16_t kListRightClearance = 15;
 constexpr int DOWNLOAD_PROGRESS_STEP_PERCENT = 5;
 constexpr unsigned long DOWNLOAD_PROGRESS_MIN_UPDATE_MS = 5000;
 constexpr size_t DOWNLOAD_BUFFER_SIZE = 2048;
@@ -501,6 +506,9 @@ void BookFusionBrowserActivity::buildCategoryScreen(UiApp::ScreenType& screen) {
   if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::LYRA) {
     props.rowHeight = 40;
   }
+  // Clears the Search edge tab (see render()) so its row highlight background
+  // doesn't run under it -- this screen always shows that tab.
+  screen.insetContent(fui::Insets{0, kListRightClearance, 0, 0});
   const auto rows = configureUiList(props, screen.theme(), screen.body());
   visibleRows = rows > 0 ? rows : 1;
   screen.list(props);
@@ -599,6 +607,10 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
   // theme().smallText already carries the FONT_SMALL slot, rebound to
   // SMALL_FONT_ID for this activity in the constructor.
   props.subtitleText = theme.smallText;
+  // Clears the Sort/Search edge tabs (see render()) so the row highlight
+  // background doesn't run under them -- this screen always shows Sort, and
+  // Search once a category/shelf is open.
+  screen.insetContent(fui::Insets{0, kListRightClearance, 0, 0});
   const auto rows = configureUiList(props, theme, screen.body(), UiListRowType::WithSubtitle);
   visibleRows = rows > 0 ? rows : 1;
   topIndex = scrollListBy(topIndex, 0, visibleRows, static_cast<int>(page.books.size()));
