@@ -353,6 +353,8 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
             return;
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
+          case FileBrowserAction::PinBootFavorite:
+          case FileBrowserAction::UnpinBootFavorite:
           case FileBrowserAction::SetSleepFolder:
           case FileBrowserAction::ClearSleepFolder:
           case FileBrowserAction::ViewBookmarks:
