@@ -45,6 +45,9 @@ class FileBrowserActivity final : public Activity {
   void clearPreferredSleepFolder();
   bool isPreferredSleepFolder(const std::string& fullPath) const;
   bool isSleepFavoriteFolder(const std::string& fullPath) const;
+  void pinBootFavorite(const std::string& fullPath);
+  void unpinBootFavorite();
+  bool isPinnedBootFavorite(const std::string& fullPath) const;
   void showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease = false);
   // Nearest non-folder row to `fromRow` moving toward Left/Right's own direction
   // (forward=true is Right/next), skipping folders; SIZE_MAX if none -- used for
