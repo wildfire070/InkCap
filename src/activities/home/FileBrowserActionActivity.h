@@ -28,6 +28,8 @@ enum class FileBrowserAction : int {
   BookInfo = 16,
   PinBootFavorite = 17,
   UnpinBootFavorite = 18,
+  PinToHome = 19,
+  UnpinFromHome = 20,
 };
 
 class FileBrowserActionActivity final : public Activity {

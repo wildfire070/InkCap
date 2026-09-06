@@ -600,6 +600,8 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::EpubRenderMode:
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::SendNearby:
+                             case FileBrowserAction::PinToHome:
+                             case FileBrowserAction::UnpinFromHome:
                                return;
                            }
                          });
@@ -748,6 +750,17 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
             return;
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(fullPath, false);
+            return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(fullPath, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            requestUpdate();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(fullPath, false);
+            requestUpdate();
             return;
           case FileBrowserAction::Delete:
             promptDeleteFile(fullPath, entry);

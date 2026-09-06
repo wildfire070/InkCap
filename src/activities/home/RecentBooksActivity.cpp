@@ -351,6 +351,17 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(book.path, false);
             return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(book.path, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(book.path, false);
+            reloadAfterBookAction();
+            return;
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
           case FileBrowserAction::PinBootFavorite:

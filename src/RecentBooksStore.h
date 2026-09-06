@@ -14,6 +14,9 @@ struct RecentBook {
   std::string author;
   std::string coverBmpPath;
   CoverState coverState = CoverState::Unknown;
+  // Pinned books are exempt from addOrUpdateBook()'s eviction, so a longfic
+  // in progress isn't pushed off the list by newly-read oneshots.
+  bool pinned = false;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -23,6 +26,10 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   std::vector<RecentBook> recentBooks;
 
   static constexpr int MAX_RECENT_BOOKS = 18;
+  // Enforced only at pin-time (setPinned refuses once this many are already
+  // pinned) -- addOrUpdateBook()'s eviction never needs to know this number,
+  // it only ever needs to know whether a given entry is currently pinned.
+  static constexpr int MAX_PINNED_BOOKS = 5;
 
   RecentBooksStore() = default;
   ~RecentBooksStore() = default;
@@ -58,6 +65,12 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // Persists on success. Keeps the entry's list position (does not reorder).
   void updatePath(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                   const std::string& newCachePath);
+
+  // Pin or unpin a book by path. Returns false (no-op) if the path isn't in
+  // the list, or if pinning would exceed MAX_PINNED_BOOKS -- the caller
+  // should surface that refusal to the user rather than silently unpinning
+  // something else. Persists on success.
+  bool setPinned(const std::string& path, bool pinned);
 
   // True if the book's backing file is no longer present on the SD card.
   static bool isMissing(const RecentBook& book);

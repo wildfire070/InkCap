@@ -9,6 +9,7 @@
 #include <Logging.h>
 #include <Xtc.h>
 
+#include <algorithm>
 #include <cstdio>
 
 #include "BookmarkStore.h"
@@ -62,6 +63,17 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
     items.push_back({FileBrowserAction::ToggleCompleted,
                      isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+  }
+  // Offered from all three real callers (RecentBooksActivity, FileBrowserActivity,
+  // RecentBooksGridActivity) via this one shared code path, rather than a
+  // per-call-site duplicate -- pinning only makes sense for a book already
+  // tracked in RecentBooksStore (it's what puts a book on the Home rail).
+  const auto& recents = RECENT_BOOKS.getBooks();
+  const auto recentIt =
+      std::find_if(recents.begin(), recents.end(), [&](const RecentBook& b) { return b.path == fullPath; });
+  if (recentIt != recents.end()) {
+    items.push_back({recentIt->pinned ? FileBrowserAction::UnpinFromHome : FileBrowserAction::PinToHome,
+                     recentIt->pinned ? StrId::STR_UNPIN_FROM_HOME : StrId::STR_PIN_TO_HOME});
   }
   if (includeRemoveFromRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecents, StrId::STR_REMOVE_FROM_RECENTS_ACTION});

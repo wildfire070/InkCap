@@ -390,6 +390,8 @@ void BmpViewerActivity::showContextMenu() {
                              case FileBrowserAction::DeleteClippings:
                              case FileBrowserAction::EpubRenderMode:
                              case FileBrowserAction::ResetReaderSettings:
+                             case FileBrowserAction::PinToHome:
+                             case FileBrowserAction::UnpinFromHome:
                                return;
                            }
                          });
