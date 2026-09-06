@@ -246,6 +246,13 @@ void BookFusionAuthActivity::render(RenderLock&&) {
     // user still types the code shown above.
     const Rect qrBounds((pageWidth - QR_CODE_SIZE) / 2, y, QR_CODE_SIZE, QR_CODE_SIZE);
     QrUtils::drawQrCode(renderer, qrBounds, verificationUriComplete);
+    y += QR_CODE_SIZE + 12;
+
+    const unsigned long now = millis();
+    const int secsLeft = (pollExpireAt > now) ? static_cast<int>((pollExpireAt - now) / 1000UL) : 0;
+    char countdown[32];
+    snprintf(countdown, sizeof(countdown), tr(STR_BF_TIME_REMAINING), secsLeft);
+    renderer.drawCenteredText(UI_10_FONT_ID, y, countdown);
   } else if (state == SUCCESS) {
     const int top = (pageHeight - lineH) / 2;
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BF_AUTH_SUCCESS), true, EpdFontFamily::BOLD);
