@@ -1536,6 +1536,10 @@ void HomeActivity::drawCompanionCompact(const int stripTop, const int available,
   const int labelFont = tight ? SMALL_FONT_ID : UI_10_FONT_ID;
 
   const int labelH = renderer.getTextHeight(labelFont) + DESCENDER_ALLOWANCE;
+  // Deliberately labelFont, not always SMALL_FONT_ID: on a tight strip the
+  // label itself has already dropped to SMALL_FONT_ID above, so this keeps
+  // matching it rather than shrinking further -- there isn't room to spare
+  // for a font a size smaller than the label it sits under.
   const int subH = renderer.getTextHeight(labelFont) + DESCENDER_ALLOWANCE;
   const int labelW = renderer.getTextWidth(labelFont, label, EpdFontFamily::BOLD);
   const int subW = sub[0] != '\0' ? renderer.getTextWidth(labelFont, sub) : 0;
