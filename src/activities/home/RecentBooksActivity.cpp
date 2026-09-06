@@ -103,9 +103,11 @@ RecentBooksActivity::DashboardRow RecentBooksActivity::activeTabRow(const size_t
     case DashboardTab::Wips:
       if (index >= wipsEntries.size()) return {};
       return {wipsEntries[index].path, wipsEntries[index].title, wipsEntries[index].author};
-    case DashboardTab::RecentBooks:
+    case DashboardTab::RecentBooks: {
       if (index >= recentBooks.size()) return {};
-      return {recentBooks[index].path, recentBooks[index].title, recentBooks[index].author};
+      const RecentBook& book = recentBooks[index];
+      return {book.path, book.pinned ? "\xE2\x80\xA2 " + book.title : book.title, book.author};
+    }
   }
   return {};
 }
