@@ -732,8 +732,10 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       const int progressSuffixWidth =
           hasProgress ? separatorWidth + progressWidth + progressIconGap + progressIconSize : 0;
       const int titleMaxWidth = std::max(0, totalGridWidth - progressSuffixWidth);
+      const std::string displayTitle =
+          selectedBook.book.pinned ? "\xE2\x80\xA2 " + selectedBook.book.title : selectedBook.book.title;
       const std::string truncTitle =
-          renderer.truncatedText(UI_10_FONT_ID, selectedBook.book.title.c_str(), titleMaxWidth, EpdFontFamily::REGULAR);
+          renderer.truncatedText(UI_10_FONT_ID, displayTitle.c_str(), titleMaxWidth, EpdFontFamily::REGULAR);
       renderer.drawText(UI_10_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::REGULAR);
       if (hasProgress) {
         const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, truncTitle.c_str(), EpdFontFamily::REGULAR);

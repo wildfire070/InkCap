@@ -419,12 +419,17 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
     return;
   }
 
-  // Transient per-render: points into the recentBooks strings.
+  // Transient per-render: points into the recentBooks strings (and, for a
+  // pinned book's prefixed title, into displayTitles below), since
+  // fui::ListItem only stores pointers.
+  std::vector<std::string> displayTitles;
+  displayTitles.reserve(recentBooks.size());
   std::vector<fui::ListItem> items;
   items.reserve(recentBooks.size());
   for (const auto& book : recentBooks) {
+    displayTitles.push_back(book.pinned ? "\xE2\x80\xA2 " + book.title : book.title);
     fui::ListItem item;
-    item.label = book.title.c_str();
+    item.label = displayTitles.back().c_str();
     if (!book.author.empty()) item.subtitle = book.author.c_str();
     item.icon = listIconFor(UITheme::getFileIcon(book.path), 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(items.size());
