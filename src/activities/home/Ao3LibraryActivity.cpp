@@ -15,6 +15,7 @@
 #include <new>
 
 #include "../../Ao3Librarian.h"
+#include "../../Ao3MarkedForLaterStore.h"
 #include "../../CrossPointState.h"
 #include "../../MappedInputManager.h"
 #include "../../RecentBooksStore.h"
@@ -133,6 +134,26 @@ BookStatus Ao3LibraryActivity::getBookStatus(uint64_t cacheHash) {
 }
 
 // ---------------------------------------------------------------------------
+//  getMarkedPosition — 0-based queue position if this cache hash's fic is in
+//  Marked for Later, else -1. ViewEntry carries only a cache hash (kept
+//  deliberately minimal, see Ao3ViewEntry.h), not the fic's file path, so this
+//  resolves each of the (at most 10) marked entries' own paths to the same
+//  hash-derived cache-path domain getBookStatus() above uses, rather than
+//  needing the raw path here.
+// ---------------------------------------------------------------------------
+
+int Ao3LibraryActivity::getMarkedPosition(uint64_t cacheHash) {
+  const std::string targetCachePath = "/.crosspoint/epub_" + std::to_string(cacheHash);
+  const auto& entries = AO3_MARKED_FOR_LATER_STORE.getEntries();
+  for (size_t i = 0; i < entries.size(); i++) {
+    if (Epub::cachePathForFilePath(entries[i].path, "/.crosspoint") == targetCachePath) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------------
 //  loadPageCache — pulls full Ao3LibraryMetadata for the visible 3 entries
 // ---------------------------------------------------------------------------
 
@@ -144,6 +165,7 @@ void Ao3LibraryActivity::loadPageCache(int page) {
   for (int i = 0; i < 3; i++) {
     new (&pageCache[i]) Ao3LibraryMetadata();
     pageCacheStatus[i] = BookStatus::START;
+    pageCacheMarkedPosition[i] = -1;
   }
 
   for (int i = startIdx; i < endIdx; i++) {
@@ -155,6 +177,7 @@ void Ao3LibraryActivity::loadPageCache(int page) {
       f.close();
     }
     pageCacheStatus[slot] = getBookStatus(viewEntries[i].cacheHash);
+    pageCacheMarkedPosition[slot] = getMarkedPosition(viewEntries[i].cacheHash);
   }
 
   cachedPage = page;
@@ -1207,7 +1230,8 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
   const char warning = metaLoaded ? meta.warning : 0;
   const bool completed = metaLoaded ? (bool)meta.isCompleted : false;
 
-  drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot]);
+  drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot],
+               pageCacheMarkedPosition[cacheSlot]);
 
   std::string title = metaLoaded && meta.title[0] ? std::string(meta.title) : std::string(ve.title);
   std::string authorText = metaLoaded && meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
@@ -1296,11 +1320,11 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
 // ---------------------------------------------------------------------------
 
 void Ao3LibraryActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
-                                       BookStatus status) {
+                                       BookStatus status, int markedPosition) {
   const int h = s / 2;
 
   renderSymbol(x + 1, y + 1, h - 1, rating, true, false, false, false, -1);
-  renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1);
+  renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1, markedPosition);
   renderWarningSymbol(x + 1, y + h + 1, h - 1, warning, false, false, true, false, -2);
   renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
 
@@ -1328,7 +1352,18 @@ void Ao3LibraryActivity::renderSymbol(int x, int y, int s, char c, bool tl, bool
 }
 
 void Ao3LibraryActivity::renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br,
-                                            int yOffset) {
+                                            int yOffset, int markedPosition) {
+  // Marked for Later takes priority over the regular R/F/chapter-status
+  // symbol -- a queue position is more useful at a glance than a reading
+  // status the reader hasn't acted on yet.
+  if (markedPosition >= 0) {
+    const std::string queueNum = std::to_string(markedPosition + 1);
+    const int tw = renderer.getTextWidth(UI_10_FONT_ID, queueNum.c_str());
+    const int th = renderer.getTextHeight(UI_10_FONT_ID);
+    renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, queueNum.c_str(), true);
+    return;
+  }
+
   // Handle geometric custom renders for chapter status updates
   if (status == BookStatus::WAITING_FOR_CHAPTER || status == BookStatus::NEW_CHAPTER_AVAILABLE) {
     // 1. Calculate an upward-pointing triangle centered inside the quadrant

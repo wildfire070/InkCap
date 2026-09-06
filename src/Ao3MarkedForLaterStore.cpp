@@ -61,6 +61,13 @@ bool Ao3MarkedForLaterStore::contains(const std::string& path) const {
          entries.end();
 }
 
+int Ao3MarkedForLaterStore::getQueuePosition(const std::string& path) const {
+  ensureLoaded();
+  const auto it = std::find_if(entries.begin(), entries.end(),
+                               [&](const Ao3MarkedForLaterEntry& e) { return e.path == path; });
+  return it == entries.end() ? -1 : static_cast<int>(std::distance(entries.begin(), it));
+}
+
 bool Ao3MarkedForLaterStore::pruneMissing() {
   ensureLoaded();
 

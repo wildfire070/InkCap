@@ -59,6 +59,9 @@ class Ao3LibraryActivity final : public Activity {
   // Page cache
   Ao3LibraryMetadata pageCache[3];
   BookStatus pageCacheStatus[3] = {BookStatus::START, BookStatus::START, BookStatus::START};
+  // 0-based Marked for Later queue position for the slot's fic, or -1 if not
+  // marked. See getMarkedPosition().
+  int pageCacheMarkedPosition[3] = {-1, -1, -1};
   std::vector<std::string> wrappedSummary[3];
   int cachedPage = -1;
   bool buttonsSetup = false;
@@ -86,13 +89,15 @@ class Ao3LibraryActivity final : public Activity {
   void loadViewEntries();
   void loadPageCache(int page);
   BookStatus getBookStatus(uint64_t cacheHash);
+  int getMarkedPosition(uint64_t cacheHash);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
   void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
-                     BookStatus status);
+                     BookStatus status, int markedPosition = -1);
 
   void renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
-  void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br,
+                          int yOffset = 0, int markedPosition = -1);
   void renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
 

@@ -22,14 +22,14 @@ class Ao3MarkedForLaterStore : public PersistableStore<Ao3MarkedForLaterStore> {
  private:
   std::vector<Ao3MarkedForLaterEntry> entries;
 
-  static constexpr int MAX_ENTRIES = 10;
-
   Ao3MarkedForLaterStore() = default;
   ~Ao3MarkedForLaterStore() = default;
 
   friend class PersistableStore<Ao3MarkedForLaterStore>;
 
  public:
+  static constexpr int MAX_ENTRIES = 10;
+
   static const char* getFilePath() { return "/.crosspoint/marked_for_later.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
@@ -42,6 +42,10 @@ class Ao3MarkedForLaterStore : public PersistableStore<Ao3MarkedForLaterStore> {
   bool removeByPath(const std::string& path);
 
   bool contains(const std::string& path) const;
+
+  // 0-based position in the FIFO order getEntries() returns (index 0 = oldest
+  // = first in queue), or -1 if not present.
+  int getQueuePosition(const std::string& path) const;
 
   // Remove entries whose backing file is no longer on the SD card.
   // Returns true if any entry was removed. Does not persist -- caller decides.
