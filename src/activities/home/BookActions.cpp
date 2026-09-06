@@ -9,8 +9,11 @@
 #include <Logging.h>
 #include <Xtc.h>
 
+#include <algorithm>
 #include <cstdio>
 
+#include "../../Ao3Librarian.h"
+#include "Ao3MarkedForLaterStore.h"
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
@@ -21,6 +24,7 @@
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 
@@ -39,6 +43,14 @@ std::string bookStatsCachePath(const std::string& path) {
     return Xtc(path, "/.crosspoint").getCachePath();
   }
   return "";
+}
+
+// Cheap -- getLibraryInfo only reads the small ao3_library_info sidecar via
+// the cache-path hash, no epub content is loaded.
+bool isAo3IndexedFic(const std::string& path) {
+  if (!FsHelpers::hasEpubExtension(path)) return false;
+  Ao3LibraryMetadata meta;
+  return Ao3Librarian::getLibraryInfo(Epub(path, "/.crosspoint"), meta);
 }
 
 }  // namespace
@@ -62,6 +74,25 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
     items.push_back({FileBrowserAction::ToggleCompleted,
                      isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+  }
+  // Offered from all three real callers (RecentBooksActivity, FileBrowserActivity,
+  // RecentBooksGridActivity) via this one shared code path, rather than a
+  // per-call-site duplicate -- pinning only makes sense for a book already
+  // tracked in RecentBooksStore (it's what puts a book on the Home rail).
+  const auto& recents = RECENT_BOOKS.getBooks();
+  const auto recentIt =
+      std::find_if(recents.begin(), recents.end(), [&](const RecentBook& b) { return b.path == fullPath; });
+  if (recentIt != recents.end()) {
+    items.push_back({recentIt->pinned ? FileBrowserAction::UnpinFromHome : FileBrowserAction::PinToHome,
+                     recentIt->pinned ? StrId::STR_UNPIN_FROM_HOME : StrId::STR_PIN_TO_HOME});
+  }
+  if (isAo3IndexedFic(fullPath)) {
+    const bool marked = AO3_MARKED_FOR_LATER_STORE.contains(fullPath);
+    items.push_back({marked ? FileBrowserAction::UnmarkForLater : FileBrowserAction::MarkForLater,
+                     marked ? StrId::STR_UNMARK_FOR_LATER : StrId::STR_MARK_FOR_LATER});
+    items.push_back({FileBrowserAction::ArchiveFic, StrId::STR_ARCHIVE_FIC});
+  } else if (Ao3ArchiveUtils::isArchived(fullPath)) {
+    items.push_back({FileBrowserAction::RestoreFic, StrId::STR_RESTORE_FIC});
   }
   if (includeRemoveFromRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecents, StrId::STR_REMOVE_FROM_RECENTS_ACTION});

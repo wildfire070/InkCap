@@ -17,6 +17,8 @@
 #include <limits>
 
 #include "../../Ao3Librarian.h"
+#include "Ao3MarkedForLaterStore.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
 #include "BookFusionBookIdStore.h"
@@ -603,6 +605,12 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::EpubRenderMode:
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::SendNearby:
+                             case FileBrowserAction::PinToHome:
+                             case FileBrowserAction::UnpinFromHome:
+                             case FileBrowserAction::MarkForLater:
+                             case FileBrowserAction::UnmarkForLater:
+                             case FileBrowserAction::ArchiveFic:
+                             case FileBrowserAction::RestoreFic:
                                return;
                            }
                          });
@@ -858,6 +866,43 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
             return;
           case FileBrowserAction::UnpinBootFavorite:
             unpinBootFavorite();
+            return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(fullPath, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            requestUpdate();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(fullPath, false);
+            requestUpdate();
+            return;
+          case FileBrowserAction::MarkForLater: {
+            const RecentBook data = RECENT_BOOKS.getDataFromBook(fullPath);
+            AO3_MARKED_FOR_LATER_STORE.addBook(fullPath, data.title, data.author);
+            requestUpdate();
+            return;
+          }
+          case FileBrowserAction::UnmarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.removeByPath(fullPath);
+            requestUpdate();
+            return;
+          case FileBrowserAction::ArchiveFic: {
+            const RecentBook data = RECENT_BOOKS.getDataFromBook(fullPath);
+            if (Ao3ArchiveUtils::archiveFic(fullPath, data.title, data.author).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            requestUpdate();
+            return;
+          }
+          case FileBrowserAction::RestoreFic:
+            if (Ao3ArchiveUtils::restoreFic(fullPath).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            requestUpdate();
             return;
           case FileBrowserAction::SetSleepFolder:
           case FileBrowserAction::ClearSleepFolder:

@@ -5,7 +5,9 @@
 #include <I18n.h>
 
 #include "../../Ao3Librarian.h"
+#include "../../Ao3MarkedForLaterStore.h"
 #include "../../components/UITheme.h"
+#include "../../util/Ao3ArchiveUtils.h"
 #include "../util/ConfirmationActivity.h"
 #include "Ao3IndexActivity.h"
 
@@ -22,6 +24,7 @@ void BookActionActivity::onEnter() {
   initialStatus = currentStatus;
 
   hasAo3LibraryInfo = Storage.exists((cachePath + "/ao3_library_info").c_str());
+  bookIsArchived = Ao3ArchiveUtils::isArchived(filePath);
 
   requestUpdate(true);
 }
@@ -34,19 +37,26 @@ void BookActionActivity::render(RenderLock&&) {
                  fileName.c_str());
 
   auto rowTitle = [this](int index) {
-    if (index == 0) {
-      return std::string("Book Status: ") + getStatusLabel(currentStatus);
-    } else if (index == 1) {
-      return hasAo3LibraryInfo ? std::string("Reindex Book") : std::string("Index Book");
+    switch (index) {
+      case 0:
+        return std::string("Book Status: ") + getStatusLabel(currentStatus);
+      case 1:
+        return hasAo3LibraryInfo ? std::string("Reindex Book") : std::string("Index Book");
+      case 2:
+        return std::string(AO3_MARKED_FOR_LATER_STORE.contains(filePath) ? tr(STR_UNMARK_FOR_LATER)
+                                                                         : tr(STR_MARK_FOR_LATER));
+      case 3:
+        return std::string(bookIsArchived ? tr(STR_RESTORE_FIC) : tr(STR_ARCHIVE_FIC));
+      default:
+        return std::string(tr(STR_DELETE));
     }
-    return std::string(tr(STR_DELETE));
   };
 
   GUI.drawList(
       renderer,
       Rect{0, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, renderer.getScreenWidth(),
            renderer.getScreenHeight() - metrics.headerHeight - metrics.buttonHintsHeight - metrics.verticalSpacing * 2},
-      3, selectorIndex, rowTitle);
+      ROW_COUNT, selectorIndex, rowTitle);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -91,6 +101,37 @@ void BookActionActivity::loop() {
       };
       startActivityForResult(std::make_unique<Ao3IndexActivity>(renderer, mappedInput, Ao3IndexMode::SINGLE, filePath),
                              handler);
+    } else if (selectorIndex == 2) {
+      if (AO3_MARKED_FOR_LATER_STORE.contains(filePath)) {
+        AO3_MARKED_FOR_LATER_STORE.removeByPath(filePath);
+      } else {
+        Epub epub(filePath, "/.crosspoint");
+        epub.load(false, true, Epub::XLocationLoadMode::Skip);
+        AO3_MARKED_FOR_LATER_STORE.addBook(filePath, epub.getTitle(), epub.getAuthor());
+      }
+      requestUpdate(true);
+    } else if (selectorIndex == 3) {
+      if (bookIsArchived) {
+        const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath);
+        if (!restoredPath.empty()) {
+          filePath = restoredPath;
+          bookIsArchived = false;
+        }
+      } else {
+        Epub epub(filePath, "/.crosspoint");
+        epub.load(false, true, Epub::XLocationLoadMode::Skip);
+        const std::string archivedPath = Ao3ArchiveUtils::archiveFic(filePath, epub.getTitle(), epub.getAuthor());
+        if (!archivedPath.empty()) {
+          // The book is no longer at the browsed path -- leave this menu
+          // rather than keep operating on a stale filePath.
+          BookActionResult result;
+          result.modified = true;
+          setResult(ActivityResult(std::move(result)));
+          finish();
+          return;
+        }
+      }
+      requestUpdate(true);
     } else {
       // Trigger delete confirmation
       auto handler = [this](const ActivityResult& res) {
@@ -111,12 +152,12 @@ void BookActionActivity::loop() {
   }
 
   buttonNavigator.onNext([this] {
-    selectorIndex = (selectorIndex < 2) ? selectorIndex + 1 : 0;
+    selectorIndex = (selectorIndex < ROW_COUNT - 1) ? selectorIndex + 1 : 0;
     requestUpdate(true);
   });
 
   buttonNavigator.onPrevious([this] {
-    selectorIndex = (selectorIndex > 0) ? selectorIndex - 1 : 2;
+    selectorIndex = (selectorIndex > 0) ? selectorIndex - 1 : ROW_COUNT - 1;
     requestUpdate(true);
   });
 }

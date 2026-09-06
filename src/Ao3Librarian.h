@@ -66,6 +66,16 @@ class Ao3Librarian {
    * @brief Marks a record as tombstoned (deleted) in the index.
    */
   static bool tombstoneRecord(const std::string& epubPath);
+
+  /**
+   * @brief True if epubPath has a live (non-tombstoned) index record at its
+   * current hash. Path-independent way to tell "is this fic currently a
+   * normal, indexed library entry" apart from "archived" -- archiving
+   * tombstones the OLD path's record and deliberately never writes a new one
+   * at the new path, so this returns false for an archived fic regardless of
+   * which folder it currently lives in.
+   */
+  static bool hasLiveIndexRecord(const std::string& epubPath);
   static bool setRecordFinished(const std::string& epubPath, bool finished);
 
   /**
