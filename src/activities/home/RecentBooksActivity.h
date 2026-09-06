@@ -72,6 +72,8 @@ class RecentBooksActivity final : public Activity {
     std::string path;
     std::string title;
     std::string author;
+    // "#N" queue position, MarkedForLater tab only; empty on every other tab.
+    std::string value;
   };
   DashboardRow activeTabRow(size_t index) const;
 

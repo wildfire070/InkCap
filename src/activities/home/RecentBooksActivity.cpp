@@ -96,7 +96,7 @@ RecentBooksActivity::DashboardRow RecentBooksActivity::activeTabRow(const size_t
     case DashboardTab::MarkedForLater:
       if (index >= markedForLaterEntries.size()) return {};
       return {markedForLaterEntries[index].path, markedForLaterEntries[index].title,
-              markedForLaterEntries[index].author};
+              markedForLaterEntries[index].author, "#" + std::to_string(index + 1)};
     case DashboardTab::NewChapters:
       if (index >= newChaptersEntries.size()) return {};
       return {newChaptersEntries[index].path, newChaptersEntries[index].title, newChaptersEntries[index].author};
@@ -770,6 +770,7 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
     fui::ListItem item;
     item.label = row.title.c_str();
     if (!row.author.empty()) item.subtitle = row.author.c_str();
+    if (!row.value.empty()) item.value = row.value.c_str();  // queue position, MarkedForLater tab only
     item.icon = listIconFor(UITheme::getFileIcon(row.path), 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(items.size());
     items.push_back(item);

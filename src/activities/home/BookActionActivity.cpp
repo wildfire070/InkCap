@@ -52,11 +52,21 @@ void BookActionActivity::render(RenderLock&&) {
     }
   };
 
+  // Surfaces how close "Mark for Later" is to its cap, rather than letting it
+  // silently no-op once full with no visible warning.
+  auto rowValue = [this](int index) {
+    if (index == 2) {
+      return std::to_string(AO3_MARKED_FOR_LATER_STORE.getCount()) + "/" +
+             std::to_string(Ao3MarkedForLaterStore::MAX_ENTRIES);
+    }
+    return std::string();
+  };
+
   GUI.drawList(
       renderer,
       Rect{0, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, renderer.getScreenWidth(),
            renderer.getScreenHeight() - metrics.headerHeight - metrics.buttonHintsHeight - metrics.verticalSpacing * 2},
-      ROW_COUNT, selectorIndex, rowTitle);
+      ROW_COUNT, selectorIndex, rowTitle, nullptr, nullptr, rowValue);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -117,21 +127,34 @@ void BookActionActivity::loop() {
           filePath = restoredPath;
           bookIsArchived = false;
         }
+        requestUpdate(true);
       } else {
-        Epub epub(filePath, "/.crosspoint");
-        epub.load(false, true, Epub::XLocationLoadMode::Skip);
-        const std::string archivedPath = Ao3ArchiveUtils::archiveFic(filePath, epub.getTitle(), epub.getAuthor());
-        if (!archivedPath.empty()) {
-          // The book is no longer at the browsed path -- leave this menu
-          // rather than keep operating on a stale filePath.
-          BookActionResult result;
-          result.modified = true;
-          setResult(ActivityResult(std::move(result)));
-          finish();
-          return;
-        }
+        // Archiving moves the file out of the tracked AO3 folder -- less
+        // casually reversible than Restore, so confirm it the same way
+        // Delete does below rather than acting immediately.
+        auto handler = [this](const ActivityResult& res) {
+          if (!res.isCancelled) {
+            Epub epub(filePath, "/.crosspoint");
+            epub.load(false, true, Epub::XLocationLoadMode::Skip);
+            const std::string archivedPath =
+                Ao3ArchiveUtils::archiveFic(filePath, epub.getTitle(), epub.getAuthor());
+            if (!archivedPath.empty()) {
+              // The book is no longer at the browsed path -- leave this menu
+              // rather than keep operating on a stale filePath.
+              BookActionResult result;
+              result.modified = true;
+              setResult(ActivityResult(std::move(result)));
+              finish();
+              return;
+            }
+          }
+          requestUpdate(true);
+        };
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_CONFIRM_HEADING),
+                                                    tr(STR_ARCHIVE_CONFIRM_BODY)),
+            handler);
       }
-      requestUpdate(true);
     } else {
       // Trigger delete confirmation
       auto handler = [this](const ActivityResult& res) {
