@@ -12,6 +12,7 @@ class Ao3LibrarySettingsActivity final : public Activity {
   ButtonNavigator buttonNavigator;
 
   std::string ao3Folder;
+  std::string archiveFolderName;
   std::vector<std::string> excludedFolders;
   int batchSize = 10;
   bool autoIndexOnOpen = false;
@@ -28,6 +29,7 @@ class Ao3LibrarySettingsActivity final : public Activity {
   std::string getFolderLastComponent(const std::string& path) const;
   std::string formatFolderPill() const;
   std::string formatExclusionsPill() const;
+  std::string formatArchiveFolderPill() const;
 
  public:
   explicit Ao3LibrarySettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

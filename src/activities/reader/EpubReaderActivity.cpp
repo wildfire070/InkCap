@@ -26,6 +26,7 @@
 #include <type_traits>
 
 #include "../../Ao3Librarian.h"
+#include "../../Ao3NewChaptersStore.h"
 #include "../../Ao3ViewEntry.h"
 #include "../network/AO3SyncActivity.h"
 #include "../settings/DictionarySelectActivity.h"
@@ -6674,6 +6675,9 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
       }
     } else if (!((spineIndex == 0 && currentPage == 0) || spineIndex >= epub->getSpineItemsCount())) {
       // Was waiting on a chapter/update; the user paged back in, so resume tracking as READING.
+      // A no-op if this fic was never in the New Chapters store (e.g. it was
+      // only WAITING_FOR_CHAPTER, not NEW_CHAPTER_AVAILABLE).
+      AO3_NEW_CHAPTERS_STORE.removeByPath(epub->getPath());
       currentStatus = BookStatus::READING;
       ao3FinishedRecordWritten = false;
     }
@@ -7946,6 +7950,7 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             Storage.remove((cachePath + "/book.bin").c_str());
             Storage.removeDir((cachePath + "/sections").c_str());
             Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+            AO3_NEW_CHAPTERS_STORE.addBook(bookPath, freshEpub.getTitle(), freshEpub.getAuthor());
             int firstNewChapter = eobSpineIndex;
             if (hadAfterword && eobSpineIndex > 0) {
               firstNewChapter -= 1;
@@ -7953,6 +7958,7 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             EpubReaderUtils::saveProgress(freshEpub, firstNewChapter, 0, spineCountBeforeDownload);
           } else if (ao3Res.updateFound) {
             Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+            AO3_NEW_CHAPTERS_STORE.addBook(bookPath, freshEpub.getTitle(), freshEpub.getAuthor());
           }
         }
         onGoHome();

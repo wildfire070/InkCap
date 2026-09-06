@@ -1,5 +1,7 @@
 #include "Ao3Librarian.h"
 
+#include "Ao3WipsStore.h"
+
 #include <Epub.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 #include <HalStorage.h>
@@ -1058,6 +1060,15 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
       return false;
     }
 
+    // WIPs tab tracks author-side incompleteness, independent of the
+    // reader's own BookStatus::FINISHED -- keep it in sync with every
+    // (re-)scrape, not just the first one.
+    if (meta->isCompleted) {
+      AO3_WIPS_STORE.removeByPath(epub.getPath());
+    } else {
+      AO3_WIPS_STORE.addBook(epub.getPath(), meta->title, meta->author);
+    }
+
     return true;
   }
   return false;
@@ -1379,6 +1390,40 @@ bool Ao3Librarian::tombstoneRecord(const std::string& epubPath) {
       rec.flags |= 1;
       f.seek(offsetOf(i));
       f.write((uint8_t*)&rec, sizeof(rec));
+      f.close();
+      return true;
+    }
+  }
+
+  f.close();
+  return false;
+}
+
+bool Ao3Librarian::hasLiveIndexRecord(const std::string& epubPath) {
+  const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  if (!Storage.exists(indexPath)) return false;
+
+  HalFile f;
+  if (!Storage.openFileForRead("AO3L", indexPath, f)) return false;
+
+  char magic[4];
+  uint8_t version;
+  uint16_t recordCount;
+  bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
+
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
+    f.close();
+    return false;
+  }
+
+  const uint64_t targetHash = ZipFile::fnvHash64(epubPath.c_str(), epubPath.size());
+
+  CompactIndexRecord rec;
+  for (uint16_t i = 0; i < recordCount; i++) {
+    f.seek(offsetOf(i));
+    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+
+    if (!(rec.flags & 1) && rec.cacheHash == targetHash) {
       f.close();
       return true;
     }
