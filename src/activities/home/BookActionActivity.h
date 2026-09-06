@@ -11,10 +11,12 @@ class BookActionActivity final : public Activity {
   std::string filePath;
   std::string fileName;
   int selectorIndex = 0;
+  static constexpr int ROW_COUNT = 5;
   BookStatus currentStatus = BookStatus::START;
   BookStatus initialStatus = BookStatus::START;
   ButtonNavigator buttonNavigator;
   bool hasAo3LibraryInfo = false;
+  bool bookIsArchived = false;
 
  public:
   BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,

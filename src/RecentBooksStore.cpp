@@ -26,6 +26,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
     obj["coverState"] = static_cast<uint8_t>(book.coverState);
+    obj["pinned"] = book.pinned;
   }
 }
 
@@ -46,6 +47,9 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     if (storedCoverState == static_cast<int>(RecentBook::CoverState::Missing)) {
       book.coverState = RecentBook::CoverState::Missing;
     }
+    // Old recent.json files with no "pinned" key parse every entry as
+    // unpinned -- no explicit migration needed.
+    book.pinned = obj["pinned"] | false;
     recentBooks.push_back(book);
   }
 
@@ -80,8 +84,13 @@ void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::strin
   } else {
     recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath, coverState});
     changed = true;
-    if (recentBooks.size() > MAX_RECENT_BOOKS) {
-      recentBooks.resize(MAX_RECENT_BOOKS);
+    // Evict the oldest *unpinned* entry rather than a flat tail resize, so a
+    // pinned longfic survives new books pushing the list past capacity.
+    while (recentBooks.size() > MAX_RECENT_BOOKS) {
+      auto evictIt = std::find_if(recentBooks.rbegin(), recentBooks.rend(),
+                                  [](const RecentBook& book) { return !book.pinned; });
+      if (evictIt == recentBooks.rend()) break;  // everything left is pinned; stop evicting
+      recentBooks.erase(std::next(evictIt).base());
     }
   }
   if (changed) saveToFile();
@@ -138,6 +147,29 @@ void RecentBooksStore::updatePath(const std::string& oldPath, const std::string&
     it->coverBmpPath = newCachePath + it->coverBmpPath.substr(oldCachePath.size());
   }
   saveToFile();
+}
+
+bool RecentBooksStore::setPinned(const std::string& path, const bool pinned) {
+  ensureLoaded();
+
+  auto it =
+      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) {
+    return false;
+  }
+  if (it->pinned == pinned) {
+    return true;
+  }
+  if (pinned) {
+    const int pinnedCount =
+        static_cast<int>(std::count_if(recentBooks.begin(), recentBooks.end(), [](const RecentBook& b) { return b.pinned; }));
+    if (pinnedCount >= MAX_PINNED_BOOKS) {
+      return false;
+    }
+  }
+  it->pinned = pinned;
+  saveToFile();
+  return true;
 }
 
 bool RecentBooksStore::isMissing(const RecentBook& book) { return !Storage.exists(book.path.c_str()); }

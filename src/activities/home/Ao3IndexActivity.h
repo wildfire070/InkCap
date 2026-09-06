@@ -42,6 +42,9 @@ class Ao3IndexActivity final : public Activity {
   // Settings
   std::string ao3Folder;
   std::vector<std::string> excludedFolders;
+  // Resolved once in loadSettings() (default applied if unset) rather than
+  // re-reading ao3_settings.json from isExcluded() on every directory visited.
+  std::string cachedArchiveRoot;
 
   // Discovery / Scan state variables
   struct QueueEntry {

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "Ao3MarkedForLaterStore.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
 #include "FileBrowserActionActivity.h"
@@ -16,6 +17,7 @@
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/OptionSelectionActivity.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -31,6 +33,7 @@ constexpr size_t MAX_LIST_RECENT_BOOKS = 10;
 constexpr unsigned long LONG_PRESS_MS = 1000;
 constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
 constexpr fui::ActionId ACTION_ROW = 1;
+constexpr fui::ActionId ACTION_TAB = 2;
 }  // namespace
 
 RecentBooksActivity::RecentBooksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -54,19 +57,93 @@ void RecentBooksActivity::loadRecentBooks() {
   }
 }
 
+void RecentBooksActivity::loadActiveTabEntries() {
+  switch (activeTab) {
+    case DashboardTab::MarkedForLater:
+      AO3_MARKED_FOR_LATER_STORE.pruneMissing();
+      markedForLaterEntries = AO3_MARKED_FOR_LATER_STORE.getEntries();
+      return;
+    case DashboardTab::NewChapters:
+      AO3_NEW_CHAPTERS_STORE.pruneMissing();
+      newChaptersEntries = AO3_NEW_CHAPTERS_STORE.getEntries();
+      return;
+    case DashboardTab::Wips:
+      AO3_WIPS_STORE.pruneMissing();
+      wipsEntries = AO3_WIPS_STORE.getEntries();
+      return;
+    case DashboardTab::RecentBooks:
+      loadRecentBooks();
+      return;
+  }
+}
+
+int RecentBooksActivity::activeTabCount() const {
+  switch (activeTab) {
+    case DashboardTab::MarkedForLater:
+      return static_cast<int>(markedForLaterEntries.size());
+    case DashboardTab::NewChapters:
+      return static_cast<int>(newChaptersEntries.size());
+    case DashboardTab::Wips:
+      return static_cast<int>(wipsEntries.size());
+    case DashboardTab::RecentBooks:
+      return static_cast<int>(recentBooks.size());
+  }
+  return 0;
+}
+
+RecentBooksActivity::DashboardRow RecentBooksActivity::activeTabRow(const size_t index) const {
+  switch (activeTab) {
+    case DashboardTab::MarkedForLater:
+      if (index >= markedForLaterEntries.size()) return {};
+      return {markedForLaterEntries[index].path, markedForLaterEntries[index].title,
+              markedForLaterEntries[index].author};
+    case DashboardTab::NewChapters:
+      if (index >= newChaptersEntries.size()) return {};
+      return {newChaptersEntries[index].path, newChaptersEntries[index].title, newChaptersEntries[index].author};
+    case DashboardTab::Wips:
+      if (index >= wipsEntries.size()) return {};
+      return {wipsEntries[index].path, wipsEntries[index].title, wipsEntries[index].author};
+    case DashboardTab::RecentBooks:
+      if (index >= recentBooks.size()) return {};
+      return {recentBooks[index].path, recentBooks[index].title, recentBooks[index].author};
+  }
+  return {};
+}
+
 void RecentBooksActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<RecentBooksActivity*>(user);
-  if (event.value < 0 || event.value >= static_cast<int16_t>(self->recentBooks.size())) return;
+  if (event.value < 0 || event.value >= static_cast<int16_t>(self->activeTabCount())) return;
   self->selectorIndex = static_cast<size_t>(event.value);
-  if (event.longPress) {
+  if (self->activeTab == DashboardTab::RecentBooks) {
+    if (event.longPress) {
+      self->app.clearTapFlash();
+      self->showBookActionMenu(self->selectorIndex);
+      return;
+    }
+    // Opening the book leaves this screen; a lingering flash would gray an
+    // unrelated row when the list next appears.
     self->app.clearTapFlash();
-    self->showBookActionMenu(self->selectorIndex);
+    self->onSelectBook(self->recentBooks[self->selectorIndex].path);
     return;
   }
-  // Opening the book leaves this screen; a lingering flash would gray an
-  // unrelated row when the list next appears.
+  const auto row = self->activeTabRow(self->selectorIndex);
+  if (event.longPress) {
+    self->app.clearTapFlash();
+    self->showDashboardEntryActionMenu(row.path, row.title, row.author);
+    return;
+  }
   self->app.clearTapFlash();
-  self->onSelectBook(self->recentBooks[self->selectorIndex].path);
+  self->onSelectBook(row.path);
+}
+
+void RecentBooksActivity::onTabEvent(const fui::ActionEvent& event, void* user) {
+  auto* self = static_cast<RecentBooksActivity*>(user);
+  if (event.value < 0 || event.value >= TAB_COUNT) return;
+  self->activeTab = static_cast<DashboardTab>(event.value);
+  self->selectorIndex = 0;
+  self->topIndex = 0;
+  self->loadActiveTabEntries();
+  self->requestUpdate(true);
 }
 
 void RecentBooksActivity::onEnter() {
@@ -78,8 +155,10 @@ void RecentBooksActivity::onEnter() {
     RECENT_BOOKS.saveToFile();
   }
 
-  // Load data
-  loadRecentBooks();
+  // activeTab defaults to RecentBooks, so a fresh launch loads the same data
+  // this screen has always shown -- the other three tabs load lazily on
+  // first switch, via onTabEvent().
+  loadActiveTabEntries();
 
   selectorIndex = 0;
   uiReady = false;
@@ -87,6 +166,7 @@ void RecentBooksActivity::onEnter() {
   topIndex = 0;
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &RecentBooksActivity::onRowEvent, this);
+  app.on(ACTION_TAB, &RecentBooksActivity::onTabEvent, this);
   app.setScreen(&RecentBooksActivity::listScreen, this);
   requestUpdate();
 }
@@ -94,6 +174,9 @@ void RecentBooksActivity::onEnter() {
 void RecentBooksActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
+  markedForLaterEntries.clear();
+  newChaptersEntries.clear();
+  wipsEntries.clear();
 }
 
 void RecentBooksActivity::loop() {
@@ -107,7 +190,7 @@ void RecentBooksActivity::loop() {
     onGoHome();
     return;
   }
-  const int listSize = static_cast<int>(recentBooks.size());
+  const int listSize = activeTabCount();
   // After a long-press has fired, swallow input until Confirm is physically released
   // (so the release doesn't also open the book; re-arm only once the button is up).
   if (longPressFired) {
@@ -120,10 +203,15 @@ void RecentBooksActivity::loop() {
   // Long-press Confirm on the selected book: open the same action menu shape used by File Browser.
   // Fires when the hold times out while still held (firmware hold-to-act pattern,
   // cf. FileBrowserActivity BACK long-press).
-  if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
+  if (listSize > 0 && static_cast<int>(selectorIndex) < listSize &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
-    showBookActionMenu(selectorIndex, true);
+    if (activeTab == DashboardTab::RecentBooks) {
+      showBookActionMenu(selectorIndex, true);
+    } else {
+      const auto row = activeTabRow(selectorIndex);
+      showDashboardEntryActionMenu(row.path, row.title, row.author, true);
+    }
     return;
   }
 
@@ -142,14 +230,35 @@ void RecentBooksActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (!recentBooks.empty() && selectorIndex < recentBooks.size()) {
-      onSelectBook(recentBooks[selectorIndex].path);
+    if (listSize > 0 && static_cast<int>(selectorIndex) < listSize) {
+      onSelectBook(activeTabRow(selectorIndex).path);
       return;
     }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     onGoHome();
+    return;
+  }
+
+  // PageBack/PageForward aren't used for anything else on this screen, so
+  // they're free for tab-cycling -- short press switches tabs immediately
+  // (unlike Next/Previous, whose hold variant already means "jump a page
+  // within the current list", not "switch tabs").
+  if (mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
+    activeTab = static_cast<DashboardTab>((static_cast<int>(activeTab) + 1) % TAB_COUNT);
+    selectorIndex = 0;
+    topIndex = 0;
+    loadActiveTabEntries();
+    requestUpdate(true);
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+    activeTab = static_cast<DashboardTab>((static_cast<int>(activeTab) + TAB_COUNT - 1) % TAB_COUNT);
+    selectorIndex = 0;
+    topIndex = 0;
+    loadActiveTabEntries();
+    requestUpdate(true);
     return;
   }
 
@@ -186,19 +295,18 @@ void RecentBooksActivity::loop() {
 }
 
 void RecentBooksActivity::reloadAfterBookAction() {
-  loadRecentBooks();
-  if (recentBooks.empty()) {
+  loadActiveTabEntries();
+  const int count = activeTabCount();
+  if (count == 0) {
     selectorIndex = 0;
-  } else if (selectorIndex >= recentBooks.size()) {
-    selectorIndex = recentBooks.size() - 1;
+  } else if (static_cast<int>(selectorIndex) >= count) {
+    selectorIndex = static_cast<size_t>(count - 1);
   }
-  topIndex =
-      followListSelection(static_cast<int>(selectorIndex), topIndex, visibleRows, static_cast<int>(recentBooks.size()));
+  topIndex = followListSelection(static_cast<int>(selectorIndex), topIndex, visibleRows, count);
   requestUpdate(true);
 }
 
-void RecentBooksActivity::promptDeleteBook(const RecentBook& book) {
-  const std::string path = book.path;
+void RecentBooksActivity::promptDeleteBook(const std::string& path, const std::string& title) {
   auto handler = [this, path](const ActivityResult& res) {
     if (res.isCancelled) {
       return;
@@ -215,7 +323,7 @@ void RecentBooksActivity::promptDeleteBook(const RecentBook& book) {
   };
 
   const std::string heading = tr(STR_DELETE) + std::string("? ");
-  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, book.title),
+  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, title),
                          std::move(handler));
 }
 
@@ -265,7 +373,7 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
             openBookDetails(bookIndex);
             return;
           case FileBrowserAction::Delete:
-            promptDeleteBook(book);
+            promptDeleteBook(book.path, book.title);
             return;
           case FileBrowserAction::DeleteCache:
             startActivityForResult(
@@ -351,6 +459,39 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(book.path, false);
             return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(book.path, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(book.path, false);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::MarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.addBook(book.path, book.title, book.author);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnmarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.removeByPath(book.path);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::ArchiveFic:
+            if (Ao3ArchiveUtils::archiveFic(book.path, book.title, book.author).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::RestoreFic:
+            if (Ao3ArchiveUtils::restoreFic(book.path).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
+            return;
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
           case FileBrowserAction::PinBootFavorite:
@@ -391,6 +532,174 @@ void RecentBooksActivity::openBookDetails(const size_t bookIndex) {
       });
 }
 
+void RecentBooksActivity::showDashboardEntryActionMenu(const std::string& path, const std::string& title,
+                                                       const std::string& author,
+                                                       const bool ignoreInitialConfirmRelease) {
+  std::vector<FileBrowserActionActivity::MenuItem> items =
+      BookActions::buildBookActionItems(path, /*includeRemoveFromRecents=*/false);
+  if (BookActions::canSendNearby(path)) {
+    items.push_back({FileBrowserAction::SendNearby, StrId::STR_SEND_NEARBY_BOOK});
+  }
+
+  startActivityForResult(
+      std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, title, std::move(items),
+                                                  ignoreInitialConfirmRelease),
+      [this, path, title, author](const ActivityResult& result) {
+        longPressFired = false;
+        if (result.isCancelled) {
+          return;
+        }
+
+        const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);
+        if (!actionResult) {
+          LOG_ERR("RBA", "Dashboard entry action result missing");
+          return;
+        }
+
+        switch (static_cast<FileBrowserAction>(actionResult->action)) {
+          case FileBrowserAction::BookInfo:
+            // No Prev/Next chaining here -- unlike the Recent Books tab, these
+            // rows aren't a stable index-addressable list the user is paging
+            // through (WIPs is alphabetical, Marked/New Chapters are FIFO/MRU
+            // and can reorder on any store mutation elsewhere).
+            startActivityForResult(
+                std::make_unique<BookDetailsActivity>(renderer, mappedInput, path, title, author,
+                                                      /*hasPrevious=*/false, /*hasNext=*/false),
+                [this](const ActivityResult&) { reloadAfterBookAction(); });
+            return;
+          case FileBrowserAction::Delete:
+            promptDeleteBook(path, title);
+            return;
+          case FileBrowserAction::DeleteCache:
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(
+                    renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_CACHE), title),
+                [this, path](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled) {
+                    if (!BookActions::clearBookCache(path)) {
+                      LOG_ERR("RBA", "Failed to clear book cache for: %s", path.c_str());
+                    } else {
+                      pendingCacheDeletedFeedback = true;
+                      cacheDeletedFeedbackShowTime = millis();
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          case FileBrowserAction::DeleteStats:
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(
+                    renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_BOOK_STATS), title),
+                [this, path](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled) {
+                    if (!BookActions::deleteBookStats(path)) {
+                      LOG_ERR("RBA", "Failed to delete book stats for: %s", path.c_str());
+                    } else {
+                      BookActions::drawToast(renderer, tr(STR_BOOK_STATS_DELETED));
+                      delay(1000);
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          case FileBrowserAction::ResetReaderSettings:
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(
+                    renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_RESET_BOOK_READER_SETTINGS),
+                    title),
+                [this, path](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled) {
+                    if (!BookActions::resetBookReaderSettings(path)) {
+                      LOG_ERR("RBA", "Failed to reset reader settings for: %s", path.c_str());
+                    } else {
+                      BookActions::drawToast(renderer, tr(STR_BOOK_READER_SETTINGS_RESET));
+                      delay(1000);
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          case FileBrowserAction::ToggleCompleted: {
+            bool completed = false;
+            if (BookActions::toggleBookCompleted(path, title, completed)) {
+              BookActions::drawToast(renderer, completed ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
+              delay(1000);
+            }
+            reloadAfterBookAction();
+            return;
+          }
+          case FileBrowserAction::EpubRenderMode: {
+            const uint8_t currentIndex =
+                BookActions::epubRenderModeDisplayIndex(EpubReaderActivity::loadBookRenderMode(path));
+            startActivityForResult(
+                std::make_unique<OptionSelectionActivity>(renderer, mappedInput, "DashboardEpubRenderModeSelect",
+                                                          StrId::STR_EPUB_RENDER_MODE,
+                                                          BookActions::epubRenderModeOptions(), currentIndex),
+                [this, path](const ActivityResult& selectionResult) {
+                  if (!selectionResult.isCancelled) {
+                    const auto* selection = std::get_if<OptionSelectionResult>(&selectionResult.data);
+                    if (selection != nullptr &&
+                        !EpubReaderActivity::saveBookRenderMode(
+                            path, BookActions::epubRenderModeForDisplayIndex(selection->index))) {
+                      LOG_ERR("RBA", "Failed to save render mode for: %s", path.c_str());
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          }
+          case FileBrowserAction::SendNearby:
+            activityManager.goToNearbyBookSend(path, false);
+            return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(path, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(path, false);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::MarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.addBook(path, title, author);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnmarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.removeByPath(path);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::ArchiveFic:
+            if (Ao3ArchiveUtils::archiveFic(path, title, author).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::RestoreFic:
+            if (Ao3ArchiveUtils::restoreFic(path).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::PinFavorite:
+          case FileBrowserAction::UnpinFavorite:
+          case FileBrowserAction::PinBootFavorite:
+          case FileBrowserAction::UnpinBootFavorite:
+          case FileBrowserAction::SetSleepFolder:
+          case FileBrowserAction::ClearSleepFolder:
+          case FileBrowserAction::ViewBookmarks:
+          case FileBrowserAction::ViewClippings:
+          case FileBrowserAction::DeleteBookmarks:
+          case FileBrowserAction::DeleteClippings:
+          case FileBrowserAction::RemoveFromRecents:
+            return;
+        }
+      });
+}
+
 void RecentBooksActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<RecentBooksActivity*>(user)->buildListScreen(screen);
 }
@@ -401,21 +710,65 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.setContentMargin(
       fui::Insets{static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput)), 0,
                   static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+
+  // Dashboard tab bar -- simplified from SettingsActivity's own tab bar (no
+  // RoundedRaff-specific pill styling or focused/unfocused dimming: unlike
+  // there, selectorIndex here always addresses a list row, never the tab
+  // band itself, so there's no "focus moved to the tabs" state to distinguish).
+  fui::TabItem tabs[TAB_COUNT];
+  tabs[0].label = tr(STR_TAB_MARKED_FOR_LATER);
+  tabs[0].value = static_cast<int16_t>(DashboardTab::MarkedForLater);
+  tabs[0].selected = activeTab == DashboardTab::MarkedForLater;
+  tabs[1].label = tr(STR_TAB_NEW_CHAPTERS);
+  tabs[1].value = static_cast<int16_t>(DashboardTab::NewChapters);
+  tabs[1].selected = activeTab == DashboardTab::NewChapters;
+  tabs[2].label = tr(STR_TAB_WIPS);
+  tabs[2].value = static_cast<int16_t>(DashboardTab::Wips);
+  tabs[2].selected = activeTab == DashboardTab::Wips;
+  tabs[3].label = tr(STR_RECENTS);
+  tabs[3].value = static_cast<int16_t>(DashboardTab::RecentBooks);
+  tabs[3].selected = activeTab == DashboardTab::RecentBooks;
+
+  fui::TabBarProps tabProps;
+  tabProps.tabs = tabs;
+  tabProps.count = TAB_COUNT;
+  tabProps.action = ACTION_TAB;
+  tabProps.inputMask = fui::InputTouch;
+  tabProps.text = screen.theme().smallText;
+  tabProps.divider = true;
+  const int16_t tabLineHeight = screen.target().lineHeight(screen.theme().smallText.font);
+  constexpr int16_t kTouchTabBarHeight = 50;
+  const int16_t preferredTabHeight =
+      mappedInput.hasTouch() ? kTouchTabBarHeight : static_cast<int16_t>(metrics.tabBarHeight);
+  const int16_t tabBand = preferredTabHeight > tabLineHeight + 10 ? preferredTabHeight : tabLineHeight + 10;
+  const fui::Rect tabRect = screen.takeTop(tabBand);
+  drawUiTabBar(screen, tabProps, tabRect, metrics.tabBarAppearance);
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
-  if (recentBooks.empty()) {
-    screen.centeredText(tr(STR_NO_RECENT_BOOKS), screen.theme().bodyText);
+  const int count = activeTabCount();
+  if (count == 0) {
+    const StrId emptyStrId = activeTab == DashboardTab::MarkedForLater  ? StrId::STR_NO_MARKED_FOR_LATER
+                             : activeTab == DashboardTab::NewChapters   ? StrId::STR_NO_NEW_CHAPTERS
+                             : activeTab == DashboardTab::Wips          ? StrId::STR_NO_WIPS
+                                                                        : StrId::STR_NO_RECENT_BOOKS;
+    screen.centeredText(I18n::getInstance().get(emptyStrId), screen.theme().bodyText);
     return;
   }
 
-  // Transient per-render: points into the recentBooks strings.
+  // Transient per-render: points into whichever tab's own entry vector.
+  // itemStrings keeps the projected (title, author) pairs alive for the
+  // duration of this call, since fui::ListItem only stores pointers.
+  std::vector<DashboardRow> itemStrings;
+  itemStrings.reserve(static_cast<size_t>(count));
   std::vector<fui::ListItem> items;
-  items.reserve(recentBooks.size());
-  for (const auto& book : recentBooks) {
+  items.reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; i++) {
+    itemStrings.push_back(activeTabRow(static_cast<size_t>(i)));
+    const auto& row = itemStrings.back();
     fui::ListItem item;
-    item.label = book.title.c_str();
-    if (!book.author.empty()) item.subtitle = book.author.c_str();
-    item.icon = listIconFor(UITheme::getFileIcon(book.path), 32);  // subtitle rows carry the larger icon
+    item.label = row.title.c_str();
+    if (!row.author.empty()) item.subtitle = row.author.c_str();
+    item.icon = listIconFor(UITheme::getFileIcon(row.path), 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(items.size());
     items.push_back(item);
   }
@@ -432,7 +785,7 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
   const fui::Rect listBounds = screen.body();
   const auto rows = configureUiList(props, screen.theme(), listBounds, UiListRowType::WithSubtitle);
   visibleRows = rows > 0 ? rows : 1;
-  topIndex = scrollListBy(topIndex, 0, visibleRows, static_cast<int>(recentBooks.size()));  // clamp to range
+  topIndex = scrollListBy(topIndex, 0, visibleRows, count);  // clamp to range
   props.topIndex = static_cast<uint16_t>(topIndex);
   screen.list(props);
 }

@@ -9,6 +9,7 @@
 
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
+#include "../../util/Ao3ArchiveUtils.h"
 #include "SdCardFontSystem.h"
 
 namespace {
@@ -99,6 +100,9 @@ void Ao3IndexActivity::loadSettings() {
   if (deserializeJson(doc, json)) return;
   ao3Folder = doc["ao3Folder"] | "";
   batchSize = doc["batchSize"] | 10;
+  const char* configuredArchiveRoot = doc["archiveFolderName"] | "";
+  cachedArchiveRoot =
+      configuredArchiveRoot[0] != '\0' ? configuredArchiveRoot : Ao3ArchiveUtils::DEFAULT_ARCHIVE_ROOT;
   JsonArray arr = doc["excludedFolders"];
   if (!arr.isNull()) {
     for (JsonVariant val : arr) {
@@ -140,6 +144,10 @@ bool Ao3IndexActivity::isExcluded(const std::string& path) const {
   for (const auto& excl : excludedFolders) {
     if (path == excl) return true;
   }
+  // Auto-exclude the current Archive Folder even if the user never added it
+  // to Never Index -- otherwise, if it's nested inside the AO3 Folder, a
+  // scan would walk in and re-index (un-tombstone) archived fics.
+  if (path == cachedArchiveRoot) return true;
   return false;
 }
 

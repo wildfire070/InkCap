@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdio>
 
+#include "Ao3MarkedForLaterStore.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
 #include "CrossPointSettings.h"
@@ -631,6 +633,39 @@ void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool
             return;
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(book.path, false);
+            return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(book.path, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(book.path, false);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::MarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.addBook(book.path, book.title, book.author);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnmarkForLater:
+            AO3_MARKED_FOR_LATER_STORE.removeByPath(book.path);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::ArchiveFic:
+            if (Ao3ArchiveUtils::archiveFic(book.path, book.title, book.author).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::RestoreFic:
+            if (Ao3ArchiveUtils::restoreFic(book.path).empty()) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+            }
+            reloadAfterBookAction();
             return;
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
