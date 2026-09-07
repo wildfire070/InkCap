@@ -132,6 +132,11 @@ class FileBrowserActivity final : public Activity {
   bool isBookFusionLinked(const std::string& path);
   std::map<size_t, bool> visibleBookFusionCache;
 
+  // AO3 Marked for Later: whether this file is in Ao3MarkedForLaterStore, shown
+  // via a status-badge icon variant. Cached per visible row index, same as
+  // visibleStatusCache/visibleBookFusionCache above.
+  std::map<size_t, bool> visibleMarkedForLaterCache;
+
   // Metadata sort (Mode::Books only). `files` already interleaves folders (natural-sorted,
   // pinned first) and non-folder entries; sortFiles() re-derives that ordering, replacing
   // FsHelpers::sortFileList's plain alphabetical pass with a metadata-keyed one when

@@ -311,6 +311,7 @@ void FileBrowserActivity::loadFilesLocked() {
   fileListMemoryLimited = false;
   visibleStatusCache.clear();
   visibleBookFusionCache.clear();
+  visibleMarkedForLaterCache.clear();
   for (auto& cache : sortKeyCache) cache.clear();
   for (bool& ready : sortCacheReady) ready = false;
   fileListReadFailed = false;
@@ -881,11 +882,13 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::MarkForLater: {
             const RecentBook data = RECENT_BOOKS.getDataFromBook(fullPath);
             AO3_MARKED_FOR_LATER_STORE.addBook(fullPath, data.title, data.author);
+            visibleMarkedForLaterCache[bookRow] = true;
             requestUpdate();
             return;
           }
           case FileBrowserAction::UnmarkForLater:
             AO3_MARKED_FOR_LATER_STORE.removeByPath(fullPath);
+            visibleMarkedForLaterCache[bookRow] = false;
             requestUpdate();
             return;
           case FileBrowserAction::ArchiveFic: {
@@ -1687,6 +1690,7 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
     bool isBookFusion = false;
+    bool isMarkedForLater = false;
     BookStatus rowStatus = BookStatus::START;
     if (entry.back() != '/') {
       auto cached = visibleStatusCache.find(entryIndex);
@@ -1700,6 +1704,10 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       isBookFusion = bfCached != visibleBookFusionCache.end()
                          ? bfCached->second
                          : (visibleBookFusionCache[entryIndex] = isBookFusionLinked(fullPath));
+      auto mflCached = visibleMarkedForLaterCache.find(entryIndex);
+      isMarkedForLater = mflCached != visibleMarkedForLaterCache.end()
+                            ? mflCached->second
+                            : (visibleMarkedForLaterCache[entryIndex] = AO3_MARKED_FOR_LATER_STORE.contains(fullPath));
     }
     fui::ListItem item;
     item.label = names[i].c_str();
@@ -1708,9 +1716,9 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     // of the usual file-type icon (matching InsiderPhD's original file-browser badge).
     // Otherwise a Book icon gets AvesO3's status-badge overlay (reading/finished/
     // waiting/new-chapter), baked as a pre-composited icon variant.
-    item.icon = isBookFusion
-                   ? listIconFor(UIIcon::BookFusion, twoLineRows ? 32 : 24)
-                   : listIconForBookStatus(UITheme::getFileIcon(entry), rowStatus, twoLineRows ? 32 : 24);
+    item.icon = isBookFusion ? listIconFor(UIIcon::BookFusion, twoLineRows ? 32 : 24)
+                            : listIconForBookStatus(UITheme::getFileIcon(entry), rowStatus, isMarkedForLater,
+                                                    twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);
   }
