@@ -76,11 +76,12 @@ void BookActionActivity::render(RenderLock&&) {
 
 void BookActionActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (currentStatus != initialStatus) {
-      saveStatus();
+    if (currentStatus != initialStatus || markedForLaterChanged) {
+      if (currentStatus != initialStatus) saveStatus();
       BookActionResult res;
       res.modified = true;
       res.newStatus = currentStatus;
+      res.markedForLaterChanged = markedForLaterChanged;
       setResult(ActivityResult(std::move(res)));
     }
     finish();
@@ -119,6 +120,7 @@ void BookActionActivity::loop() {
         epub.load(false, true, Epub::XLocationLoadMode::Skip);
         AO3_MARKED_FOR_LATER_STORE.addBook(filePath, epub.getTitle(), epub.getAuthor());
       }
+      markedForLaterChanged = true;
       requestUpdate(true);
     } else if (selectorIndex == 3) {
       if (bookIsArchived) {
@@ -143,6 +145,7 @@ void BookActionActivity::loop() {
               // rather than keep operating on a stale filePath.
               BookActionResult result;
               result.modified = true;
+              result.archived = true;
               setResult(ActivityResult(std::move(result)));
               finish();
               return;
