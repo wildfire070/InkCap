@@ -654,11 +654,17 @@ void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool
             reloadAfterBookAction();
             return;
           case FileBrowserAction::ArchiveFic:
-            if (Ao3ArchiveUtils::archiveFic(book.path, book.title, book.author).empty()) {
-              RenderLock lock(*this);
-              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-            }
-            reloadAfterBookAction();
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_CONFIRM_HEADING),
+                                                        tr(STR_ARCHIVE_CONFIRM_BODY)),
+                [this, book](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled &&
+                      Ao3ArchiveUtils::archiveFic(book.path, book.title, book.author).empty()) {
+                    RenderLock lock(*this);
+                    BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+                  }
+                  reloadAfterBookAction();
+                });
             return;
           case FileBrowserAction::RestoreFic:
             if (Ao3ArchiveUtils::restoreFic(book.path).empty()) {
