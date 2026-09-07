@@ -109,6 +109,14 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
+  // dc:subject tags (Calibre convention), e.g. genre/keyword tags a Calibre
+  // library or BookFusion export attaches -- distinct from AO3's own
+  // fandom/relationship tags, which are stored separately. A book can have
+  // several dc:subject elements; subjectBuffer accumulates the current one's
+  // character data, joined into tags (", "-separated) on each closing tag.
+  std::string tags;
+  std::string subjectBuffer;
+
   // BookFusion's "bookshelf" Calibre custom column (calibre:user_metadata:#bookfusionshelf),
   // written into the EPUB's own OPF metadata at export time -- no network call needed.
   std::string bookshelf;

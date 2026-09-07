@@ -608,6 +608,7 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     if (val.find("Completed") != std::string::npos) {
       self->ao3IsCompleted = true;
     }
+    self->subjectBuffer.append(s, len);
     return;
   }
 }
@@ -661,6 +662,11 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_DC_SUBJECT && strcmp(name, "dc:subject") == 0) {
+    if (!self->subjectBuffer.empty()) {
+      if (!self->tags.empty()) self->tags += ", ";
+      self->tags += self->subjectBuffer;
+    }
+    self->subjectBuffer.clear();
     self->state = IN_METADATA;
     return;
   }
