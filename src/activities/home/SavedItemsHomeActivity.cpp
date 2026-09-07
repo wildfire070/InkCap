@@ -280,7 +280,25 @@ void SavedItemsHomeActivity::showSavedKindMenu(const int bookIndex) {
           case FileBrowserAction::ViewClippings:
             openClippingList(entry);
             break;
-          default:
+          case FileBrowserAction::Delete:
+          case FileBrowserAction::PinFavorite:
+          case FileBrowserAction::UnpinFavorite:
+          case FileBrowserAction::SetSleepFolder:
+          case FileBrowserAction::ClearSleepFolder:
+          case FileBrowserAction::DeleteCache:
+          case FileBrowserAction::ToggleCompleted:
+          case FileBrowserAction::RemoveFromRecents:
+          case FileBrowserAction::DeleteStats:
+          case FileBrowserAction::DeleteBookmarks:
+          case FileBrowserAction::DeleteClippings:
+          case FileBrowserAction::EpubRenderMode:
+          case FileBrowserAction::ResetReaderSettings:
+          case FileBrowserAction::SendNearby:
+          case FileBrowserAction::BookInfo:
+          case FileBrowserAction::PinBootFavorite:
+          case FileBrowserAction::UnpinBootFavorite:
+          case FileBrowserAction::PinToHome:
+          case FileBrowserAction::UnpinFromHome:
             requestUpdate();
             break;
         }
@@ -332,7 +350,25 @@ void SavedItemsHomeActivity::showSavedBookActionMenu(const int bookIndex, const 
               CLIPPINGS.loadForBook(entry.bookPath, entry.bookTitle, entry.bookAuthor, entry.bookType);
               CLIPPINGS.clearAll();
               break;
-            default:
+            case FileBrowserAction::Delete:
+            case FileBrowserAction::PinFavorite:
+            case FileBrowserAction::UnpinFavorite:
+            case FileBrowserAction::SetSleepFolder:
+            case FileBrowserAction::ClearSleepFolder:
+            case FileBrowserAction::DeleteCache:
+            case FileBrowserAction::ToggleCompleted:
+            case FileBrowserAction::RemoveFromRecents:
+            case FileBrowserAction::DeleteStats:
+            case FileBrowserAction::ViewBookmarks:
+            case FileBrowserAction::ViewClippings:
+            case FileBrowserAction::EpubRenderMode:
+            case FileBrowserAction::ResetReaderSettings:
+            case FileBrowserAction::SendNearby:
+            case FileBrowserAction::BookInfo:
+            case FileBrowserAction::PinBootFavorite:
+            case FileBrowserAction::UnpinBootFavorite:
+            case FileBrowserAction::PinToHome:
+            case FileBrowserAction::UnpinFromHome:
               break;
           }
         }
