@@ -86,13 +86,18 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({recentIt->pinned ? FileBrowserAction::UnpinFromHome : FileBrowserAction::PinToHome,
                      recentIt->pinned ? StrId::STR_UNPIN_FROM_HOME : StrId::STR_PIN_TO_HOME});
   }
-  if (isAo3IndexedFic(fullPath)) {
+  // isArchived() must be checked BEFORE isAo3IndexedFic(): archiving moves the
+  // whole cache dir (including the sidecar isAo3IndexedFic reads) to the new
+  // path, so an archived fic's sidecar is still valid there and the indexed
+  // check alone would always be true, making this branch's Restore option
+  // unreachable.
+  if (Ao3ArchiveUtils::isArchived(fullPath)) {
+    items.push_back({FileBrowserAction::RestoreFic, StrId::STR_RESTORE_FIC});
+  } else if (isAo3IndexedFic(fullPath)) {
     const bool marked = AO3_MARKED_FOR_LATER_STORE.contains(fullPath);
     items.push_back({marked ? FileBrowserAction::UnmarkForLater : FileBrowserAction::MarkForLater,
                      marked ? StrId::STR_UNMARK_FOR_LATER : StrId::STR_MARK_FOR_LATER});
     items.push_back({FileBrowserAction::ArchiveFic, StrId::STR_ARCHIVE_FIC});
-  } else if (Ao3ArchiveUtils::isArchived(fullPath)) {
-    items.push_back({FileBrowserAction::RestoreFic, StrId::STR_RESTORE_FIC});
   }
   if (includeRemoveFromRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecents, StrId::STR_REMOVE_FROM_RECENTS_ACTION});
@@ -111,6 +116,13 @@ bool canSendNearby(const std::string& path) {
 
 void clearFileMetadata(const std::string& fullPath) {
   if (FsHelpers::hasEpubExtension(fullPath)) {
+    // Tombstone any live AO3 index record before the cache dir (which holds
+    // its sidecar) is wiped below -- otherwise a fic deleted from here
+    // (rather than from the AO3 Library's own delete path) leaves a
+    // permanent ghost row in the AO3 Library/Dashboard, since nothing else
+    // ever runs Ao3Librarian::sanitizeIndex() automatically. A no-op for a
+    // non-AO3 epub (no matching hash) or on a branch with no AO3 index file.
+    Ao3Librarian::tombstoneRecord(fullPath);
     Epub(fullPath, "/.crosspoint").clearCache();
     BookmarkStore::deleteForFilePath(fullPath, "epub");
     ClippingStore::deleteForFilePath(fullPath, "epub");

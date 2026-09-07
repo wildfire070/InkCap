@@ -281,7 +281,13 @@ void Ao3LibraryActivity::loop() {
         mappedInput.suppressCurrentTouchContact();
         selectorIndex = static_cast<size_t>(tappedItem);
         const int selPage = tappedItem / 3;
-        if (selPage != cachedPage) loadPageCache(selPage);
+        if (selPage != cachedPage) {
+          // loadPageCache() reassigns pageCache/wrappedSummary, which render()
+          // reads under its own RenderLock -- must not mutate them unlocked
+          // from loop().
+          RenderLock lock(*this);
+          loadPageCache(selPage);
+        }
         const std::string epubPath(pageCache[tappedItem % 3].filepath);
         if (!epubPath.empty()) {
           APP_STATE.ao3LibraryReturnIndex = tappedItem;
@@ -376,7 +382,12 @@ void Ao3LibraryActivity::loop() {
     if (!viewEntries.empty() && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       // Ensure the page cache is fresh for the current selector position
       const int selPage = static_cast<int>(selectorIndex) / 3;
-      if (selPage != cachedPage) loadPageCache(selPage);
+      if (selPage != cachedPage) {
+        // See the tap handler above: loadPageCache() must run under a
+        // RenderLock when called from loop(), not just from render().
+        RenderLock lock(*this);
+        loadPageCache(selPage);
+      }
 
       const int slot = static_cast<int>(selectorIndex) % 3;
       // Full epub path and title live in the ao3_library_info sidecar (page cache)
@@ -428,7 +439,20 @@ void Ao3LibraryActivity::loop() {
                 // without a full reload.
                 if (static_cast<int>(selectorIndex) / 3 == cachedPage) {
                   pageCacheStatus[selectorIndex % 3] = actionRes->newStatus;
-                  pageCacheMarkedPosition[selectorIndex % 3] = getMarkedPosition(hash);
+                  if (actionRes->markedForLaterChanged) {
+                    // AO3_MARKED_FOR_LATER_STORE is a FIFO -- a mark/unmark
+                    // shifts every other marked fic's queue position, so
+                    // refresh every cached slot's badge, not just the
+                    // acted-upon one, or a sibling row on this same page
+                    // shows a stale position digit until the page reloads.
+                    const int startIdx = cachedPage * 3;
+                    const int endIdx = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
+                    for (int i = startIdx; i < endIdx; i++) {
+                      pageCacheMarkedPosition[i - startIdx] = getMarkedPosition(viewEntries[i].cacheHash);
+                    }
+                  } else {
+                    pageCacheMarkedPosition[selectorIndex % 3] = getMarkedPosition(hash);
+                  }
                 }
               }
               requestUpdate(true);
