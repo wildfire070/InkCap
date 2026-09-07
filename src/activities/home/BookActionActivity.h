@@ -17,6 +17,10 @@ class BookActionActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   bool hasAo3LibraryInfo = false;
   bool bookIsArchived = false;
+  // Set when Mark/Unmark for Later toggles -- currentStatus alone doesn't
+  // change from this, so the Back handler needs a separate signal to know a
+  // result should still be reported (see BookActionResult::markedForLaterChanged).
+  bool markedForLaterChanged = false;
 
  public:
   BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
