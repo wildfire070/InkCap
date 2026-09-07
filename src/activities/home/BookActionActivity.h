@@ -21,6 +21,10 @@ class BookActionActivity final : public Activity {
   // change from this, so the Back handler needs a separate signal to know a
   // result should still be reported (see BookActionResult::markedForLaterChanged).
   bool markedForLaterChanged = false;
+  // Set when Restore succeeds -- like markedForLaterChanged, currentStatus
+  // doesn't change from this, so it needs its own signal for the Back
+  // handler to know a result should be reported.
+  bool wasRestored = false;
 
  public:
   BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
