@@ -38,25 +38,38 @@ std::string buildReadFolderDestination(const std::string& srcPath) {
 
 bool migrateMovedEpubState(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                            const std::string& title, const std::string& author, const bool keepInRecents) {
-  bool ok = true;
-
   const std::string newCachePath = Epub::cachePathForFilePath(newPath, "/.crosspoint");
   if (!oldCachePath.empty() && Storage.exists(oldCachePath.c_str())) {
-    if (!Storage.rename(oldCachePath.c_str(), newCachePath.c_str())) {
-      LOG_ERR("BookMove", "Failed to rename cache dir %s -> %s (non-fatal)", oldCachePath.c_str(),
+    bool cacheDirMoved = Storage.rename(oldCachePath.c_str(), newCachePath.c_str());
+    if (!cacheDirMoved) {
+      // A rename failing immediately after the epub file's own rename just
+      // succeeded on the same filesystem is almost always transient SD I/O
+      // contention -- one retry clears it in practice.
+      delay(50);
+      cacheDirMoved = Storage.rename(oldCachePath.c_str(), newCachePath.c_str());
+    }
+    if (!cacheDirMoved) {
+      // Reading progress and (for AO3) the library sidecar live in this
+      // cache dir -- bail before touching bookmarks/clippings/recents below
+      // so the caller can still roll back the epub file's own rename and
+      // keep the book at one consistent location, rather than orphaning
+      // this state under a path nothing points at anymore.
+      LOG_ERR("BookMove", "Failed to rename cache dir %s -> %s (after retry)", oldCachePath.c_str(),
               newCachePath.c_str());
-      ok = false;
+      return false;
     }
   }
 
+  // Bookmarks/clippings are independently path-keyed stores, not part of the
+  // cache dir above -- a failure here strands old-path entries rather than
+  // orphaning data, so it's logged but doesn't fail the whole migration; no
+  // caller has ever needed to roll back for this specifically.
   if (!BookmarkStore::migrateForFilePath(oldPath, newPath, title, author, "epub")) {
     LOG_ERR("BookMove", "Failed to migrate bookmarks for moved book %s -> %s", oldPath.c_str(), newPath.c_str());
-    ok = false;
   }
 
   if (!ClippingStore::migrateForFilePath(oldPath, newPath, title, author, "epub")) {
     LOG_ERR("BookMove", "Failed to migrate clippings for moved book %s -> %s", oldPath.c_str(), newPath.c_str());
-    ok = false;
   }
 
   if (keepInRecents) {
@@ -71,7 +84,7 @@ bool migrateMovedEpubState(const std::string& oldPath, const std::string& newPat
     APP_STATE.saveToFile();
   }
 
-  return ok;
+  return true;
 }
 
 }  // namespace BookMoveUtils
