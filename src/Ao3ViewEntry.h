@@ -22,15 +22,18 @@ inline uint32_t fnv1a(const char* str) {
  * @brief In-RAM sort/filter key struct — one per live book, loaded sequentially
  *        from ao3_library_index.bin at library startup.
  *
- * 42 bytes packed (pragma pack 1).
- * 42 × 1000 books = 42 KB peak RAM.
+ * 44 bytes packed (pragma pack 1).
+ * 44 × 1000 books = 44 KB peak RAM.
  */
 #pragma pack(push, 1)
 struct ViewEntry {
   uint64_t cacheHash;      // same as CompactIndexRecord.cacheHash
   uint32_t wordCount;      // word count sort
   uint32_t seriesHash;     // fnv1a(seriesName), 0 if no series
-  uint16_t addedSequence;  // date-added sort (monotonic, higher = newer), max 65535
+  uint32_t addedSequence;  // date-added sort (monotonic, higher = newer); matches
+                           // CompactIndexRecord's own width so it can't wrap
+                           // around on a device with a long archive/restore/
+                           // reindex history
   uint16_t seriesPart;     // position within series, 0 if not in a series
   char title[12];          // first 11 chars of title, null-terminated (alphabetic sort)
   char authorKey[8];       // first 7 chars of author lowercased (author sort)
@@ -56,7 +59,7 @@ inline ViewEntry buildViewEntry(const CompactIndexRecord& rec) {
   }
 
   v.wordCount = rec.wordCount;
-  v.addedSequence = static_cast<uint16_t>(rec.addedSequence);
+  v.addedSequence = rec.addedSequence;
   v.seriesHash = fnv1a(rec.seriesName);
   v.seriesPart = rec.seriesPart;
   v.cacheHash = rec.cacheHash;

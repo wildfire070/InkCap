@@ -10,6 +10,7 @@
 #include "../../util/Ao3ArchiveUtils.h"
 #include "../util/ConfirmationActivity.h"
 #include "Ao3IndexActivity.h"
+#include "BookActions.h"
 
 BookActionActivity::BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
                                        std::string fileName)
@@ -116,12 +117,17 @@ void BookActionActivity::loop() {
     } else if (selectorIndex == 2) {
       if (AO3_MARKED_FOR_LATER_STORE.contains(filePath)) {
         AO3_MARKED_FOR_LATER_STORE.removeByPath(filePath);
+        markedForLaterChanged = true;
       } else {
         Epub epub(filePath, "/.crosspoint");
         epub.load(false, true, Epub::XLocationLoadMode::Skip);
-        AO3_MARKED_FOR_LATER_STORE.addBook(filePath, epub.getTitle(), epub.getAuthor());
+        if (AO3_MARKED_FOR_LATER_STORE.addBook(filePath, epub.getTitle(), epub.getAuthor())) {
+          markedForLaterChanged = true;
+        } else {
+          RenderLock lock(*this);
+          BookActions::drawToast(renderer, tr(STR_MARKED_FOR_LATER_LIMIT_REACHED));
+        }
       }
-      markedForLaterChanged = true;
       requestUpdate(true);
     } else if (selectorIndex == 3) {
       if (bookIsArchived) {

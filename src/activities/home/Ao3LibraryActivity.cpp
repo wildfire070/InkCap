@@ -72,8 +72,16 @@ void Ao3LibraryActivity::loadFilterMode() {
 void Ao3LibraryActivity::buildAllowedHashes(const std::string& scanPath, int maxDepth) {
   allowedHashes.clear();
 
+  // Matches are collected once currentDepth >= maxDepth (see below) with no
+  // upper bound -- a deeper folder's epubs are legitimate matches too, so
+  // this can't simply stop recursing at maxDepth without also losing those.
+  // This cap is purely a safety net against pathological nesting (or a
+  // filesystem loop), set far beyond any real AO3 folder structure (which
+  // this session's own research found is at most one level deep).
+  constexpr int ABSOLUTE_MAX_RECURSION_DEPTH = 32;
+
   std::function<void(const std::string&, int)> scanRecursive = [&](const std::string& dirPath, int currentDepth) {
-    // if (currentDepth > maxDepth) return;
+    if (currentDepth > ABSOLUTE_MAX_RECURSION_DEPTH) return;
     HalFile dir = Storage.open(dirPath.c_str());
     if (!dir || !dir.isDirectory()) {
       if (dir) dir.close();
