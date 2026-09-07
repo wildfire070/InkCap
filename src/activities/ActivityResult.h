@@ -152,6 +152,11 @@ struct BookActionResult {
   // Mark/Unmark for Later toggled without any BookStatus change -- caller
   // should still refresh this entry's queue-position display.
   bool markedForLaterChanged = false;
+  // The fic was moved back into the tracked AO3 folder and re-scraped into a
+  // live index record -- its cache hash/index slot may no longer match what
+  // the caller had cached, so this should trigger a full rebuild rather than
+  // an in-place patch, the same as `indexingCompleted`.
+  bool restored = false;
 };
 
 struct AO3Result {
