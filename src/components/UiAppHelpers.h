@@ -140,9 +140,15 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
 // our fui::ListItem has only one flat icon slot, no overlay layer, so these
 // are baked composites rather than a second draw pass). Falls back to the
 // plain book icon for START (no badge) and to listIconFor() entirely for any
-// non-Book icon.
-inline freeink::ui::BitmapRef listIconForBookStatus(const UIIcon icon, const BookStatus status, const int size = 24) {
+// non-Book icon. markedForLater takes priority over status, matching
+// AvesO3's own renderStatusSymbol precedence -- a queue position is more
+// useful at a glance than a reading status the reader hasn't acted on yet.
+inline freeink::ui::BitmapRef listIconForBookStatus(const UIIcon icon, const BookStatus status,
+                                                    const bool markedForLater = false, const int size = 24) {
   if (icon == UIIcon::Book) {
+    if (markedForLater) {
+      return freeink::ui::bitmapFromIcon(size >= 32 ? icon_book_markedforlater_32 : icon_book_markedforlater_24);
+    }
     if (size >= 32) {
       switch (status) {
         case BookStatus::READING:

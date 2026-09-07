@@ -309,6 +309,7 @@ void FileBrowserActivity::loadFilesLocked() {
   clearIndexNameCache();
   fileListMemoryLimited = false;
   visibleStatusCache.clear();
+  visibleMarkedForLaterCache.clear();
   for (auto& cache : sortKeyCache) cache.clear();
   for (bool& ready : sortCacheReady) ready = false;
   fileListReadFailed = false;
@@ -879,11 +880,13 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::MarkForLater: {
             const RecentBook data = RECENT_BOOKS.getDataFromBook(fullPath);
             AO3_MARKED_FOR_LATER_STORE.addBook(fullPath, data.title, data.author);
+            visibleMarkedForLaterCache[bookRow] = true;
             requestUpdate();
             return;
           }
           case FileBrowserAction::UnmarkForLater:
             AO3_MARKED_FOR_LATER_STORE.removeByPath(fullPath);
+            visibleMarkedForLaterCache[bookRow] = false;
             requestUpdate();
             return;
           case FileBrowserAction::ArchiveFic: {
@@ -1679,6 +1682,7 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     if ((entry.back() == '/' && isPreferredSleepFolder(fullPath)) || isPinnedSleepFavorite(fullPath)) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
+    bool isMarkedForLater = false;
     BookStatus rowStatus = BookStatus::START;
     if (entry.back() != '/') {
       auto cached = visibleStatusCache.find(entryIndex);
@@ -1688,13 +1692,18 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       if (glance[0] != '\0') {
         values[i] = values[i].empty() ? glance : std::string(glance) + " " + values[i];
       }
+      auto mflCached = visibleMarkedForLaterCache.find(entryIndex);
+      isMarkedForLater = mflCached != visibleMarkedForLaterCache.end()
+                            ? mflCached->second
+                            : (visibleMarkedForLaterCache[entryIndex] = AO3_MARKED_FOR_LATER_STORE.contains(fullPath));
     }
     fui::ListItem item;
     item.label = names[i].c_str();
     if (!values[i].empty()) item.value = values[i].c_str();
     // A Book icon gets AvesO3's status-badge overlay (reading/finished/waiting/
-    // new-chapter), baked as a pre-composited icon variant.
-    item.icon = listIconForBookStatus(UITheme::getFileIcon(entry), rowStatus, twoLineRows ? 32 : 24);
+    // new-chapter/marked-for-later), baked as a pre-composited icon variant.
+    item.icon = listIconForBookStatus(UITheme::getFileIcon(entry), rowStatus, isMarkedForLater,
+                                      twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);
   }
