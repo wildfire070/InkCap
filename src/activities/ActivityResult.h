@@ -145,6 +145,13 @@ struct BookActionResult {
   bool modified = false;
   BookStatus newStatus = BookStatus::START;
   bool indexingCompleted = false;
+  // The fic moved out of the tracked AO3 folder -- caller should drop it from
+  // the current view entirely, like `deleted`, rather than treat it as an
+  // ordinary status change (it isn't at this index/cache slot anymore).
+  bool archived = false;
+  // Mark/Unmark for Later toggled without any BookStatus change -- caller
+  // should still refresh this entry's queue-position display.
+  bool markedForLaterChanged = false;
 };
 
 struct AO3Result {

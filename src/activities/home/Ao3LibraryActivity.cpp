@@ -389,12 +389,19 @@ void Ao3LibraryActivity::loop() {
         auto handler = [this, epubPath, hash](const ActivityResult& res) {
           if (const auto* actionRes = std::get_if<BookActionResult>(&res.data)) {
             if (actionRes->modified) {
-              if (actionRes->deleted) {
-                // Tombstone in the index, remove file + cache from disk
-                Ao3Librarian::tombstoneRecord(epubPath);
-                if (Storage.remove(epubPath.c_str())) {
-                  Epub(epubPath, "/.crosspoint").clearCache();
+              if (actionRes->deleted || actionRes->archived) {
+                if (actionRes->deleted) {
+                  // Tombstone in the index, remove file + cache from disk
+                  Ao3Librarian::tombstoneRecord(epubPath);
+                  if (Storage.remove(epubPath.c_str())) {
+                    Epub(epubPath, "/.crosspoint").clearCache();
+                  }
                 }
+                // Archiving already tombstoned the record and moved the
+                // file/cache itself (Ao3ArchiveUtils::archiveFic) -- either
+                // way the fic no longer belongs at this index, so just drop
+                // it from the in-RAM view rather than leave a stale row
+                // showing a bogus reset status.
                 // Remove from in-RAM viewEntries (no full reload needed)
                 auto it = std::find_if(viewEntries.begin(), viewEntries.end(),
                                        [hash](const ViewEntry& v) { return v.cacheHash == hash; });
@@ -412,9 +419,11 @@ void Ao3LibraryActivity::loop() {
               } else if (actionRes->indexingCompleted) {
                 rebuildViewEntries();
               } else {
-                // Status change only — update in-place without a full reload
+                // Status and/or Marked-for-Later change — update in-place
+                // without a full reload.
                 if (static_cast<int>(selectorIndex) / 3 == cachedPage) {
                   pageCacheStatus[selectorIndex % 3] = actionRes->newStatus;
+                  pageCacheMarkedPosition[selectorIndex % 3] = getMarkedPosition(hash);
                 }
               }
               requestUpdate(true);
