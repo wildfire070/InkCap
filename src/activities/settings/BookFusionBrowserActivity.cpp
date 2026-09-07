@@ -5,12 +5,14 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <InflateStream.h>
 #include <Logging.h>
 #include <WiFi.h>
 #include <strings.h>
 
 #include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
+#include "RecentBooksStore.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
@@ -1340,6 +1342,21 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     // Cover was already fetched into this same cache path before the
     // transfer started (see above) -- nothing left to do here for it.
     BookFusionBookIdStore::saveBookId(filename, book.bookId);
+
+    // Build the metadata cache and add to Recent Books right away, matching
+    // InsiderPhD's fork -- otherwise Book Info and Recent Books both stay
+    // empty for this book until it's opened once. Only attempted with enough
+    // contiguous heap for the zip-inflate dictionary this needs (the same
+    // guard Section.cpp uses for its own large decompression); skipped
+    // silently under heap pressure rather than risking the crash the
+    // no-cover-fetch comment above was written to avoid -- falls back to
+    // today's lazy metadata-on-first-open behavior in that case.
+    if (ESP.getMaxAllocHeap() >= InflateStream::requiredStorageSize(true)) {
+      Epub epub(filename, "/.crosspoint");
+      if (epub.load(true, true)) {
+        RECENT_BOOKS.addOrUpdateBook(filename, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath());
+      }
+    }
     state = BrowserState::DOWNLOAD_COMPLETE;
   } else if (result == HttpDownloader::ABORTED) {
     LOG_INF("BFBrowser", "Download cancelled");
