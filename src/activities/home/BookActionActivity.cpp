@@ -76,12 +76,13 @@ void BookActionActivity::render(RenderLock&&) {
 
 void BookActionActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (currentStatus != initialStatus || markedForLaterChanged) {
+    if (currentStatus != initialStatus || markedForLaterChanged || wasRestored) {
       if (currentStatus != initialStatus) saveStatus();
       BookActionResult res;
       res.modified = true;
       res.newStatus = currentStatus;
       res.markedForLaterChanged = markedForLaterChanged;
+      res.restored = wasRestored;
       setResult(ActivityResult(std::move(res)));
     }
     finish();
@@ -128,6 +129,7 @@ void BookActionActivity::loop() {
         if (!restoredPath.empty()) {
           filePath = restoredPath;
           bookIsArchived = false;
+          wasRestored = true;
         }
         requestUpdate(true);
       } else {

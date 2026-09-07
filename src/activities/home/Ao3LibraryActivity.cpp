@@ -416,7 +416,12 @@ void Ao3LibraryActivity::loop() {
                   selectorIndex = 0;
                 }
                 cachedPage = -1;  // invalidate so next render reloads page cache
-              } else if (actionRes->indexingCompleted) {
+              } else if (actionRes->indexingCompleted || actionRes->restored) {
+                // Restore re-scrapes a fresh live index record -- this fic's
+                // cache hash/index slot may not match what's cached here
+                // (it may not even have been a normal live entry a moment
+                // ago), so a full rebuild is the safe choice rather than an
+                // in-place patch.
                 rebuildViewEntries();
               } else {
                 // Status and/or Marked-for-Later change — update in-place
