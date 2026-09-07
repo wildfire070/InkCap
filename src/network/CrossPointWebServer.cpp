@@ -890,6 +890,27 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
     LOG_DBG("WEB", "[UPLOAD] Free heap: %d bytes", ESP.getFreeHeap());
 
+    // Reject up front if the whole request (an overestimate of this one
+    // file's size, since it also covers multipart boundaries/other fields --
+    // the safe direction for this check) clearly won't fit, rather than
+    // relying purely on a write failure partway through.
+    const String contentLength = server->header("Content-Length");
+    if (contentLength.length() > 0) {
+      uint64_t total = 0;
+      uint64_t used = 0;
+#ifndef SIMULATOR
+      total = Storage.totalBytes();
+      used = Storage.usedBytes();
+#endif
+      const uint64_t declaredSize = strtoull(contentLength.c_str(), nullptr, 10);
+      if (total > 0 && used <= total && declaredSize > total - used) {
+        state.error = "Not enough free space on SD card";
+        LOG_DBG("WEB", "[UPLOAD] Rejecting %s, declared size %llu exceeds free space", state.fileName.c_str(),
+                (unsigned long long)declaredSize);
+        return;
+      }
+    }
+
     String filePath = state.path;
     if (!filePath.endsWith("/")) filePath += "/";
     filePath += state.fileName;
@@ -935,6 +956,14 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
           if (!flushUploadBuffer(state)) {
             state.error = "Failed to write to SD card - disk may be full";
             state.file.close();
+            // Don't leave a truncated file at the real target filename -- a
+            // retry of the same upload would otherwise hit the "File
+            // already exists" collision check above and be stuck until the
+            // user manually deletes it via the file browser.
+            String filePath = state.path;
+            if (!filePath.endsWith("/")) filePath += "/";
+            filePath += state.fileName;
+            Storage.remove(filePath.c_str());
             return;
           }
         }
@@ -963,6 +992,14 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         filePath += state.fileName;
         clearBookCachePreservingUserState(filePath.c_str());
         ImageFolderIndex::invalidateForPath(filePath.c_str());
+      } else {
+        // The final flush failed -- don't leave a truncated file at the
+        // real target filename, or a retry hits the "File already exists"
+        // collision check and is stuck until manually deleted.
+        String filePath = state.path;
+        if (!filePath.endsWith("/")) filePath += "/";
+        filePath += state.fileName;
+        Storage.remove(filePath.c_str());
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -1841,8 +1878,9 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
     }
 
     case WStype_TEXT: {
-      // Parse control messages
-      String msg = String((char*)payload);
+      // Parse control messages. Built from the explicit frame length rather
+      // than trusting the library to null-terminate the buffer after it.
+      String msg((const char*)payload, length);
 
       if (msg.startsWith("START:")) {
         // Reject any START while an upload is already active to prevent
@@ -1870,7 +1908,11 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsServer->sendTXT(num, "ERROR:Invalid START format");
             return;
           }
-          wsUploadSize = sizeToken.toInt();
+          // sizeToken was already validated above as digits-only (with an
+          // optional leading '+'), but String::toInt() returns a 32-bit
+          // long and can silently overflow on a legitimately all-digit but
+          // very large token; strtoull avoids that.
+          wsUploadSize = static_cast<size_t>(strtoull(sizeToken.c_str(), nullptr, 10));
           wsUploadPath = normalizeWebPath(msg.substring(secondColon + 1));
           wsUploadReceived = 0;
           wsLastProgressSent = 0;
@@ -1895,6 +1937,21 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           LOG_DBG("WS", "Starting upload: %s (%d bytes) to %s", wsUploadFileName.c_str(), wsUploadSize,
                   filePath.c_str());
+
+          // Reject up front if the declared size clearly won't fit, rather
+          // than relying purely on a write failure partway through.
+          {
+            uint64_t total = 0;
+            uint64_t used = 0;
+#ifndef SIMULATOR
+            total = Storage.totalBytes();
+            used = Storage.usedBytes();
+#endif
+            if (total > 0 && used <= total && static_cast<uint64_t>(wsUploadSize) > total - used) {
+              wsServer->sendTXT(num, "ERROR:Not enough free space on SD card");
+              return;
+            }
+          }
 
           // Open file for writing
           if (!Storage.openFileForWrite("WS", filePath, wsUploadFile)) {
@@ -2144,7 +2201,13 @@ void CrossPointWebServer::handleFontUploadData() {
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          if (written != fontUpload.bufferPos) {
+            LOG_ERR("WEB", "Font upload write failed: expected %zu, wrote %zu", fontUpload.bufferPos, written);
+            fontUpload.valid = false;
+            fontUpload.bufferPos = 0;
+            break;
+          }
           fontUpload.bytesWritten += fontUpload.bufferPos;
           fontUpload.bufferPos = 0;
         }
@@ -2155,8 +2218,12 @@ void CrossPointWebServer::handleFontUploadData() {
     case UPLOAD_FILE_END: {
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
-        fontUpload.bytesWritten += fontUpload.bufferPos;
+        const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        if (written != fontUpload.bufferPos) {
+          LOG_ERR("WEB", "Font upload final flush failed: expected %zu, wrote %zu", fontUpload.bufferPos, written);
+          fontUpload.valid = false;
+        }
+        fontUpload.bytesWritten += written;
         fontUpload.bufferPos = 0;
       }
       if (fontUpload.file.isOpen()) {

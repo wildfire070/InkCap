@@ -243,6 +243,13 @@ void NearbyBookTransferActivity::processPackets() {
 
 void NearbyBookTransferActivity::handlePacket(const nearby::EspNowTransport::Event& event,
                                               const nearby::PacketView& packet) {
+  // This mutates state_/session_/peers_/offeredFileName_/senderName_/
+  // finalPath_ -- all read by render() on the render task while holding its
+  // own RenderLock -- and everything this function calls into (setState(),
+  // setError(), sendNextChunk(), finishReceivedFile()) does the same
+  // without taking a lock of its own, relying on this one. RenderLock is
+  // released automatically on any of this function's many early returns.
+  RenderLock lock(*this);
   if (packet.type == nearby::PacketType::Discover && state_ == State::Listening) {
     sessionId_ = packet.sessionId;
     sendAdvertisement(event.sourceMac.data());
