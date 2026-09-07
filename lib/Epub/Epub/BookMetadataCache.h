@@ -15,6 +15,7 @@ class BookMetadataCache {
     std::string title;
     std::string author;
     std::string language;
+    std::string tags;  // dc:subject, ", "-joined (Calibre convention)
     std::string coverItemHref;
     std::string textReferenceHref;
     // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookfusionshelf),

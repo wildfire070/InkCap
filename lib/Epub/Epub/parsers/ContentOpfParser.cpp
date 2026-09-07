@@ -321,6 +321,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
+  if (self->state == IN_METADATA && strcmp(name, "dc:subject") == 0) {
+    self->state = IN_DC_SUBJECT;
+    return;
+  }
+
   if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_MANIFEST;
     if (!Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
@@ -556,6 +561,11 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  if (self->state == IN_DC_SUBJECT) {
+    self->subjectBuffer.append(s, len);
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -586,6 +596,16 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_AUTHOR && strcmp(name, "dc:creator") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_SUBJECT && strcmp(name, "dc:subject") == 0) {
+    if (!self->subjectBuffer.empty()) {
+      if (!self->tags.empty()) self->tags += ", ";
+      self->tags += self->subjectBuffer;
+    }
+    self->subjectBuffer.clear();
     self->state = IN_METADATA;
     return;
   }

@@ -14,7 +14,8 @@
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
 constexpr uint8_t BOOK_CACHE_VERSION =
-    12;  // v12: fixed bookshelf column name; added chapters, completionStatus, updatedDate, liked, readStatus
+    13;  // v13: added tags (dc:subject); v12: fixed bookshelf column name; added
+         // chapters, completionStatus, updatedDate, liked, readStatus
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
@@ -208,11 +209,12 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::BufferedFileReader spineIn(spineFile, BUILD_IO_BUFFER_SIZE);
   serialization::BufferedFileReader tocIn(tocFile, BUILD_IO_BUFFER_SIZE);
   const uint32_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
-                                metadata.coverItemHref.size() + metadata.textReferenceHref.size() +
-                                metadata.bookshelf.size() + metadata.seriesName.size() + metadata.seriesIndex.size() +
+                                metadata.tags.size() + metadata.coverItemHref.size() +
+                                metadata.textReferenceHref.size() + metadata.bookshelf.size() +
+                                metadata.seriesName.size() + metadata.seriesIndex.size() +
                                 metadata.contentRating.size() + metadata.chapters.size() +
                                 metadata.completionStatus.size() + metadata.updatedDate.size() +
-                                sizeof(uint32_t) * 12 + sizeof(metadata.liked) + sizeof(metadata.readStatus);
+                                sizeof(uint32_t) * 13 + sizeof(metadata.liked) + sizeof(metadata.readStatus);
   const uint32_t lutSize = sizeof(uint32_t) * spineCount + sizeof(uint32_t) * tocCount;
   const uint32_t lutOffset = headerASize + metadataSize;
 
@@ -226,6 +228,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::writeString(bookOut, metadata.title);
   serialization::writeString(bookOut, metadata.author);
   serialization::writeString(bookOut, metadata.language);
+  serialization::writeString(bookOut, metadata.tags);
   serialization::writeString(bookOut, metadata.coverItemHref);
   serialization::writeString(bookOut, metadata.textReferenceHref);
   serialization::writeString(bookOut, metadata.bookshelf);
@@ -547,6 +550,7 @@ bool BookMetadataCache::load() {
       !serialization::tryReadPod(bookFile, tocCount) || !serialization::tryReadString(bookFile, coreMetadata.title) ||
       !serialization::tryReadString(bookFile, coreMetadata.author) ||
       !serialization::tryReadString(bookFile, coreMetadata.language) ||
+      !serialization::tryReadString(bookFile, coreMetadata.tags) ||
       !serialization::tryReadString(bookFile, coreMetadata.coverItemHref) ||
       !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref) ||
       !serialization::tryReadString(bookFile, coreMetadata.bookshelf) ||

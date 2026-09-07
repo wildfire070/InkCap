@@ -18,6 +18,7 @@ class ContentOpfParser final : public Print {
     IN_BOOK_TITLE,
     IN_BOOK_AUTHOR,
     IN_BOOK_LANGUAGE,
+    IN_DC_SUBJECT,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -98,6 +99,13 @@ class ContentOpfParser final : public Print {
   std::string guideCoverPageHref;  // Guide reference with type="cover" or "cover-page" (points to XHTML wrapper)
   std::string textReferenceHref;
   std::vector<std::string> cssFiles;  // CSS stylesheet paths
+
+  // dc:subject tags (Calibre convention), e.g. genre/keyword tags a Calibre
+  // library or BookFusion export attaches. A book can have several dc:subject
+  // elements; subjectBuffer accumulates the current one's character data,
+  // joined into tags (", "-separated) on each closing tag.
+  std::string tags;
+  std::string subjectBuffer;
 
   // BookFusion's "bookshelf" Calibre custom column (calibre:user_metadata:#bookfusionshelf),
   // written into the EPUB's own OPF metadata at export time -- no network call needed.
