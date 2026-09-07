@@ -1351,11 +1351,24 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     // silently under heap pressure rather than risking the crash the
     // no-cover-fetch comment above was written to avoid -- falls back to
     // today's lazy metadata-on-first-open behavior in that case.
-    if (ESP.getMaxAllocHeap() >= InflateStream::requiredStorageSize(true)) {
+    // TEMPORARY: measuring how often this guard actually trips on real
+    // hardware, to decide whether a framebuffer-leased inflate scratch
+    // buffer (like InsiderPhD's, which this codebase has no equivalent of)
+    // is worth building so the eager load always succeeds instead of falling
+    // back. Remove once that's answered.
+    const size_t maxAllocHeap = ESP.getMaxAllocHeap();
+    const size_t requiredHeap = InflateStream::requiredStorageSize(true);
+    if (maxAllocHeap >= requiredHeap) {
       Epub epub(filename, "/.crosspoint");
-      if (epub.load(true, true)) {
+      const bool loaded = epub.load(true, true);
+      LOG_INF("BFBrowser", "Eager metadata load: heap guard passed (%u >= %u), epub.load() %s",
+              (unsigned)maxAllocHeap, (unsigned)requiredHeap, loaded ? "succeeded" : "FAILED");
+      if (loaded) {
         RECENT_BOOKS.addOrUpdateBook(filename, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath());
       }
+    } else {
+      LOG_INF("BFBrowser", "Eager metadata load: heap guard FAILED (%u < %u), falling back to lazy load",
+              (unsigned)maxAllocHeap, (unsigned)requiredHeap);
     }
     state = BrowserState::DOWNLOAD_COMPLETE;
   } else if (result == HttpDownloader::ABORTED) {
