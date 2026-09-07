@@ -1301,11 +1301,16 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   uint16_t recordCount;
   uint32_t nextSequence;
   uint8_t reserved[1];
-  f.read(magic, 4);
-  f.read(&version, 1);
-  f.read((uint8_t*)&recordCount, 2);
-  f.read((uint8_t*)&nextSequence, 4);
-  f.read(reserved, 1);
+  const bool headerReadOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 &&
+                            f.read((uint8_t*)&recordCount, 2) == 2 && f.read((uint8_t*)&nextSequence, 4) == 4 &&
+                            f.read(reserved, 1) == 1;
+  if (!headerReadOk) {
+    // The file was just validated above, so a failure here is a transient
+    // read error rather than a format mismatch -- don't drive the
+    // update/append loop below off a garbage recordCount.
+    f.close();
+    return false;
+  }
 
   int32_t updateSlot = -1;
   uint32_t preservedSeq = 0;

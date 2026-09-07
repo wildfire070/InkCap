@@ -69,10 +69,6 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
     return "";
   }
 
-  // Hashes srcPath itself to find the record, so this must run with the OLD
-  // path, before any cache-dir renaming below.
-  Ao3Librarian::tombstoneRecord(srcPath);
-
   // Preserve the Marked-for-Later flag across the archive so restoreFic() can
   // bring it back -- a small marker file in the cache dir, which moves along
   // with bookmarks/clippings/etc. via migrateMovedEpubState below, rather
@@ -83,9 +79,20 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
   }
 
   if (!BookMoveUtils::migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author, /*keepInRecents=*/true)) {
-    LOG_ERR("Ao3Archive", "Partial failure migrating state for %s -> %s (non-fatal)", srcPath.c_str(),
-            dstPath.c_str());
+    // The cache dir carries reading progress and the AO3 sidecar -- if it
+    // didn't move, the fic must not appear to have moved either, or it ends
+    // up split across two locations with orphaned state. Undo the file move
+    // (the cache dir itself never moved in this failure case, so nothing
+    // else needs unwinding) rather than treat this as non-fatal.
+    LOG_ERR("Ao3Archive", "State migration failed for %s -> %s, rolling back", srcPath.c_str(), dstPath.c_str());
+    Storage.rename(dstPath.c_str(), srcPath.c_str());
+    return "";
   }
+
+  // Hashes srcPath itself to find the record -- the epub's own file path,
+  // not its cache dir, so this is safe to run only once the migration above
+  // has actually succeeded.
+  Ao3Librarian::tombstoneRecord(srcPath);
 
   AO3_MARKED_FOR_LATER_STORE.removeByPath(srcPath);
   AO3_NEW_CHAPTERS_STORE.removeByPath(srcPath);
@@ -133,8 +140,15 @@ std::string restoreFic(const std::string& archivedPath) {
 
   if (!BookMoveUtils::migrateMovedEpubState(archivedPath, restoredPath, oldCachePath, meta.title, meta.author,
                                             /*keepInRecents=*/true)) {
-    LOG_ERR("Ao3Archive", "Partial failure migrating state for %s -> %s (non-fatal)", archivedPath.c_str(),
+    LOG_ERR("Ao3Archive", "State migration failed for %s -> %s, rolling back", archivedPath.c_str(),
             restoredPath.c_str());
+    Storage.rename(restoredPath.c_str(), archivedPath.c_str());
+    // The marker file was already cleared above; the cache dir never moved
+    // in this failure case (still at oldCachePath), so restore it there too.
+    if (wasMarkedForLater) {
+      Storage.writeFile(markerPath.c_str(), "");
+    }
+    return "";
   }
 
   // Recreates a live index record at the restored path's hash; the
