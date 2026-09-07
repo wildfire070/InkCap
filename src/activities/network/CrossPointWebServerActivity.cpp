@@ -383,37 +383,48 @@ void CrossPointWebServerActivity::loop() {
         // Driver auto-reconnect handles retries; abandon (via onGoHome) only
         // after WIFI_ABANDON_MS, otherwise the activity freezes on a blip.
         bool repaint = false;
-        if (wifiStatus != WL_CONNECTED) {
-          if (consecutiveDisconnects == 0) {
-            firstDisconnectAt = millis();
-            repaint = true;
+        bool abandoning = false;
+        {
+          // consecutiveDisconnects/lastWifiBars are read by renderWifiIndicator()
+          // on the render task with no lock of its own on that side either --
+          // this is the only place they're mutated, so guard it here.
+          RenderLock lock(*this);
+          if (wifiStatus != WL_CONNECTED) {
+            if (consecutiveDisconnects == 0) {
+              firstDisconnectAt = millis();
+              repaint = true;
+            }
+            consecutiveDisconnects++;
+            LOG_DBG("WEBACT", "WiFi not connected (status=%d, consecutive=%d, total=%lu ms)", wifiStatus,
+                    consecutiveDisconnects, millis() - firstDisconnectAt);
+            if (millis() - firstDisconnectAt > WIFI_ABANDON_MS) {
+              LOG_DBG("WEBACT", "WiFi unavailable for >%lu s; returning to network selection",
+                      WIFI_ABANDON_MS / 1000UL);
+              state = WebServerActivityState::SHUTTING_DOWN;
+              abandoning = true;
+            }
+          } else {
+            if (consecutiveDisconnects > 0) {
+              LOG_DBG("WEBACT", "WiFi recovered after %d failed checks (%lu ms)", consecutiveDisconnects,
+                      millis() - firstDisconnectAt);
+              repaint = true;
+            }
+            consecutiveDisconnects = 0;
+            firstDisconnectAt = 0;
+            const int rssi = WiFi.RSSI();
+            if (rssi < -75) {
+              LOG_DBG("WEBACT", "Warning: Weak WiFi signal: %d dBm", rssi);
+            }
+            const int bars = barsForRssi(rssi, lastWifiBars);
+            if (bars != lastWifiBars) {
+              lastWifiBars = bars;
+              repaint = true;
+            }
           }
-          consecutiveDisconnects++;
-          LOG_DBG("WEBACT", "WiFi not connected (status=%d, consecutive=%d, total=%lu ms)", wifiStatus,
-                  consecutiveDisconnects, millis() - firstDisconnectAt);
-          if (millis() - firstDisconnectAt > WIFI_ABANDON_MS) {
-            LOG_DBG("WEBACT", "WiFi unavailable for >%lu s; returning to network selection", WIFI_ABANDON_MS / 1000UL);
-            state = WebServerActivityState::SHUTTING_DOWN;
-            onGoHome();
-            return;
-          }
-        } else {
-          if (consecutiveDisconnects > 0) {
-            LOG_DBG("WEBACT", "WiFi recovered after %d failed checks (%lu ms)", consecutiveDisconnects,
-                    millis() - firstDisconnectAt);
-            repaint = true;
-          }
-          consecutiveDisconnects = 0;
-          firstDisconnectAt = 0;
-          const int rssi = WiFi.RSSI();
-          if (rssi < -75) {
-            LOG_DBG("WEBACT", "Warning: Weak WiFi signal: %d dBm", rssi);
-          }
-          const int bars = barsForRssi(rssi, lastWifiBars);
-          if (bars != lastWifiBars) {
-            lastWifiBars = bars;
-            repaint = true;
-          }
+        }
+        if (abandoning) {
+          onGoHome();
+          return;
         }
         if (repaint) requestUpdate();
       }

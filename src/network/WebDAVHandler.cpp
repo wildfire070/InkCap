@@ -91,6 +91,27 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
       if (existing) existing.close();
     }
 
+    // Reject up front if the declared size clearly won't fit, rather than
+    // relying purely on a write failure partway through -- matches the
+    // check NearbyBookTransferActivity::acceptOffer() already does before
+    // accepting an incoming file.
+    const String contentLength = server.header("Content-Length");
+    if (contentLength.length() > 0) {
+      uint64_t total = 0;
+      uint64_t used = 0;
+#ifndef SIMULATOR
+      total = Storage.totalBytes();
+      used = Storage.usedBytes();
+#endif
+      const uint64_t declaredSize = strtoull(contentLength.c_str(), nullptr, 10);
+      if (total > 0 && used <= total && declaredSize > total - used) {
+        _putOk = false;
+        LOG_DBG("DAV", "PUT START: rejecting %s, declared size %llu exceeds free space", _putPath.c_str(),
+                (unsigned long long)declaredSize);
+        return;
+      }
+    }
+
     // Write to a temp file to avoid destroying the original on failed upload
     String tempPath = _putPath + ".davtmp";
     Storage.remove(tempPath.c_str());
