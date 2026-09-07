@@ -73,6 +73,15 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
   // path, before any cache-dir renaming below.
   Ao3Librarian::tombstoneRecord(srcPath);
 
+  // Preserve the Marked-for-Later flag across the archive so restoreFic() can
+  // bring it back -- a small marker file in the cache dir, which moves along
+  // with bookmarks/clippings/etc. via migrateMovedEpubState below, rather
+  // than a new field on the versioned Ao3LibraryMetadata sidecar.
+  const bool wasMarkedForLater = AO3_MARKED_FOR_LATER_STORE.contains(srcPath);
+  if (wasMarkedForLater) {
+    Storage.writeFile((oldCachePath + "/marked_for_later").c_str(), "");
+  }
+
   if (!BookMoveUtils::migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author, /*keepInRecents=*/true)) {
     LOG_ERR("Ao3Archive", "Partial failure migrating state for %s -> %s (non-fatal)", srcPath.c_str(),
             dstPath.c_str());
@@ -94,6 +103,12 @@ std::string restoreFic(const std::string& archivedPath) {
   }
 
   const std::string oldCachePath = archivedEpub.getCachePath();
+  const std::string markerPath = oldCachePath + "/marked_for_later";
+  const bool wasMarkedForLater = Storage.exists(markerPath.c_str());
+  if (wasMarkedForLater) {
+    Storage.remove(markerPath.c_str());
+  }
+
   std::string restoredPath = meta.filepath;
   if (Storage.exists(restoredPath.c_str())) {
     // Something already occupies the original path (e.g. a re-download) --
@@ -127,6 +142,10 @@ std::string restoreFic(const std::string& archivedPath) {
   // cacheHash, so this lands cleanly with no manual un-tombstone step.
   const Epub restoredEpub(restoredPath, "/.crosspoint");
   Ao3Librarian::scrape(restoredEpub, /*force=*/true);
+
+  if (wasMarkedForLater) {
+    AO3_MARKED_FOR_LATER_STORE.addBook(restoredPath, meta.title, meta.author);
+  }
 
   return restoredPath;
 }
