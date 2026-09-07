@@ -1,6 +1,7 @@
 #include "RecentBooksActivity.h"
 
 #include <Arduino.h>
+#include <Epub.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "Ao3Librarian.h"
 #include "Ao3MarkedForLaterStore.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
@@ -771,7 +773,11 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
     item.label = row.title.c_str();
     if (!row.author.empty()) item.subtitle = row.author.c_str();
     if (!row.value.empty()) item.value = row.value.c_str();  // queue position, MarkedForLater tab only
-    item.icon = listIconFor(UITheme::getFileIcon(row.path), 32);  // subtitle rows carry the larger icon
+    const UIIcon fileIcon = UITheme::getFileIcon(row.path);
+    const BookStatus status = fileIcon == UIIcon::Book
+                                  ? Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(row.path, "/.crosspoint"))
+                                  : BookStatus::START;
+    item.icon = listIconForBookStatus(fileIcon, status, 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(items.size());
     items.push_back(item);
   }
