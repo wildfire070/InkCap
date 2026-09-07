@@ -1687,12 +1687,12 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
     bool isBookFusion = false;
+    BookStatus rowStatus = BookStatus::START;
     if (entry.back() != '/') {
       auto cached = visibleStatusCache.find(entryIndex);
-      const BookStatus status = cached != visibleStatusCache.end()
-                                    ? cached->second
-                                    : (visibleStatusCache[entryIndex] = getBookStatus(fullPath));
-      const char* glance = ao3StatusGlance(status);
+      rowStatus = cached != visibleStatusCache.end() ? cached->second
+                                                     : (visibleStatusCache[entryIndex] = getBookStatus(fullPath));
+      const char* glance = ao3StatusGlance(rowStatus);
       if (glance[0] != '\0') {
         values[i] = values[i].empty() ? glance : std::string(glance) + " " + values[i];
       }
@@ -1706,7 +1706,11 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     if (!values[i].empty()) item.value = values[i].c_str();
     // BookFusion-linked books display the BF mark in the row's icon slot instead
     // of the usual file-type icon (matching InsiderPhD's original file-browser badge).
-    item.icon = listIconFor(isBookFusion ? UIIcon::BookFusion : UITheme::getFileIcon(entry), twoLineRows ? 32 : 24);
+    // Otherwise a Book icon gets AvesO3's status-badge overlay (reading/finished/
+    // waiting/new-chapter), baked as a pre-composited icon variant.
+    item.icon = isBookFusion
+                   ? listIconFor(UIIcon::BookFusion, twoLineRows ? 32 : 24)
+                   : listIconForBookStatus(UITheme::getFileIcon(entry), rowStatus, twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);
   }

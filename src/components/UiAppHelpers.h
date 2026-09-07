@@ -12,7 +12,9 @@
 #include "components/UIThemeTokens.h"
 #include "components/icons/icon_ao3.h"
 #include "components/icons/icon_bookfusion.h"
+#include "components/icons/bookStatusIcons.h"
 #include "components/icons/listIcons.h"
+#include "BookStatus.h"
 
 // Shared glue for activities hosting a FreeInkApp: the font-bound render
 // target and the touch snapshot FreeInkApp routing consumes.
@@ -152,6 +154,45 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
     default:
       return {};
   }
+}
+
+// listIconFor(), but for a Book icon specifically, swaps in a pre-composited
+// status-badge variant (ported from AvesO3's LyraTheme.cpp status overlay --
+// our fui::ListItem has only one flat icon slot, no overlay layer, so these
+// are baked composites rather than a second draw pass). Falls back to the
+// plain book icon for START (no badge) and to listIconFor() entirely for any
+// non-Book icon.
+inline freeink::ui::BitmapRef listIconForBookStatus(const UIIcon icon, const BookStatus status, const int size = 24) {
+  if (icon == UIIcon::Book) {
+    if (size >= 32) {
+      switch (status) {
+        case BookStatus::READING:
+          return freeink::ui::bitmapFromIcon(icon_book_reading_32);
+        case BookStatus::FINISHED:
+          return freeink::ui::bitmapFromIcon(icon_book_finished_32);
+        case BookStatus::WAITING_FOR_CHAPTER:
+          return freeink::ui::bitmapFromIcon(icon_book_waiting_32);
+        case BookStatus::NEW_CHAPTER_AVAILABLE:
+          return freeink::ui::bitmapFromIcon(icon_book_newchapter_32);
+        default:
+          break;
+      }
+    } else {
+      switch (status) {
+        case BookStatus::READING:
+          return freeink::ui::bitmapFromIcon(icon_book_reading_24);
+        case BookStatus::FINISHED:
+          return freeink::ui::bitmapFromIcon(icon_book_finished_24);
+        case BookStatus::WAITING_FOR_CHAPTER:
+          return freeink::ui::bitmapFromIcon(icon_book_waiting_24);
+        case BookStatus::NEW_CHAPTER_AVAILABLE:
+          return freeink::ui::bitmapFromIcon(icon_book_newchapter_24);
+        default:
+          break;
+      }
+    }
+  }
+  return listIconFor(icon, size);
 }
 
 // Legacy GfxRenderer icon arrays are pre-rotated. Render SDK Lucide assets through
