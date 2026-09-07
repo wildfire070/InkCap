@@ -97,6 +97,7 @@ void BookDetailsActivity::loadMetadata() {
   if (author.empty()) author = epub.getAuthor();
   seriesName = epub.getSeriesName();
   seriesIndex = epub.getSeriesIndex();
+  tags = epub.getTags();
   contentRating = epub.getContentRating();
   completionStatus = epub.getCompletionStatus();
   chapters = epub.getChapters();
@@ -254,6 +255,7 @@ void BookDetailsActivity::render(RenderLock&&) {
   if (!author.empty()) y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_AUTHOR), author);
   if (!seriesName.empty()) y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_SERIES), seriesName);
   if (!seriesIndex.empty()) y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_NUMBER), seriesIndex);
+  if (!tags.empty()) y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_TAGS), tags);
   if (!contentRating.empty()) y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_RATING), contentRating);
   if (!completionStatus.empty())
     y = drawInfoRow(renderer, textX, y, textWidth, tr(STR_BOOK_INFO_STATUS), completionStatus);

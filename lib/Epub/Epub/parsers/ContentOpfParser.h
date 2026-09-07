@@ -111,6 +111,14 @@ class ContentOpfParser final : public Print {
 
   // Calibre custom-column metadata, parsed straight from the EPUB's own OPF --
   // no network call needed.
+  // dc:subject tags (Calibre convention), e.g. genre/keyword tags a Calibre
+  // library export attaches -- distinct from AO3's own fandom/relationship
+  // tags, which are stored separately. A book can have several dc:subject
+  // elements; subjectBuffer accumulates the current one's character data,
+  // joined into tags (", "-separated) on each closing tag.
+  std::string tags;
+  std::string subjectBuffer;
+
   std::string seriesName;   // calibre:series
   std::string seriesIndex;  // calibre:series_index
   // User's own Calibre custom column for content rating (Explicit/Mature/General/

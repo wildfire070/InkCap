@@ -27,6 +27,7 @@ class BookDetailsActivity final : public Activity {
   std::string author;
   std::string seriesName;
   std::string seriesIndex;
+  std::string tags;
   std::string contentRating;
   std::string completionStatus;
   std::string chapters;

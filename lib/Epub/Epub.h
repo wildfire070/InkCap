@@ -127,6 +127,9 @@ class Epub {
   const std::string& getTitle() const;
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
+  // dc:subject tags (Calibre convention), ", "-joined. Distinct from AO3's own
+  // fandom/relationship tags.
+  const std::string& getTags() const;
   // True when parsed EPUB metadata identifies a cover image. Requires load().
   bool hasCoverImage() const;
   std::string getCoverBmpPath(bool cropped = false) const;
