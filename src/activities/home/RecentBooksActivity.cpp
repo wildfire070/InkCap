@@ -777,7 +777,10 @@ void RecentBooksActivity::buildListScreen(UiApp::ScreenType& screen) {
     const BookStatus status = fileIcon == UIIcon::Book
                                   ? Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(row.path, "/.crosspoint"))
                                   : BookStatus::START;
-    item.icon = listIconForBookStatus(fileIcon, status, 32);  // subtitle rows carry the larger icon
+    // Always checked, not just on the MarkedForLater tab itself -- a book
+    // showing in Recents/NewChapters/Wips can also be marked independently.
+    const bool markedForLater = AO3_MARKED_FOR_LATER_STORE.contains(row.path);
+    item.icon = listIconForBookStatus(fileIcon, status, markedForLater, 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(items.size());
     items.push_back(item);
   }
