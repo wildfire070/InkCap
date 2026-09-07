@@ -155,7 +155,10 @@ std::string normalisePath(const std::string& path) {
     if (i == path.length() || path[i] == '/') {
       if (i > start) {
         std::string_view component(path.data() + start, i - start);
-        if (component == "..") {
+        if (component == ".") {
+          // No-op segment -- drop it rather than push it as a literal path
+          // component (e.g. "/a/./b" must resolve to "a/b", not "a/./b").
+        } else if (component == "..") {
           if (!components.empty()) {
             components.pop_back();
           }
