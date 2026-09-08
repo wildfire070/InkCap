@@ -2461,13 +2461,17 @@ size_t GfxRenderer::readFramebufferRegion(uint16_t x, uint16_t y, uint16_t w, ui
   return needed;
 }
 
-void GfxRenderer::writeFramebufferRegion(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t* src) {
+void GfxRenderer::writeFramebufferRegion(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t* src,
+                                         size_t srcCapacity) {
   if (frameBuffer == nullptr || src == nullptr || w == 0 || h == 0) return;
 
   const AlignedMemRect mem = screenRectToAlignedMemRect(orientation, x, y, w, h, panelWidth, panelHeight);
   if (!mem.valid) return;
 
   const size_t rowBytes = mem.w / 8;
+  const size_t needed = rowBytes * mem.h;
+  if (needed > srcCapacity) return;
+
   for (uint16_t row = 0; row < mem.h; row++) {
     const uint8_t* srcRow = src + (static_cast<size_t>(row) * rowBytes);
     uint8_t* dstRow = frameBuffer + (static_cast<uint32_t>(mem.y + row) * panelWidthBytes) + (mem.x / 8);

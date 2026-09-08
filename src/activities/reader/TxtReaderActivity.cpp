@@ -55,13 +55,31 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
         break;
       }
 
-      if (renderer.getTextWidth(fontId, line.c_str()) <= vw) {
+      const int fullLineWidth = renderer.getTextWidth(fontId, line.c_str());
+      if (fullLineWidth <= vw) {
         outLines.push_back(line);
         lineBytePos = displayLen;
         line.clear();
         break;
       }
       size_t breakPos = line.length();
+      // A long run with no whitespace anywhere (minified JSON/base64 saved as
+      // .txt, e.g.) would otherwise decrement breakPos one byte at a time
+      // below, re-measuring the whole (still long) prefix every step -- O(n)
+      // remeasurements of increasingly long substrings, i.e. O(n^2) total for
+      // one line. Jump close to the true break point first using the average
+      // character width, halved as a safety margin so the estimate is biased
+      // to overshoot (predict too many characters fit) rather than
+      // undershoot -- the exact loop below only ever trims downward, so it
+      // must start at or past the true answer to still find it exactly.
+      if (breakPos > 64 && line.find(' ') == std::string::npos) {
+        const int avgCharWidth = std::max(1, fullLineWidth / static_cast<int>(breakPos) / 2);
+        const size_t estimate = static_cast<size_t>(vw / avgCharWidth);
+        if (estimate > 0 && estimate < breakPos) {
+          breakPos = estimate;
+          while (breakPos > 0 && (line[breakPos] & 0xC0) == 0x80) breakPos--;
+        }
+      }
       while (breakPos > 0 && renderer.getTextWidth(fontId, line.substr(0, breakPos).c_str()) > vw) {
         size_t spacePos = line.rfind(' ', breakPos - 1);
         if (spacePos != std::string::npos && spacePos > 0) {
@@ -947,44 +965,66 @@ bool TxtReaderActivity::loadPageIndexCache() {
     return false;
   }
 
-  // Read and validate header using serialization module
+  // Read and validate header using serialization module. Every read below
+  // uses the checked tryReadPod() -- a short/failed read (truncated cache
+  // file from a disk-full or interrupted save) must not leave pageOffsets
+  // populated from stale/zero data, since that would silently corrupt
+  // pagination rather than triggering a rebuild.
   uint32_t magic;
-  serialization::readPod(f, magic);
+  if (!serialization::tryReadPod(f, magic)) {
+    LOG_DBG("TRS", "Cache truncated reading magic, rebuilding");
+    return false;
+  }
   if (magic != CACHE_MAGIC) {
     LOG_DBG("TRS", "Cache magic mismatch, rebuilding");
     return false;
   }
 
   uint8_t version;
-  serialization::readPod(f, version);
+  if (!serialization::tryReadPod(f, version)) {
+    LOG_DBG("TRS", "Cache truncated reading version, rebuilding");
+    return false;
+  }
   if (version != CACHE_VERSION) {
     LOG_DBG("TRS", "Cache version mismatch (%d != %d), rebuilding", version, CACHE_VERSION);
     return false;
   }
 
   uint32_t fileSize;
-  serialization::readPod(f, fileSize);
+  if (!serialization::tryReadPod(f, fileSize)) {
+    LOG_DBG("TRS", "Cache truncated reading file size, rebuilding");
+    return false;
+  }
   if (fileSize != txt->getFileSize()) {
     LOG_DBG("TRS", "Cache file size mismatch, rebuilding");
     return false;
   }
 
   int32_t cachedWidth;
-  serialization::readPod(f, cachedWidth);
+  if (!serialization::tryReadPod(f, cachedWidth)) {
+    LOG_DBG("TRS", "Cache truncated reading viewport width, rebuilding");
+    return false;
+  }
   if (cachedWidth != viewportWidth) {
     LOG_DBG("TRS", "Cache viewport width mismatch, rebuilding");
     return false;
   }
 
   int32_t cachedLines;
-  serialization::readPod(f, cachedLines);
+  if (!serialization::tryReadPod(f, cachedLines)) {
+    LOG_DBG("TRS", "Cache truncated reading lines per page, rebuilding");
+    return false;
+  }
   if (cachedLines != linesPerPage) {
     LOG_DBG("TRS", "Cache lines per page mismatch, rebuilding");
     return false;
   }
 
   int32_t fontId;
-  serialization::readPod(f, fontId);
+  if (!serialization::tryReadPod(f, fontId)) {
+    LOG_DBG("TRS", "Cache truncated reading font ID, rebuilding");
+    return false;
+  }
   if (fontId != cachedFontId) {
     LOG_DBG("TRS", "Cache font ID mismatch (%d != %d), rebuilding", fontId, cachedFontId);
     return false;
@@ -992,22 +1032,30 @@ bool TxtReaderActivity::loadPageIndexCache() {
 
   int32_t verticalMargin;
   int32_t horizontalMargin;
-  serialization::readPod(f, verticalMargin);
-  serialization::readPod(f, horizontalMargin);
+  if (!serialization::tryReadPod(f, verticalMargin) || !serialization::tryReadPod(f, horizontalMargin)) {
+    LOG_DBG("TRS", "Cache truncated reading screen margins, rebuilding");
+    return false;
+  }
   if (verticalMargin != cachedVerticalMargin || horizontalMargin != cachedHorizontalMargin) {
     LOG_DBG("TRS", "Cache screen margins mismatch, rebuilding");
     return false;
   }
 
   uint8_t alignment;
-  serialization::readPod(f, alignment);
+  if (!serialization::tryReadPod(f, alignment)) {
+    LOG_DBG("TRS", "Cache truncated reading paragraph alignment, rebuilding");
+    return false;
+  }
   if (alignment != cachedParagraphAlignment) {
     LOG_DBG("TRS", "Cache paragraph alignment mismatch, rebuilding");
     return false;
   }
 
   uint32_t numPages;
-  serialization::readPod(f, numPages);
+  if (!serialization::tryReadPod(f, numPages)) {
+    LOG_DBG("TRS", "Cache truncated reading page count, rebuilding");
+    return false;
+  }
   if (numPages > MAX_CACHE_PAGES) {
     LOG_ERR("TRS", "Cache numPages %u exceeds cap %u, cache invalid", numPages, MAX_CACHE_PAGES);
     f.close();
@@ -1020,7 +1068,11 @@ bool TxtReaderActivity::loadPageIndexCache() {
 
   for (uint32_t i = 0; i < numPages; i++) {
     uint32_t offset;
-    serialization::readPod(f, offset);
+    if (!serialization::tryReadPod(f, offset)) {
+      LOG_DBG("TRS", "Cache truncated reading page offset %u/%u, rebuilding", i, numPages);
+      pageOffsets.clear();
+      return false;
+    }
     pageOffsets.push_back(offset);
   }
 
@@ -1036,21 +1088,32 @@ void TxtReaderActivity::savePageIndexCache() const {
     return;
   }
 
-  // Write header using serialization module
-  serialization::writePod(f, CACHE_MAGIC);
-  serialization::writePod(f, CACHE_VERSION);
-  serialization::writePod(f, static_cast<uint32_t>(txt->getFileSize()));
-  serialization::writePod(f, static_cast<int32_t>(viewportWidth));
-  serialization::writePod(f, static_cast<int32_t>(linesPerPage));
-  serialization::writePod(f, static_cast<int32_t>(cachedFontId));
-  serialization::writePod(f, static_cast<int32_t>(cachedVerticalMargin));
-  serialization::writePod(f, static_cast<int32_t>(cachedHorizontalMargin));
-  serialization::writePod(f, cachedParagraphAlignment);
-  serialization::writePod(f, static_cast<uint32_t>(pageOffsets.size()));
+  // Write header using serialization module. A short/failed write (disk
+  // full) would otherwise leave a truncated cache file that could still
+  // pass the header checks above on a later load but then desync the page
+  // offsets -- track failure and remove the file instead of leaving it
+  // behind for a future load to trip over.
+  bool ok = true;
+  ok &= serialization::tryWritePod(f, CACHE_MAGIC);
+  ok &= serialization::tryWritePod(f, CACHE_VERSION);
+  ok &= serialization::tryWritePod(f, static_cast<uint32_t>(txt->getFileSize()));
+  ok &= serialization::tryWritePod(f, static_cast<int32_t>(viewportWidth));
+  ok &= serialization::tryWritePod(f, static_cast<int32_t>(linesPerPage));
+  ok &= serialization::tryWritePod(f, static_cast<int32_t>(cachedFontId));
+  ok &= serialization::tryWritePod(f, static_cast<int32_t>(cachedVerticalMargin));
+  ok &= serialization::tryWritePod(f, static_cast<int32_t>(cachedHorizontalMargin));
+  ok &= serialization::tryWritePod(f, cachedParagraphAlignment);
+  ok &= serialization::tryWritePod(f, static_cast<uint32_t>(pageOffsets.size()));
 
   // Write page offsets
   for (size_t offset : pageOffsets) {
-    serialization::writePod(f, static_cast<uint32_t>(offset));
+    ok &= serialization::tryWritePod(f, static_cast<uint32_t>(offset));
+  }
+
+  f.close();
+  if (!ok) {
+    LOG_ERR("TRS", "Failed to write page index cache, removing partial file");
+    Storage.remove(cachePath.c_str());
   }
 }
 

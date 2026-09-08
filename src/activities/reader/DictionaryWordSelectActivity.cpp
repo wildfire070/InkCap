@@ -185,6 +185,13 @@ void DictionaryWordSelectActivity::onEnter() {
   const bool consumeInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   if (!buildWorkingSet(consumeInitialConfirm)) {
     if (workingSetMemoryError_) {
+      // onEnter() runs unlocked by design (ActivityManager::loop() releases
+      // its RenderLock right before calling onEnter()), but this activity
+      // does implement render() -- a stale pending notification from before
+      // this activity became current could wake the render task and have it
+      // call render() on this now-current activity while this direct draw is
+      // still in flight, both touching the framebuffer unguarded.
+      RenderLock lock(*this);
       GUI.drawPopup(renderer, tr(STR_MEMORY_ERROR));
       renderer.displayBuffer();
       delay(1000);
