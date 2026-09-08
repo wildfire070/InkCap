@@ -1115,15 +1115,44 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
+    // Sanity-check the raw on-disk dataLength before it feeds the
+    // totalBitmapSize sum below -- a corrupted/malicious .cpfont could
+    // otherwise wrap that sum, causing an undersized allocation that the
+    // unbounded write loop further down then overflows.
+    static constexpr uint32_t MAX_GLYPH_DATA_LENGTH = 65536;
+    if (s.miniGlyphs[mapIdx].dataLength > MAX_GLYPH_DATA_LENGTH) {
+      LOG_ERR("SDCF", "Prewarm: unreasonable glyph data length %u (style %u, glyph %d)",
+              s.miniGlyphs[mapIdx].dataLength, styleIdx, gIdx);
+      delete[] readOrder;
+      delete[] mappings;
+      freeStyleMiniData(s);
+      return failPrewarm(static_cast<int>(cpCount));
+    }
     lastReadIndex = gIdx;
   }
 
   uint32_t totalBitmapSize = 0;
 
   if (!metadataOnly) {
-    // Compute total bitmap size
+    // Compute total bitmap size. Each dataLength was already capped above,
+    // but check the running sum too: enough glyphs at that cap could still
+    // wrap a uint32_t, and a wrapped (small) total would pass straight to
+    // ensureArrayCapacity below and undersize the allocation.
+    bool bitmapSizeOverflowed = false;
     for (uint32_t i = 0; i < validCount; i++) {
-      totalBitmapSize += s.miniGlyphs[i].dataLength;
+      const uint32_t next = totalBitmapSize + s.miniGlyphs[i].dataLength;
+      if (next < totalBitmapSize) {
+        bitmapSizeOverflowed = true;
+        break;
+      }
+      totalBitmapSize = next;
+    }
+    if (bitmapSizeOverflowed) {
+      LOG_ERR("SDCF", "Prewarm: total bitmap size overflowed (style %u)", styleIdx);
+      delete[] readOrder;
+      delete[] mappings;
+      freeStyleMiniData(s);
+      return failPrewarm(static_cast<int>(cpCount));
     }
 
     if (!ensureArrayCapacity(s.miniBitmap, s.miniBitmapCapacity, totalBitmapSize)) {
@@ -1161,6 +1190,16 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
           return failPrewarm(static_cast<int>(cpCount));
         }
         seekCount++;
+      }
+      // Belt-and-suspenders against the allocation above: even with the
+      // per-glyph cap and overflow-checked sum, verify this write can't run
+      // past the buffer before it happens.
+      if (miniBitmapOffset > s.miniBitmapCapacity || glyph.dataLength > s.miniBitmapCapacity - miniBitmapOffset) {
+        LOG_ERR("SDCF", "Prewarm: bitmap write would overflow buffer (style %u)", styleIdx);
+        delete[] readOrder;
+        delete[] mappings;
+        freeStyleMiniData(s);
+        return failPrewarm(static_cast<int>(cpCount));
       }
       if (file.read(s.miniBitmap + miniBitmapOffset, glyph.dataLength) != static_cast<int>(glyph.dataLength)) {
         LOG_ERR("SDCF", "Prewarm: short bitmap read (style %u)", styleIdx);

@@ -149,6 +149,11 @@ void FontSelectionActivity::activateSelected() {
     handleSelection();
     return;
   }
+  // previewFontIndex_ is read by render(); called from loop() (Confirm
+  // press) and onRowEvent() (touch), neither of which holds this lock
+  // already -- RenderLock's underlying mutex is recursive, so re-entering
+  // it from onRowEvent()'s own lock (below) is safe.
+  RenderLock lock(*this);
   previewFontIndex_ = selectedIndex_;
   const auto& font = fonts_[selectedIndex_];
   if (font.isBuiltin) {
@@ -169,7 +174,10 @@ void FontSelectionActivity::activateSelected() {
 void FontSelectionActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<FontSelectionActivity*>(user);
   if (event.value < 0 || event.value >= static_cast<int16_t>(self->fonts_.size())) return;
-  self->selectedIndex_ = event.value;
+  {
+    RenderLock lock(*self);
+    self->selectedIndex_ = event.value;
+  }
   self->app_.clearTapFlash();
   self->activateSelected();
 }
@@ -206,6 +214,7 @@ void FontSelectionActivity::loop() {
     const int next = scrollListBy(topIndex_, swipe == MappedInputManager::SwipeDir::Up ? visibleRows_ : -visibleRows_,
                                   visibleRows_, listSize);
     if (next != topIndex_) {
+      RenderLock lock(*this);
       topIndex_ = next;
       requestUpdate();
     }
@@ -213,6 +222,7 @@ void FontSelectionActivity::loop() {
   }
 
   const auto move = [this, listSize](const int next) {
+    RenderLock lock(*this);
     selectedIndex_ = next;
     topIndex_ = followListSelection(selectedIndex_, topIndex_, visibleRows_, listSize);
     requestUpdate();

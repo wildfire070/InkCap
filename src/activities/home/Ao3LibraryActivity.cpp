@@ -420,8 +420,10 @@ void Ao3LibraryActivity::loop() {
                 // file/cache itself (Ao3ArchiveUtils::archiveFic) -- either
                 // way the fic no longer belongs at this index, so just drop
                 // it from the in-RAM view rather than leave a stale row
-                // showing a bogus reset status.
-                // Remove from in-RAM viewEntries (no full reload needed)
+                // showing a bogus reset status. viewEntries is read by
+                // render()/renderLibrary() under its own lock, so erasing
+                // from it here (loop task) needs the same lock.
+                RenderLock lock(*this);
                 auto it = std::find_if(viewEntries.begin(), viewEntries.end(),
                                        [hash](const ViewEntry& v) { return v.cacheHash == hash; });
                 if (it != viewEntries.end()) viewEntries.erase(it);
