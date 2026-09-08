@@ -23,6 +23,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookMetadataUtils.h"
 #include "util/BookMoveUtils.h"
 
 namespace BookActions {
@@ -90,17 +91,7 @@ bool canSendNearby(const std::string& path) {
          FsHelpers::hasPngExtension(path) || FsHelpers::hasBmpExtension(path);
 }
 
-void clearFileMetadata(const std::string& fullPath) {
-  if (FsHelpers::hasEpubExtension(fullPath)) {
-    Epub(fullPath, "/.crosspoint").clearCache();
-    BookmarkStore::deleteForFilePath(fullPath, "epub");
-    ClippingStore::deleteForFilePath(fullPath, "epub");
-  } else if (FsHelpers::hasXtcExtension(fullPath)) {
-    BookmarkStore::deleteForFilePath(fullPath, "xtc");
-  } else if (FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath)) {
-    BookmarkStore::deleteForFilePath(fullPath, "txt");
-  }
-}
+void clearFileMetadata(const std::string& fullPath) { BookMetadataUtils::clearFileMetadata(fullPath); }
 
 bool clearBookCache(const std::string& fullPath) {
   if (FsHelpers::hasEpubExtension(fullPath) || FsHelpers::hasXtcExtension(fullPath)) {

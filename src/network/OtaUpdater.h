@@ -9,8 +9,11 @@ class OtaUpdater {
   std::string otaUrl;
   std::string otaSha256;
   size_t otaSize = 0;
-  size_t processedSize = 0;
-  size_t totalSize = 0;
+  // Written by installUpdate()'s task while OtaUpdateActivity::render() reads
+  // them from the separate render task -- atomic avoids relying on size_t
+  // loads/stores happening to be single-instruction on this target.
+  std::atomic<size_t> processedSize{0};
+  std::atomic<size_t> totalSize{0};
 
  public:
   using ProgressCallback = void (*)(void* ctx);
