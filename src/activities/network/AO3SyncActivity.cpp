@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <RestartHooks.h>
 #include <SecureHttpClient.h>
 #include <WiFi.h>
 #include <ZipFile.h>
@@ -325,6 +326,7 @@ void AO3SyncActivity::performDownload() {
     downloadTotal = total;
     if (!renderer.reallocFrameBuffersAfterNetwork()) {
       LOG_ERR("AO3", "Framebuffer realloc failed during download progress");
+      runPreRestartHook();
       ESP.restart();
     }
     if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
@@ -348,6 +350,7 @@ void AO3SyncActivity::performDownload() {
     usingGayFallback = true;
     if (!renderer.reallocFrameBuffersAfterNetwork()) {
       LOG_ERR("AO3", "Framebuffer realloc failed before gay fallback");
+      runPreRestartHook();
       ESP.restart();
     }
     requestUpdateAndWait();
@@ -362,6 +365,7 @@ void AO3SyncActivity::performDownload() {
   // renders.
   if (!renderer.reallocFrameBuffersAfterNetwork()) {
     LOG_ERR("AO3", "Framebuffer realloc failed after download");
+    runPreRestartHook();
     ESP.restart();
   }
 
