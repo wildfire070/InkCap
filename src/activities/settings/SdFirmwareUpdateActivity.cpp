@@ -156,6 +156,10 @@ void SdFirmwareUpdateActivity::performUpdate() {
 
   auto progressCb = +[](size_t written, size_t total, void* ctx) {
     auto* self = static_cast<SdFirmwareUpdateActivity*>(ctx);
+    // Guards writtenBytes/firmwareSize, which render() reads on the separate
+    // render task -- this callback runs on whichever task is flashing, not
+    // the render task itself.
+    RenderLock lock(*self);
     self->writtenBytes = written;
     self->firmwareSize = total;
     // immediate=true: wake the render task directly. We're in a tight sync

@@ -906,7 +906,16 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     return;
   }
 
-  auto& family = families_[familyIndexFromList(selectedIndex_)];
+  // Re-validate the index the same way promptDeleteSelectedFamily() did
+  // before showing this confirmation -- the list could have changed while
+  // the dialog was up.
+  const int familyIndex = familyIndexFromList(selectedIndex_);
+  if (familyIndex < 0 || familyIndex >= static_cast<int>(families_.size())) {
+    requestUpdate();
+    return;
+  }
+
+  auto& family = families_[familyIndex];
 
   if (fontInstaller_.deleteFamily(family.installName.c_str()) != FontInstaller::Error::OK) {
     RenderLock lock(*this);

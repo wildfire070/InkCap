@@ -569,14 +569,28 @@ void handleWrite() {
     return;
   }
 
+  // Rename any existing destination aside rather than deleting it outright:
+  // if the rename below fails partway, the previous file must still be
+  // recoverable instead of losing both the old file and the new upload.
+  char backupPath[PATH_BUFFER_SIZE + 4];
+  bool hasBackup = false;
   if (Storage.exists(path)) {
-    Storage.remove(path);
+    snprintf(backupPath, sizeof(backupPath), "%s.bak", path);
+    Storage.remove(backupPath);
+    if (!Storage.rename(path, backupPath)) {
+      Storage.remove(TEMP_UPLOAD_PATH);
+      writeLine("ERR:rename_failed\n");
+      return;
+    }
+    hasBackup = true;
   }
   if (!Storage.rename(TEMP_UPLOAD_PATH, path)) {
     Storage.remove(TEMP_UPLOAD_PATH);
+    if (hasBackup) Storage.rename(backupPath, path);
     writeLine("ERR:rename_failed\n");
     return;
   }
+  if (hasBackup) Storage.remove(backupPath);
 
   clearCachesForPath(path);
   ImageFolderIndex::invalidateForPath(path);
