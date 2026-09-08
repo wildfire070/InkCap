@@ -1082,6 +1082,10 @@ void HomeActivity::showNextRecentBookOnHome() {
     return;
   }
 
+  // Called from loop() (swipe/long-press); render() reads recentBooks and
+  // the highlighted-book fields updateHighlightedBookContext() sets, under
+  // its own lock.
+  RenderLock lock(*this);
   std::rotate(recentBooks.begin(), recentBooks.begin() + 1, recentBooks.end());
   selectorIndex = 0;
   lastCarouselBookIndex = 0;
@@ -1246,6 +1250,12 @@ bool HomeActivity::restoreCoverBuffer() {
 }
 
 void HomeActivity::freeCoverBuffer() {
+  // Called from both loop() (many call sites) and render() (via
+  // invalidateCoverCache()/storeCoverBuffer()); render() concurrently reads
+  // coverBuffer in restoreCoverBuffer() under its own RenderLock, so this
+  // needs the same lock -- RenderLock's underlying mutex is recursive, so
+  // re-entering it from render()'s own call sites is safe.
+  RenderLock lock(*this);
   if (coverBuffer) {
     free(coverBuffer);
     coverBuffer = nullptr;
