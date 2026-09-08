@@ -1339,8 +1339,6 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   }
 
   if (result == HttpDownloader::OK) {
-    // Cover was already fetched into this same cache path before the
-    // transfer started (see above) -- nothing left to do here for it.
     BookFusionBookIdStore::saveBookId(filename, book.bookId);
 
     // Build the metadata cache and add to Recent Books right away, matching

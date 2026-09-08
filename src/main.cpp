@@ -104,6 +104,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "companion/CompanionState.h"
+#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
@@ -364,6 +365,12 @@ using BootResume = SleepWakePolicy::Resume;
 static bool deepSleepInProgress = false;
 
 static void restartWithSilentToken() {
+  // A silent restart bypasses Activity::onExit() (the reader's own exit path
+  // is the only place a Companion session normally gets banked), so any
+  // credited-but-not-yet-banked reading time would otherwise be discarded on
+  // every silent-restart path (heap-defrag reboots, sync-jump retries, etc.)
+  // -- endSession() is a no-op if no session is active or Companion is off.
+  COMPANION.endSession();
 #ifdef SIMULATOR
   SimulatorLifecycle::setSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
 #endif

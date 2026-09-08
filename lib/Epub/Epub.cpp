@@ -2183,6 +2183,8 @@ bool Epub::getReadStatus() const {
 namespace {
 class PublisherParser final : public Print {
   enum ParserState { START, IN_PACKAGE, IN_METADATA, IN_DC_PUBLISHER };
+  // Bounds a runaway/malformed field; real publisher names are far smaller.
+  static constexpr size_t kMaxRawBytes = 4096;
 
   size_t remainingSize;
   XML_Parser parser = nullptr;
@@ -2207,8 +2209,9 @@ class PublisherParser final : public Print {
 
   static void characterData(void* userData, const XML_Char* s, int len) {
     auto* self = static_cast<PublisherParser*>(userData);
-    if (self->state == IN_DC_PUBLISHER) {
-      self->publisher.append(s, len);
+    if (self->state == IN_DC_PUBLISHER && self->publisher.size() < kMaxRawBytes) {
+      const size_t room = kMaxRawBytes - self->publisher.size();
+      self->publisher.append(s, std::min(static_cast<size_t>(len), room));
     }
   }
 

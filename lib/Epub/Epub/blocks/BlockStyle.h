@@ -9,6 +9,15 @@
  * BlockStyle - Block-level styling properties
  */
 struct BlockStyle {
+  // XML nesting depth at which this entry was pushed onto
+  // ChapterHtmlSlimParser's block-style stack (0 elsewhere/unused). Lets the
+  // matching close tag verify it's popping the entry IT pushed, mirroring
+  // StyleStackEntry::depth's role for the inline-style stack -- without it, an
+  // element whose own push was skipped by the stack's overflow guard would
+  // still trigger an unconditional pop on close, popping an ancestor's entry
+  // instead.
+  int depth = 0;
+
   // Upper bound (in em) for any single side's horizontal margin or padding.
   // Some EPUBs apply huge em-based insets to chapter-opener classes; without a
   // cap, effectiveWidth collapses to 1-2 words per line and justification dumps

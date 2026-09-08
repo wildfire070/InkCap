@@ -124,7 +124,11 @@ void BookDetailsActivity::loadMetadata() {
 void BookDetailsActivity::onEnter() {
   Activity::onEnter();
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
-  waitForBackRelease = false;
+  // Symmetric with the Confirm guard above: if this screen is ever entered
+  // while Back is already held (no known call site does this today, but
+  // nothing prevents one from being added), a stale release shouldn't
+  // immediately finish() the screen the instant it opens.
+  waitForBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
   descScrollOffset = 0;
 
   // loadMetadata() can block (building a missing cache, generating the cover thumbnail).
@@ -182,7 +186,12 @@ void BookDetailsActivity::loop() {
 
   // Page-at-a-time scroll through the description (clamped against maxScrollOffset
   // in render()); a no-op when there's no description or it all fits on screen.
-  const int pageStep = std::max(1, descVisibleLines - 1);
+  // descVisibleLines is written by render() under its own RenderLock.
+  int pageStep;
+  {
+    RenderLock lock(*this);
+    pageStep = std::max(1, descVisibleLines - 1);
+  }
   const auto scrollDown = [this, pageStep] {
     descScrollOffset += pageStep;
     requestUpdate();
