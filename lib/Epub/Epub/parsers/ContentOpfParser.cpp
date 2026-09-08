@@ -541,11 +541,21 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 }
 
+namespace {
+// Appends up to kMaxFieldBytes total into `field`, silently truncating any
+// excess -- same bounded-append shape as Epub.cpp's DescriptionParser.
+void appendBounded(std::string& field, const XML_Char* s, const int len) {
+  if (field.size() >= ContentOpfParser::kMaxFieldBytes) return;
+  const size_t room = ContentOpfParser::kMaxFieldBytes - field.size();
+  field.append(s, std::min(static_cast<size_t>(len), room));
+}
+}  // namespace
+
 void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ContentOpfParser*>(userData);
 
   if (self->state == IN_BOOK_TITLE) {
-    self->title.append(s, len);
+    appendBounded(self->title, s, len);
     return;
   }
 
@@ -553,17 +563,17 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     if (!self->author.empty()) {
       self->author.append(", ");  // Add separator for multiple authors
     }
-    self->author.append(s, len);
+    appendBounded(self->author, s, len);
     return;
   }
 
   if (self->state == IN_BOOK_LANGUAGE) {
-    self->language.append(s, len);
+    appendBounded(self->language, s, len);
     return;
   }
 
   if (self->state == IN_DC_SUBJECT) {
-    self->subjectBuffer.append(s, len);
+    appendBounded(self->subjectBuffer, s, len);
     return;
   }
 }

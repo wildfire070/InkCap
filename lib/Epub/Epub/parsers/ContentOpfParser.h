@@ -89,6 +89,12 @@ class ContentOpfParser final : public Print {
   static void endElement(void* userData, const XML_Char* name);
 
  public:
+  // Bounds title/author/language/subjectBuffer against a runaway or
+  // malformed field in an untrusted EPUB's content.opf -- matches the cap
+  // Epub.cpp's DescriptionParser already applies to dc:description, for the
+  // same reason (real book metadata is far smaller than this).
+  static constexpr size_t kMaxFieldBytes = 4096;
+
   std::string title;
   std::string author;
   std::string language;

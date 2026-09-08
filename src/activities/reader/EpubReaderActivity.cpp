@@ -5492,6 +5492,16 @@ void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
 
 void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
   pageLoadRetryCount = 0;
+  // section is legitimately null for a window after a TOC/progress-bar jump
+  // or a chapter-boundary advance, until render() rebuilds it. Every loop()
+  // call site already guards this before calling in; handleShortcutAction()
+  // (reachable directly from a physical button, independent of loop()'s own
+  // guard) did not, so the guard now lives here instead of relying on every
+  // caller to remember it.
+  if (!section) {
+    requestUpdate();
+    return;
+  }
   if (activeFootnotePreview) {
     if (isForwardTurn) {
       if (section && section->currentPage < section->pageCount - 1) {
