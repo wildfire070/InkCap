@@ -444,8 +444,11 @@ void Ao3LibraryActivity::loop() {
                 rebuildViewEntries();
               } else {
                 // Status and/or Marked-for-Later change — update in-place
-                // without a full reload.
+                // without a full reload. pageCacheStatus/pageCacheMarkedPosition
+                // are read by render() under its own RenderLock, so mutating
+                // them here (on the loop task) needs the same lock.
                 if (static_cast<int>(selectorIndex) / 3 == cachedPage) {
+                  RenderLock lock(*this);
                   pageCacheStatus[selectorIndex % 3] = actionRes->newStatus;
                   if (actionRes->markedForLaterChanged) {
                     // AO3_MARKED_FOR_LATER_STORE is a FIFO -- a mark/unmark

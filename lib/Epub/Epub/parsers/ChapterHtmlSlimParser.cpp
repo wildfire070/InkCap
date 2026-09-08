@@ -2628,9 +2628,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (!self->embeddedStyle || self->isLightMode()) {
       stripPublisherSpacing(headerBlockStyle);
     }
-    const auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
+    auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
         headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
     if (self->blockStyleCount_ < MAX_BLOCK_STYLE_DEPTH) {
+      accumulated.depth = self->depth;  // Track depth for matching pop
       self->blockStyleBuf_[self->blockStyleCount_++] = accumulated;
     } else {
       LOG_ERR("EHP", "block style stack overflow (header)");
@@ -2661,9 +2662,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->startNewTextBlock(brStyle);
     } else {
       self->currentCssStyle = cssStyle;
-      const auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
+      auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
           userAlignmentBlockStyle, BlockStyle::CombineAxis::Horizontal);
       if (self->blockStyleCount_ < MAX_BLOCK_STYLE_DEPTH) {
+        accumulated.depth = self->depth;  // Track depth for matching pop
         self->blockStyleBuf_[self->blockStyleCount_++] = accumulated;
       } else {
         LOG_ERR("EHP", "block style stack overflow (block)");
@@ -3362,7 +3364,14 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     self->updateEffectiveInlineStyle();
 
     // br is self-closing and not a container — it doesn't push/pop the stack.
-    if (strcmp(name, "br") != 0 && self->blockStyleCount_ > 1) {
+    // Only pop if this element's own push actually landed at the top of the
+    // stack (depth match) -- if the stack was full when it opened (see the
+    // overflow guard above), popping unconditionally here would instead
+    // remove an ancestor's entry that DID push, permanently desyncing the
+    // stack for the rest of this chapter. Mirrors the inline-style stack's
+    // own depth-matched pop a few lines up.
+    if (strcmp(name, "br") != 0 && self->blockStyleCount_ > 1 &&
+        self->blockStyleBuf_[self->blockStyleCount_ - 1].depth == self->depth) {
       // Apply closing element's bottom margin to the current text block so
       // container spacing appears after the element's content (on the last child),
       // not on the first child via the empty-block merge in startNewTextBlock.

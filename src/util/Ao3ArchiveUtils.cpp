@@ -112,9 +112,6 @@ std::string restoreFic(const std::string& archivedPath) {
   const std::string oldCachePath = archivedEpub.getCachePath();
   const std::string markerPath = oldCachePath + "/marked_for_later";
   const bool wasMarkedForLater = Storage.exists(markerPath.c_str());
-  if (wasMarkedForLater) {
-    Storage.remove(markerPath.c_str());
-  }
 
   std::string restoredPath = meta.filepath;
   if (Storage.exists(restoredPath.c_str())) {
@@ -135,7 +132,17 @@ std::string restoreFic(const std::string& archivedPath) {
 
   if (!Storage.rename(archivedPath.c_str(), restoredPath.c_str())) {
     LOG_ERR("Ao3Archive", "Failed to move %s -> %s", archivedPath.c_str(), restoredPath.c_str());
+    // Nothing moved yet -- leave the marker file exactly where it was rather
+    // than clearing it before knowing the restore will actually happen.
     return "";
+  }
+
+  // Only clear the marker now that the fic has actually moved -- clearing it
+  // any earlier would lose the flag permanently on the rename failure above,
+  // even though the fic never left the archive folder and the restore could
+  // simply be retried.
+  if (wasMarkedForLater) {
+    Storage.remove(markerPath.c_str());
   }
 
   if (!BookMoveUtils::migrateMovedEpubState(archivedPath, restoredPath, oldCachePath, meta.title, meta.author,
