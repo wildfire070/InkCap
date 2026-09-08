@@ -85,7 +85,13 @@ void AO3SyncActivity::onWifiSelectionComplete(bool success) {
 }
 
 void AO3SyncActivity::performSearch() {
+  // These short RenderLock scopes below guard state/errorMessage/
+  // usingGayFallback/scrapedDate/scrapedIsCompleted, which render() reads on
+  // the separate render task -- each is released before any blocking network
+  // call or requestUpdateAndWait(), which would otherwise reject re-entering
+  // the lock from the same task.
   if (workId.empty()) {
+    RenderLock lock(*this);
     errorMessage = "Invalid Work ID";
     state = AO3SyncState::ERROR;
     return;
@@ -96,6 +102,7 @@ void AO3SyncActivity::performSearch() {
   cleanWorkId.erase(cleanWorkId.find_last_not_of(" \n\r\t") + 1);
 
   if (cleanWorkId.empty()) {
+    RenderLock lock(*this);
     errorMessage = "Invalid Work ID";
     state = AO3SyncState::ERROR;
     return;
@@ -109,7 +116,7 @@ void AO3SyncActivity::performSearch() {
   // .org is the official domain and the one most likely to resolve/connect
   // reliably; .gay is an unofficial mirror, kept only as a fallback for when
   // .org is unreachable or blocks the request.
-  usingGayFallback = false;
+  { RenderLock lock(*this); usingGayFallback = false; }
   const std::string searchUrls[] = {"https://archiveofourown.org/works/" + cleanWorkId + "?view_adult=true",
                                     "https://archiveofourown.gay/works/" + cleanWorkId + "?view_adult=true"};
 
@@ -130,7 +137,7 @@ void AO3SyncActivity::performSearch() {
   bool userAborted = false;
   for (int urlIdx = 0; urlIdx < 2; urlIdx++) {
     if (urlIdx == 1) {
-      usingGayFallback = true;
+      { RenderLock lock(*this); usingGayFallback = true; }
       requestUpdateAndWait();
       delay(1000);
     }
@@ -253,6 +260,7 @@ void AO3SyncActivity::performSearch() {
     }
 
     if (userAborted) {
+      RenderLock lock(*this);
       errorMessage = "Search Aborted";
       state = AO3SyncState::ERROR;
       requestUpdate();
@@ -261,34 +269,41 @@ void AO3SyncActivity::performSearch() {
 
     if (status_code == 403) {
       if (urlIdx == 0) continue;  // try .gay
+      RenderLock lock(*this);
       errorMessage = tr(STR_AO3_ERROR_LOCKED);
       state = AO3SyncState::ERROR;
       return;
     } else if (status_code == 429) {
+      RenderLock lock(*this);
       errorMessage = "AO3 Rate Limit: Try later";
       state = AO3SyncState::ERROR;
       return;
     } else if (status_code == 404) {
+      RenderLock lock(*this);
       errorMessage = "Work Deleted/Not Found";
       state = AO3SyncState::ERROR;
       return;
     } else if (status_code != 200) {
+      RenderLock lock(*this);
       errorMessage = "Err: " + std::to_string(status_code);
       state = AO3SyncState::ERROR;
       return;
     }
 
-    if (foundDate && foundChapters) {
-      if (scrapedDate > currentLocalDate) {
-        state = AO3SyncState::UPDATE_FOUND;
+    {
+      RenderLock lock(*this);
+      if (foundDate && foundChapters) {
+        if (scrapedDate > currentLocalDate) {
+          state = AO3SyncState::UPDATE_FOUND;
+        } else {
+          state = AO3SyncState::UP_TO_DATE;
+        }
       } else {
-        state = AO3SyncState::UP_TO_DATE;
+        LOG_INF("AO3", "Parse failed: status=%d bytes=%u foundDate=%d foundChapters=%d",
+                status_code, (unsigned)bytesProcessed, foundDate, foundChapters);
+        errorMessage = tr(STR_AO3_ERROR_GENERIC);
+        state = AO3SyncState::ERROR;
       }
-    } else {
-      LOG_INF("AO3", "Parse failed: status=%d bytes=%u foundDate=%d foundChapters=%d",
-              status_code, (unsigned)bytesProcessed, foundDate, foundChapters);
-      errorMessage = tr(STR_AO3_ERROR_GENERIC);
-      state = AO3SyncState::ERROR;
     }
     requestUpdate();
     break;
@@ -296,10 +311,13 @@ void AO3SyncActivity::performSearch() {
 }
 
 void AO3SyncActivity::performDownload() {
-  state = AO3SyncState::DOWNLOADING;
-  errorMessage = "";
-  downloadProgress = 0;
-  downloadTotal = 0;
+  {
+    RenderLock lock(*this);
+    state = AO3SyncState::DOWNLOADING;
+    errorMessage = "";
+    downloadProgress = 0;
+    downloadTotal = 0;
+  }
   // Must actually wait (not just requestUpdate()): the framebuffer release
   // just below frees the buffer this render may still be reading from
   // mid-flight otherwise — the same null-framebuffer store fault found and
@@ -378,8 +396,11 @@ void AO3SyncActivity::performDownload() {
       if (Storage.exists(tempPath.c_str())) {
         Storage.remove(tempPath.c_str());
       }
-      errorMessage = "Integrity Check Failed";
-      state = AO3SyncState::ERROR;
+      {
+        RenderLock lock(*this);
+        errorMessage = "Integrity Check Failed";
+        state = AO3SyncState::ERROR;
+      }
       requestUpdate();
       return;
     }
@@ -404,6 +425,7 @@ void AO3SyncActivity::performDownload() {
       setResult(ActivityResult(res));
       finish();
     } else {
+      RenderLock lock(*this);
       errorMessage = "File Swap Failed";
       state = AO3SyncState::ERROR;
     }
@@ -412,6 +434,7 @@ void AO3SyncActivity::performDownload() {
     if (Storage.exists(tempPath.c_str())) {
       Storage.remove(tempPath.c_str());
     }
+    RenderLock lock(*this);
     errorMessage = tr(STR_DOWNLOAD_FAILED);
     state = AO3SyncState::ERROR;
   }

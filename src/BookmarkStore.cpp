@@ -190,7 +190,10 @@ bool readBookmarkFileHeader(const std::string& fullPath, const char* name, Bookm
     uint32_t len;
     if (f.available() < static_cast<int>(sizeof(len))) return false;
     serialization::readPod(f, len);
-    if (f.available() < static_cast<int>(len)) return false;
+    // Compare as uint32_t, not int -- a hostile/corrupt len >= 2^31 wraps
+    // negative under static_cast<int>, which would defeat this bounds check
+    // and drive s.resize(len) into a multi-GB allocation abort.
+    if (f.available() < 0 || len > static_cast<uint32_t>(f.available())) return false;
     s.resize(len);
     f.read(reinterpret_cast<uint8_t*>(&s[0]), len);
     return true;
@@ -454,10 +457,22 @@ bool BookmarkStore::readFromFile(const std::string& path, std::vector<Bookmark>&
   }
 
   std::string tmp;
-  serialization::readString(f, tmp);  // title — not validated
-  serialization::readString(f, tmp);  // author — not validated
+  if (!serialization::tryReadString(f, tmp)) {  // title
+    LOG_ERR("BKS", "Failed to read title, file may be corrupt: %s", path.c_str());
+    f.close();
+    return false;
+  }
+  if (!serialization::tryReadString(f, tmp)) {  // author
+    LOG_ERR("BKS", "Failed to read author, file may be corrupt: %s", path.c_str());
+    f.close();
+    return false;
+  }
   std::string storedPath;
-  serialization::readString(f, storedPath);
+  if (!serialization::tryReadString(f, storedPath)) {
+    LOG_ERR("BKS", "Failed to read stored path, file may be corrupt: %s", path.c_str());
+    f.close();
+    return false;
+  }
   if (storedPath != bookFilePath) {
     LOG_ERR("BKS", "Bookmark file path mismatch, file may belong to a different book: %s", path.c_str());
     f.close();
@@ -726,7 +741,10 @@ bool BookmarkStore::getAllBookmarkedBooks(std::vector<BookmarkedBookEntry>& out)
       uint32_t len;
       if (f.available() < static_cast<int>(sizeof(len))) return false;
       serialization::readPod(f, len);
-      if (f.available() < static_cast<int>(len)) return false;
+      // Compare as uint32_t, not int -- a hostile/corrupt len >= 2^31 wraps
+      // negative under static_cast<int>, which would defeat this bounds check
+      // and drive s.resize(len) into a multi-GB allocation abort.
+      if (f.available() < 0 || len > static_cast<uint32_t>(f.available())) return false;
       s.resize(len);
       f.read(reinterpret_cast<uint8_t*>(&s[0]), len);
       return true;

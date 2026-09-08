@@ -19,6 +19,7 @@
 #include "../../Ao3Librarian.h"
 #include "Ao3MarkedForLaterStore.h"
 #include "util/Ao3ArchiveUtils.h"
+#include "util/BookMetadataUtils.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
 #include "CrossPointSettings.h"
@@ -133,11 +134,6 @@ bool hasHeapForFileEntryAppend(const std::vector<std::string>& files, size_t ent
          ESP.getMaxAllocHeap() >= largestNeeded + FILE_BROWSER_APPEND_MIN_MAX_ALLOC_AFTER_ALLOC;
 }
 
-bool hasFileMetadata(const std::string& path) {
-  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
-         FsHelpers::hasMarkdownExtension(path);
-}
-
 bool isSupportedBrowserFile(std::string_view filename) {
   return FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
          FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
@@ -191,27 +187,6 @@ bool containsHiddenPathSegment(const std::string& path) {
     segmentStart = segmentEnd + 1;
   }
   return false;
-}
-
-void collectMetadataPathsRecursively(const std::string& dirPath, std::vector<std::string>& paths) {
-  auto dir = Storage.open(dirPath.c_str());
-  if (!dir || !dir.isDirectory()) {
-    LOG_ERR("FileBrowser", "Failed to scan directory metadata before delete: %s", dirPath.c_str());
-    return;
-  }
-
-  char name[256];
-  for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
-    file.getName(name, sizeof(name));
-    const std::string childPath = buildFullPath(dirPath, name);
-    if (file.isDirectory()) {
-      collectMetadataPathsRecursively(childPath, paths);
-    } else if (hasFileMetadata(childPath)) {
-      paths.push_back(childPath);
-    }
-    file.close();
-  }
-  dir.close();
 }
 
 std::string getFileName(std::string filename);
@@ -519,7 +494,7 @@ void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, con
     }
 
     std::vector<std::string> metadataPaths;
-    collectMetadataPathsRecursively(dirPath, metadataPaths);
+    BookMetadataUtils::collectMetadataPathsRecursively(dirPath, metadataPaths);
 
     if (!Storage.removeDir(dirPath.c_str())) {
       LOG_ERR("FileBrowser", "Failed to delete directory: %s", dirPath.c_str());

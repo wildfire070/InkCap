@@ -14,6 +14,8 @@
 #include "CrossPointSettings.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookMetadataUtils.h"
+#include "util/BookMoveUtils.h"
 
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
@@ -476,8 +478,8 @@ void WebDAVHandler::handleDelete(WebServer& s) {
     }
   } else {
     file.close();
-    clearBookCache(path.c_str());
     if (Storage.remove(path.c_str())) {
+      BookMetadataUtils::clearFileMetadata(path.c_str());
       ImageFolderIndex::invalidateForPath(path.c_str());
       s.send(204);
     } else {
@@ -569,11 +571,34 @@ void WebDAVHandler::handleMove(WebServer& s) {
     return;
   }
 
+  HalFile file = Storage.open(srcPath.c_str());
+  if (!file) {
+    s.send(500, "text/plain", "Failed to open source");
+    return;
+  }
+
+  const bool srcIsDir = file.isDirectory();
+  String srcPrefix;
+  if (srcIsDir) {
+    // Unlike handleCopy (which rejects directory sources outright), MOVE
+    // needs to support renaming a folder -- but a client (rclone, a scripted
+    // curl -X MOVE) could still name a destination inside the source's own
+    // subtree, which would create a self-referential directory entry.
+    srcPrefix = srcPath;
+    if (!srcPrefix.endsWith("/")) srcPrefix += "/";
+    if (dstPath == srcPath || dstPath.startsWith(srcPrefix)) {
+      file.close();
+      s.send(409, "text/plain", "Cannot move a directory into its own subtree");
+      return;
+    }
+  }
+
   // Check destination parent exists
   int lastSlash = dstPath.lastIndexOf('/');
   if (lastSlash > 0) {
     String parentPath = dstPath.substring(0, lastSlash);
     if (!parentPath.isEmpty() && !Storage.exists(parentPath.c_str())) {
+      file.close();
       s.send(409, "text/plain", "Destination parent does not exist");
       return;
     }
@@ -581,29 +606,88 @@ void WebDAVHandler::handleMove(WebServer& s) {
 
   bool dstExists = Storage.exists(dstPath.c_str());
   if (dstExists && !overwrite) {
+    file.close();
     s.send(412, "text/plain", "Destination exists and Overwrite is F");
     return;
   }
 
+  // Rename the existing destination aside rather than deleting it outright:
+  // if the rename below fails partway (SD I/O error, card pulled mid-op),
+  // the previous destination content must still be recoverable instead of
+  // silently gone with nothing to replace it -- mirrors the .davtmp pattern
+  // raw()/PUT already uses for exactly this reason.
+  std::string dstBackupPath;
   if (dstExists) {
-    Storage.remove(dstPath.c_str());
+    dstBackupPath = std::string(dstPath.c_str()) + ".davbak";
+    Storage.remove(dstBackupPath.c_str());  // clear any stale backup from a prior failed attempt
+    if (!Storage.rename(dstPath.c_str(), dstBackupPath.c_str())) {
+      file.close();
+      s.send(500, "text/plain", "Failed to prepare overwrite");
+      return;
+    }
   }
 
-  HalFile file = Storage.open(srcPath.c_str());
-  if (!file) {
-    s.send(500, "text/plain", "Failed to open source");
-    return;
+  // For a single epub, capture its cache path/title/author (a lightweight,
+  // metadata-only load) before the rename below, so its bookmarks/clippings/
+  // AO3 index record/RecentBooksStore entry can be migrated to the new path
+  // afterward instead of being silently orphaned under the old one. For a
+  // directory move, collect every book file's path up front instead -- the
+  // rename below moves them all atomically, and each one is migrated by path
+  // afterward (loading title/author fresh from its new location, since the
+  // old path no longer exists once the directory itself has moved).
+  const bool srcIsEpub = !srcIsDir && FsHelpers::hasEpubExtension(srcPath);
+  std::string oldCachePath, epubTitle, epubAuthor;
+  std::vector<std::string> dirMetadataPaths;
+  if (srcIsEpub) {
+    Epub epub(srcPath.c_str(), "/.crosspoint");
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
+                  /*skipScraping=*/true)) {
+      oldCachePath = epub.getCachePath();
+      epubTitle = epub.getTitle();
+      epubAuthor = epub.getAuthor();
+    }
+  } else if (srcIsDir) {
+    BookMetadataUtils::collectMetadataPathsRecursively(srcPath.c_str(), dirMetadataPaths);
+  } else {
+    clearBookCache(srcPath.c_str());
   }
 
-  clearBookCache(srcPath.c_str());
   bool success = file.rename(dstPath.c_str());
   file.close();
 
   if (success) {
+    if (!dstBackupPath.empty()) Storage.remove(dstBackupPath.c_str());
+    if (srcIsEpub) {
+      BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle, epubAuthor,
+                                           /*keepInRecents=*/true);
+    } else if (srcIsDir) {
+      const std::string srcStd = srcPath.c_str();
+      const std::string dstStd = dstPath.c_str();
+      for (const auto& oldFullPath : dirMetadataPaths) {
+        const std::string relPath = oldFullPath.substr(srcStd.size());
+        const std::string newFullPath = dstStd + relPath;
+        if (!FsHelpers::hasEpubExtension(newFullPath)) continue;
+        Epub epub(newFullPath, "/.crosspoint");
+        std::string title, author;
+        if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
+                      /*skipScraping=*/true)) {
+          title = epub.getTitle();
+          author = epub.getAuthor();
+        }
+        // The epub file itself already moved with the directory, but its
+        // cache dir lives in a separate, path-hash-keyed location that the
+        // directory rename never touched -- migrateMovedEpubState still
+        // needs to relocate it explicitly.
+        const std::string oldChildCachePath = Epub::cachePathForFilePath(oldFullPath, "/.crosspoint");
+        BookMoveUtils::migrateMovedEpubState(oldFullPath, newFullPath, oldChildCachePath, title, author,
+                                             /*keepInRecents=*/true);
+      }
+    }
     ImageFolderIndex::invalidateForPath(srcPath.c_str());
     ImageFolderIndex::invalidateForPath(dstPath.c_str());
     s.send(dstExists ? 204 : 201);
   } else {
+    if (!dstBackupPath.empty()) Storage.rename(dstBackupPath.c_str(), dstPath.c_str());
     s.send(500, "text/plain", "Move failed");
   }
 }
@@ -667,13 +751,26 @@ void WebDAVHandler::handleCopy(WebServer& s) {
     return;
   }
 
+  // Rename the existing destination aside rather than deleting it outright:
+  // if the copy below fails partway (SD I/O error, out of memory, disk
+  // full), the previous destination content must still be recoverable
+  // instead of silently gone with nothing to replace it -- mirrors the
+  // .davtmp pattern raw()/PUT already uses for exactly this reason.
+  std::string dstBackupPath;
   if (dstExists) {
-    Storage.remove(dstPath.c_str());
+    dstBackupPath = std::string(dstPath.c_str()) + ".davbak";
+    Storage.remove(dstBackupPath.c_str());
+    if (!Storage.rename(dstPath.c_str(), dstBackupPath.c_str())) {
+      srcFile.close();
+      s.send(500, "text/plain", "Failed to prepare overwrite");
+      return;
+    }
   }
 
   HalFile dstFile;
   if (!Storage.openFileForWrite("DAV", dstPath, dstFile)) {
     srcFile.close();
+    if (!dstBackupPath.empty()) Storage.rename(dstBackupPath.c_str(), dstPath.c_str());
     s.send(500, "text/plain", "Failed to create destination");
     return;
   }
@@ -684,6 +781,7 @@ void WebDAVHandler::handleCopy(WebServer& s) {
     srcFile.close();
     dstFile.close();
     Storage.remove(dstPath.c_str());
+    if (!dstBackupPath.empty()) Storage.rename(dstBackupPath.c_str(), dstPath.c_str());
     s.send(500, "text/plain", "Copy failed - out of memory");
     return;
   }
@@ -703,10 +801,12 @@ void WebDAVHandler::handleCopy(WebServer& s) {
   dstFile.close();
 
   if (copyOk) {
+    if (!dstBackupPath.empty()) Storage.remove(dstBackupPath.c_str());
     ImageFolderIndex::invalidateForPath(dstPath.c_str());
     s.send(dstExists ? 204 : 201);
   } else {
     Storage.remove(dstPath.c_str());
+    if (!dstBackupPath.empty()) Storage.rename(dstBackupPath.c_str(), dstPath.c_str());
     s.send(500, "text/plain", "Copy failed - disk full?");
   }
 }

@@ -22,7 +22,8 @@ bool isLibraryFull() {
     char magic[4];
     uint8_t version;
     uint16_t recordCount;
-    if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2) {
+    if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
+        memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
       // Skip remaining header bytes to reach records
       f.seek(12);
       uint16_t liveCount = 0;
@@ -48,6 +49,9 @@ void Ao3IndexActivity::onEnter() {
 }
 
 void Ao3IndexActivity::runHeapCheck() {
+  // Guards state/errorMessage writes below, which render() reads on the
+  // separate render task.
+  RenderLock lock(*this);
   if (ESP.getFreeHeap() < 80 * 1024) {
     // A loaded SD custom font can be the difference here; release it and
     // recheck before giving up. (Not releasing the framebuffer too: render()
@@ -180,6 +184,7 @@ void Ao3IndexActivity::loop() {
   if (state == State::DIR_COMPLETE) {
     if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
       if (!failedBooks.empty()) {
+        RenderLock lock(*this);
         state = State::DIR_FAILED_LIST;
         requestUpdate(true);
       } else {
@@ -220,7 +225,8 @@ void Ao3IndexActivity::loop() {
       tickSingleScraping();
       break;
 
-    case State::DIR_LOAD_SETTINGS:
+    case State::DIR_LOAD_SETTINGS: {
+      RenderLock settingsLock(*this);
       loadSettings();
       if (ao3Folder.empty()) {
         state = State::ERROR;
@@ -232,6 +238,7 @@ void Ao3IndexActivity::loop() {
         requestUpdate(true);
       }
       break;
+    }
 
     case State::DIR_DISCOVERY:
       tickDirDiscovery();
@@ -239,10 +246,13 @@ void Ao3IndexActivity::loop() {
 
     case State::DIR_DISCOVERY_CONFIRM:
       if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm)) {
-        successCount = 0;
-        failureCount = 0;
-        failedBooks.clear();
-        failedHashes.clear();
+        {
+          RenderLock confirmLock(*this);
+          successCount = 0;
+          failureCount = 0;
+          failedBooks.clear();
+          failedHashes.clear();
+        }
         startDirIndexing();
       } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
         finish();  // user declined; return to library
@@ -267,6 +277,9 @@ void Ao3IndexActivity::loop() {
 }
 
 void Ao3IndexActivity::tickSingleSniffing() {
+  // Guards state/errorMessage writes below, which render() reads on the
+  // separate render task.
+  RenderLock lock(*this);
   Epub epub(targetPath, "/.crosspoint");
   std::string pub = epub.sniffPublisher();
 
@@ -284,6 +297,9 @@ void Ao3IndexActivity::tickSingleSniffing() {
 }
 
 void Ao3IndexActivity::tickSingleScraping() {
+  // Guards state/errorMessage writes below, which render() reads on the
+  // separate render task.
+  RenderLock lock(*this);
   if (ESP.getFreeHeap() < 80 * 1024) {
     // Not releasing the framebuffer here: the state transition into this
     // tick used requestUpdate(true) (non-waiting), so there's no guarantee
@@ -314,6 +330,9 @@ void Ao3IndexActivity::tickSingleScraping() {
 }
 
 void Ao3IndexActivity::tickDirDiscovery() {
+  // Guards state/unindexedCount/headless_ writes below, which render() reads
+  // on the separate render task.
+  RenderLock lock(*this);
   if (!initialized) {
     buildIndexedHashes();
     dirQueue.clear();
@@ -399,6 +418,9 @@ void Ao3IndexActivity::tickDirDiscovery() {
 }
 
 void Ao3IndexActivity::startDirIndexing() {
+  // Guards state/currentBookIndex/batchStartIndex/batchCount writes below,
+  // which render() reads on the separate render task.
+  RenderLock lock(*this);
   // Rebuild indexed hashes so books successfully indexed in previous batches are excluded.
   buildIndexedHashes();
   // Merge in any books that failed this session so subsequent batch walks
@@ -489,6 +511,11 @@ void Ao3IndexActivity::startDirIndexing() {
 }
 
 void Ao3IndexActivity::tickDirIndexing() {
+  // Guards every write below (state/errorMessage/currentBookTitle/counts) --
+  // render() reads all of them on the separate render task. Mutex is
+  // recursive, so this is safe even though this function can indirectly
+  // reach render-adjacent code via sdFontSystem.releaseForNetwork().
+  RenderLock lock(*this);
   if (ESP.getFreeHeap() < 80 * 1024) {
     // Not releasing the framebuffer here: same reasoning as
     // tickSingleScraping() — the state transition into this tick used a

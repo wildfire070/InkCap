@@ -178,7 +178,7 @@ extern esp_err_t esp_crt_bundle_attach(void* conf);
 size_t totalBytesReceived = 0;
 
 struct OtaInstallContext {
-  size_t* processedSize = nullptr;
+  std::atomic<size_t>* processedSize = nullptr;
   size_t totalSize = 0;
   size_t lastProgressBytes = 0;
   int lastReportedPct = -1;
@@ -465,7 +465,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
       LOG_INF("OTA", "Update cancelled");
       return CANCELLED_ERROR;
     }
-    LOG_ERR("OTA", "Firmware download failed after %zu/%zu bytes", processedSize, totalSize);
+    LOG_ERR("OTA", "Firmware download failed after %zu/%zu bytes", processedSize.load(), totalSize.load());
     return HTTP_ERROR;
   }
 
@@ -535,7 +535,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   }
 
   notifyOtaProgress(&installCtx, true);
-  LOG_INF("OTA", "Update completed: %zu bytes", processedSize);
+  LOG_INF("OTA", "Update completed: %zu bytes", processedSize.load());
   return OK;
 }
 #endif

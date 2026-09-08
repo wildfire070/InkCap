@@ -143,8 +143,13 @@ void Ao3LibrarySettingsActivity::loop() {
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || tapConfirm) {
       showingCleanupConfirm = false;
       cleaningUpIndex = true;
-      requestUpdate(true);
-      render(RenderLock());
+      // Calling render() directly here (as this once did) bypasses the
+      // render task's own HalPowerManager::Lock (ActivityManager.cpp) --
+      // the device could enter low-power mode mid-refresh -- and double-
+      // renders the "Cleaning up..." screen. requestUpdateAndWait() is the
+      // established pattern for "show a message, then do blocking work,"
+      // used by OtaUpdateActivity/FontDownloadActivity/SdFirmwareUpdateActivity.
+      requestUpdateAndWait();
       cleanupRemovedCount = Ao3Librarian::sanitizeIndex();
       cleaningUpIndex = false;
       showingCleanupResult = true;
