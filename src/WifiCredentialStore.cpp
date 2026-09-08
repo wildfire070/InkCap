@@ -146,7 +146,10 @@ bool WifiCredentialStore::loadFromBinaryFile() {
   }
 
   if (version >= 2) {
-    serialization::readString(file, lastConnectedSsid);
+    if (!serialization::tryReadString(file, lastConnectedSsid)) {
+      LOG_ERR("WCS", "Deserialization failed: could not read lastConnectedSsid");
+      return false;
+    }
   } else {
     lastConnectedSsid.clear();
   }
@@ -158,8 +161,9 @@ bool WifiCredentialStore::loadFromBinaryFile() {
   credentials.reserve(std::min<size_t>(count, MAX_NETWORKS));
   for (uint8_t i = 0; i < count && i < MAX_NETWORKS; i++) {
     WifiCredential cred;
-    serialization::readString(file, cred.ssid);
-    serialization::readString(file, cred.password);
+    if (!serialization::tryReadString(file, cred.ssid) || !serialization::tryReadString(file, cred.password)) {
+      break;
+    }
     legacyDeobfuscate(cred.password);
     credentials.push_back(std::move(cred));
   }

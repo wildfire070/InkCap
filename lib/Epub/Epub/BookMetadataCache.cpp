@@ -50,10 +50,19 @@ uint32_t writeTocEntryTo(F& file, const BookMetadataCache::TocEntry& entry) {
   return pos;
 }
 
+// Uses the bounded tryReadString() rather than readString(): these entries
+// can be reached via a seek to a position derived from a corrupted LUT slot
+// (getSpineEntry/getTocEntry/getSpineCumulativeSize below don't validate the
+// seek target), so a garbage length prefix here must fail safely -- return
+// an empty/default entry -- rather than drive resize() into an oversized
+// allocation attempt, which aborts under this project's -fno-exceptions
+// build.
 template <typename F>
 BookMetadataCache::SpineEntry readSpineEntryFrom(F& file) {
   BookMetadataCache::SpineEntry entry;
-  serialization::readString(file, entry.href);
+  if (!serialization::tryReadString(file, entry.href)) {
+    return {};
+  }
   serialization::readPod(file, entry.cumulativeSize);
   serialization::readPod(file, entry.tocIndex);
   return entry;
@@ -62,9 +71,10 @@ BookMetadataCache::SpineEntry readSpineEntryFrom(F& file) {
 template <typename F>
 BookMetadataCache::TocEntry readTocEntryFrom(F& file) {
   BookMetadataCache::TocEntry entry;
-  serialization::readString(file, entry.title);
-  serialization::readString(file, entry.href);
-  serialization::readString(file, entry.anchor);
+  if (!serialization::tryReadString(file, entry.title) || !serialization::tryReadString(file, entry.href) ||
+      !serialization::tryReadString(file, entry.anchor)) {
+    return {};
+  }
   serialization::readPod(file, entry.level);
   serialization::readPod(file, entry.spineIndex);
   return entry;
@@ -620,7 +630,7 @@ BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) 
 
   // Seek to spine LUT item, read from LUT and get out data
   bookFile.seek(lutOffset + sizeof(uint32_t) * index);
-  uint32_t spineEntryPos;
+  uint32_t spineEntryPos = 0;
   serialization::readPod(bookFile, spineEntryPos);
   bookFile.seek(spineEntryPos);
   return readSpineEntry(bookFile);
@@ -643,7 +653,7 @@ size_t BookMetadataCache::getSpineCumulativeSize(const int index) {
 
   // Seek to spine LUT item, then read only the cumulative size field from the entry.
   bookFile.seek(lutOffset + sizeof(uint32_t) * index);
-  uint32_t spineEntryPos;
+  uint32_t spineEntryPos = 0;
   serialization::readPod(bookFile, spineEntryPos);
   bookFile.seek(spineEntryPos);
 
@@ -669,7 +679,7 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
 
   // Seek to TOC LUT item, read from LUT and get out data
   bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index);
-  uint32_t tocEntryPos;
+  uint32_t tocEntryPos = 0;
   serialization::readPod(bookFile, tocEntryPos);
   bookFile.seek(tocEntryPos);
   return readTocEntry(bookFile);
