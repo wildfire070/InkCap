@@ -174,6 +174,13 @@ bool Txt::readContent(uint8_t* buffer, size_t offset, size_t length) const {
     return false;
   }
 
-  size_t bytesRead = file.read(buffer, length);
-  return bytesRead > 0;
+  // Callers size `length` from the actual remaining file size (never past
+  // EOF), so a short read here is always a genuine I/O error, not
+  // end-of-file -- treating it as success would leave the unread tail of
+  // `buffer` as uninitialized heap memory that gets parsed and rendered as
+  // page text. Check the exact count (and the raw int return, which can be
+  // negative on error -- assigning that to a size_t would otherwise wrap to
+  // a huge value and pass the old `> 0` check).
+  const int readResult = file.read(buffer, length);
+  return readResult >= 0 && static_cast<size_t>(readResult) == length;
 }

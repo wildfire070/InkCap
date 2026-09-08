@@ -19,6 +19,15 @@ namespace {
 constexpr uint16_t ZIP_METHOD_STORED = 0;
 constexpr uint16_t ZIP_METHOD_DEFLATED = 8;
 constexpr size_t ONE_SHOT_DEFLATE_MAX_COMPRESSED_BYTES = 32768;
+// Sanity cap on the reserve() hint below, generous for even a huge multi-
+// thousand-chapter omnibus. zipDetails.totalEntries is an unvalidated field
+// read straight from the zip's end-of-central-directory record, so a
+// corrupted/hostile value near its uint16_t max would otherwise force an
+// unordered_map bucket-array allocation sized for 65535 entries before a
+// single central-directory record has been parsed. The actual number of
+// entries added is still bounded by what the parse loop below genuinely
+// finds -- this only bounds the upfront allocation.
+constexpr uint16_t MAX_ZIP_ENTRIES_RESERVE_HINT = 4096;
 
 // RAII zip: opens the zip if not already open, closes on destruction only if
 // it performed the open.  Removes the wasOpen/close boilerplate from every method.
@@ -287,7 +296,7 @@ bool ZipFile::loadAllFileStatSlims() {
   uint32_t sig;
   char itemName[256];
   fileStatSlimCache.clear();
-  fileStatSlimCache.reserve(zipDetails.totalEntries);
+  fileStatSlimCache.reserve(std::min(zipDetails.totalEntries, MAX_ZIP_ENTRIES_RESERVE_HINT));
 
   while (file.available()) {
     file.read(&sig, 4);
@@ -668,6 +677,15 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
 
   const auto deflatedDataSize = fileStat.compressedSize;
   const auto inflatedDataSize = fileStat.uncompressedSize;
+  // uncompressedSize comes straight from the zip's own central directory with
+  // no validation -- a corrupted or hostile entry reporting UINT32_MAX would
+  // wrap dataSize to 0 below, while every read/inflate call past this point
+  // still targets the original (unwrapped) inflatedDataSize, writing far past
+  // a buffer sized for 0 bytes. Reject outright rather than silently wrapping.
+  if (trailingNullByte && inflatedDataSize == UINT32_MAX) {
+    LOG_ERR("ZIP", "Uncompressed size too large to add a trailing null byte (%u)", inflatedDataSize);
+    return nullptr;
+  }
   const auto dataSize = trailingNullByte ? inflatedDataSize + 1 : inflatedDataSize;
   const auto data = static_cast<uint8_t*>(malloc(dataSize));
   if (data == nullptr) {
