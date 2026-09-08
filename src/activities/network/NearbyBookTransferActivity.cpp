@@ -163,6 +163,11 @@ void NearbyBookTransferActivity::stopRadio() { transport_.end(); }
 
 void NearbyBookTransferActivity::startListening() {
   if (!startRadio()) return;
+  // session_/offeredFileName_/senderName_/finalPath_ are read by render();
+  // reachable from rejectOffer(), a menu action, and loop()'s back-button
+  // handler -- none of which hold this lock already, and nothing called
+  // from here reaches acceptOffer()'s requestUpdateAndWait().
+  RenderLock lock(*this);
   session_.reset();
   peerMac_ = {};
   offeredFileName_.clear();
@@ -212,6 +217,10 @@ bool NearbyBookTransferActivity::sendAdvertisement(const uint8_t* destination) {
 
 void NearbyBookTransferActivity::selectPeer() {
   if (peerCount_ == 0 || selectedIndex_ < 0 || selectedIndex_ >= peerCount_) return;
+  // state_ (via setState()) is read by render(); called only from
+  // activateSelected(), never nested under handlePacket()'s lock or
+  // acceptOffer()'s requestUpdateAndWait().
+  RenderLock lock(*this);
   peerMac_ = peers_[selectedIndex_].mac;
   retryCount_ = 0;
   setState(State::WaitingForApproval);
@@ -605,6 +614,11 @@ void NearbyBookTransferActivity::chooseDestinationFolder() {
 }
 
 void NearbyBookTransferActivity::updateTimers() {
+  // Called every loop() tick; can mutate state_/errorMessage_ via setError()
+  // -- both read by render() under its own lock. Nothing reachable from here
+  // (sendDiscovery/sendOffer/setError/resendPending/sendComplete) calls
+  // acceptOffer()'s requestUpdateAndWait(), so no nested-lock risk.
+  RenderLock lock(*this);
   const uint32_t now = millis();
   if (state_ == State::Discovering && now - lastActionMs_ >= DISCOVERY_INTERVAL_MS) {
     sendDiscovery();
