@@ -18,6 +18,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
+#include <RestartHooks.h>
 #include <SPI.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
@@ -362,6 +363,13 @@ using BootResume = SleepWakePolicy::Resume;
 static bool deepSleepInProgress = false;
 
 static void restartWithSilentToken() {
+  // A silent restart bypasses Activity::onExit() (the reader's own exit path
+  // is the only place a session-tracking feature like Companion normally
+  // banks anything), so any credited-but-not-yet-banked state would
+  // otherwise be discarded on every silent-restart path (heap-defrag
+  // reboots, sync-jump retries, etc.). Generic on purpose -- this file is
+  // shared by branches that don't have Companion at all; see RestartHooks.h.
+  runPreRestartHook();
 #ifdef SIMULATOR
   SimulatorLifecycle::setSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
 #endif
