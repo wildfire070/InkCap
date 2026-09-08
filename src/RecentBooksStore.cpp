@@ -242,18 +242,23 @@ bool RecentBooksStore::loadFromBinaryFile() {
     uint8_t count;
     serialization::readPod(inputFile, count);
     recentBooks.clear();
-    recentBooks.reserve(count);
+    recentBooks.reserve(std::min<size_t>(count, MAX_RECENT_BOOKS));
     for (uint8_t i = 0; i < count; i++) {
+      // Cap at MAX_RECENT_BOOKS same as the JSON load path (fromJson) --
+      // a legacy file claiming more than that shouldn't grow the list
+      // unbounded.
+      if (recentBooks.size() >= static_cast<size_t>(MAX_RECENT_BOOKS)) break;
       std::string path;
-      serialization::readString(inputFile, path);
+      if (!serialization::tryReadString(inputFile, path)) break;
 
       // load book to get missing data
       RecentBook book = getDataFromBook(path);
       if (book.title.empty() && book.author.empty() && version == 2) {
         // Fall back to loading what we can from the store
         std::string title, author;
-        serialization::readString(inputFile, title);
-        serialization::readString(inputFile, author);
+        if (!serialization::tryReadString(inputFile, title) || !serialization::tryReadString(inputFile, author)) {
+          break;
+        }
         recentBooks.push_back({path, title, author, ""});
       } else {
         recentBooks.push_back(book);
@@ -264,15 +269,16 @@ bool RecentBooksStore::loadFromBinaryFile() {
     serialization::readPod(inputFile, count);
 
     recentBooks.clear();
-    recentBooks.reserve(count);
+    recentBooks.reserve(std::min<size_t>(count, MAX_RECENT_BOOKS));
     uint8_t omitted = 0;
 
     for (uint8_t i = 0; i < count; i++) {
+      if (recentBooks.size() >= static_cast<size_t>(MAX_RECENT_BOOKS)) break;
       std::string path, title, author, coverBmpPath;
-      serialization::readString(inputFile, path);
-      serialization::readString(inputFile, title);
-      serialization::readString(inputFile, author);
-      serialization::readString(inputFile, coverBmpPath);
+      if (!serialization::tryReadString(inputFile, path) || !serialization::tryReadString(inputFile, title) ||
+          !serialization::tryReadString(inputFile, author) || !serialization::tryReadString(inputFile, coverBmpPath)) {
+        break;
+      }
 
       // Omit books with missing title (e.g. saved before metadata was available)
       if (title.empty()) {

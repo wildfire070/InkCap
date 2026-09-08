@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace serialization {
@@ -110,6 +111,10 @@ class BufferedFileReader {
   // Logical read position.
   size_t position() const { return bufStart + off; }
 
+  // Total file size, for bounding a length-prefixed read against actual
+  // remaining bytes (see tryReadString below).
+  size_t size() const { return file.size(); }
+
   bool seek(const size_t target) {
     // Within the buffered window: just move the cursor.
     if (cap != 0 && target >= bufStart && target < bufStart + fill) {
@@ -156,6 +161,29 @@ inline void readString(BufferedFileReader& in, std::string& s) {
   if (len > 0) {
     in.read(&s[0], len);
   }
+}
+
+// Bounded counterpart to readString() above: rejects a length prefix that
+// exceeds the string's max_size(), INT_MAX, or the file's actual remaining
+// bytes, instead of driving resize() into an oversized allocation attempt
+// (which aborts under this project's -fno-exceptions build). Mirrors
+// serialization::tryReadString() in Serialization.h for HalFile.
+inline bool tryReadString(BufferedFileReader& in, std::string& s) {
+  uint32_t len = 0;
+  if (in.read(&len, sizeof(len)) != sizeof(len)) {
+    return false;
+  }
+  if (static_cast<size_t>(len) > s.max_size() || len > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
+  const size_t total = in.size();
+  const size_t pos = in.position();
+  const size_t remaining = total > pos ? total - pos : 0;
+  if (len > remaining) {
+    return false;
+  }
+  s.resize(len);
+  return len == 0 || in.read(&s[0], len) == len;
 }
 
 }  // namespace serialization
