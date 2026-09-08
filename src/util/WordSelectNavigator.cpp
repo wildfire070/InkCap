@@ -476,7 +476,7 @@ bool WordSelectNavigator::HighlightSnapshot::capture(uint16_t x, uint16_t y, uin
 
 void WordSelectNavigator::HighlightSnapshot::restore(GfxRenderer& renderer) const {
   if (!valid() || !storage_) return;
-  renderer.writeFramebufferRegion(x_, y_, w_, h_, storage_->bytes);
+  renderer.writeFramebufferRegion(x_, y_, w_, h_, storage_->bytes, HighlightSnapshotStorage::MAX_SNAPSHOT_BYTES);
 }
 
 void WordSelectNavigator::releaseWorkingSet() {
