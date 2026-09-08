@@ -22,6 +22,7 @@
 #include <string>
 
 #include "KOReaderCredentialStore.h"
+#include "KOReaderHttpBounds.h"
 
 #ifndef SIMULATOR
 // wolfSSL is built with DEBUG_WOLFSSL, whose Arduino backend expects the app to
@@ -212,7 +213,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
     return NETWORK_ERROR;
   }
   applyAuthHeaders(http);
-  const int httpCode = http.GET();
+  std::string responseBody;
+  const int httpCode = koreader_sync::boundedGet(http, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
 
@@ -223,7 +225,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
     return NETWORK_ERROR;
   }
   if (httpCode == 200) {
-    const Error result = validateAuthResponse(http.getString().c_str());
+    const Error result = validateAuthResponse(responseBody.c_str());
     http.end();
     return result;
   }
@@ -261,7 +263,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
   }
   http.addHeader("Accept", "application/vnd.koreader.v1+json");
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
+  std::string responseBody;  // unread; response status alone decides the outcome below
+  const int httpCode = koreader_sync::boundedSendRequest(http, "POST", body, responseBody);
   http.end();
   lastHttpCode = httpCode;
 
@@ -354,7 +357,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     return NETWORK_ERROR;
   }
   applyAuthHeaders(http);
-  const int httpCode = http.GET();
+  std::string responseBody;
+  const int httpCode = koreader_sync::boundedGet(http, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
 
@@ -375,7 +379,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   }
 
   if (isSuccessfulHttpCode(httpCode)) {
-    const std::string& body = http.getString();
+    const std::string& body = responseBody;
     JsonDocument doc;
     const DeserializationError error = deserializeJson(doc, body);
 
@@ -505,7 +509,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
   applyAuthHeaders(http);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("PUT", body);
+  std::string responseBody;  // unread; response status alone decides the outcome below
+  const int httpCode = koreader_sync::boundedSendRequest(http, "PUT", body, responseBody);
   http.end();
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
