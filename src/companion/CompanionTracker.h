@@ -2,6 +2,7 @@
 #include <CompanionMood.h>
 
 #include <cstdint>
+#include <mutex>
 
 #include "CompanionSprites.generated.h"
 
@@ -55,21 +56,32 @@ class CompanionTracker {
 
   // False when the board has no RTC or it was never set. Day-based decay and
   // streaks are paused in that case; the UI can explain why.
-  bool hasValidClock() const { return clockValid; }
+  bool hasValidClock() const;
 
  private:
   CompanionTracker();
 
-  // Reads the RTC and recomputes the cached local day. Does I2C.
+  // Reads the RTC and recomputes the cached local day. Does I2C. Caller must
+  // already hold mutex_.
   void refreshDay();
 
   // Single source for the mood inputs, so the pose and any figure shown beside
-  // it are always derived from the same numbers.
+  // it are always derived from the same numbers. Caller must already hold
+  // mutex_.
   companion::MoodInput buildMoodInput() const;
 
   // Banks the accumulator into CompanionState. Returns true if state changed.
+  // Caller must already hold mutex_.
   bool bankSession();
 
+  // Guards every field below: beginSession()/onPageTurn()/tick()/endSession()
+  // run on the main task (tick() every loop iteration, unconditionally, with
+  // no requestUpdate() to provide a happens-before edge), while
+  // currentMood()/minutesToday()/hasValidClock() are read from
+  // HomeActivity::render() on the separate render task. std::mutex (not
+  // recursive) is taken only at each public entry point below -- the private
+  // helpers assume it's already held, to avoid a self-deadlock.
+  mutable std::mutex mutex_;
   companion::SessionAccumulator accumulator;
   uint32_t pagesThisSession = 0;
   uint32_t bankedSeconds = 0;  // already folded into CompanionState this session

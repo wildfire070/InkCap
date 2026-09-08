@@ -2061,7 +2061,10 @@ std::string Epub::getAo3WorkId() const {
     bool completed;
     std::string id;
     serialization::readPod(f, completed);
-    serialization::readString(f, id);
+    if (!serialization::tryReadString(f, id)) {
+      f.close();
+      return bookMetadataCache ? bookMetadataCache->coreMetadata.ao3WorkId : "";
+    }
     f.close();
     return id;
   }
@@ -2078,8 +2081,10 @@ std::string Epub::getAo3UpdateDate() const {
     bool completed;
     std::string id, date;
     serialization::readPod(f, completed);
-    serialization::readString(f, id);
-    serialization::readString(f, date);
+    if (!serialization::tryReadString(f, id) || !serialization::tryReadString(f, date)) {
+      f.close();
+      return bookMetadataCache ? bookMetadataCache->coreMetadata.ao3UpdateDate : "";
+    }
     f.close();
     return date;
   }

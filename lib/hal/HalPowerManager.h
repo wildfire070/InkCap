@@ -28,6 +28,14 @@ class HalPowerManager {
   mutable int _batteryCachedPercent = 0;  // Last read battery percentage * 10 (0-1000); callers divide by 10 (ADC/X4
                                           // path only — I2C/X3 path stores 0-100 directly)
   mutable unsigned long _batteryLastPollMs = 0;  // Timestamp of last battery read in milliseconds
+  // Guards the two fields above: getBatteryPercentage() is called both from
+  // the render task (BaseTheme.cpp's status bar) and the main task
+  // (main.cpp), with no other synchronization between them. Deliberately
+  // separate from modeMutex below -- that one is already held for the
+  // duration of rendering (see ActivityManager::renderTaskLoop()'s
+  // HalPowerManager::Lock), so reusing it here would deadlock the very call
+  // from BaseTheme.cpp that needs it.
+  mutable SemaphoreHandle_t batteryCacheMutex = nullptr;
 
   enum LockMode { None, NormalSpeed };
   LockMode currentLockMode = None;

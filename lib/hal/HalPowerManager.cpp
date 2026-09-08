@@ -40,6 +40,8 @@ void HalPowerManager::begin() {
   normalFreq = getCpuFrequencyMhz();
   modeMutex = xSemaphoreCreateMutex();
   assert(modeMutex != nullptr);
+  batteryCacheMutex = xSemaphoreCreateMutex();
+  assert(batteryCacheMutex != nullptr);
 }
 
 void HalPowerManager::setPowerSaving(bool enabled) {
@@ -148,28 +150,37 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
 
 uint16_t HalPowerManager::getBatteryPercentage() const {
   static const BatteryMonitor battery;
+  if (batteryCacheMutex != nullptr) {
+    xSemaphoreTake(batteryCacheMutex, portMAX_DELAY);
+  }
+  uint16_t result;
   if (BoardConfig::ACTIVE.batteryGauge.gaugeAddr != 0) {
     const unsigned long now = millis();
     if (_batteryLastPollMs != 0 && (now - _batteryLastPollMs) < BATTERY_POLL_MS) {
-      return _batteryCachedPercent;
+      result = _batteryCachedPercent;
+    } else {
+      _batteryLastPollMs = now;
+      uint16_t percent = 0;
+      if (!battery.readPercentageChecked(percent)) {
+        result = _batteryCachedPercent;
+      } else {
+        _batteryCachedPercent = percent;
+        result = _batteryCachedPercent;
+      }
     }
-
-    _batteryLastPollMs = now;
-    uint16_t percent = 0;
-    if (!battery.readPercentageChecked(percent)) {
-      return _batteryCachedPercent;
-    }
-    _batteryCachedPercent = percent;
-    return _batteryCachedPercent;
-  }
-
-  // smooth the battery %.
-  if (_batteryCachedPercent == 0) {
-    _batteryCachedPercent = 10 * battery.readPercentage();
   } else {
-    _batteryCachedPercent = (_batteryCachedPercent * 9 + battery.readPercentage() * 10) / 10;
+    // smooth the battery %.
+    if (_batteryCachedPercent == 0) {
+      _batteryCachedPercent = 10 * battery.readPercentage();
+    } else {
+      _batteryCachedPercent = (_batteryCachedPercent * 9 + battery.readPercentage() * 10) / 10;
+    }
+    result = _batteryCachedPercent / 10;
   }
-  return _batteryCachedPercent / 10;
+  if (batteryCacheMutex != nullptr) {
+    xSemaphoreGive(batteryCacheMutex);
+  }
+  return result;
 }
 
 #if CROSSINK_BATTERY_DIAG_LOG

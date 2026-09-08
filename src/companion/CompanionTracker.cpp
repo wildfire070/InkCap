@@ -58,6 +58,7 @@ void CompanionTracker::refreshDay() {
 
 void CompanionTracker::beginSession() {
   if (!isEnabled()) return;
+  std::lock_guard<std::mutex> lock(mutex_);
 
   accumulator.reset();
   pagesThisSession = 0;
@@ -68,6 +69,7 @@ void CompanionTracker::beginSession() {
 
 void CompanionTracker::refreshForDisplay() {
   if (!isEnabled()) return;
+  std::lock_guard<std::mutex> lock(mutex_);
   // Outside a session there is no accumulator to disturb; only the cached day
   // and clock validity are updated so currentMood() reflects real elapsed days.
   if (!sessionActive) refreshDay();
@@ -75,12 +77,14 @@ void CompanionTracker::refreshForDisplay() {
 
 void CompanionTracker::onPageTurn() {
   if (!isEnabled() || !sessionActive) return;
+  std::lock_guard<std::mutex> lock(mutex_);
   accumulator.onPageTurn(millis() / 1000);
   pagesThisSession++;
 }
 
 void CompanionTracker::tick() {
   if (!isEnabled() || !sessionActive) return;
+  std::lock_guard<std::mutex> lock(mutex_);
   accumulator.onTick(millis() / 1000);
 
   // Mid-session checkpoint. Only credited time counts, so an idle reader never
@@ -102,6 +106,7 @@ bool CompanionTracker::bankSession() {
 
 void CompanionTracker::endSession() {
   if (!isEnabled() || !sessionActive) return;
+  std::lock_guard<std::mutex> lock(mutex_);
 
   accumulator.onTick(millis() / 1000);
   // The day can have rolled over mid-session (reading past midnight), so
@@ -130,6 +135,17 @@ companion::MoodInput CompanionTracker::buildMoodInput() const {
   return in;
 }
 
-companion::Mood CompanionTracker::currentMood() const { return companion::evaluate(buildMoodInput()); }
+companion::Mood CompanionTracker::currentMood() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return companion::evaluate(buildMoodInput());
+}
 
-uint16_t CompanionTracker::minutesToday() const { return buildMoodInput().creditedMinutesToday; }
+uint16_t CompanionTracker::minutesToday() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return buildMoodInput().creditedMinutesToday;
+}
+
+bool CompanionTracker::hasValidClock() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return clockValid;
+}
