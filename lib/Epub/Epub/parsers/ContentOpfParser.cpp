@@ -331,6 +331,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 
   if (self->state == IN_METADATA && strcmp(name, "dc:creator") == 0) {
+    // Once per <dc:creator> element, not per characterData() chunk -- expat
+    // can deliver one author's text across multiple chunks (buffer-boundary
+    // splits, entity references), and checking "is author non-empty" in
+    // characterData() itself would splice a spurious separator into the
+    // middle of that name instead of only between distinct authors.
+    if (!self->author.empty() && self->author.size() < ContentOpfParser::kMaxFieldBytes) {
+      self->author.append(", ");  // Add separator for multiple authors
+    }
     self->state = IN_BOOK_AUTHOR;
     return;
   }
@@ -595,9 +603,6 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
   }
 
   if (self->state == IN_BOOK_AUTHOR) {
-    if (!self->author.empty()) {
-      self->author.append(", ");  // Add separator for multiple authors
-    }
     appendBounded(self->author, s, len);
     return;
   }

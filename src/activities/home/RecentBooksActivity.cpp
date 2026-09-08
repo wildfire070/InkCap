@@ -60,6 +60,12 @@ void RecentBooksActivity::loadRecentBooks() {
 }
 
 void RecentBooksActivity::loadActiveTabEntries() {
+  // Reassigns markedForLaterEntries/newChaptersEntries/wipsEntries/recentBooks
+  // -- full vector reassignment, which can free/reallocate the backing store
+  // -- while render()'s buildListScreen()/activeTabRow() reads the same
+  // vectors under its own lock. Called from loop()-task sites (tab switch,
+  // page navigation, post-action reload), so needs the same lock here.
+  RenderLock lock(*this);
   switch (activeTab) {
     case DashboardTab::MarkedForLater:
       AO3_MARKED_FOR_LATER_STORE.pruneMissing();
