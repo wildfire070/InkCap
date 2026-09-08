@@ -194,7 +194,10 @@ bool CrossPointState::loadFromBinaryFile() {
     return false;
   }
 
-  serialization::readString(inputFile, openEpubPath);
+  if (!serialization::tryReadString(inputFile, openEpubPath)) {
+    LOG_ERR("CPS", "Deserialization failed: could not read openEpubPath");
+    return false;
+  }
   if (version >= 2) {
     uint8_t legacyLastSleep = UINT8_MAX;
     serialization::readPod(inputFile, legacyLastSleep);

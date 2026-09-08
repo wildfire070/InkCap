@@ -74,6 +74,14 @@ static bool tryReadString(FsFile& file, std::string& s) {
   if (static_cast<size_t>(len) > s.max_size() || len > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
     return false;
   }
+  // Also bound against the file's actual remaining bytes: a corrupted/
+  // hostile length prefix that's merely large (not large enough to trip the
+  // checks above) would otherwise still drive an oversized resize() attempt,
+  // which aborts under this project's -fno-exceptions build.
+  const int available = file.available();
+  if (available < 0 || len > static_cast<uint32_t>(available)) {
+    return false;
+  }
   s.resize(len);
   const int readLen = static_cast<int>(len);
   return len == 0 || file.read(&s[0], readLen) == readLen;

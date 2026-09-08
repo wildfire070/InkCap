@@ -725,7 +725,11 @@ void WifiSelectionActivity::checkConnectionStatus() {
     lastConnectionStatusLogTime = now;
   }
 
-  if (status == WL_CONNECTED) {
+  // WL_CONNECTED alone can precede DHCP actually handing out a lease --
+  // matches the same guard BookFusionBrowserActivity::checkAndConnectWifi()
+  // already needed. Falling through (rather than erroring) is correct here:
+  // the failure/timeout checks below still apply on subsequent polls.
+  if (status == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
     // Successfully connected
     IPAddress ip = WiFi.localIP();
     char ipStr[16];
