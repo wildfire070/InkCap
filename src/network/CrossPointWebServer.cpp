@@ -39,6 +39,8 @@
 #include "html/StyleCss.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookMetadataUtils.h"
+#include "util/BookMoveUtils.h"
 #include "util/FontFamilyLabel.h"
 #include "util/StringUtils.h"
 
@@ -1156,12 +1158,34 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
+  // For an epub, capture cache path + title/author (a lightweight,
+  // metadata-only load, matching Ao3IndexActivity's own scraping-skip load)
+  // BEFORE the rename below, so bookmarks/clippings/the AO3 index record and
+  // RecentBooksStore can be migrated to the new path afterward instead of
+  // being silently orphaned under the old one.
+  const bool isEpub = FsHelpers::hasEpubExtension(itemPath);
+  std::string oldCachePath, epubTitle, epubAuthor;
+  if (isEpub) {
+    Epub epub(itemPath.c_str(), "/.crosspoint");
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
+                  /*skipScraping=*/true)) {
+      oldCachePath = epub.getCachePath();
+      epubTitle = epub.getTitle();
+      epubAuthor = epub.getAuthor();
+    }
+  } else {
+    clearBookCache(itemPath.c_str());
+  }
+
   const bool success = file.rename(newPath.c_str());
   file.close();
 
   if (success) {
     LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
+    if (isEpub) {
+      BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
+                                           /*keepInRecents=*/true);
+    }
     ImageFolderIndex::invalidateForPath(itemPath.c_str());
     ImageFolderIndex::invalidateForPath(newPath.c_str());
     server->send(200, "text/plain", "Renamed successfully");
@@ -1249,12 +1273,31 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
+  // See handleRename() for why an epub's cache path/title/author are
+  // captured (via a metadata-only load) before the rename below.
+  const bool isEpub = FsHelpers::hasEpubExtension(itemPath);
+  std::string oldCachePath, epubTitle, epubAuthor;
+  if (isEpub) {
+    Epub epub(itemPath.c_str(), "/.crosspoint");
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
+                  /*skipScraping=*/true)) {
+      oldCachePath = epub.getCachePath();
+      epubTitle = epub.getTitle();
+      epubAuthor = epub.getAuthor();
+    }
+  } else {
+    clearBookCache(itemPath.c_str());
+  }
+
   const bool success = file.rename(newPath.c_str());
   file.close();
 
   if (success) {
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
+    if (isEpub) {
+      BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
+                                           /*keepInRecents=*/true);
+    }
     ImageFolderIndex::invalidateForPath(itemPath.c_str());
     ImageFolderIndex::invalidateForPath(newPath.c_str());
     server->send(200, "text/plain", "Moved successfully");
@@ -1322,17 +1365,36 @@ void CrossPointWebServer::handleDelete() const {
       continue;
     }
 
+    if (isProtectedPath(itemPath)) {
+      failedItems += itemPath + " (protected); ";
+      allSuccess = false;
+      continue;
+    }
+
     // Decide whether it's a directory or file by opening it
     bool success = false;
     HalFile f = Storage.open(itemPath.c_str());
     if (f && f.isDirectory()) {
       f.close();
+      // Collect every book's metadata path before the directory (and its
+      // contents) are gone -- mirrors FileBrowserActivity's own recursive
+      // delete, so a folder deleted over the web doesn't orphan bookmarks/
+      // clippings/AO3 index records the in-app delete would have cleaned up.
+      std::vector<std::string> metadataPaths;
+      BookMetadataUtils::collectMetadataPathsRecursively(itemPath.c_str(), metadataPaths);
       success = Storage.removeDir(itemPath.c_str());
+      if (success) {
+        for (const auto& metadataPath : metadataPaths) {
+          BookMetadataUtils::clearFileMetadata(metadataPath);
+        }
+      }
     } else {
       // It's a file (or couldn't open as dir) — remove file
       if (f) f.close();
       success = Storage.remove(itemPath.c_str());
-      clearBookCache(itemPath.c_str());
+      if (success) {
+        BookMetadataUtils::clearFileMetadata(itemPath.c_str());
+      }
     }
 
     if (!success) {

@@ -26,6 +26,7 @@
 #include "fontIds.h"
 #include "util/Ao3ArchiveUtils.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookMetadataUtils.h"
 #include "util/BookMoveUtils.h"
 
 namespace BookActions {
@@ -114,24 +115,7 @@ bool canSendNearby(const std::string& path) {
          FsHelpers::hasPngExtension(path) || FsHelpers::hasBmpExtension(path);
 }
 
-void clearFileMetadata(const std::string& fullPath) {
-  if (FsHelpers::hasEpubExtension(fullPath)) {
-    // Tombstone any live AO3 index record before the cache dir (which holds
-    // its sidecar) is wiped below -- otherwise a fic deleted from here
-    // (rather than from the AO3 Library's own delete path) leaves a
-    // permanent ghost row in the AO3 Library/Dashboard, since nothing else
-    // ever runs Ao3Librarian::sanitizeIndex() automatically. A no-op for a
-    // non-AO3 epub (no matching hash) or on a branch with no AO3 index file.
-    Ao3Librarian::tombstoneRecord(fullPath);
-    Epub(fullPath, "/.crosspoint").clearCache();
-    BookmarkStore::deleteForFilePath(fullPath, "epub");
-    ClippingStore::deleteForFilePath(fullPath, "epub");
-  } else if (FsHelpers::hasXtcExtension(fullPath)) {
-    BookmarkStore::deleteForFilePath(fullPath, "xtc");
-  } else if (FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath)) {
-    BookmarkStore::deleteForFilePath(fullPath, "txt");
-  }
-}
+void clearFileMetadata(const std::string& fullPath) { BookMetadataUtils::clearFileMetadata(fullPath); }
 
 bool clearBookCache(const std::string& fullPath) {
   if (FsHelpers::hasEpubExtension(fullPath) || FsHelpers::hasXtcExtension(fullPath)) {

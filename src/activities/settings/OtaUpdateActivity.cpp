@@ -138,7 +138,7 @@ void OtaUpdateActivity::render(RenderLock&&) {
   const auto top = (pageHeight - height) / 2;
 
   float updaterProgress = 0;
-  if (state == UPDATE_IN_PROGRESS) {
+  if (state == UPDATE_IN_PROGRESS && updater.getTotalSize() > 0) {
     updaterProgress = static_cast<float>(updater.getProcessedSize()) / static_cast<float>(updater.getTotalSize());
     // Only update every 2% at the most
     if (static_cast<int>(updaterProgress * 50) == lastUpdaterPercentage / 2) {
