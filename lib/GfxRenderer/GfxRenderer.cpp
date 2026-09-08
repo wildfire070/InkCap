@@ -5,6 +5,7 @@
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
 #include <Logging.h>
+#include <RestartHooks.h>
 #include <SdCardFont.h>
 #include <Utf8.h>
 #include <freertos/task.h>
@@ -360,6 +361,7 @@ void GfxRenderer::FrameBufferLoan::end() {
     // Only reachable if the framebuffer never existed, which begin() already
     // asserts against; kept as a backstop since running blind helps nobody.
     LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+    runPreRestartHook();
     ESP.restart();
   }
 }
@@ -375,6 +377,7 @@ void GfxRenderer::NetworkBufferLoan::end() {
   active_ = false;
   if (!renderer_.reallocFrameBuffersAfterNetwork()) {
     LOG_ERR("GFX", "Framebuffer realloc failed after network fetch - restarting");
+    runPreRestartHook();
     ESP.restart();
   }
 }

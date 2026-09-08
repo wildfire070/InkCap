@@ -58,7 +58,7 @@ class CompanionTracker {
   bool hasValidClock() const { return clockValid; }
 
  private:
-  CompanionTracker() = default;
+  CompanionTracker();
 
   // Reads the RTC and recomputes the cached local day. Does I2C.
   void refreshDay();

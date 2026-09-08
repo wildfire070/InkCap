@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HalClock.h>
 #include <Logging.h>
+#include <RestartHooks.h>
 
 #include "CompanionState.h"
 #include "CrossPointSettings.h"
@@ -20,6 +21,17 @@ int32_t signedUtcOffsetQuarterHours() {
   return static_cast<int32_t>(biased) - 48;
 }
 }  // namespace
+
+CompanionTracker::CompanionTracker() {
+  // Register once, on first access to the singleton (every branch that has
+  // Companion touches getInstance() early via routine UI code, e.g. the home
+  // screen's mood render, so this reliably runs before any restart could).
+  // Lets shared/library code (GfxRenderer's buffer-loan failures,
+  // AO3SyncActivity, main.cpp's silent-restart path) call a generic
+  // runPreRestartHook() instead of depending on Companion directly -- a
+  // no-op on branches that never construct this singleton at all.
+  setPreRestartHook([] { CompanionTracker::getInstance().endSession(); });
+}
 
 bool CompanionTracker::isEnabled() { return SETTINGS.companionEnabled != 0; }
 

@@ -18,6 +18,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
+#include <RestartHooks.h>
 #include <SPI.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
@@ -104,7 +105,6 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "companion/CompanionState.h"
-#include "companion/CompanionTracker.h"
 #include "components/UITheme.h"
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
@@ -366,11 +366,12 @@ static bool deepSleepInProgress = false;
 
 static void restartWithSilentToken() {
   // A silent restart bypasses Activity::onExit() (the reader's own exit path
-  // is the only place a Companion session normally gets banked), so any
-  // credited-but-not-yet-banked reading time would otherwise be discarded on
-  // every silent-restart path (heap-defrag reboots, sync-jump retries, etc.)
-  // -- endSession() is a no-op if no session is active or Companion is off.
-  COMPANION.endSession();
+  // is the only place a session-tracking feature like Companion normally
+  // banks anything), so any credited-but-not-yet-banked state would
+  // otherwise be discarded on every silent-restart path (heap-defrag
+  // reboots, sync-jump retries, etc.). Generic on purpose -- this file is
+  // shared by branches that don't have Companion at all; see RestartHooks.h.
+  runPreRestartHook();
 #ifdef SIMULATOR
   SimulatorLifecycle::setSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
 #endif
