@@ -1167,8 +1167,7 @@ void CrossPointWebServer::handleRename() const {
   std::string oldCachePath, epubTitle, epubAuthor;
   if (isEpub) {
     Epub epub(itemPath.c_str(), "/.crosspoint");
-    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                  /*skipScraping=*/true)) {
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false)) {
       oldCachePath = epub.getCachePath();
       epubTitle = epub.getTitle();
       epubAuthor = epub.getAuthor();
@@ -1279,8 +1278,7 @@ void CrossPointWebServer::handleMove() const {
   std::string oldCachePath, epubTitle, epubAuthor;
   if (isEpub) {
     Epub epub(itemPath.c_str(), "/.crosspoint");
-    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                  /*skipScraping=*/true)) {
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false)) {
       oldCachePath = epub.getCachePath();
       epubTitle = epub.getTitle();
       epubAuthor = epub.getAuthor();

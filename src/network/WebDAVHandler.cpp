@@ -640,8 +640,7 @@ void WebDAVHandler::handleMove(WebServer& s) {
   std::vector<std::string> dirMetadataPaths;
   if (srcIsEpub) {
     Epub epub(srcPath.c_str(), "/.crosspoint");
-    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                  /*skipScraping=*/true)) {
+    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false)) {
       oldCachePath = epub.getCachePath();
       epubTitle = epub.getTitle();
       epubAuthor = epub.getAuthor();
@@ -669,8 +668,7 @@ void WebDAVHandler::handleMove(WebServer& s) {
         if (!FsHelpers::hasEpubExtension(newFullPath)) continue;
         Epub epub(newFullPath, "/.crosspoint");
         std::string title, author;
-        if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                      /*skipScraping=*/true)) {
+        if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false)) {
           title = epub.getTitle();
           author = epub.getAuthor();
         }
