@@ -149,7 +149,16 @@ std::string restoreFic(const std::string& archivedPath) {
                                             /*keepInRecents=*/true)) {
     LOG_ERR("Ao3Archive", "State migration failed for %s -> %s, rolling back", archivedPath.c_str(),
             restoredPath.c_str());
-    Storage.rename(restoredPath.c_str(), archivedPath.c_str());
+    if (!Storage.rename(restoredPath.c_str(), archivedPath.c_str())) {
+      // The epub is now sitting at restoredPath instead of either archivedPath
+      // or restoredPath's fully-restored state -- don't re-write the marker
+      // at the (now-wrong) archived cache dir, which would misrepresent
+      // where the fic actually lives. This needs manual recovery; the loud
+      // log is the only signal available at this layer.
+      LOG_ERR("Ao3Archive", "Rollback rename also failed for %s -> %s; fic may be stranded at %s",
+              restoredPath.c_str(), archivedPath.c_str(), restoredPath.c_str());
+      return "";
+    }
     // The marker file was already cleared above; the cache dir never moved
     // in this failure case (still at oldCachePath), so restore it there too.
     if (wasMarkedForLater) {
