@@ -434,19 +434,25 @@ void ActivityManager::loop() {
                                  (resume.bookPath.empty() || resume.bookPath == currentActivity->getCurrentBookPath());
         const bool homeReady = resume.origin == PendingOverlayOrigin::Home && currentActivity->isHomeActivity();
         if (readerReady || homeReady) {
-          if (resume.overlay == PendingOverlayType::ReaderDrawer && currentActivity->restorePendingOverlay(resume)) {
-            PendingOverlayResume consumed;
-            APP_STATE.consumePendingOverlayResume(consumed);
+          if (resume.overlay == PendingOverlayType::ReaderDrawer) {
+            currentActivity->restorePendingOverlay(resume);
           } else if (resume.overlay == PendingOverlayType::FrontlightDrawer &&
                      supportsFrontlightDrawer(mappedInput.hasTouchHardware(), Frontlight.present(),
                                               hasStickyReaderDetailsPanel())) {
             FrontlightDrawerState restoredState;
             restoredState.selectedAction = static_cast<int8_t>(resume.selectedIndex);
-            if (openFrontlightPanel(*currentActivity, renderer, mappedInput, &restoredState)) {
-              PendingOverlayResume consumed;
-              APP_STATE.consumePendingOverlayResume(consumed);
-            }
+            openFrontlightPanel(*currentActivity, renderer, mappedInput, &restoredState);
           }
+          // Consume the resume regardless of outcome (success, failure, or the
+          // FrontlightDrawer hardware-support precondition failing above): this
+          // is a one-shot handoff tied to the transition that just happened.
+          // Leaving a failed attempt armed (previously only cleared on
+          // success) would otherwise silently re-fire on some later,
+          // unrelated activity transition that happens to match the same
+          // readerReady/homeReady gate -- popping the drawer open well after
+          // the user has moved on.
+          PendingOverlayResume consumed;
+          APP_STATE.consumePendingOverlayResume(consumed);
         }
       }
 

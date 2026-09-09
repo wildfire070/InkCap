@@ -26,6 +26,13 @@ namespace {
 // heap, not just fail this one book gracefully.
 constexpr uint32_t kMinFreeHeapForBuild = 80 * 1024;
 
+// Bounds the main task's stack usage (its default depth is 8KB, per
+// sdkconfig.defaults). Matches Ao3IndexActivity's own folder-walk depth cap
+// for the same reason: an unbounded recursive descent for a library
+// organized many folders deep (e.g. Author/Series/Book Title/) would
+// otherwise overflow the stack rather than fail gracefully.
+constexpr int kMaxRecursionDepth = 5;
+
 TouchActionButtons::Layout touchActionLayout(const GfxRenderer& renderer) {
   auto& theme = UITheme::getInstance();
   const auto& metrics = theme.getMetrics();
@@ -181,7 +188,8 @@ void CacheAllBooksActivity::render(RenderLock&&) {
   }
 }
 
-int CacheAllBooksActivity::countEpubsRecursive(const std::string& dirPath) {
+int CacheAllBooksActivity::countEpubsRecursive(const std::string& dirPath, int depth) {
+  if (depth >= kMaxRecursionDepth) return 0;
   auto dir = Storage.open(dirPath.c_str());
   if (!dir || !dir.isDirectory()) return 0;
 
@@ -207,7 +215,7 @@ int CacheAllBooksActivity::countEpubsRecursive(const std::string& dirPath) {
       // User-chosen exclusions (see isExcluded()) skip the same way -- excluding a
       // folder skips its whole subtree, since children are never discovered if it's
       // never opened.
-      if (!isExcluded(childPath)) count += countEpubsRecursive(childPath);
+      if (!isExcluded(childPath)) count += countEpubsRecursive(childPath, depth + 1);
     } else if (FsHelpers::hasEpubExtension(childPath)) {
       count++;
     }
@@ -218,7 +226,8 @@ int CacheAllBooksActivity::countEpubsRecursive(const std::string& dirPath) {
 }
 
 void CacheAllBooksActivity::buildCachesRecursive(const std::string& dirPath, const int total, int& processed,
-                                                 bool& showingPopup, Rect& popupRect) {
+                                                 bool& showingPopup, Rect& popupRect, int depth) {
+  if (depth >= kMaxRecursionDepth) return;
   auto dir = Storage.open(dirPath.c_str());
   if (!dir || !dir.isDirectory()) return;
 
@@ -234,7 +243,9 @@ void CacheAllBooksActivity::buildCachesRecursive(const std::string& dirPath, con
     }
     const std::string childPath = joinPath(dirPath, name);
     if (isDir) {
-      if (!isExcluded(childPath)) buildCachesRecursive(childPath, total, processed, showingPopup, popupRect);
+      if (!isExcluded(childPath)) {
+        buildCachesRecursive(childPath, total, processed, showingPopup, popupRect, depth + 1);
+      }
     } else if (FsHelpers::hasEpubExtension(childPath)) {
       if (!BookMetadataCache::exists(Epub::cachePathForFilePath(childPath, "/.crosspoint"))) {
         if (ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
