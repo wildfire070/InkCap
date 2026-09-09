@@ -20,17 +20,15 @@
 
 namespace {
 
-// Same 80KB floor Ao3IndexActivity's own bulk book-processing pass checks, and
-// FileBrowserActivity::ensureSortCache() now checks too -- the OPF/TOC build pass
-// has an unguarded allocation deep inside that can abort the whole device on low
-// heap, not just fail this one book gracefully.
+// Same 80KB floor FileBrowserActivity::ensureSortCache() checks -- the OPF/TOC
+// build pass has an unguarded allocation deep inside that can abort the whole
+// device on low heap, not just fail this one book gracefully.
 constexpr uint32_t kMinFreeHeapForBuild = 80 * 1024;
 
 // Bounds the main task's stack usage (its default depth is 8KB, per
-// sdkconfig.defaults). Matches Ao3IndexActivity's own folder-walk depth cap
-// for the same reason: an unbounded recursive descent for a library
-// organized many folders deep (e.g. Author/Series/Book Title/) would
-// otherwise overflow the stack rather than fail gracefully.
+// sdkconfig.defaults): an unbounded recursive descent for a library organized
+// many folders deep (e.g. Author/Series/Book Title/) would otherwise overflow
+// the stack rather than fail gracefully.
 constexpr int kMaxRecursionDepth = 5;
 
 TouchActionButtons::Layout touchActionLayout(const GfxRenderer& renderer) {
@@ -280,11 +278,11 @@ void CacheAllBooksActivity::cacheAllBooks() {
   lowHeapAborted = false;
   failedNames.clear();
 
-  // Mirrors Ao3IndexActivity::runHeapCheck(): a loaded SD custom font can be the
-  // difference here, so release it and recheck before giving up. Safe to release
-  // the framebuffer's font dependency here specifically because startCaching()
-  // already confirmed the CACHING screen rendered synchronously before calling
-  // this -- unlike Ao3IndexActivity's own check, there's no render still in flight.
+  // A loaded SD custom font can be the difference here, so release it and
+  // recheck before giving up. Safe to release the framebuffer's font
+  // dependency here specifically because startCaching() already confirmed
+  // the CACHING screen rendered synchronously before calling this -- there's
+  // no render still in flight.
   if (ESP.getFreeHeap() < kMinFreeHeapForBuild) {
     LOG_DBG("CACHE_ALL", "Free heap %u below floor, releasing SD font before retry", ESP.getFreeHeap());
     sdFontSystem.releaseForNetwork(renderer);
