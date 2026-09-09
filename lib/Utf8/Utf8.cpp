@@ -229,8 +229,13 @@ int utf8SafeTruncateBuffer(const char* buf, int len) {
   int expectedLen = utf8CodepointLen(static_cast<unsigned char>(buf[leadPos]));
   int actualLen = len - leadPos;
 
-  if (actualLen < expectedLen && leadPos > 0) {
-    // Incomplete UTF-8 sequence at the end — exclude it
+  if (actualLen < expectedLen) {
+    // Incomplete UTF-8 sequence at the end — exclude it. This also covers
+    // leadPos == 0 (the whole buffer is one incomplete leading sequence,
+    // e.g. a lead byte for a 4-byte codepoint with only 1-2 continuation
+    // bytes present) -- returning len unchanged there would leave the
+    // truncated function's caller holding the broken bytes it exists to
+    // strip.
     return leadPos;
   }
   return len;
