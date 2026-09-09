@@ -234,7 +234,7 @@ EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
   auto& bookmarkItems = items[BOOKMARKS_TAB_INDEX];
   auto& settingsItems = items[SETTINGS_TAB_INDEX];
 
-  mainItems.reserve(9 + (hasFootnotes ? 1u : 0u) + (hasDictionary ? 2u : 0u));
+  mainItems.reserve(10 + (hasFootnotes ? 1u : 0u) + (hasDictionary ? 2u : 0u));
   bookmarkItems.reserve(10 + (hasBookmarks ? 2u : 0u) + (hasClippings ? 1u : 0u));
   settingsItems.reserve(6);
 
@@ -250,6 +250,12 @@ EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
   mainItems.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL_SECONDS});
   mainItems.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
   mainItems.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
+  // Dropped silently when the flat pre-tabbed menu list was rewritten into
+  // this Main/Bookmarks/Settings layout -- activateSelectedItem() and
+  // buildMenuScreen() below still fully implement it, it just had no entry
+  // pointing to it in any tab. Restored here rather than left reachable only
+  // via a configured long-press/side-button orientation shortcut.
+  mainItems.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
   bookmarkItems.push_back({MenuAction::SAVE_CLIPPING, StrId::STR_SAVE_CLIPPING});
   if (hasClippings) {
     bookmarkItems.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS});

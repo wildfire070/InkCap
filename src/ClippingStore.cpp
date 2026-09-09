@@ -20,6 +20,14 @@ constexpr size_t INITIAL_CLIPPING_RESERVE = 4;
 constexpr char CLIPPINGS_DIR[] = "/.crosspoint/clippings";
 constexpr size_t TEXT_COPY_BUFFER_SIZE = 128;
 
+// Mirrors BookmarkStore.cpp's bookmarksMatchIdentity(): the selection range
+// (not the timestamp, which can legitimately differ for an otherwise
+// identical re-clip) is what makes two clippings "the same" for merge/dedup
+// purposes during a path migration.
+bool clippingsMatchIdentity(const Clipping& a, const Clipping& b) {
+  return a.spineIndex == b.spineIndex && a.startWordIndex == b.startWordIndex && a.endWordIndex == b.endWordIndex;
+}
+
 struct ClippingFileHeader {
   std::string title;
   std::string author;
@@ -501,18 +509,9 @@ bool ClippingStore::migrateForFilePath(const std::string& oldFilePath, const std
   }
 
   ClippingStore reader;
+  reader.storeFilePath = oldStorePath;  // so readClippingText() below reads from the right file
   std::vector<Clipping> migratedClippings;
   if (!reader.readFromFile(oldStorePath, migratedClippings)) {
-    return false;
-  }
-
-  ClippingStore writer;
-  writer.bookFilePath = newFilePath;
-  writer.bookTitle = title;
-  writer.bookAuthor = author;
-  writer.storeFilePath = oldStorePath;
-  writer.clippings = std::move(migratedClippings);
-  if (!writer.writeToFile()) {
     return false;
   }
 
@@ -521,27 +520,57 @@ bool ClippingStore::migrateForFilePath(const std::string& oldFilePath, const std
     return true;
   }
 
-  const std::string backupPath = newStorePath + ".bak";
-  const bool hasDestination = Storage.exists(newStorePath.c_str());
-  if (hasDestination) {
-    if (Storage.exists(backupPath.c_str()) && !Storage.remove(backupPath.c_str())) {
-      LOG_ERR("CLIP", "Failed to remove stale clipping migration backup: %s", backupPath.c_str());
-      return false;
-    }
-    if (!Storage.rename(newStorePath.c_str(), backupPath.c_str())) {
-      LOG_ERR("CLIP", "Failed to back up destination clippings: %s", newStorePath.c_str());
+  // Load any clippings already at the destination path (e.g. a stale,
+  // orphaned clippings file left behind by a since-deleted, differently
+  // named book that happened to hash to the same store path) so they can be
+  // merged rather than silently destroyed by the migration below.
+  std::vector<Clipping> destClippings;
+  if (Storage.exists(newStorePath.c_str())) {
+    ClippingStore destReader;
+    if (!destReader.readFromFile(newStorePath, destClippings)) {
+      LOG_ERR("CLIP", "Failed to load destination clippings during migration: %s", newStorePath.c_str());
       return false;
     }
   }
-  if (!Storage.rename(oldStorePath.c_str(), newStorePath.c_str())) {
-    LOG_ERR("CLIP", "Failed to rename migrated clippings: %s -> %s", oldStorePath.c_str(), newStorePath.c_str());
-    if (hasDestination && !Storage.rename(backupPath.c_str(), newStorePath.c_str())) {
-      LOG_ERR("CLIP", "Failed to restore destination clipping backup: %s", backupPath.c_str());
+
+  ClippingStore writer;
+  writer.bookFilePath = newFilePath;
+  writer.bookTitle = title;
+  writer.bookAuthor = author;
+  writer.storeFilePath = newStorePath;
+  writer.clippings = std::move(destClippings);
+
+  // Append migrated clippings not already present at the destination (same
+  // selection range) one at a time, pulling each one's text from the OLD
+  // store file into memory first -- writeToFile() can only source
+  // replacement text from memory, not a second on-disk file, so a
+  // destination-plus-migrated merge can't be done in a single call the way
+  // a from-scratch write can.
+  for (const auto& clip : migratedClippings) {
+    const bool alreadyPresent =
+        std::any_of(writer.clippings.begin(), writer.clippings.end(),
+                    [&](const Clipping& existing) { return clippingsMatchIdentity(existing, clip); });
+    if (alreadyPresent) continue;
+    if (writer.clippings.size() >= CLIPPING_MAX_PER_BOOK) {
+      LOG_ERR("CLIP", "Clipping limit (%u) reached while merging migrated clippings: %s", CLIPPING_MAX_PER_BOOK,
+              newStorePath.c_str());
+      break;
     }
+    std::string text;
+    if (clip.textLength > 0 && !reader.readClippingText(clip, text)) {
+      LOG_ERR("CLIP", "Failed to read migrated clipping text, dropping one clipping: %s", oldStorePath.c_str());
+      continue;
+    }
+    writer.clippings.push_back(clip);
+    if (!writer.writeToFile(&text, writer.clippings.size() - 1)) {
+      LOG_ERR("CLIP", "Failed to write migrated clipping: %s", newStorePath.c_str());
+      return false;
+    }
+  }
+
+  if (!Storage.remove(oldStorePath.c_str())) {
+    LOG_ERR("CLIP", "Failed to remove migrated source clippings file: %s", oldStorePath.c_str());
     return false;
-  }
-  if (hasDestination && Storage.exists(backupPath.c_str())) {
-    Storage.remove(backupPath.c_str());
   }
   return true;
 }
