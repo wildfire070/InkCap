@@ -235,6 +235,23 @@ void getSyncPageAnchors(const Section& section, const int page, std::optional<ui
   }
 }
 
+// HomeActivity::handleFrontlightPanelResult() arms
+// APP_STATE.pendingOverlayResume.returnHomeAfterReaderFlow before the
+// NEARBY_POSITION_SYNC action it queues has actually run -- ActivityManager's
+// loop() unconditionally honors that flag the instant pendingAction is back to
+// None, with no way to tell "the flow finished" apart from "the flow's own
+// early-failure branch just returned without pushing anything". Every early
+// exit out of the NEARBY_POSITION_SYNC case below must clear the flag itself
+// so a re-optimize-required, save-progress-failed, or OOM toast doesn't get
+// immediately cut off by an unwanted bounce back to Home.
+void clearReturnHomeAfterReaderFlowResume(const std::string& bookPath) {
+  if (!APP_STATE.pendingOverlayResume.valid() || !APP_STATE.pendingOverlayResume.returnHomeAfterReaderFlow) return;
+  if (!APP_STATE.pendingOverlayResume.bookPath.empty() && APP_STATE.pendingOverlayResume.bookPath != bookPath) return;
+  PendingOverlayResume resume = APP_STATE.pendingOverlayResume;
+  resume.returnHomeAfterReaderFlow = false;
+  APP_STATE.setPendingOverlayResume(std::move(resume));
+}
+
 uint64_t hashFootnotePreviewAnchor(const std::string& anchor) {
   uint64_t hash = 1469598103934665603ULL;
   for (const char c : anchor) {
@@ -4122,6 +4139,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         drawToast(renderer, tr(STR_SYNC_REOPTIMIZE_REQUIRED));
         delay(1200);
         requestUpdate();
+        clearReturnHomeAfterReaderFlowResume(epub->getPath());
         break;
       }
       const int tocIdx = epub->getTocIndexForSpineIndex(currentSpineIndex);
@@ -4132,6 +4150,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         LOG_ERR("NBPS", "Aborting nearby position sync because current progress could not be saved");
         pendingSyncSaveError = true;
         requestUpdate();
+        clearReturnHomeAfterReaderFlowResume(savedEpubPath);
         return;
       }
 
@@ -4150,7 +4169,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           std::move(localChapterName), matchMethod, paragraphIndex, listItemIndex);
       if (!syncActivity) {
         LOG_ERR("NBPS", "OOM opening nearby position sync");
+        drawToast(renderer, tr(STR_NEARBY_SYNC_LOW_MEMORY));
+        delay(1200);
         requestUpdate();
+        clearReturnHomeAfterReaderFlowResume(savedEpubPath);
         break;
       }
       if (replacementResume) APP_STATE.setPendingOverlayResume(*replacementResume);
