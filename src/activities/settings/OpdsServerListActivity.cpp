@@ -182,6 +182,10 @@ void OpdsServerListActivity::handleSelection() {
     // Reload server list when returning from editor
     OPDS_STORE.loadFromFile();
     selectedIndex = 0;
+    // Without resetting this too, a scrolled-down list leaves the highlight
+    // (now index 0) scrolled out of view above the visible viewport -- see
+    // the picker-mode handler above, which already resets both.
+    topIndex = 0;
   };
 
   if (selectedIndex < serverCount) {

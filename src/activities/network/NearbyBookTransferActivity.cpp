@@ -523,7 +523,13 @@ bool NearbyBookTransferActivity::finishReceivedFile(const uint64_t expectedBytes
     }
   }
   if (!Storage.rename(tempPath_.c_str(), finalPath_.c_str())) {
-    if (replacing) Storage.rename(backupPath_.c_str(), finalPath_.c_str());
+    if (replacing && !Storage.rename(backupPath_.c_str(), finalPath_.c_str())) {
+      // The original file is still intact, just left under backupPath_
+      // instead of finalPath_ -- surface that clearly rather than letting it
+      // silently vanish from the file browser with nothing logged.
+      LOG_ERR(LOG_TAG, "Failed to restore original file after replace failed; still present at %s",
+              backupPath_.c_str());
+    }
     Storage.remove(tempPath_.c_str());
     setError(tr(STR_NEARBY_TRANSFER_REPLACE_FAILED));
     return false;
