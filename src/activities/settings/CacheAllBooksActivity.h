@@ -58,9 +58,13 @@ class CacheAllBooksActivity final : public Activity {
   // this device only has ~320KB of DRAM total. total/processed/popupRect are
   // threaded through as parameters rather than stored on the activity, matching
   // how RecentBooksGridActivity's own build-cache-then-progress loop keeps them local.
-  int countEpubsRecursive(const std::string& dirPath);
+  // depth is capped (see kMaxRecursionDepth in the .cpp) to bound the main
+  // task's stack usage -- unlike the heap floor above, there was previously
+  // no guard against a pathologically deep folder tree recursing until the
+  // stack itself overflows.
+  int countEpubsRecursive(const std::string& dirPath, int depth = 0);
   void buildCachesRecursive(const std::string& dirPath, int total, int& processed, bool& showingPopup,
-                            Rect& popupRect);
+                            Rect& popupRect, int depth = 0);
   void cacheAllBooks();
   void startCaching();
 };

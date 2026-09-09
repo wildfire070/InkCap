@@ -179,7 +179,14 @@ std::string cachedMinimalCoverPathFor(const std::string& bookPath) {
   if (FsHelpers::hasEpubExtension(bookPath)) {
     const Epub epub(bookPath, "/.crosspoint");
     const std::string coverPath = epub.getAdaptiveThumbBmpPath(kMinimalSleepCoverWidth, kMinimalSleepCoverHeight);
-    return fileExists(coverPath) ? epub.getThumbBmpPath() : std::string{};
+    // Must return coverPath itself, not the unresolved getThumbBmpPath()
+    // template: that template has no "_fit" suffix, but generateAdaptiveThumbBmp
+    // (called by prepareMinimalCoverForPath above) only ever writes the
+    // "_fit"-suffixed file at these dimensions. UITheme::getCoverThumbPath()
+    // is a pure placeholder substitution with no "_fit" awareness, so
+    // resolving that template would reconstruct a path that was never
+    // generated -- the cover would silently never be found.
+    return fileExists(coverPath) ? coverPath : std::string{};
   }
 
   const std::string reusablePath = reusableCoverPathFor(bookPath);
@@ -192,7 +199,9 @@ std::string cachedDashboardCoverPathFor(const std::string& bookPath) {
   if (FsHelpers::hasEpubExtension(bookPath)) {
     const Epub epub(bookPath, "/.crosspoint");
     const std::string coverPath = epub.getAdaptiveThumbBmpPath(kDashboardSleepCoverWidth, kDashboardSleepCoverHeight);
-    return fileExists(coverPath) ? epub.getThumbBmpPath() : std::string{};
+    // See cachedMinimalCoverPathFor() above for why this must be coverPath
+    // itself, not the unresolved (and "_fit"-suffix-less) getThumbBmpPath().
+    return fileExists(coverPath) ? coverPath : std::string{};
   }
 
   const std::string reusablePath = reusableCoverPathFor(bookPath);
