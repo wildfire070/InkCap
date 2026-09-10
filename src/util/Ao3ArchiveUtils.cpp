@@ -137,13 +137,13 @@ std::string restoreFic(const std::string& archivedPath) {
     return "";
   }
 
-  // Only clear the marker now that the fic has actually moved -- clearing it
-  // any earlier would lose the flag permanently on the rename failure above,
-  // even though the fic never left the archive folder and the restore could
-  // simply be retried.
-  if (wasMarkedForLater) {
-    Storage.remove(markerPath.c_str());
-  }
+  // Deliberately NOT deleting the marker file here. It lives in oldCachePath,
+  // which migrateMovedEpubState below renames wholesale to the restored
+  // path's cache dir -- it rides along for free, mirroring how archiveFic()
+  // relies on that same rename to carry it the other way. Deleting it before
+  // knowing AO3_MARKED_FOR_LATER_STORE.addBook() will actually succeed (it
+  // no-ops if the list is full) would lose the flag for good with no way to
+  // retry once the list has room again.
 
   if (!BookMoveUtils::migrateMovedEpubState(archivedPath, restoredPath, oldCachePath, meta.title, meta.author,
                                             /*keepInRecents=*/true)) {
@@ -159,11 +159,10 @@ std::string restoreFic(const std::string& archivedPath) {
               restoredPath.c_str(), archivedPath.c_str(), restoredPath.c_str());
       return "";
     }
-    // The marker file was already cleared above; the cache dir never moved
-    // in this failure case (still at oldCachePath), so restore it there too.
-    if (wasMarkedForLater) {
-      Storage.writeFile(markerPath.c_str(), "");
-    }
+    // The marker was never deleted above, and the cache dir never moved in
+    // this failure case (migrateMovedEpubState bails before renaming
+    // anything if the cache-dir rename itself fails) -- it's still sitting
+    // untouched at oldCachePath, right where the rolled-back epub now is.
     return "";
   }
 
@@ -174,7 +173,15 @@ std::string restoreFic(const std::string& archivedPath) {
   Ao3Librarian::scrape(restoredEpub, /*force=*/true);
 
   if (wasMarkedForLater) {
-    AO3_MARKED_FOR_LATER_STORE.addBook(restoredPath, meta.title, meta.author);
+    if (AO3_MARKED_FOR_LATER_STORE.addBook(restoredPath, meta.title, meta.author)) {
+      Storage.remove((restoredEpub.getCachePath() + "/marked_for_later").c_str());
+    } else {
+      // List is at its 10-entry cap -- leave the marker in the (now-restored)
+      // cache dir rather than silently dropping the flag. Nothing currently
+      // re-reads it automatically, but it's recoverable by hand and, more
+      // importantly, isn't destroyed here.
+      LOG_ERR("Ao3Archive", "Marked-for-later list full, could not restore flag for %s", restoredPath.c_str());
+    }
   }
 
   return restoredPath;

@@ -10,6 +10,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "../../MappedInputManager.h"
+#include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
 #include "ReaderUtils.h"
@@ -154,6 +155,23 @@ void Ao3EndOfBookSeriesActivity::loop() {
     }
   }
 
+  // Tap a row (registered in render) → select it and open it directly.
+  {
+    int tappedItem = -1;
+    if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 &&
+        tappedItem < static_cast<int>(viewEntries.size())) {
+      mappedInput.suppressCurrentTouchContact();
+      selectorIndex = static_cast<size_t>(tappedItem);
+      const int selPage = tappedItem / 3;
+      if (selPage != cachedPage) loadPageCache(selPage);
+      const std::string epubPath(pageCache[tappedItem % 3].filepath);
+      if (!epubPath.empty()) {
+        activityManager.goToReader(epubPath);
+      }
+      return;
+    }
+  }
+
   const int total = static_cast<int>(viewEntries.size());
   if (total > 0) {
     // All four nav buttons behave the same — no panels to open in this view.
@@ -229,6 +247,8 @@ void Ao3EndOfBookSeriesActivity::render(RenderLock&& lock) {
     for (int i = startIdx; i < endIdx; i++) {
       const bool selected = (i == static_cast<int>(selectorIndex));
       renderEntry(lock, y, viewEntries[i], i - startIdx, selected);
+      // Register the row as a tappable item (X4 Pro); no-op on button-only builds.
+      TouchRegistry::getInstance().add(Rect{0, y, renderer.getScreenWidth(), entrySlot}, i, TouchRegistry::Item);
       y += entrySlot;
       if (i < endIdx - 1) {
         renderer.drawLine(15, y - topPad, renderer.getScreenWidth() - 15, y - topPad);
