@@ -12,7 +12,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/ActivityResult.h"
-#include "activities/home/Ao3FolderPickerActivity.h"
+#include "activities/home/FolderPickerActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -132,7 +132,7 @@ void BookFusionSettingsActivity::handleSelection() {
     const std::string startPath =
         Storage.exists(SETTINGS.bookFusionDownloadFolder) ? SETTINGS.bookFusionDownloadFolder : "/";
     startActivityForResult(
-        std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, tr(STR_BF_DOWNLOAD_FOLDER),
+        std::make_unique<FolderPickerActivity>(renderer, mappedInput, tr(STR_BF_DOWNLOAD_FOLDER),
                                                    PickerMode::SINGLE, std::vector<std::string>{}, startPath),
         [this](const ActivityResult& result) {
           if (const auto* pickerRes = std::get_if<FolderPickerResult>(&result.data)) {
