@@ -172,6 +172,12 @@ class EpubReaderActivity final : public Activity {
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
+  // True when pendingPercentJump targets an inherently approximate position (a
+  // percent-based jump) rather than an exact one (a bookmark/clipping/paragraph).
+  // Lets the low-memory build path retain a readable partial cache instead of
+  // hard-failing -- landing somewhere within whatever got built is an acceptable
+  // degrade for an estimate, but not for a bookmark the user placed at an exact spot.
+  bool pendingPercentJumpApproximate = false;
   // Normalized 0.0-1.0 progress within the target spine item, computed from book percentage.
   float pendingSpineProgress = 0.0f;
   uint16_t pendingParagraphIndex = UINT16_MAX;
