@@ -241,8 +241,13 @@ void Ao3LibraryActivity::loop() {
       if (pendingTransferScan && !full) {
         pendingTransferScan = false;  // Reset the flag so it won't scan again until a new book is added
         autoIndexLaunched_ = true;
-        viewEntries.clear();
-        viewEntries.shrink_to_fit();
+        {
+          // viewEntries is read by render()/renderLibrary() under its own
+          // lock -- clear()/shrink_to_fit() from loop() need the same lock.
+          RenderLock lock(*this);
+          viewEntries.clear();
+          viewEntries.shrink_to_fit();
+        }
         auto handler = [this](const ActivityResult&) {
           indexState = IndexState::UNKNOWN;
           rebuildViewEntries();
@@ -1578,6 +1583,13 @@ void Ao3LibraryActivity::saveSortFilterState() const {
 // ---------------------------------------------------------------------------
 
 void Ao3LibraryActivity::resortViewEntries() {
+  // viewEntries is read by render()/renderLibrary() under its own lock, and
+  // this is called from several loop()-task sites (filter/sort confirm,
+  // rebuildViewEntries() below) with no lock of their own -- an in-place
+  // std::sort swapping ViewEntry structs (which contain strings) racing a
+  // concurrent locked read is UB, not just a stale ordering. RenderLock is
+  // recursive, so this is safe to call from a caller that already holds one.
+  RenderLock lock(*this);
   switch (activeState.sortMode) {
     case SortMode::ALPHABETIC:
       std::sort(viewEntries.begin(), viewEntries.end(), [&](const ViewEntry& a, const ViewEntry& b) {
@@ -1642,6 +1654,15 @@ bool Ao3LibraryActivity::passesFilter(const ViewEntry& v, const FilterHashes& h)
 }
 
 void Ao3LibraryActivity::rebuildViewEntries() {
+  // viewEntries is read by render()/renderLibrary() under its own lock, and
+  // this is called from several loop()-task sites (initial load, filter
+  // confirm, post-index-return callbacks) with no lock of their own --
+  // clear()+push_back() can reallocate the vector's backing store, which
+  // races a concurrent locked read. RenderLock is recursive, so holding it
+  // across this function's SD reads (matching loadPageCache()'s established
+  // pattern elsewhere in this codebase) is safe even if a caller already
+  // holds one.
+  RenderLock lock(*this);
   viewEntries.clear();
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
 
