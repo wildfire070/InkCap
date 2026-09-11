@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <Serialization.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -265,8 +266,12 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
     if (boundary > 0) {
       const auto boldStyle = static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
       char boldBuf[40];
-      const size_t boldLen =
+      size_t boldLen =
           std::min<size_t>({static_cast<size_t>(boundary), static_cast<size_t>(wordLen), sizeof(boldBuf) - 1});
+      // The clamp to sizeof(boldBuf)-1 can land mid-UTF-8-sequence even
+      // though `boundary` itself was chosen to be safe within the unclamped
+      // word -- trim back to the last complete codepoint.
+      boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(word, static_cast<int>(boldLen)));
       memcpy(boldBuf, word, boldLen);
       boldBuf[boldLen] = '\0';
       const int secondRunX = wordX + bionicRunOffset(i);
