@@ -48,6 +48,13 @@ constexpr int homeCoverImageWidth = homeCoverWidth;
 // looked up, silently falling back to no cover on every book. Matches
 // homeCoverHeight now so generation and lookup agree.
 constexpr int homeCoverImageHeight = values.homeCoverHeight;
+// coverImageRectForFrame's min() silently drops any excess over
+// homeCoverHeight -- if homeCoverImageHeight ever exceeds it again, the
+// generation-vs-lookup mismatch above recurs (see comment). Catch that at
+// compile time instead of at the next accidental edit to either constant.
+static_assert(homeCoverImageHeight <= values.homeCoverHeight,
+              "homeCoverImageHeight must not exceed homeCoverHeight, or thumbnail generation and lookup will "
+              "silently disagree on cover size");
 }  // namespace MinimalMetrics
 
 struct GlobalReadingStats;

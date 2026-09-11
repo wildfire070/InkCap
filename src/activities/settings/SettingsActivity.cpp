@@ -35,7 +35,7 @@
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
-#include "activities/home/Ao3FolderPickerActivity.h"
+#include "activities/home/FolderPickerActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -1120,7 +1120,7 @@ void SettingsActivity::toggleCurrentSetting() {
           requestUpdate();
         };
         startActivityForResult(
-            std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, tr(STR_SELECT_EXCLUDED_FOLDERS),
+            std::make_unique<FolderPickerActivity>(renderer, mappedInput, tr(STR_SELECT_EXCLUDED_FOLDERS),
                                                        PickerMode::MULTI, CacheAllBooksActivity::loadExclusions()),
             exclusionsHandler);
         break;

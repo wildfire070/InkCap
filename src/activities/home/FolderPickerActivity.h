@@ -5,11 +5,10 @@
 #include "../../util/ButtonNavigator.h"
 #include "../Activity.h"
 
-// Generic SD-card folder browser/picker, single- or multi-select. Ported from
-// Capy/InkCapO3/InxAO3's Ao3FolderPickerActivity (originally written for AO3-folder
-// selection, but its own logic was never AO3-specific -- just a directory browser)
-// since this branch has no AO3 feature to have brought the original along with it.
-// Used here for Cache Exclusions' folder picker.
+// Generic SD-card folder browser/picker, single- or multi-select. Used for
+// the AO3 library folder, AO3 archive folder, AO3 library exclusions, the
+// BookFusion download folder, and Cache Exclusions -- despite the name's
+// history, this logic was never AO3-specific.
 enum class PickerMode { SINGLE, MULTI };
 
 class FolderPickerActivity final : public Activity {

@@ -29,7 +29,7 @@ class CacheAllBooksActivity final : public Activity {
   // own ao3_settings.json for its own, separate excludedFolders list) -- shared
   // between this activity (which reads it to skip folders while scanning) and
   // SettingsActivity's "Cache Exclusions" row (which edits it via the same
-  // Ao3FolderPickerActivity MULTI picker AO3 library exclusions already use).
+  // FolderPickerActivity MULTI picker AO3 library exclusions already use).
   static std::vector<std::string> loadExclusions();
   static void saveExclusions(const std::vector<std::string>& folders);
 
