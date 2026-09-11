@@ -2,9 +2,28 @@
 
 #include <FsHelpers.h>
 #include <Logging.h>
+#include <Utf8.h>
 #include <XmlParserUtils.h>
 
+#include <algorithm>
+
 #include "Epub/BookMetadataCache.h"
+
+namespace {
+// Bounds a runaway/malformed TOC label; real chapter titles are far smaller.
+constexpr size_t kMaxLabelBytes = 4096;
+
+void appendLabelBounded(std::string& field, const XML_Char* s, const int len) {
+  if (field.size() >= kMaxLabelBytes) return;
+  const size_t room = kMaxLabelBytes - field.size();
+  const size_t toCopy = std::min(static_cast<size_t>(len), room);
+  field.append(s, toCopy);
+  if (toCopy < static_cast<size_t>(len)) {
+    // Truncated mid-chunk -- back up to the last complete UTF-8 codepoint.
+    field.resize(utf8SafeTruncateBuffer(field.data(), static_cast<int>(field.size())));
+  }
+}
+}  // namespace
 
 bool TocNavParser::setup() {
   parser = XML_ParserCreate(nullptr);
@@ -40,7 +59,12 @@ size_t TocNavParser::write(const uint8_t* buffer, const size_t size) {
     const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
     memcpy(buf, currentBufferPos, toRead);
 
-    if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
+    // remainingSize is the declared size from the zip entry -- a corrupted/
+    // malicious entry could feed more actual bytes than that, so compare
+    // with <= (not ==) and clamp the subtraction below to avoid underflowing
+    // this size_t, which would otherwise wrap and never report isFinal again.
+    const bool isFinalChunk = remainingSize <= toRead;
+    if (XML_ParseBuffer(parser, static_cast<int>(toRead), isFinalChunk) == XML_STATUS_ERROR) {
       LOG_DBG("NAV", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
               XML_ErrorString(XML_GetErrorCode(parser)));
       destroyXmlParser(parser);
@@ -49,7 +73,7 @@ size_t TocNavParser::write(const uint8_t* buffer, const size_t size) {
 
     currentBufferPos += toRead;
     remainingInBuffer -= toRead;
-    remainingSize -= toRead;
+    remainingSize -= (remainingSize > toRead) ? toRead : remainingSize;
   }
   return size;
 }
@@ -115,7 +139,7 @@ void XMLCALL TocNavParser::characterData(void* userData, const XML_Char* s, cons
 
   // Only collect text when inside an anchor within the TOC nav
   if (self->state == IN_ANCHOR) {
-    self->currentLabel.append(s, len);
+    appendLabelBounded(self->currentLabel, s, len);
   }
 }
 
