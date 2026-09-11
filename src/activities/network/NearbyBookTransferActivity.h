@@ -74,6 +74,10 @@ class NearbyBookTransferActivity final : public Activity {
   uint8_t peerCount_ = 0;
   int selectedIndex_ = 0;
   std::array<uint8_t, freeink::nearby::MAC_BYTES> peerMac_{};
+  // Captured in selectPeer() before setState() resets selectedIndex_ to 0 --
+  // the WaitingForApproval screen needs the name of the peer actually being
+  // contacted, not whatever peers_[0] happens to be.
+  std::array<char, 21> waitingPeerName_{};
 
   HalFile sourceFile_;
   HalFile receiveFile_;
