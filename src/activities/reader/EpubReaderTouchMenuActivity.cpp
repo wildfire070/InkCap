@@ -469,7 +469,12 @@ void EpubReaderTouchMenuActivity::applySettings(const ReaderSettingsDraft& value
 void EpubReaderTouchMenuActivity::markSettingChanged(const ReaderSettingsChangeMask mask) {
   settingsChanged = true;
   didChangeSettings = true;
-  previewDirty = previewDirty || hasReaderSettingsChange(mask, ReaderSettingsChangeMask::Preview);
+  if (hasReaderSettingsChange(mask, ReaderSettingsChangeMask::Preview)) {
+    // previewDirty is also written and cleared by render() on the render
+    // task; guard this loop()-side write against that race.
+    RenderLock lock(*this);
+    previewDirty = true;
+  }
   changeMask = changeMask | mask;
 }
 
@@ -1743,7 +1748,13 @@ void EpubReaderTouchMenuActivity::loop() {
         if (app.invalidated()) requestUpdate();
         if (snap.touchReleased) {
           draggingSlider = false;
-          previewDirty = readerDrawerSliderPreviewsText(state.pane);
+          const bool dirty = readerDrawerSliderPreviewsText(state.pane);
+          {
+            // previewDirty is also written and cleared by render() on the
+            // render task; guard this loop()-side write against that race.
+            RenderLock lock(*this);
+            previewDirty = dirty;
+          }
           requestUpdate();
         }
         return;
@@ -1752,7 +1763,11 @@ void EpubReaderTouchMenuActivity::loop() {
       // track has no routed event, but it still needs to finish the preview.
       if (draggingSlider && !snap.touchHeld) {
         draggingSlider = false;
-        previewDirty = readerDrawerSliderPreviewsText(state.pane);
+        const bool dirty = readerDrawerSliderPreviewsText(state.pane);
+        {
+          RenderLock lock(*this);
+          previewDirty = dirty;
+        }
         requestUpdate();
         return;
       }
