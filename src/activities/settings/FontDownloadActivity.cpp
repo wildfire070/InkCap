@@ -780,6 +780,11 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       result = HttpDownloader::downloadToFile(
           url, tempPath,
           [this](size_t downloaded, size_t total) {
+            // fileProgress_/fileTotal_ are read by render() on the render
+            // task with no lock of its own on that side either -- guard the
+            // mutation, matching every other assignment site in this
+            // function.
+            RenderLock lock(*this);
             fileProgress_ = downloaded;
             fileTotal_ = total;
             requestUpdate(true);
