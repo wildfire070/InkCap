@@ -239,7 +239,7 @@ std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int widt
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {
-  if (filename.back() == '/') {
+  if (!filename.empty() && filename.back() == '/') {
     return Folder;
   }
   if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename)) {
