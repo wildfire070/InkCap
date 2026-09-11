@@ -2137,7 +2137,12 @@ class PublisherParser final : public Print {
     auto* self = static_cast<PublisherParser*>(userData);
     if (self->state == IN_DC_PUBLISHER && self->publisher.size() < kMaxRawBytes) {
       const size_t room = kMaxRawBytes - self->publisher.size();
-      self->publisher.append(s, std::min(static_cast<size_t>(len), room));
+      const size_t toCopy = std::min(static_cast<size_t>(len), room);
+      self->publisher.append(s, toCopy);
+      if (toCopy < static_cast<size_t>(len)) {
+        // Truncated mid-chunk -- back up to the last complete UTF-8 codepoint.
+        self->publisher.resize(utf8SafeTruncateBuffer(self->publisher.data(), static_cast<int>(self->publisher.size())));
+      }
     }
   }
 
@@ -2350,7 +2355,13 @@ class DescriptionParser final : public Print {
     auto* self = static_cast<DescriptionParser*>(userData);
     if (self->state == IN_DC_DESCRIPTION && self->description.size() < kMaxRawBytes) {
       const size_t room = kMaxRawBytes - self->description.size();
-      self->description.append(s, std::min(static_cast<size_t>(len), room));
+      const size_t toCopy = std::min(static_cast<size_t>(len), room);
+      self->description.append(s, toCopy);
+      if (toCopy < static_cast<size_t>(len)) {
+        // Truncated mid-chunk -- back up to the last complete UTF-8 codepoint.
+        self->description.resize(
+            utf8SafeTruncateBuffer(self->description.data(), static_cast<int>(self->description.size())));
+      }
     }
   }
 
