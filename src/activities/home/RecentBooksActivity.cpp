@@ -59,13 +59,17 @@ void RecentBooksActivity::loadRecentBooks() {
   }
 }
 
-void RecentBooksActivity::loadActiveTabEntries() {
+void RecentBooksActivity::loadActiveTabEntries(const DashboardTab tab) {
   // Reassigns markedForLaterEntries/newChaptersEntries/wipsEntries/recentBooks
   // -- full vector reassignment, which can free/reallocate the backing store
   // -- while render()'s buildListScreen()/activeTabRow() reads the same
   // vectors under its own lock. Called from loop()-task sites (tab switch,
   // page navigation, post-action reload), so needs the same lock here.
+  // activeTab itself is also set under this same lock (rather than by
+  // callers beforehand) so render() never sees a tab index that doesn't
+  // match which vector has actually been (re)loaded for it yet.
   RenderLock lock(*this);
+  activeTab = tab;
   switch (activeTab) {
     case DashboardTab::MarkedForLater:
       AO3_MARKED_FOR_LATER_STORE.pruneMissing();
@@ -149,10 +153,9 @@ void RecentBooksActivity::onRowEvent(const fui::ActionEvent& event, void* user) 
 void RecentBooksActivity::onTabEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<RecentBooksActivity*>(user);
   if (event.value < 0 || event.value >= TAB_COUNT) return;
-  self->activeTab = static_cast<DashboardTab>(event.value);
   self->selectorIndex = 0;
   self->topIndex = 0;
-  self->loadActiveTabEntries();
+  self->loadActiveTabEntries(static_cast<DashboardTab>(event.value));
   self->requestUpdate(true);
 }
 
@@ -168,7 +171,7 @@ void RecentBooksActivity::onEnter() {
   // activeTab defaults to RecentBooks, so a fresh launch loads the same data
   // this screen has always shown -- the other three tabs load lazily on
   // first switch, via onTabEvent().
-  loadActiveTabEntries();
+  loadActiveTabEntries(activeTab);
 
   selectorIndex = 0;
   uiReady = false;
@@ -256,18 +259,16 @@ void RecentBooksActivity::loop() {
   // (unlike Next/Previous, whose hold variant already means "jump a page
   // within the current list", not "switch tabs").
   if (mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
-    activeTab = static_cast<DashboardTab>((static_cast<int>(activeTab) + 1) % TAB_COUNT);
     selectorIndex = 0;
     topIndex = 0;
-    loadActiveTabEntries();
+    loadActiveTabEntries(static_cast<DashboardTab>((static_cast<int>(activeTab) + 1) % TAB_COUNT));
     requestUpdate(true);
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
-    activeTab = static_cast<DashboardTab>((static_cast<int>(activeTab) + TAB_COUNT - 1) % TAB_COUNT);
     selectorIndex = 0;
     topIndex = 0;
-    loadActiveTabEntries();
+    loadActiveTabEntries(static_cast<DashboardTab>((static_cast<int>(activeTab) + TAB_COUNT - 1) % TAB_COUNT));
     requestUpdate(true);
     return;
   }
@@ -305,7 +306,7 @@ void RecentBooksActivity::loop() {
 }
 
 void RecentBooksActivity::reloadAfterBookAction() {
-  loadActiveTabEntries();
+  loadActiveTabEntries(activeTab);
   const int count = activeTabCount();
   if (count == 0) {
     selectorIndex = 0;
