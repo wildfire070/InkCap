@@ -575,6 +575,7 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::EpubRenderMode:
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::SendNearby:
+                             case FileBrowserAction::BookInfo:
                              case FileBrowserAction::PinToHome:
                              case FileBrowserAction::UnpinFromHome:
                                return;
