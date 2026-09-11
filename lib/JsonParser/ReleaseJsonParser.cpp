@@ -1,5 +1,7 @@
 #include "ReleaseJsonParser.h"
 
+#include <Utf8.h>
+
 #include <cstdlib>
 #include <cstring>
 
@@ -8,6 +10,10 @@ namespace {
 void safeCopy(char* dst, size_t dstSize, const char* src, size_t srcLen) {
   size_t n = srcLen < dstSize - 1 ? srcLen : dstSize - 1;
   memcpy(dst, src, n);
+  // Trim back to the last complete UTF-8 codepoint in case the cut (when
+  // srcLen >= dstSize - 1) landed mid-sequence -- tag/asset names are
+  // usually ASCII but aren't guaranteed to be.
+  n = static_cast<size_t>(utf8SafeTruncateBuffer(dst, static_cast<int>(n)));
   dst[n] = '\0';
 }
 
