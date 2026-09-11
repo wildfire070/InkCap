@@ -62,7 +62,7 @@ class RecentBooksActivity final : public Activity {
 
   // Data loading
   void loadRecentBooks();
-  void loadActiveTabEntries();
+  void loadActiveTabEntries(DashboardTab tab);
   void reloadAfterBookAction();
 
   // Number of rows in the currently active tab (whichever vector it reads from).
