@@ -171,6 +171,9 @@ generate_reading_fonts() {
 # Built-in reader fonts retain the PHM fallback ranges, but exclude emoticons.
 generate_reading_fonts
 
+# Shared fixed-size UI symbols
+bash ./generate-ui-symbols.sh
+
 # UI Font - Inter
 
 UI_FONT_SIZES=(10 12)

@@ -513,13 +513,13 @@ void WordSelectNavigator::drawSingleHighlight(const GfxRenderer& renderer, int l
   renderer.fillRect(w->screenX - 2, w->screenY - 2, w->width + 4, lineHeight + 4, foregroundBlack);
   const char* displayedText = getDisplay(*w);
   const auto baseDir = w->isRtl ? BidiUtils::BidiBaseDir::RTL : BidiUtils::BidiBaseDir::LTR;
-  if (w->bionicBoundary > 0 && w->bionicSuffixX > 0) {
+  if (w->focusBoundary > 0 && w->focusSuffixX > 0) {
     const auto boldStyle = static_cast<EpdFontFamily::Style>(w->style | EpdFontFamily::BOLD);
     char boldBuf[40];
     size_t boldLen =
-        std::min<size_t>({static_cast<size_t>(w->bionicBoundary), strlen(displayedText), sizeof(boldBuf) - 1});
+        std::min<size_t>({static_cast<size_t>(w->focusBoundary), strlen(displayedText), sizeof(boldBuf) - 1});
     // The clamp to sizeof(boldBuf)-1 can land mid-UTF-8-sequence even though
-    // bionicBoundary itself was chosen to be safe within the unclamped word
+    // focusBoundary itself was chosen to be safe within the unclamped word
     // -- trim back to the last complete codepoint.
     boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(displayedText, static_cast<int>(boldLen)));
     memcpy(boldBuf, displayedText, boldLen);
@@ -527,11 +527,11 @@ void WordSelectNavigator::drawSingleHighlight(const GfxRenderer& renderer, int l
     if (w->isRtl) {
       renderer.drawText(w->fontId, w->screenX, w->screenY, displayedText + boldLen, !foregroundBlack, w->style,
                         baseDir);
-      renderer.drawText(w->fontId, w->screenX + w->bionicSuffixX, w->screenY, boldBuf, !foregroundBlack, boldStyle,
+      renderer.drawText(w->fontId, w->screenX + w->focusSuffixX, w->screenY, boldBuf, !foregroundBlack, boldStyle,
                         baseDir);
     } else {
       renderer.drawText(w->fontId, w->screenX, w->screenY, boldBuf, !foregroundBlack, boldStyle, baseDir);
-      renderer.drawText(w->fontId, w->screenX + w->bionicSuffixX, w->screenY, displayedText + boldLen, !foregroundBlack,
+      renderer.drawText(w->fontId, w->screenX + w->focusSuffixX, w->screenY, displayedText + boldLen, !foregroundBlack,
                         w->style, baseDir);
     }
     return;

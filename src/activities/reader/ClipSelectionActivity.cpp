@@ -519,6 +519,11 @@ bool ClipSelectionActivity::switchToPage(const int pageIdx) {
   resetSavedBufferChunks();
   hasSavedBuffer = false;
 
+  if (page->hasImages()) {
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    page->prepareImageCaches();
+  }
+
   if (auto* fcm = renderer.getFontCacheManager()) {
     bool renderWithFallback = false;
     {

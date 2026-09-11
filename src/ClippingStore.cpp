@@ -11,6 +11,8 @@
 #include <cstring>
 #include <functional>
 
+#include "clippings/ClippingPreview.h"
+
 namespace {
 constexpr uint8_t LEGACY_VERSION = 1;
 constexpr uint8_t TEXT_OFFSET_VERSION = 2;
@@ -193,6 +195,28 @@ bool ClippingStore::cacheResolvedLayoutRange(const size_t index, const uint16_t 
   }
   dirty = true;
   return true;
+}
+
+bool ClippingStore::readClippingPreview(const size_t index, std::string& out) const {
+  out.clear();
+  const Clipping* clipping = clippingAt(index);
+  if (!clipping || storeFilePath.empty()) {
+    LOG_ERR("CLIP", "Invalid clipping preview index: %u", static_cast<unsigned>(index));
+    return false;
+  }
+  if (clipping->textLength == 0) return true;
+
+  FsFile f;
+  if (!Storage.openFileForRead("CLIP", storeFilePath, f)) return false;
+  if (!f.seek(clipping->textOffset)) {
+    f.close();
+    LOG_ERR("CLIP", "Failed to seek clipping preview at %u", clipping->textOffset);
+    return false;
+  }
+  const bool ok = clippingPreview::read(f, clipping->textLength, out);
+  f.close();
+  if (!ok) LOG_ERR("CLIP", "Failed to read clipping preview at %u", clipping->textOffset);
+  return ok;
 }
 
 bool ClippingStore::readClippingText(const size_t index, std::string& out) const {

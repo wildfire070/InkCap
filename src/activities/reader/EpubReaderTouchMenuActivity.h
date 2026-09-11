@@ -81,6 +81,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
   bool settingsChanged = false;
   bool didChangeSettings = false;
   bool previewDirty = false;
+  int16_t previousDrawerTop = -1;
   bool previewHasAntiAliasing = false;
   bool draggingSlider = false;
   bool sliderTapPending = false;
@@ -90,6 +91,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
 
   ReaderDrawerState state{};
   ReaderSettingsDraft draft{};
+  const ReaderSettingsDraft sourceSettings;
   ReaderSettingsChangeMask changeMask = ReaderSettingsChangeMask::None;
   std::array<std::vector<RowId>, READER_DRAWER_TAB_COUNT> rootRows;
   std::vector<RowId> paneRows;
@@ -174,10 +176,10 @@ class EpubReaderTouchMenuActivity final : public Activity {
   void completePercentSelection();
   void completeAutoPageTurnSelection();
   void notifyDictionaryFontChanged();
-  void showDestructiveConfirmation(RowId row, EpubReaderMenuAction action);
   void toggleSetting(RowId row);
   void adjustActiveSlider(int delta);
   void setActiveSliderPermille(int16_t permille);
+  int16_t drawerHeight() const;
   bool renderPreview();
   void renderPreviewWithAntiAliasing();
   void renderPreviewContents(const ReaderSettingsDraft& previewSettings, int previewFontId);

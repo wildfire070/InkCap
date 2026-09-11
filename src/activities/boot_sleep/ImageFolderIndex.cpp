@@ -286,7 +286,14 @@ bool buildIndex(const std::string& directory, const bool includePng, const bool 
     file.close();
     if ((++scanned & 0xFF) == 0) delay(1);
   }
+  const bool iterationFailed = FsHelpers::directoryIterationFailed(directoryFile);
   directoryFile.close();
+  if (iterationFailed) {
+    LOG_ERR("IMGIDX", "Directory index build failed before EOF: %s", directory.c_str());
+    output.close();
+    Storage.remove(tempPath);
+    return false;
+  }
 
   const bool finalized = output.seek(0) && writeExact(output, &header, sizeof(header)) && output.sync();
   // Close before removing: the earlier error paths do the same, and deleting a
