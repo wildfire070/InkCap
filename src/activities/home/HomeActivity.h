@@ -151,4 +151,8 @@ class HomeActivity final : public Activity {
   std::unique_ptr<Activity> createFrontlightReadingStatsActivity() override;
   void onFrontlightPanelClosed() override;
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
+
+  // Called by the boot path when the panel still shows a frame this activity did
+  // not draw, so the first paint clears it instead of ghosting through it.
+  static void notePanelHoldsRetainedFrame();
 };

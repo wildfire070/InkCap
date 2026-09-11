@@ -667,7 +667,12 @@ class CarouselCache {
 };
 
 CarouselCache gCarouselCache;
+
+// One-shot: set by the boot path, consumed by the first home paint.
+bool panelHoldsRetainedFrame = false;
 }  // namespace
+
+void HomeActivity::notePanelHoldsRetainedFrame() { panelHoldsRetainedFrame = true; }
 
 static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeRecentBooksCount,
               "kMaxCachedBooks must cover all carousel slots");
@@ -2475,7 +2480,18 @@ void HomeActivity::render(RenderLock&&) {
                           : mappedInput.mapLabels(readLabel, tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  displayHomeBuffer();
+  if (panelHoldsRetainedFrame) {
+    // A sleep wake leaves the sleep screen on the panel and skips the clearing
+    // pass so resume stays fast, on the assumption the reader repaints next.
+    // Landing on home instead, the fast waveform paints over the retained frame
+    // without clearing it and the sleep screen ghosts through. HALF_REFRESH
+    // requests the resync that clears it; after this the panel is ours and
+    // every later paint can stay fast.
+    panelHoldsRetainedFrame = false;
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  } else {
+    displayHomeBuffer();
+  }
 
   if (!firstRenderDone) {
     firstRenderDone = true;
