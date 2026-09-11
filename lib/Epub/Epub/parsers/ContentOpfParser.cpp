@@ -3,6 +3,7 @@
 #include <FsHelpers.h>
 #include <Logging.h>
 #include <Serialization.h>
+#include <Utf8.h>
 #include <XmlParserUtils.h>
 
 #include <cctype>
@@ -290,7 +291,12 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
     const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
     memcpy(buf, currentBufferPos, toRead);
 
-    const XML_Status parseStatus = XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead);
+    // remainingSize is the declared size from the zip entry -- a corrupted/
+    // malicious entry could feed more actual bytes than that, so compare
+    // with <= (not ==) and clamp the subtraction below to avoid underflowing
+    // this size_t, which would otherwise wrap and never report isFinal again.
+    const bool isFinalChunk = remainingSize <= toRead;
+    const XML_Status parseStatus = XML_ParseBuffer(parser, static_cast<int>(toRead), isFinalChunk);
     if (parseStatus != XML_STATUS_OK) {
       if (!parseFailed) {
         LOG_DBG("COF", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
@@ -302,7 +308,7 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 
     currentBufferPos += toRead;
     remainingInBuffer -= toRead;
-    remainingSize -= toRead;
+    remainingSize -= (remainingSize > toRead) ? toRead : remainingSize;
   }
 
   return size;
@@ -590,7 +596,12 @@ namespace {
 void appendBounded(std::string& field, const XML_Char* s, const int len) {
   if (field.size() >= ContentOpfParser::kMaxFieldBytes) return;
   const size_t room = ContentOpfParser::kMaxFieldBytes - field.size();
-  field.append(s, std::min(static_cast<size_t>(len), room));
+  const size_t toCopy = std::min(static_cast<size_t>(len), room);
+  field.append(s, toCopy);
+  if (toCopy < static_cast<size_t>(len)) {
+    // Truncated mid-chunk -- back up to the last complete UTF-8 codepoint.
+    field.resize(utf8SafeTruncateBuffer(field.data(), static_cast<int>(field.size())));
+  }
 }
 }  // namespace
 
