@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -316,6 +317,7 @@ EpubReaderTouchMenuActivity::EpubReaderTouchMenuActivity(
                                              READER_AUTO_PAGE_TURN_MAX_SECONDS)),
       state(initialState),
       draft(captureSettings()),
+      sourceSettings(draft),
       saveReaderSettingsCallback(saveReaderSettingsCallback),
       saveReaderSettingsContext(saveReaderSettingsContext),
       saveGlobalSettingsCallback(saveGlobalSettingsCallback),
@@ -427,7 +429,7 @@ ReaderSettingsDraft EpubReaderTouchMenuActivity::captureSettings() {
   value.orientation = SETTINGS.orientation;
   value.paragraphAlignment = SETTINGS.paragraphAlignment;
   value.textAntiAliasing = SETTINGS.textAntiAliasing;
-  value.bionicReadingEnabled = SETTINGS.bionicReadingEnabled;
+  value.focusReadingEnabled = SETTINGS.focusReadingEnabled;
   value.guideReadingEnabled = SETTINGS.guideReadingEnabled;
   value.hyphenationEnabled = SETTINGS.hyphenationEnabled;
   value.publisherPageNumbers = SETTINGS.publisherPageNumbers;
@@ -452,7 +454,7 @@ void EpubReaderTouchMenuActivity::applySettings(const ReaderSettingsDraft& value
   SETTINGS.orientation = value.orientation;
   SETTINGS.paragraphAlignment = value.paragraphAlignment;
   SETTINGS.textAntiAliasing = value.textAntiAliasing;
-  SETTINGS.bionicReadingEnabled = value.bionicReadingEnabled;
+  SETTINGS.focusReadingEnabled = value.focusReadingEnabled;
   SETTINGS.guideReadingEnabled = value.guideReadingEnabled;
   SETTINGS.hyphenationEnabled = value.hyphenationEnabled;
   SETTINGS.publisherPageNumbers = value.publisherPageNumbers;
@@ -618,11 +620,8 @@ void EpubReaderTouchMenuActivity::drawerScreen(UiApp::ScreenType& screen, void* 
   static_cast<EpubReaderTouchMenuActivity*>(user)->buildDrawer(screen);
 }
 
-void EpubReaderTouchMenuActivity::buildDrawer(UiApp::ScreenType& screen) {
+int16_t EpubReaderTouchMenuActivity::drawerHeight() const {
   fui::SheetProps sheet;
-  sheet.anchor = fui::SheetEdge::Bottom;
-  sheet.dismissAction = ACTION_DISMISS;
-  sheet.radius = 0;
   sheet.ruleWidth = DRAWER_RULE_WIDTH;
   const int16_t grabberBand = DrawerHandle::bandHeight(sheet);
   // Give root menus exactly four standard row slots in landscape. A percentage
@@ -633,10 +632,20 @@ void EpubReaderTouchMenuActivity::buildDrawer(UiApp::ScreenType& screen) {
   if (state.pane == ReaderDrawerPane::Root && isLandscapeOrientation(renderer.getOrientation())) {
     drawerHeight = static_cast<int16_t>(
         grabberBand + sheet.ruleWidth + tabBarHeight + DRAWER_LIST_TOP_PADDING +
-        readerDrawerListHeightForRows(LANDSCAPE_ROOT_ROWS, screen.theme().rowHeight, screen.theme().spaceSm));
+        readerDrawerListHeightForRows(LANDSCAPE_ROOT_ROWS, app.theme().rowHeight, app.theme().spaceSm));
     drawerHeight = std::min<int16_t>(drawerHeight, renderer.getScreenHeight());
   }
-  const fui::Rect sheetContent = screen.sheet(sheet, drawerHeight);
+  return drawerHeight;
+}
+
+void EpubReaderTouchMenuActivity::buildDrawer(UiApp::ScreenType& screen) {
+  fui::SheetProps sheet;
+  sheet.anchor = fui::SheetEdge::Bottom;
+  sheet.dismissAction = ACTION_DISMISS;
+  sheet.radius = 0;
+  sheet.ruleWidth = DRAWER_RULE_WIDTH;
+  const int16_t tabBarHeight = static_cast<int16_t>(TAB_BAR_HEIGHT + TAB_BAR_VERTICAL_PADDING * 2);
+  const fui::Rect sheetContent = screen.sheet(sheet, drawerHeight());
   drawerHandleRect = DrawerHandle::registerTap(screen.frame(), sheetContent, sheet, ACTION_DISMISS);
   // Give every tab row four pixels of white space above and below its icons.
   // The tab pill keeps its previous size so the selected background does not
@@ -1187,11 +1196,15 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
     case RowId::Controls:
       commitSettings();
       if (auto controls = makeUniqueNoThrow<ControlsOptionsActivity>(renderer, mappedInput)) {
-        startActivityForResult(std::move(controls), [this](const ActivityResult&) { requestUpdate(); });
+        if (beginGlobalSettingsEditCallback) beginGlobalSettingsEditCallback(beginGlobalSettingsEditContext);
+        startActivityForResult(std::move(controls), [this](const ActivityResult&) {
+          if (endGlobalSettingsEditCallback) endGlobalSettingsEditCallback(endGlobalSettingsEditContext);
+          requestUpdate();
+        });
       }
       return;
     case RowId::TextAa:
-    case RowId::Bionic:
+    case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
     case RowId::PublisherPages:
@@ -1209,13 +1222,13 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
       closeAndReturn(false, EpubReaderMenuAction::TOGGLE_COMPLETED);
       return;
     case RowId::DeleteBookmarks:
-      showDestructiveConfirmation(row, EpubReaderMenuAction::DELETE_BOOKMARKS);
+      closeAndReturn(false, EpubReaderMenuAction::DELETE_BOOKMARKS);
       return;
     case RowId::DeleteCache:
-      showDestructiveConfirmation(row, EpubReaderMenuAction::DELETE_CACHE);
+      closeAndReturn(false, EpubReaderMenuAction::DELETE_CACHE);
       return;
     case RowId::DeleteStats:
-      showDestructiveConfirmation(row, EpubReaderMenuAction::DELETE_STATS);
+      closeAndReturn(false, EpubReaderMenuAction::DELETE_STATS);
       return;
     default:
       break;
@@ -1256,29 +1269,13 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
   closeAndReturn(false, action, false);
 }
 
-void EpubReaderTouchMenuActivity::showDestructiveConfirmation(const RowId row, const EpubReaderMenuAction action) {
-  static constexpr std::array<StrId, 2> OPTIONS = {StrId::STR_NO, StrId::STR_YES};
-  StrId title = StrId::STR_DELETE;
-  if (row == RowId::DeleteBookmarks) title = StrId::STR_DELETE_BOOKMARKS;
-  if (row == RowId::DeleteCache) title = StrId::STR_DELETE_CACHE;
-  if (row == RowId::DeleteStats) title = StrId::STR_DELETE_BOOK_STATS;
-  optionPopup.show(title, OPTIONS.data(), OPTIONS.size(), 0, [this, action](const int selected) {
-    if (selected == 1) {
-      closeAndReturn(false, action, false);
-      return;
-    }
-    requestUpdate();
-  });
-  requestUpdate();
-}
-
 void EpubReaderTouchMenuActivity::toggleSetting(const RowId row) {
   switch (row) {
     case RowId::TextAa:
       draft.textAntiAliasing = !draft.textAntiAliasing;
       break;
-    case RowId::Bionic:
-      draft.bionicReadingEnabled = !draft.bionicReadingEnabled;
+    case RowId::Focus:
+      draft.focusReadingEnabled = !draft.focusReadingEnabled;
       break;
     case RowId::GuideDots:
       draft.guideReadingEnabled = !draft.guideReadingEnabled;
@@ -1306,7 +1303,7 @@ void EpubReaderTouchMenuActivity::toggleSetting(const RowId row) {
     // makes the in-drawer preview appear to zoom while the page reflows.
     markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::NonLayout);
   } else {
-    const bool previews = row == RowId::Bionic || row == RowId::GuideDots;
+    const bool previews = row == RowId::Focus || row == RowId::GuideDots;
     markSettingChanged(previews ? ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout
                                 : ReaderSettingsChangeMask::Relayout);
   }
@@ -1329,12 +1326,12 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
       static constexpr std::array<CrossPointSettings::FONT_SIZE, CrossPointSettings::FONT_SIZE_COUNT> BUILTIN_SIZES = {
           CrossPointSettings::TINY, CrossPointSettings::SMALL, CrossPointSettings::MEDIUM, CrossPointSettings::LARGE};
       raw.reserve(BUILTIN_SIZES.size());
-      for (const auto size : BUILTIN_SIZES) {
-        raw.push_back(CrossPointSettings::getReaderFontPointSize(size));
-      }
+      std::transform(BUILTIN_SIZES.begin(), BUILTIN_SIZES.end(), std::back_inserter(raw),
+                     [](const auto size) { return CrossPointSettings::getReaderFontPointSize(size); });
     }
     labels.reserve(raw.size());
-    for (const uint8_t size : raw) labels.push_back(fontSizePointLabel(size));
+    std::transform(raw.begin(), raw.end(), std::back_inserter(labels),
+                   [](const uint8_t size) { return fontSizePointLabel(size); });
     const auto it = std::find(raw.begin(), raw.end(), draft.readerFontPointSize);
     const int current = it == raw.end() ? 0 : static_cast<int>(std::distance(raw.begin(), it));
     openEnumOptions(row, StrId::STR_FONT_SIZE, std::move(labels), std::move(raw), current);
@@ -1636,9 +1633,7 @@ bool EpubReaderTouchMenuActivity::saveBookDictionary(const std::string& path) {
 void EpubReaderTouchMenuActivity::renderPreviewContents(const ReaderSettingsDraft& previewSettings,
                                                         const int previewFontId) {
   const int previewTop = 0;
-  const fui::SheetProps sheet;
-  const int drawerHeight = readerDrawerHeight(renderer, state.pane) + DrawerHandle::bandHeight(sheet);
-  const int previewBottom = renderer.getScreenHeight() - drawerHeight;
+  const int previewBottom = renderer.getScreenHeight() - drawerHeight();
   const int previewHeight = std::max(0, previewBottom - previewTop);
   renderer.fillRect(0, previewTop, renderer.getScreenWidth(), previewHeight, ReaderUtils::readerDarkModeEnabled());
   renderPreviewText(previewSettings, previewFontId);
@@ -1646,20 +1641,39 @@ void EpubReaderTouchMenuActivity::renderPreviewContents(const ReaderSettingsDraf
 
 void EpubReaderTouchMenuActivity::renderPreviewText(const ReaderSettingsDraft& previewSettings,
                                                     const int previewFontId) {
+  const bool sourceLayout = previewSettings.fontFamily == sourceSettings.fontFamily &&
+                            previewSettings.readerFontPointSize == sourceSettings.readerFontPointSize &&
+                            previewSettings.sdFontFamilyName == sourceSettings.sdFontFamilyName &&
+                            previewSettings.lineHeightPercent == sourceSettings.lineHeightPercent &&
+                            previewSettings.wordSpacing == sourceSettings.wordSpacing &&
+                            previewSettings.screenMarginVertical == sourceSettings.screenMarginVertical &&
+                            previewSettings.screenMarginHorizontal == sourceSettings.screenMarginHorizontal &&
+                            previewSettings.paragraphAlignment == sourceSettings.paragraphAlignment &&
+                            previewSettings.focusReadingEnabled == sourceSettings.focusReadingEnabled &&
+                            previewSettings.guideReadingEnabled == sourceSettings.guideReadingEnabled;
+  if (sourceLayout) {
+    renderer.beginTextClip(0, 0, renderer.getScreenWidth(), renderer.getScreenHeight() - drawerHeight());
+    previewModel->renderSource(renderer, previewFontId, ReaderUtils::readerForegroundBlack());
+    renderer.endTextClip();
+    return;
+  }
   int orientedTop, orientedRight, orientedBottom, orientedLeft;
   renderer.getOrientedViewableTRBL(&orientedTop, &orientedRight, &orientedBottom, &orientedLeft);
   (void)orientedRight;
   (void)orientedBottom;
   (void)orientedLeft;
   const int clockReservation = ReaderUtils::getTopClockStatusBarReservedHeight(renderer);
-  const int previewYOffset = orientedTop + std::max(static_cast<int>(previewSettings.screenMarginVertical),
-                                                    clockReservation + ReaderUtils::TOP_CLOCK_TEXT_PADDING);
+  const int previewYOffset =
+      orientedTop + std::max(static_cast<int>(previewSettings.screenMarginVertical),
+                             clockReservation > 0 ? clockReservation + ReaderUtils::TOP_CLOCK_TEXT_PADDING : 0);
   const int previewWidth =
       std::max(1, renderer.getScreenWidth() - static_cast<int>(previewSettings.screenMarginHorizontal) * 2);
+  renderer.beginTextClip(0, 0, renderer.getScreenWidth(), renderer.getScreenHeight() - drawerHeight());
   previewModel->renderText(renderer, previewFontId, previewSettings.screenMarginHorizontal, previewYOffset,
                            previewWidth, previewSettings.lineHeightPercent, previewSettings.wordSpacing,
-                           previewSettings.paragraphAlignment, previewSettings.bionicReadingEnabled,
+                           previewSettings.paragraphAlignment, previewSettings.focusReadingEnabled,
                            previewSettings.guideReadingEnabled, ReaderUtils::readerForegroundBlack());
+  renderer.endTextClip();
 }
 
 bool EpubReaderTouchMenuActivity::renderPreview() {
@@ -1780,6 +1794,15 @@ void EpubReaderTouchMenuActivity::loop() {
 }
 
 void EpubReaderTouchMenuActivity::render(RenderLock&&) {
+  const int16_t drawerTop = static_cast<int16_t>(renderer.getScreenHeight() - drawerHeight());
+  if (previousDrawerTop >= 0 && drawerTop > previousDrawerTop) {
+    // A shorter pane exposes pixels occupied by the old sheet. Clear them even
+    // when this page has no text preview (image pages or snapshot allocation failure).
+    renderer.fillRect(0, previousDrawerTop, renderer.getScreenWidth(), drawerTop - previousDrawerTop,
+                      ReaderUtils::readerDarkModeEnabled());
+    previewDirty = true;
+  }
+  previousDrawerTop = drawerTop;
   if (renderPreview()) {
     previewHasAntiAliasing = draft.textAntiAliasing && ReaderUtils::readerForegroundBlack();
   }
@@ -1830,8 +1853,8 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
       return tr(STR_SPACING);
     case RowId::TextAa:
       return tr(STR_TEXT_AA);
-    case RowId::Bionic:
-      return tr(STR_BIONIC_READING);
+    case RowId::Focus:
+      return tr(STR_FOCUS_READING);
     case RowId::GuideDots:
       return tr(STR_GUIDE_READING);
     case RowId::Margins:
@@ -1963,7 +1986,7 @@ const char* EpubReaderTouchMenuActivity::rowValue(const RowId row, char* buffer,
 bool EpubReaderTouchMenuActivity::rowIsToggle(const RowId row) const {
   switch (row) {
     case RowId::TextAa:
-    case RowId::Bionic:
+    case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
     case RowId::PublisherPages:
@@ -2001,8 +2024,8 @@ bool EpubReaderTouchMenuActivity::rowToggleValue(const RowId row) const {
   switch (row) {
     case RowId::TextAa:
       return draft.textAntiAliasing;
-    case RowId::Bionic:
-      return draft.bionicReadingEnabled;
+    case RowId::Focus:
+      return draft.focusReadingEnabled;
     case RowId::GuideDots:
       return draft.guideReadingEnabled;
     case RowId::Hyphenation:

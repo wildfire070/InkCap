@@ -45,7 +45,6 @@ class FileBrowserActivity final : public Activity {
   void setPreferredSleepFolder(const std::string& fullPath);
   void clearPreferredSleepFolder();
   bool isPreferredSleepFolder(const std::string& fullPath) const;
-  bool isSleepFavoriteFolder(const std::string& fullPath) const;
   void pinBootFavorite(const std::string& fullPath);
   void unpinBootFavorite();
   bool isPinnedBootFavorite(const std::string& fullPath) const;

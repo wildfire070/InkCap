@@ -41,8 +41,8 @@ emit_hash_define BITTER_16_FONT_ID \
   ./bitter_16_regular.h ./bitter_16_bold.h ./bitter_16_bolditalic.h ./bitter_16_italic.h
 
 # UI fonts
-emit_hash_define UI_10_FONT_ID ./inter_10_regular.h ./inter_10_bold.h
-emit_hash_define UI_12_FONT_ID ./inter_12_regular.h ./inter_12_bold.h
+emit_hash_define UI_10_FONT_ID ./inter_10_regular.h ./inter_10_bold.h ./ui_symbols_10.h
+emit_hash_define UI_12_FONT_ID ./inter_12_regular.h ./inter_12_bold.h ./ui_symbols_10.h
 emit_hash_define SMALL_FONT_ID ./inter_8_regular.h
 
 echo ""

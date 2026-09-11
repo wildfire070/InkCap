@@ -220,8 +220,10 @@ void TxtReaderActivity::loop() {
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
   if (touch.tapped &&
       ReaderUtils::isBottomStatusBarTap(renderer, touch.y, UITheme::getInstance().getStatusBarHeight())) {
-    statusBarVisible = !statusBarVisible;
-    requestUpdate();
+    if (SETTINGS.tapToHideStatusBar) {
+      statusBarVisible = !statusBarVisible;
+      requestUpdate();
+    }
     return;
   }
   if (consumeLongPowerButtonRelease()) {
@@ -548,9 +550,9 @@ bool TxtReaderActivity::executePowerButtonAction() {
   }
 
   if (executeReaderShortcutAction(longPowerAction)) {
-    if (longPowerAction == CrossPointSettings::SHORT_PWRBTN::TOGGLE_DARK_MODE) {
-      mappedInput.suppressNextPowerRelease();
-    }
+    // Reader long-press actions execute while Power is still held. Consume its
+    // later release so the app-wide shortcut dispatcher cannot run it again.
+    mappedInput.suppressNextPowerRelease();
     return true;
   }
 

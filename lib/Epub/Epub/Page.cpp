@@ -694,3 +694,11 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
 
   return page;
 }
+
+void Page::prepareImageCaches() const {
+  for (const auto& element : elements) {
+    if (element->getTag() == TAG_PageImage) {
+      static_cast<const PageImage&>(*element).getImageBlock().prepareCache();
+    }
+  }
+}

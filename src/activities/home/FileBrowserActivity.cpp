@@ -598,6 +598,15 @@ void FileBrowserActivity::pinSleepFavorite(const std::string& fullPath) {
     return;
   }
   LOG_INF("FileBrowser", "Pinned favorite sleep image: %s", fullPath.c_str());
+
+  // PNG sleep images only render in Page Overlay mode, so make selecting one
+  // from the File Browser immediately usable.
+  if (FsHelpers::hasPngExtension(fullPath) && SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+    SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY;
+    if (!SETTINGS.saveToFile()) {
+      LOG_ERR("FileBrowser", "Failed to save Page Overlay mode for PNG sleep image");
+    }
+  }
   requestUpdate();
 }
 
@@ -659,11 +668,6 @@ bool FileBrowserActivity::isPreferredSleepFolder(const std::string& fullPath) co
   return APP_STATE.preferredSleepFolderPath == normalizeDirectoryPath(fullPath);
 }
 
-bool FileBrowserActivity::isSleepFavoriteFolder(const std::string& fullPath) const {
-  const std::string normalizedPath = normalizeDirectoryPath(fullPath);
-  return isDefaultSleepFolderPath(normalizedPath) || isPreferredSleepFolder(normalizedPath);
-}
-
 void FileBrowserActivity::pinBootFavorite(const std::string& fullPath) {
   APP_STATE.favoriteBootImagePath = fullPath;
   if (!APP_STATE.saveToFile()) {
@@ -704,7 +708,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
     items.push_back({FileBrowserAction::SendNearby, StrId::STR_SEND_NEARBY_BOOK});
   }
 
-  const bool canPinFavorite = isSleepFavoriteFolder(basepath) && isSleepImageFile(entry);
+  const bool canPinFavorite = isSleepImageFile(entry);
   if (canPinFavorite) {
     items.push_back(
         {isPinnedSleepFavorite(fullPath) ? FileBrowserAction::UnpinFavorite : FileBrowserAction::PinFavorite,
@@ -1679,6 +1683,9 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     names[i] = getFileName(entry);
     if (SETTINGS.hideFileExtension == 0) values[i] = getFileExtension(entry);
     const std::string fullPath = buildFullPath(basepath, entry);
+    if (isPinnedBootFavorite(fullPath)) {
+      values[i] = values[i].empty() ? "⏻" : "⏻ " + values[i];
+    }
     if ((entry.back() == '/' && isPreferredSleepFolder(fullPath)) || isPinnedSleepFavorite(fullPath)) {
       values[i] = values[i].empty() ? "*" : "* " + values[i];
     }
