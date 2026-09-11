@@ -387,8 +387,8 @@ inline uint8_t shortcutRawValue(const ShortcutOptionCatalog catalog, const Cross
           return Chord::CHORD_TOGGLE_FONT;
         case Action::TOGGLE_GUIDE_DOTS:
           return Chord::CHORD_TOGGLE_GUIDE_DOTS;
-        case Action::TOGGLE_BIONIC_READING:
-          return Chord::CHORD_TOGGLE_BIONIC_READING;
+        case Action::TOGGLE_FOCUS_READING:
+          return Chord::CHORD_TOGGLE_FOCUS_READING;
         case Action::CYCLE_PAGE_TURN:
           return Chord::CHORD_CYCLE_PAGE_TURN;
         case Action::SYNC_PROGRESS:
@@ -449,8 +449,8 @@ inline uint8_t shortcutRawValue(const ShortcutOptionCatalog catalog, const Cross
           return LongPress::LONG_MENU_CHANGE_FONT;
         case Action::TOGGLE_GUIDE_DOTS:
           return LongPress::LONG_MENU_TOGGLE_GUIDE_DOTS;
-        case Action::TOGGLE_BIONIC_READING:
-          return LongPress::LONG_MENU_TOGGLE_BIONIC;
+        case Action::TOGGLE_FOCUS_READING:
+          return LongPress::LONG_MENU_TOGGLE_FOCUS;
         case Action::CYCLE_PAGE_TURN:
           return LongPress::LONG_MENU_CYCLE_PAGE_TURN;
         case Action::TOGGLE_TILT_PAGE_TURN:
@@ -671,8 +671,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             "extraParagraphSpacing", StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_FORCE_PARAGRAPH_INDENTS, &CrossPointSettings::forceParagraphIndents,
                             "forceParagraphIndents", StrId::STR_CAT_READER));
-    add(SettingInfo::Toggle(StrId::STR_BIONIC_READING, &CrossPointSettings::bionicReadingEnabled,
-                            "bionicReadingEnabled", StrId::STR_CAT_READER));
+    add(SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
+                            StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled, "guideReadingEnabled",
                             StrId::STR_CAT_READER));
     add(SettingInfo::Enum(StrId::STR_INDEXING_METHOD, &CrossPointSettings::indexingMethod,
@@ -757,10 +757,16 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                              "longPressBackAction", ShortcutOptionCatalog::LongPress));
     add(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                             "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
-    add(SettingInfo::Enum(StrId::STR_PAGE_TURN, &CrossPointSettings::pageTurnGesture,
+    add(SettingInfo::Enum(StrId::STR_NEXT_PAGE, &CrossPointSettings::pageTurnGesture,
                           {StrId::STR_TAP_AND_SWIPE, StrId::STR_TAP_ONLY, StrId::STR_SWIPE_ONLY,
                            StrId::STR_INVERTED_TAP, StrId::STR_DISABLED},
                           "pageTurnGesture", StrId::STR_CAT_CONTROLS));
+    add(SettingInfo::Enum(StrId::STR_PREV_PAGE, &CrossPointSettings::previousPageGesture,
+                          {StrId::STR_TAP_AND_SWIPE, StrId::STR_TAP_ONLY, StrId::STR_SWIPE_ONLY,
+                           StrId::STR_INVERTED_TAP, StrId::STR_DISABLED},
+                          "previousPageGesture", StrId::STR_CAT_CONTROLS));
+    add(SettingInfo::Toggle(StrId::STR_TAP_HIDE_STATUS_BAR, &CrossPointSettings::tapToHideStatusBar,
+                            "tapToHideStatusBar", StrId::STR_CAT_CONTROLS));
 
     // --- System ---
     add(SettingInfo::String(StrId::STR_DEVICE_NAME, SETTINGS.deviceName, sizeof(SETTINGS.deviceName), "deviceName",
@@ -769,6 +775,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
         {CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1},
         "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM));
+    add(SettingInfo::Toggle(StrId::STR_CUSTOM_BOOTSCREEN, &CrossPointSettings::customBootscreenEnabled,
+                            "customBootscreenEnabled", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                             StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_HIDE_FILE_EXTENSION, &CrossPointSettings::hideFileExtension, "hideFileExtension",
@@ -953,7 +961,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
                              return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
-                                    s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_PAGE_TURN ||
+                                    s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_NEXT_PAGE ||
+                                    s.nameId == StrId::STR_PREV_PAGE || s.nameId == StrId::STR_TAP_HIDE_STATUS_BAR ||
                                     s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
@@ -1082,7 +1091,7 @@ inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<
   addSettingByName(readerSettings, allSettings, StrId::STR_DISABLE_TOUCHSCREEN);
   addSettingByName(readerSettings, allSettings, StrId::STR_EMBEDDED_STYLE);
   addSettingByName(readerSettings, allSettings, StrId::STR_IMAGES);
-  addSettingByName(readerSettings, allSettings, StrId::STR_BIONIC_READING);
+  addSettingByName(readerSettings, allSettings, StrId::STR_FOCUS_READING);
   addSettingByName(readerSettings, allSettings, StrId::STR_GUIDE_READING);
   addSettingByName(readerSettings, allSettings, StrId::STR_DICTIONARY);
   addSettingByName(readerSettings, allSettings, StrId::STR_INDEXING_METHOD);
@@ -1150,7 +1159,7 @@ inline bool hasSettingByName(const std::vector<SettingInfo>& allSettings, StrId 
 inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   const bool hasTiltPageTurnSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN);
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
-  const bool hasTapsGestures = hasSettingByName(allSettings, StrId::STR_PAGE_TURN);
+  const bool hasTapsGestures = hasSettingByName(allSettings, StrId::STR_NEXT_PAGE);
   const bool hasFrontButtons = !gpio.hasTouch();
   const bool hasHomeKey = gpio.hasHomeKey();
 
@@ -1178,9 +1187,11 @@ inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std:
   std::vector<SettingInfo> settings;
   const bool hasPinch = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
   const bool hasTwoFingerSwipe = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
-  settings.reserve(1 + (hasPinch ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
-  addSettingByName(settings, allSettings, StrId::STR_PAGE_TURN);
+  settings.reserve(3 + (hasPinch ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
+  addSettingByName(settings, allSettings, StrId::STR_NEXT_PAGE);
+  addSettingByName(settings, allSettings, StrId::STR_PREV_PAGE);
   if (hasPinch) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
+  addSettingByName(settings, allSettings, StrId::STR_TAP_HIDE_STATUS_BAR);
   if (hasTwoFingerSwipe) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_TWO_FINGER_SWIPE, SettingAction::ControlsTwoFingerSwipe));
   }
@@ -1333,9 +1344,10 @@ inline std::vector<SettingInfo> buildSystemSettingsParentList(const std::vector<
 
 inline std::vector<SettingInfo> buildSystemDeviceSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(9);
+  settings.reserve(10);
   addSettingByName(settings, allSettings, StrId::STR_DEVICE_NAME);
   addSettingByName(settings, allSettings, StrId::STR_TIME_TO_SLEEP);
+  addSettingByName(settings, allSettings, StrId::STR_CUSTOM_BOOTSCREEN);
   settings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   settings.push_back(SettingInfo::Action(StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts));
   if (halClock.isAvailable()) {

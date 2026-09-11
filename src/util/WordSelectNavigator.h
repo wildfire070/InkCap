@@ -46,7 +46,7 @@ class WordSelectNavigator {
     bool isIpa = false;
     int fontId = 0;  // resolved at extraction time; used by renderHighlight()
     // Pack the display/lookup flags into the byte that already preceded
-    // bionicBoundary so WordInfo remains 36 bytes on 32-bit targets.
+    // focusBoundary so WordInfo remains 36 bytes on 32-bit targets.
     bool isRtl : 1;
     // The source layout placed this token directly beside the previous
     // selectable token without whitespace (for example adjacent CJK glyphs).
@@ -54,8 +54,8 @@ class WordSelectNavigator {
     // Table rows interleave cells in visual order, so their line endings must
     // not participate in the body-text hyphen continuation heuristic.
     bool isTableText : 1;
-    uint8_t bionicBoundary = 0;
-    uint16_t bionicSuffixX = 0;
+    uint8_t focusBoundary = 0;
+    uint16_t focusSuffixX = 0;
 
     WordInfo() : isRtl(false), joinWithoutSpaceBefore(false), isTableText(false) {}
   };

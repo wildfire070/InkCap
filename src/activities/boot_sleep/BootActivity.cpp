@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "AppVersion.h"
+#include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "ImageFolderIndex.h"
 #include "fontIds.h"
@@ -129,7 +130,7 @@ void drawDefaultBootLogo(const GfxRenderer& renderer) {
 void BootActivity::onEnter() {
   Activity::onEnter();
 
-  if (!tryDrawPinnedBootImage(renderer) && !tryDrawRotatingBootImage(renderer)) {
+  if (!SETTINGS.customBootscreenEnabled || (!tryDrawPinnedBootImage(renderer) && !tryDrawRotatingBootImage(renderer))) {
     drawDefaultBootLogo(renderer);
   }
 

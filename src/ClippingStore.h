@@ -83,6 +83,7 @@ class ClippingStore {
   bool cacheResolvedLayoutRange(size_t index, uint16_t page, uint16_t startWord, uint16_t endWord,
                                 uint32_t layoutSignature);
   bool readClippingText(size_t index, std::string& out) const;
+  bool readClippingPreview(size_t index, std::string& out) const;
   bool readClippingText(const Clipping& clipping, std::string& out) const;
 
   static bool hasAnyClippings();

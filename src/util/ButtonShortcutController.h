@@ -21,7 +21,7 @@ class ButtonShortcutController {
     ForceRefresh = 10,
     ToggleFont = 11,
     ToggleGuideDots = 12,
-    ToggleBionicReading = 13,
+    ToggleFocusReading = 13,
     CyclePageTurn = 14,
     SyncProgress = 15,
     FileTransfer = 16,

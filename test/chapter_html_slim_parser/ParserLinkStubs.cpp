@@ -26,8 +26,7 @@ TextBlock::TextBlock(const std::vector<std::string>&, const std::vector<int16_t>
     : blockStyle(blockStyle), rubyTexts(std::move(rubyTexts)) {}
 bool TextBlock::hasRuby() const { return false; }
 
-bool ImageDecoderFactory::isFormatSupported(const std::string&) { return false; }
-ImageToFramebufferDecoder* ImageDecoderFactory::getDecoder(const std::string&) { return nullptr; }
+bool ImageDecoderFactory::isFormatSupported(const std::string& path) { return path.ends_with(".jpg"); }
 
 PreviewBlockLocator::PreviewBlockLocator(const char*, IsBlockTagFn) {}
 PreviewBlockLocator::~PreviewBlockLocator() = default;
