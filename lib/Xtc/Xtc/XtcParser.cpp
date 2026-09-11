@@ -11,6 +11,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -172,6 +173,11 @@ XtcError XtcParser::readTitle() {
 
   char titleBuf[128] = {0};
   m_file.read(titleBuf, sizeof(titleBuf) - 1);
+  // If the field has no null terminator within the buffer (a full-length
+  // title packed to the cap), a raw byte-count read can end mid-UTF-8
+  // sequence -- trim back to the last complete codepoint.
+  const size_t rawLen = strnlen(titleBuf, sizeof(titleBuf) - 1);
+  titleBuf[utf8SafeTruncateBuffer(titleBuf, static_cast<int>(rawLen))] = '\0';
   m_title = titleBuf;
 
   return XtcError::OK;
@@ -186,6 +192,10 @@ XtcError XtcParser::readAuthor() {
 
   char authorBuf[64] = {0};
   m_file.read(authorBuf, sizeof(authorBuf) - 1);
+  // See readTitle() above -- trim back to the last complete UTF-8 codepoint
+  // in case the field has no null terminator within the buffer.
+  const size_t rawLen = strnlen(authorBuf, sizeof(authorBuf) - 1);
+  authorBuf[utf8SafeTruncateBuffer(authorBuf, static_cast<int>(rawLen))] = '\0';
   m_author = authorBuf;
 
   return XtcError::OK;
@@ -390,7 +400,11 @@ bool XtcParser::parseChapterRow(const uint8_t* const row, ChapterInfo& chapter, 
 
   memcpy(chapter.name, row, XTC_CHAPTER_NAME_MAX);
   chapter.name[XTC_CHAPTER_NAME_MAX] = '\0';
-  chapter.name[strnlen(chapter.name, XTC_CHAPTER_NAME_MAX)] = '\0';
+  // If the row has no null terminator within XTC_CHAPTER_NAME_MAX (a
+  // full-length name packed to the cap), the raw copy can end mid-UTF-8
+  // sequence -- trim back to the last complete codepoint.
+  const size_t rawLen = strnlen(chapter.name, XTC_CHAPTER_NAME_MAX);
+  chapter.name[utf8SafeTruncateBuffer(chapter.name, static_cast<int>(rawLen))] = '\0';
   chapter.startPage = startPage;
   chapter.endPage = endPage;
   return true;
@@ -538,6 +552,18 @@ size_t XtcParser::loadPage(uint32_t pageIndex, uint8_t* buffer, size_t bufferSiz
     return 0;
   }
 
+  // Cross-check against the page table's own dimensions -- a corrupted file
+  // could report smaller width/height here than the table entry the caller
+  // sized its buffer from, which would pass the bufferSize check below while
+  // leaving the tail of the caller's buffer unfilled (stale/uninitialized
+  // heap data baked into the resulting bitmap).
+  if (pageHeader.width != page.width || pageHeader.height != page.height) {
+    LOG_DBG("XTC", "Page %u header dims %ux%u don't match page table %ux%u", pageIndex, pageHeader.width,
+            pageHeader.height, page.width, page.height);
+    m_lastError = XtcError::CORRUPTED_HEADER;
+    return 0;
+  }
+
   // Calculate bitmap size based on bit depth
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
   // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
@@ -599,6 +625,14 @@ XtcError XtcParser::loadPageStreaming(uint32_t pageIndex,
   const uint32_t expectedMagic = (m_bitDepth == 2) ? XTH_MAGIC : XTG_MAGIC;
   if (headerRead != sizeof(XtgPageHeader) || pageHeader.magic != expectedMagic) {
     return m_lastError = XtcError::READ_ERROR;
+  }
+
+  // Cross-check against the page table's own dimensions -- see the identical
+  // check in loadPage() above for why a mismatch here matters.
+  if (pageHeader.width != page.width || pageHeader.height != page.height) {
+    LOG_DBG("XTC", "Page %u header dims %ux%u don't match page table %ux%u", pageIndex, pageHeader.width,
+            pageHeader.height, page.width, page.height);
+    return m_lastError = XtcError::CORRUPTED_HEADER;
   }
 
   // Calculate bitmap size based on bit depth
