@@ -497,9 +497,6 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
   const int tileHeight = rect.height;
   const int tileY = rect.y;
   const bool hasContinueReading = !recentBooks.empty();
-  if (coverWidth == 0) {
-    coverWidth = LyraMetrics::values.homeCoverHeight * 3 / 4;
-  }
 
   // Draw book card regardless, fill with message based on `hasContinueReading`
   // Draw cover image as background if available (inside the box)
@@ -511,6 +508,10 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     RecentBook book = recentBooks[0];
     if (!coverRendered) {
+      // Reset to the default before each fresh load -- otherwise a book with
+      // no cover (or an unparseable one) after a book with a real cover
+      // would keep drawing at the previous book's cover width.
+      coverWidth = LyraMetrics::values.homeCoverHeight * 3 / 4;
       std::string coverPath = book.coverBmpPath;
       bool hasCover = true;
       int tileX = LyraMetrics::values.contentSidePadding;
