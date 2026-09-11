@@ -1456,6 +1456,13 @@ void FileBrowserActivity::ensureSortCache(SortField field, const std::vector<std
         !BookMetadataCache::exists(Epub::cachePathForFilePath(fullPath, "/.crosspoint"))) {
       Epub epub(fullPath, "/.crosspoint");
       if (epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip)) {
+        // These draw directly to the shared renderer outside of render()/
+        // RenderLock. An ambient requestUpdate() (e.g. main.cpp's USB-plug
+        // or battery-percent poll, which fires regardless of the current
+        // activity) can wake the render task to call this activity's own
+        // render() concurrently with this scan -- two tasks touching the
+        // same GfxRenderer with no synchronization otherwise.
+        RenderLock lock(*this);
         if (!showingLoading) {
           showingLoading = true;
           popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));

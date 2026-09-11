@@ -263,11 +263,20 @@ void CacheAllBooksActivity::buildCachesRecursive(const std::string& dirPath, con
         }
       }
       processed++;
-      if (!showingPopup) {
-        showingPopup = true;
-        popupRect = GUI.drawPopup(renderer, tr(STR_CACHING_BOOKS));
+      {
+        // These draw directly to the shared renderer outside of render()/
+        // RenderLock. An ambient requestUpdate() (e.g. main.cpp's USB-plug
+        // or battery-percent poll, which fires regardless of the current
+        // activity) can wake the render task to call this activity's own
+        // render() concurrently with this long recursive scan -- two tasks
+        // touching the same GfxRenderer with no synchronization otherwise.
+        RenderLock lock(*this);
+        if (!showingPopup) {
+          showingPopup = true;
+          popupRect = GUI.drawPopup(renderer, tr(STR_CACHING_BOOKS));
+        }
+        GUI.fillPopupProgress(renderer, popupRect, (processed * 100) / std::max(1, total));
       }
-      GUI.fillPopupProgress(renderer, popupRect, (processed * 100) / std::max(1, total));
     }
     file.close();
   }
