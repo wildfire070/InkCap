@@ -335,6 +335,9 @@ bool NearbyStatsSyncActivity::prepareLocalStats() {
 }
 
 void NearbyStatsSyncActivity::startSync() {
+  // errorMessage_/peerId_/peerName_ are read by render() on the render task
+  // with no lock of its own on that side either -- guard the mutation.
+  RenderLock lock(*this);
   errorMessage_.clear();
   peerSeen_ = false;
   peerStatsSaved_ = false;
@@ -450,6 +453,11 @@ void NearbyStatsSyncActivity::processEvents() {
 
 void NearbyStatsSyncActivity::handleEvent(const SyncEvent& event) {
   if (state_ == State::ERROR) return;
+  // peerId_/peerName_/errorMessage_ are read by render() on the render task
+  // with no lock of its own on that side either -- guard this whole handler,
+  // since it can reassign them at several points below. RenderLock is
+  // recursive, so nesting with setState()/setError()'s own locks is safe.
+  RenderLock lock(*this);
 
   if (event.type == PacketType::ACK) {
     if (state_ != State::SYNCING || !localStatsSent_ || event.deviceMac != peerDeviceMac_) return;
@@ -621,6 +629,11 @@ void NearbyStatsSyncActivity::setState(const State state) {
 
 void NearbyStatsSyncActivity::setError(const std::string& error) {
   LOG_ERR(LOG_TAG, "%s", error.c_str());
+  // errorMessage_ is read by render() on the render task with no lock of its
+  // own on that side either -- guard the mutation. RenderLock is recursive,
+  // so this is safe even when called from a context that already holds one
+  // (e.g. handleEvent()).
+  RenderLock lock(*this);
   errorMessage_ = error;
   setState(State::ERROR);
 }
