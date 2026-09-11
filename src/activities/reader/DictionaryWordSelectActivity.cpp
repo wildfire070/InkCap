@@ -158,7 +158,11 @@ int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const
 
   const auto boldStyle = static_cast<EpdFontFamily::Style>(style | EpdFontFamily::BOLD);
   char boldBuf[40];
-  const size_t boldLen = std::min<size_t>({static_cast<size_t>(bionicBoundary), length, sizeof(boldBuf) - 1});
+  size_t boldLen = std::min<size_t>({static_cast<size_t>(bionicBoundary), length, sizeof(boldBuf) - 1});
+  // The clamp to sizeof(boldBuf)-1 can land mid-UTF-8-sequence even though
+  // bionicBoundary itself was chosen to be safe within the unclamped word --
+  // trim back to the last complete codepoint.
+  boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(word, static_cast<int>(boldLen)));
   memcpy(boldBuf, word, boldLen);
   boldBuf[boldLen] = '\0';
   return static_cast<int16_t>(bionicRunOffset + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle));
