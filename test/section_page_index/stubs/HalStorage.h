@@ -13,6 +13,7 @@ class HalFile {
   size_t failAt = std::numeric_limits<size_t>::max();
 
   size_t position() const { return cursor; }
+  int available() const { return static_cast<int>(bytes.size() - std::min(cursor, bytes.size())); }
 
   size_t write(const uint8_t* data, const size_t length) {
     if (cursor >= failAt) return 0;

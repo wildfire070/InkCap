@@ -33,6 +33,11 @@ class HalDisplay {
     return bw.data();
   }
   void returnFrameBufferStorage() {}
+  void releaseFrameBuffersToHeap() { bw.clear(); }
+  bool reallocFrameBuffers() {
+    bw.assign(static_cast<size_t>(stride) * height, 0xFF);
+    return true;
+  }
   void drawImage(const uint8_t*, int, int, int, int) {}
   void displayBuffer(RefreshMode, bool) {}
   void displayBufferAsync(RefreshMode) {}
