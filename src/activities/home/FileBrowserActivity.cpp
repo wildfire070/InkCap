@@ -160,7 +160,7 @@ bool acceptDirectory(const char* name, const bool isDir) {
 }
 
 std::string buildFullPath(std::string basepath, const std::string& entry) {
-  if (basepath.back() != '/') basepath += "/";
+  if (basepath.empty() || basepath.back() != '/') basepath += "/";
   return basepath + entry;
 }
 
