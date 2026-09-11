@@ -146,7 +146,13 @@ void Ao3EndOfBookSeriesActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!viewEntries.empty()) {
       const int selPage = static_cast<int>(selectorIndex) / 3;
-      if (selPage != cachedPage) loadPageCache(selPage);
+      if (selPage != cachedPage) {
+        // loadPageCache() reassigns pageCache/wrappedSummary, which render()
+        // reads under its own RenderLock -- must not mutate them unlocked
+        // from loop() (see the identical pattern in Ao3LibraryActivity.cpp).
+        RenderLock lock(*this);
+        loadPageCache(selPage);
+      }
       const int slot = static_cast<int>(selectorIndex) % 3;
       const std::string epubPath(pageCache[slot].filepath);
       if (!epubPath.empty()) {
@@ -164,7 +170,12 @@ void Ao3EndOfBookSeriesActivity::loop() {
       mappedInput.suppressCurrentTouchContact();
       selectorIndex = static_cast<size_t>(tappedItem);
       const int selPage = tappedItem / 3;
-      if (selPage != cachedPage) loadPageCache(selPage);
+      if (selPage != cachedPage) {
+        // See the Confirm handler above: loadPageCache() must run under a
+        // RenderLock when called from loop(), not just from render().
+        RenderLock lock(*this);
+        loadPageCache(selPage);
+      }
       const std::string epubPath(pageCache[tappedItem % 3].filepath);
       if (!epubPath.empty()) {
         activityManager.goToReader(epubPath);
