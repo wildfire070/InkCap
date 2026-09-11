@@ -222,6 +222,7 @@ void NearbyBookTransferActivity::selectPeer() {
   // acceptOffer()'s requestUpdateAndWait().
   RenderLock lock(*this);
   peerMac_ = peers_[selectedIndex_].mac;
+  waitingPeerName_ = peers_[selectedIndex_].name;
   retryCount_ = 0;
   setState(State::WaitingForApproval);
   sendOffer();
@@ -869,7 +870,7 @@ void NearbyBookTransferActivity::render(RenderLock&&) {
     centered(tr(STR_NEARBY_TRANSFER_DISCOVERING));
   } else if (state_ == State::WaitingForApproval) {
     centeredWrapped(tr(STR_NEARBY_TRANSFER_WAITING_APPROVAL), -10, 2);
-    centeredWrapped(peers_[selectedIndex_].name.data(), renderer.getLineHeight(UI_10_FONT_ID) + 18, 2, SMALL_FONT_ID);
+    centeredWrapped(waitingPeerName_.data(), renderer.getLineHeight(UI_10_FONT_ID) + 18, 2, SMALL_FONT_ID);
   } else if (state_ == State::Validating) {
     centered(tr(STR_NEARBY_TRANSFER_VALIDATING));
   } else if (state_ == State::OfferPrompt) {
