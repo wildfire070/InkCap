@@ -250,6 +250,10 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
   const auto* family = registry_.findFamily(familyName);
   if (!family) return;
 
+  // See SdCardFontManager::unloadAll()'s comment: render() reads fontMap/
+  // fallbackFontMap_ unlocked on the render task's side, so this lookup and
+  // the setFallbackFont() writes below need the same guard.
+  GfxRenderer::MutexGuard guard(renderer);
   const auto readerIt = renderer.getFontMap().find(manager_.getFontId(familyName));
   if (readerIt == renderer.getFontMap().end()) return;
 
@@ -279,6 +283,8 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
 void SdCardFontSystem::setupUiFallbacksDirect(GfxRenderer& renderer, const char* familyName) {
   if (!familyName || familyName[0] == '\0') return;
 
+  // See setupUiFallbacks() above.
+  GfxRenderer::MutexGuard guard(renderer);
   const auto readerIt = renderer.getFontMap().find(manager_.getFontId(manager_.currentFamilyName()));
   if (readerIt == renderer.getFontMap().end()) return;
 
