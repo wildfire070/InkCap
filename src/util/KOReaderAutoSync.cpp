@@ -55,10 +55,9 @@ void performPush(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int s
   LOG_INF("KOAuto", "Starting silent KOReader progress push for %s", documentHash.c_str());
   sdFontSystem.releaseForNetwork(renderer);
   {
-    // This branch doesn't have GfxRenderer::NetworkBufferLoan (its HalDisplay layer never grew
-    // the release/realloc-framebuffers-to-heap mechanism that requires), so unlike BookFusion's
-    // ProgressAutoSync and InkCap/InkCapO3/Capy's KOReaderAutoSync, the framebuffer stays resident
-    // through this push -- it gets less heap headroom for the TLS/HTTP work, not none.
+    // Nothing in this scope renders -- this whole push is silent -- so it's safe to hold the
+    // framebuffer released for both calls below, matching every other KOReader network call site.
+    GfxRenderer::NetworkBufferLoan fbLoan(renderer);
 
     // Check the remote position before pushing: this is push-only and silent, so if the remote
     // is already further ahead (progress made on another device), pushing local would silently
