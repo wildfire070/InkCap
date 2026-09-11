@@ -1300,8 +1300,15 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
       [this, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded, const size_t total) {
-        downloadProgress = downloaded;
-        downloadTotal = total;
+        {
+          // downloadProgress/downloadTotal are read by render() on the render
+          // task with no lock of its own on that side either -- guard the
+          // only mutation, matching OpdsBookBrowserActivity.cpp's identical
+          // download-progress callback.
+          RenderLock lock(*this);
+          downloadProgress = downloaded;
+          downloadTotal = total;
+        }
         mappedInput.update();
         if (uiReady) {
           const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
