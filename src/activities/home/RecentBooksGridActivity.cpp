@@ -274,6 +274,13 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
         if (epub.load(true, true, Epub::XLocationLoadMode::Skip)) {
+          // These draw directly to the shared renderer outside of render()/
+          // RenderLock. An ambient requestUpdate() (e.g. main.cpp's USB-plug
+          // or battery-percent poll, which fires regardless of the current
+          // activity) can wake the render task to call this activity's own
+          // render() concurrently with this scan -- two tasks touching the
+          // same GfxRenderer with no synchronization otherwise.
+          RenderLock lock(*this);
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -290,6 +297,8 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
       } else if (FsHelpers::hasXtcExtension(book.path)) {
         Xtc xtc(book.path, "/.crosspoint");
         if (xtc.load()) {
+          // See the epub branch above for why this needs a RenderLock.
+          RenderLock lock(*this);
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
