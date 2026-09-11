@@ -2018,6 +2018,11 @@ bool EpubReaderActivity::saveGlobalSettingsPreservingBookOverrides() {
     return SETTINGS.saveToFile();
   }
 
+  // render() (on the render task) reads SETTINGS.epubRenderMode/
+  // focusReadingEnabled/etc. while building a section; without this lock the
+  // temporary swap to the global values below (spanning an SD-card write)
+  // could be observed mid-swap and build a section with the wrong settings.
+  RenderLock lock(*this);
   ReaderSettingsSnapshot activeReaderSettings;
   captureReaderSettings(activeReaderSettings);
   applyReaderSettings(globalReaderSettingsBeforeBook);
