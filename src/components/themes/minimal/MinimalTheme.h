@@ -30,6 +30,15 @@ constexpr ThemeMetrics values = makeValues();
 constexpr int homeCoverWidth = coverWidthForHeight(values.homeCoverHeight);
 constexpr int homeCoverImageWidth = homeCoverWidth;
 constexpr int homeCoverImageHeight = 525;
+// coverImageRectForFrame's min() silently drops any excess over
+// homeCoverHeight -- Capy trimmed homeCoverHeight without updating its own
+// homeCoverImageHeight to match once, silently dropping every cover
+// thumbnail (generation vs. lookup size mismatch). This branch's current
+// values are safe (525 <= 583) but catch the next incompatible edit to
+// either constant at compile time instead of at runtime.
+static_assert(homeCoverImageHeight <= values.homeCoverHeight,
+              "homeCoverImageHeight must not exceed homeCoverHeight, or thumbnail generation and lookup will "
+              "silently disagree on cover size");
 }  // namespace MinimalMetrics
 
 struct GlobalReadingStats;
