@@ -1918,6 +1918,14 @@ float Epub::calculateSizeProgress(const int currentSpineIndex, const float curre
   if (bookSize == 0) {
     return 0.0f;
   }
+  if (currentSpineIndex < 0 || currentSpineIndex >= getSpineItemsCount()) {
+    // getCumulativeSpineItemSize() returns 0 for an out-of-range index, but
+    // prevChapterSize below can still be a large valid value (e.g. the whole
+    // book, if currentSpineIndex is one past the last valid entry) -- the
+    // subtraction would underflow this size_t rather than just being wrong.
+    LOG_ERR("EBP", "calculateSizeProgress spine index %d out of range", currentSpineIndex);
+    return 0.0f;
+  }
   const size_t prevChapterSize = (currentSpineIndex >= 1) ? getCumulativeSpineItemSize(currentSpineIndex - 1) : 0;
   const size_t curChapterSize = getCumulativeSpineItemSize(currentSpineIndex) - prevChapterSize;
   const float sectionProgSize = clampUnit(currentSpineRead) * static_cast<float>(curChapterSize);
