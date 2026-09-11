@@ -516,8 +516,12 @@ void WordSelectNavigator::drawSingleHighlight(const GfxRenderer& renderer, int l
   if (w->bionicBoundary > 0 && w->bionicSuffixX > 0) {
     const auto boldStyle = static_cast<EpdFontFamily::Style>(w->style | EpdFontFamily::BOLD);
     char boldBuf[40];
-    const size_t boldLen =
+    size_t boldLen =
         std::min<size_t>({static_cast<size_t>(w->bionicBoundary), strlen(displayedText), sizeof(boldBuf) - 1});
+    // The clamp to sizeof(boldBuf)-1 can land mid-UTF-8-sequence even though
+    // bionicBoundary itself was chosen to be safe within the unclamped word
+    // -- trim back to the last complete codepoint.
+    boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(displayedText, static_cast<int>(boldLen)));
     memcpy(boldBuf, displayedText, boldLen);
     boldBuf[boldLen] = '\0';
     if (w->isRtl) {
