@@ -388,7 +388,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       }
     }
 
-    if (isCover) {
+    if (isCover && contentAttr) {
       self->coverItemId = coverItemId;
     } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:user_metadata:#bookfusionshelf") == 0) {
       // BookFusion's "bookshelf" Calibre custom column -- confirmed against this
