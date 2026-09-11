@@ -676,8 +676,13 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       downloadUrl, filename,
       [this, &cancelRequested, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded,
                                                                             const size_t total) {
-        downloadProgress = downloaded;
-        downloadTotal = total;
+        {
+          // downloadProgress/downloadTotal are read by render() on the render task
+          // with no lock of its own on that side either -- guard the only mutation.
+          RenderLock lock(*this);
+          downloadProgress = downloaded;
+          downloadTotal = total;
+        }
         // The activity loop is blocked for the whole download; pump input here
         // so the Cancel button or a Back press can abort mid-transfer.
         mappedInput.update();

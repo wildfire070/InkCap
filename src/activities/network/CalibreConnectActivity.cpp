@@ -136,33 +136,42 @@ void CalibreConnectActivity::loop() {
 
     const auto status = webServer->getWsUploadStatus();
     bool changed = false;
-    if (status.inProgress) {
-      if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
-          status.filename != currentUploadName) {
-        lastProgressReceived = status.received;
-        lastProgressTotal = status.total;
-        currentUploadName = status.filename;
+    {
+      // currentUploadName/lastCompleteName/lastProgressReceived/lastProgressTotal/
+      // lastCompleteAt are all read by render() on the render task with no lock of
+      // its own on that side either -- this is the only place they're mutated, so
+      // guard it here. Without this, render() reading currentUploadName mid-assignment
+      // (a std::string reallocation, trivial for any real upload filename) is UB --
+      // a torn pointer/length read or a dereference of already-freed heap memory.
+      RenderLock lock(*this);
+      if (status.inProgress) {
+        if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
+            status.filename != currentUploadName) {
+          lastProgressReceived = status.received;
+          lastProgressTotal = status.total;
+          currentUploadName = status.filename;
+          changed = true;
+        }
+      } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
+        lastProgressReceived = 0;
+        lastProgressTotal = 0;
+        currentUploadName.clear();
         changed = true;
       }
-    } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
-      lastProgressReceived = 0;
-      lastProgressTotal = 0;
-      currentUploadName.clear();
-      changed = true;
-    }
-    // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
-    // This prevents restoring an old value after the 6s timeout clears it
-    if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
-      lastCompleteAt = status.lastCompleteAt;
-      lastCompleteName = status.lastCompleteName;
-      lastProcessedCompleteAt = status.lastCompleteAt;  // Mark this value as processed
-      changed = true;
-    }
-    if (lastCompleteAt > 0 && (millis() - lastCompleteAt) >= 6000) {
-      lastCompleteAt = 0;
-      lastCompleteName.clear();
-      // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
-      changed = true;
+      // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
+      // This prevents restoring an old value after the 6s timeout clears it
+      if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
+        lastCompleteAt = status.lastCompleteAt;
+        lastCompleteName = status.lastCompleteName;
+        lastProcessedCompleteAt = status.lastCompleteAt;  // Mark this value as processed
+        changed = true;
+      }
+      if (lastCompleteAt > 0 && (millis() - lastCompleteAt) >= 6000) {
+        lastCompleteAt = 0;
+        lastCompleteName.clear();
+        // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
+        changed = true;
+      }
     }
     if (changed) {
       requestUpdate();
