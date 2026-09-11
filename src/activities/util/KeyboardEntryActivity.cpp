@@ -239,6 +239,11 @@ void KeyboardEntryActivity::insertUtf8(const char* out) {
   if (!out || !*out) return;
   const size_t n = strlen(out);
   if (maxLength != 0 && text.length() + n > maxLength) return;
+  // text/cursorPos are read by render() on the render task with no lock of its
+  // own on that side either -- guard the mutation. text.insert() can
+  // reallocate the string's heap buffer, which races render()'s text.data()/
+  // .substr() calls otherwise (UB, not just a stale read).
+  RenderLock lock(*this);
   if (cursorPos > text.length()) cursorPos = text.length();
   text.insert(cursorPos, out, n);
   cursorPos += n;
@@ -246,6 +251,8 @@ void KeyboardEntryActivity::insertUtf8(const char* out) {
 
 bool KeyboardEntryActivity::backspaceUtf8() {
   if (text.empty() || cursorPos == 0) return false;
+  // See insertUtf8() -- text.erase() can reallocate too.
+  RenderLock lock(*this);
   const size_t prev = utf8Prev(text, cursorPos);
   text.erase(prev, cursorPos - prev);
   cursorPos = prev;
@@ -296,6 +303,7 @@ bool KeyboardEntryActivity::activateValue(const int16_t value, const bool longPr
       return false;
     case fui::QWERTY_KEY_BACKSPACE:
       if (longPress) {
+        RenderLock lock(*this);
         text.clear();
         cursorPos = 0;
         return true;
@@ -329,6 +337,7 @@ bool KeyboardEntryActivity::clearAllOrAltOnSelected() {
   const fui::KeyboardKey* key = selectedKey();
   if (!key) return false;
   if (key->value == fui::QWERTY_KEY_BACKSPACE) {
+    RenderLock lock(*this);
     text.clear();
     cursorPos = 0;
     return true;
