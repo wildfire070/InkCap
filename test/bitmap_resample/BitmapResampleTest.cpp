@@ -107,3 +107,21 @@ TEST(BitmapResample, ReadsPhysicalRowsBeforeRendererOrientation) {
   EXPECT_EQ(bottomUpRow.front() >> 6, 3U);
   EXPECT_EQ(topDownRow.front() >> 6, 0U);
 }
+
+TEST(BitmapResample, ResizingKeepsImageQuantizationSeparateFromTextOverlayLevels) {
+  auto bytes = create24BitBmp(4, 4);
+  std::fill(bytes.begin() + 54, bytes.end(), 85);
+  for (bool imageLevels : {false, true}) {
+    HalFile file(bytes);
+    Bitmap bitmap(file, true, imageLevels);
+    ASSERT_EQ(bitmap.parseHeaders(), BmpReaderError::Ok);
+    ASSERT_TRUE(bitmap.setDitheredOutputSize(2, 2));
+    std::vector<uint8_t> row(1), scratch(bitmap.getRowBytes());
+    ASSERT_EQ(bitmap.readNextRow(row.data(), scratch.data()), BmpReaderError::Ok);
+    EXPECT_EQ(row[0] >> 6, imageLevels ? 1 : 2);
+    ASSERT_EQ(bitmap.rewindToData(), BmpReaderError::Ok);
+    const auto expected = row;
+    ASSERT_EQ(bitmap.readNextRow(row.data(), scratch.data()), BmpReaderError::Ok);
+    EXPECT_EQ(row, expected);
+  }
+}

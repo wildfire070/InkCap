@@ -5,7 +5,6 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <esp_rom_crc.h>
-#include <esp_task_wdt.h>
 
 #include <algorithm>
 #include <atomic>
@@ -127,7 +126,8 @@ bool readExact(uint8_t* buffer, size_t length, uint32_t timeoutMs, size_t* recei
       nextBusyAt = millis() + 5000;
     }
 
-    esp_task_wdt_reset();
+    // USB transfers run on the Arduino loop task, which is intentionally not
+    // subscribed to the task watchdog. Yielding lets the watched idle tasks run.
     yield();
   }
   if (receivedOut) *receivedOut = received;
@@ -294,7 +294,6 @@ bool removeRecursive(const char* path, size_t depth = 0) {
       return false;
     }
 
-    esp_task_wdt_reset();
     yield();
     child = file.openNextFile();
   }
@@ -354,7 +353,6 @@ void handleList() {
       }
     }
     file.close();
-    esp_task_wdt_reset();
     yield();
     file = root.openNextFile();
   }
@@ -475,12 +473,10 @@ void handleWrite() {
   uint32_t bytesAccepted = 0;
   auto flushFileBuffer = [&]() {
     if (fileBufferPos == 0) return true;
-    esp_task_wdt_reset();
     const size_t bytesToWrite = fileBufferPos;
     logSerial.printf("BUSY:write:%lu\n", static_cast<unsigned long>(bytesAccepted));
     const size_t written = file.write(fileBuffer.get(), bytesToWrite);
     fileBufferPos = 0;
-    esp_task_wdt_reset();
     return written == bytesToWrite;
   };
 
@@ -527,7 +523,6 @@ void handleWrite() {
     if (remaining > 0) {
       writeAck();
     }
-    esp_task_wdt_reset();
     yield();
   }
 
@@ -698,7 +693,6 @@ void handleRead() {
 
     writeRaw(transferBuffer, static_cast<size_t>(read));
     crc = esp_rom_crc32_le(crc, transferBuffer, static_cast<uint32_t>(read));
-    esp_task_wdt_reset();
     yield();
   }
   file.close();

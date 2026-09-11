@@ -10,6 +10,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
 #include "activities/home/BookActions.h"
 #include "activities/settings/SettingsActivity.h"
@@ -106,10 +107,9 @@ void FrontlightPanelActivity::onExit() {
       SETTINGS.frontlightWarmth = warmth;
       SETTINGS.frontlightOn = lightOn ? 1 : 0;
     }
-    if (context.sourceActivity)
-      context.sourceActivity->persistFrontlightPanelSettings();
-    else
-      SETTINGS.saveToFile();
+    // The drawer can be opened over a dictionary or another reader child.
+    // Find the owning reader so its per-book values stay out of the global file.
+    activityManager.persistGlobalSettings();
   }
   mappedInput.setReaderTouchscreenOverride(false);
   Activity::onExit();
@@ -206,15 +206,16 @@ void FrontlightPanelActivity::openReadingStats() {
 }
 
 void FrontlightPanelActivity::openGlobalSettings() {
-  if (context.sourceActivity) context.sourceActivity->onFrontlightGlobalSettingsOpened();
+  // A drawer over Settings must not end the outer screen's edit session.
+  const bool startedGlobalEdit = activityManager.beginGlobalSettingsEdit();
   auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true, true);
   if (!settings) {
     LOG_ERR("LIGHT", "OOM opening Settings from frontlight panel");
-    if (context.sourceActivity) context.sourceActivity->onFrontlightGlobalSettingsClosed();
+    if (startedGlobalEdit) activityManager.endGlobalSettingsEdit();
     return;
   }
-  startActivityForResult(std::move(settings), [this](const ActivityResult&) {
-    if (context.sourceActivity) context.sourceActivity->onFrontlightGlobalSettingsClosed();
+  startActivityForResult(std::move(settings), [this, startedGlobalEdit](const ActivityResult&) {
+    if (startedGlobalEdit) activityManager.endGlobalSettingsEdit();
     close();
   });
 }

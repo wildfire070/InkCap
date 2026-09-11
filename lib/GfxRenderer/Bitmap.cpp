@@ -173,14 +173,14 @@ BmpReaderError Bitmap::parseHeaders() {
   const bool highColor = !nativePalette;
   if (highColor && dithering) {
     if (USE_ATKINSON) {
-      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width);
+      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width, imageLevels);
       if (!atkinsonDitherer || !atkinsonDitherer->isValid()) {
         delete atkinsonDitherer;
         atkinsonDitherer = nullptr;
         return BmpReaderError::OomRowBuffer;
       }
     } else {
-      fsDitherer = new FloydSteinbergDitherer(width);
+      fsDitherer = new FloydSteinbergDitherer(width, imageLevels);
     }
   }
 
@@ -195,7 +195,7 @@ bool Bitmap::setDitheredOutputSize(const int targetWidth, const int targetHeight
 
   // The error buffers must use final-screen coordinates. Recreating this tiny
   // helper costs about 3 KiB for an X3-wide custom sleep image, not a full BMP.
-  auto* resizedDitherer = new (std::nothrow) AtkinsonDitherer(targetWidth);
+  auto* resizedDitherer = new (std::nothrow) AtkinsonDitherer(targetWidth, imageLevels);
   if (!resizedDitherer || !resizedDitherer->isValid()) {
     delete resizedDitherer;
     return false;

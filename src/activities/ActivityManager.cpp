@@ -146,7 +146,8 @@ bool openFrontlightPanel(Activity& activity, GfxRenderer& renderer, MappedInputM
   return true;
 }
 
-bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer) {
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+                               ActivityManager& activityManager) {
   MappedInputManager::CompletedSwipe completed;
   if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
 
@@ -185,7 +186,7 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
       Frontlight.setOn(true);
       SETTINGS.frontlightBrightness = brightness;
       SETTINGS.frontlightOn = 1;
-      if (brightness != previousBrightness || !previousOn) SETTINGS.saveToFile();
+      if (brightness != previousBrightness || !previousOn) activityManager.persistGlobalSettings();
       return true;
     }
     case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH:
@@ -198,7 +199,7 @@ bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInp
       Frontlight.setWarmth(warmth);
       SETTINGS.frontlightWarmth = warmth;
       SETTINGS.frontlightOn = Frontlight.isOn() ? 1 : 0;
-      if (warmth != previousWarmth || Frontlight.isOn() != previousOn) SETTINGS.saveToFile();
+      if (warmth != previousWarmth || Frontlight.isOn() != previousOn) activityManager.persistGlobalSettings();
       return true;
     }
     case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
@@ -306,7 +307,7 @@ void ActivityManager::loop() {
 
       // The frontlight panel owns its own sliders.
       if (currentActivity->name != "FrontlightPanel" &&
-          applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
+          applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer, *this)) {
         return;
       }
 
@@ -554,6 +555,10 @@ void ActivityManager::notifyInputLockChanged(const bool locked) {
   for (const auto& activity : stackActivities) {
     activity->onInputLockChanged(locked);
   }
+}
+
+void ActivityManager::notifyUserInput() {
+  if (currentActivity) currentActivity->onUserInput();
 }
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
@@ -877,6 +882,34 @@ bool ActivityManager::requestManualReaderRefresh() {
 bool ActivityManager::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
   return currentActivity && (currentActivity->isReaderActivity() || currentActivity->isHomeActivity()) &&
          currentActivity->handleShortcutAction(action);
+}
+
+Activity* ActivityManager::findEpubReader() const {
+  if (currentActivity && currentActivity->isEpubReaderActivity()) return currentActivity.get();
+  const auto reader = std::find_if(stackActivities.rbegin(), stackActivities.rend(),
+                                   [](const auto& activity) { return activity && activity->isEpubReaderActivity(); });
+  return reader != stackActivities.rend() ? reader->get() : nullptr;
+}
+
+void ActivityManager::persistGlobalSettings() {
+  // A modal may be current while its EPUB reader, which owns the per-book
+  // override, remains on the stack. Let that reader protect the global write.
+  if (auto* reader = findEpubReader()) {
+    reader->persistGlobalSettings();
+  } else if (currentActivity) {
+    currentActivity->persistGlobalSettings();
+  } else {
+    SETTINGS.saveToFile();
+  }
+}
+
+bool ActivityManager::beginGlobalSettingsEdit() {
+  auto* reader = findEpubReader();
+  return reader && reader->onFrontlightGlobalSettingsOpened();
+}
+
+void ActivityManager::endGlobalSettingsEdit() {
+  if (auto* reader = findEpubReader()) reader->onFrontlightGlobalSettingsClosed();
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

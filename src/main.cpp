@@ -229,13 +229,15 @@ EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitte
 EpdFont smallFont(&inter_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
+const EpdFont uiSymbols10Font(&ui_symbols_10);
+
 EpdFont ui10RegularFont(&inter_10_regular);
 EpdFont ui10BoldFont(&inter_10_bold);
-EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
+EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont, nullptr, nullptr, &uiSymbols10Font);
 
 EpdFont ui12RegularFont(&inter_12_regular);
 EpdFont ui12BoldFont(&inter_12_bold);
-EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
+EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont, nullptr, nullptr, &uiSymbols10Font);
 
 const char* resetReasonName(const esp_reset_reason_t reason) {
   switch (reason) {
@@ -668,14 +670,14 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       const bool lightOn = !Frontlight.isOn();
       Frontlight.setOn(lightOn);
       SETTINGS.frontlightOn = lightOn ? 1 : 0;
-      SETTINGS.saveToFile();
+      activityManager.persistGlobalSettings();
       LOG_INF("LIGHT", "Frontlight toggled %s by shortcut", lightOn ? "on" : "off");
       return true;
     }
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
       if (!gpio.hasTouch()) return false;
       SETTINGS.disableReaderTouchscreen = SETTINGS.disableReaderTouchscreen ? 0 : 1;
-      SETTINGS.saveToFile();
+      activityManager.persistGlobalSettings();
       LOG_INF("TOUCH", "Reader touchscreen %s by shortcut", SETTINGS.disableReaderTouchscreen ? "disabled" : "enabled");
       {
         RenderLock lock;
@@ -739,8 +741,8 @@ CrossPointSettings::SHORT_PWRBTN chordPowerAction(const ButtonShortcutController
       return Power::TOGGLE_FONT;
     case Chord::ToggleGuideDots:
       return Power::TOGGLE_GUIDE_DOTS;
-    case Chord::ToggleBionicReading:
-      return Power::TOGGLE_BIONIC_READING;
+    case Chord::ToggleFocusReading:
+      return Power::TOGGLE_FOCUS_READING;
     case Chord::CyclePageTurn:
       return Power::CYCLE_PAGE_TURN;
     case Chord::SyncProgress:
@@ -832,7 +834,7 @@ bool executeX4ProHomeButtonAction(const uint8_t action,
       const bool lightOn = !Frontlight.isOn();
       Frontlight.setOn(lightOn);
       SETTINGS.frontlightOn = lightOn ? 1 : 0;
-      SETTINGS.saveToFile();
+      activityManager.persistGlobalSettings();
       LOG_INF("LIGHT", "Frontlight toggled %s by Home key", lightOn ? "on" : "off");
       return true;
     }
@@ -1424,7 +1426,7 @@ void setup() {
   // Without either, retain the fast splashless resume path.
   bool hasBootScreenDirectory = false;
   bool hasPinnedBootScreen = false;
-  if (isSleepWake && !APP_STATE.showBootScreen) {
+  if (SETTINGS.customBootscreenEnabled && isSleepWake && !APP_STATE.showBootScreen) {
     std::string bootScreenDirectory;
     hasBootScreenDirectory = ImageFolderIndex::resolveBootScreenDirectory(bootScreenDirectory);
     hasPinnedBootScreen = !APP_STATE.favoriteBootImagePath.empty() &&
@@ -1611,9 +1613,13 @@ void setup() {
   }
 
   if (restoreQuickLockAfterWake) {
-    // Render the reconstructed route first, then draw the badge. The pending
-    // wake release stays swallowed by the main loop, so it cannot unlock the
-    // restored lock immediately.
+    // Finish queued navigation (including Reader -> EPUB/TXT/XTC) before
+    // locking: the locked main loop intentionally does not dispatch activities.
+    // Waiting for a render alone would paint the temporary Reader loader and
+    // strand its pending transition, losing the page and its orientation.
+    activityManager.loop();
+    // Paint the reconstructed route before saving the badge backdrop. The wake
+    // release remains swallowed, so it cannot immediately unlock the device.
     (void)activityManager.requestUpdateAndWait();
     buttonShortcutController.restoreQuickLock(millis(), quickLockResumeTrigger);
     notifyQuickLockChanged(true);
@@ -1635,7 +1641,10 @@ void loop() {
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
 
-  gpio.update();
+  // Keep release suppression in the mapped-input layer in sync with every
+  // hardware input frame. A shortcut may open an activity that never queries
+  // the originating button, so its one-shot release guard must still expire.
+  mappedInputManager.update();
 #ifdef SIMULATOR
   simulatorHomeKeyInput.update();
 #endif
@@ -1677,15 +1686,22 @@ void loop() {
     logSerial.printf("SCREENSHOT_END\n");
   }
 
+  // Notify the active activity before global shortcut and gesture routes consume
+  // the input and skip its loop() for this frame.
+  const bool userInputReceived = gpio.wasAnyPressed() || gpio.wasAnyReleased()
+#if CROSSINK_APP_CAP_TOUCH
+                                 || gpio.wasTouchActivity()
+#endif
+                                 || halTiltSensor.hadActivity();
+
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
-  if (gpio.wasAnyPressed() || gpio.wasAnyReleased()
-#if CROSSINK_APP_CAP_TOUCH
-      || gpio.wasTouchActivity()
-#endif
-      || halTiltSensor.hadActivity() || activityManager.preventAutoSleep()) {
+  if (userInputReceived || activityManager.preventAutoSleep()) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
+  }
+  if (userInputReceived) {
+    activityManager.notifyUserInput();
   }
 
   // Let wake continue as soon as its hold has been verified. The release can
@@ -1790,6 +1806,8 @@ void loop() {
   // Home-key taps are consumed until their single- or double-tap action is
   // known.
   if (handleX4ProHomeKeyShortcuts()) {
+    // Simulator Home-key events bypass HalGPIO's raw touch activity signal.
+    activityManager.notifyUserInput();
     return;
   }
 
