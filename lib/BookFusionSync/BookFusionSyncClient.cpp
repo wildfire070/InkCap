@@ -1,5 +1,7 @@
 #include "BookFusionSyncClient.h"
 
+#include "BookFusionHttpBounds.h"
+
 #include <ArduinoJson.h>
 #ifdef SIMULATOR
 #include <ArduinoJsonStringCompat.h>
@@ -519,10 +521,10 @@ BookFusionSyncClient::Error BookFusionSyncClient::startDeviceAuth(BookFusionDevi
   }
   http.addHeader("Accept", API_ACCEPT);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", body, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
-  const std::string responseBody = http.getString();
   http.end();
 #endif
 
@@ -590,10 +592,10 @@ BookFusionSyncClient::Error BookFusionSyncClient::pollForToken(const std::string
   }
   http.addHeader("Accept", API_ACCEPT);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", body, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
-  const std::string responseBody = http.getString();
   http.end();
 #endif
 
@@ -932,10 +934,10 @@ BookFusionSyncClient::Error BookFusionSyncClient::getProgress(uint32_t bookId, B
     return NETWORK_ERROR;
   }
   addAuthHeaders(http);
-  const int httpCode = http.GET();
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedGet(http, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
-  const std::string responseBody = http.getString();
   http.end();
 #endif
 
@@ -1013,7 +1015,8 @@ BookFusionSyncClient::Error BookFusionSyncClient::updateProgress(const BookFusio
   }
   addAuthHeaders(http);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", body, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
   http.end();
@@ -1068,7 +1071,8 @@ BookFusionSyncClient::Error BookFusionSyncClient::trackReadingTime(uint32_t book
   }
   addAuthHeaders(http);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", body, responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
   http.end();
@@ -1112,10 +1116,10 @@ BookFusionSyncClient::Error BookFusionSyncClient::getDownloadUrl(uint32_t bookId
   }
   addAuthHeaders(http);
   http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", "{}");
+  std::string responseBody;
+  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", "{}", responseBody);
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
-  const std::string responseBody = http.getString();
 #endif
 
   LOG_DBG("BFS", "getDownloadUrl book=%lu response: %d", (unsigned long)bookId, httpCode);
