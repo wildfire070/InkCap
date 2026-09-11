@@ -37,6 +37,12 @@ constexpr int kSubtitleFontId = SMALL_FONT_ID;  // Requested subtitle size: 8px
 constexpr int kGuideFontId = SMALL_FONT_ID;     // Closest available to requested 6px
 constexpr int kHeaderClockYOffset = 3;
 
+// Adaptive cover width for the home "continue reading" tile, set on each
+// fresh load in drawRecentBookCover() and reused across draws of the same
+// book while coverRendered stays true (the surrounding fill rects need the
+// same width every render, not just the first).
+int coverWidth = 0;
+
 void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pageStartIndex, int pageItems) {
   if (itemCount <= 0 || pageItems <= 0 || itemCount <= pageItems) {
     return;
@@ -57,7 +63,6 @@ void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pa
 }
 
 }  // namespace
-int coverWidth = 0;
 
 void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
                                   const bool readerContext) const {
@@ -132,9 +137,6 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
   const int tileHeight = rect.height;
   const int tileY = rect.y;
   const bool hasContinueReading = !recentBooks.empty();
-  if (coverWidth == 0) {
-    coverWidth = RoundedRaffMetrics::values.homeCoverHeight * 2 / 3;
-  }
   const int imgY = tileY + (tileHeight - RoundedRaffMetrics::values.homeCoverHeight) / 2;
   const int tileX = RoundedRaffMetrics::values.contentSidePadding;
   // Draw book card regardless, fill with message based on `hasContinueReading`
@@ -144,6 +146,10 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
     TouchRegistry::getInstance().add(Rect{tileX, tileY, tileWidth, tileHeight}, 0, TouchRegistry::Cover);
     RecentBook book = recentBooks[0];
     if (!coverRendered) {
+      // Reset to the default before each fresh load -- otherwise a book with
+      // no cover (or an unparseable one) after a book with a real cover
+      // would keep drawing at the previous book's cover width.
+      coverWidth = RoundedRaffMetrics::values.homeCoverHeight * 2 / 3;
       std::string coverPath = book.coverBmpPath;
       bool hasCover = true;
       if (coverPath.empty()) {
