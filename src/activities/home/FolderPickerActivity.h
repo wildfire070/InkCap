@@ -5,9 +5,13 @@
 #include "../../util/ButtonNavigator.h"
 #include "../Activity.h"
 
+// Generic SD-card folder browser/picker, single- or multi-select. Used for
+// the AO3 library folder, AO3 archive folder, AO3 library exclusions, the
+// BookFusion download folder, and Cache Exclusions -- despite the name's
+// history, this logic was never AO3-specific.
 enum class PickerMode { SINGLE, MULTI };
 
-class Ao3FolderPickerActivity final : public Activity {
+class FolderPickerActivity final : public Activity {
   std::string title;
   PickerMode mode;
   std::string currentPath;
@@ -22,9 +26,9 @@ class Ao3FolderPickerActivity final : public Activity {
   void toggleSelection(const std::string& path);
 
  public:
-  Ao3FolderPickerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string title, PickerMode mode,
-                          std::vector<std::string> initialSelected = {}, std::string startPath = "/")
-      : Activity("Ao3FolderPicker", renderer, mappedInput),
+  FolderPickerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string title, PickerMode mode,
+                       std::vector<std::string> initialSelected = {}, std::string startPath = "/")
+      : Activity("FolderPicker", renderer, mappedInput),
         title(std::move(title)),
         mode(mode),
         currentPath(std::move(startPath)),

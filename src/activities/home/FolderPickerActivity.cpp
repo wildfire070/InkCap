@@ -1,4 +1,4 @@
-#include "Ao3FolderPickerActivity.h"
+#include "FolderPickerActivity.h"
 
 #include <HalStorage.h>
 #include <I18n.h>
@@ -11,7 +11,7 @@
 #include "../../fontIds.h"
 #include "../ActivityResult.h"
 
-void Ao3FolderPickerActivity::loadDirectories() {
+void FolderPickerActivity::loadDirectories() {
   directories.clear();
   auto root = Storage.open(currentPath.c_str());
   if (!root || !root.isDirectory()) {
@@ -40,11 +40,11 @@ void Ao3FolderPickerActivity::loadDirectories() {
   }
 }
 
-bool Ao3FolderPickerActivity::isSelected(const std::string& path) const {
+bool FolderPickerActivity::isSelected(const std::string& path) const {
   return std::find(selectedPaths.begin(), selectedPaths.end(), path) != selectedPaths.end();
 }
 
-void Ao3FolderPickerActivity::toggleSelection(const std::string& path) {
+void FolderPickerActivity::toggleSelection(const std::string& path) {
   auto it = std::find(selectedPaths.begin(), selectedPaths.end(), path);
   if (it != selectedPaths.end()) {
     selectedPaths.erase(it);
@@ -53,19 +53,19 @@ void Ao3FolderPickerActivity::toggleSelection(const std::string& path) {
   }
 }
 
-void Ao3FolderPickerActivity::onEnter() {
+void FolderPickerActivity::onEnter() {
   Activity::onEnter();
   loadDirectories();
   selectorIndex = 0;
   requestUpdate();
 }
 
-void Ao3FolderPickerActivity::onExit() {
+void FolderPickerActivity::onExit() {
   Activity::onExit();
   directories.clear();
 }
 
-void Ao3FolderPickerActivity::loop() {
+void FolderPickerActivity::loop() {
   int listSize = static_cast<int>(directories.size());
 
   // Touch (X4 Pro): tap a row to act on it. A long-press navigates into the
@@ -174,7 +174,7 @@ void Ao3FolderPickerActivity::loop() {
   });
 }
 
-void Ao3FolderPickerActivity::render(RenderLock&&) {
+void FolderPickerActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();

@@ -8,7 +8,7 @@
 
 #include "../../util/Ao3ArchiveUtils.h"
 #include "../ActivityResult.h"
-#include "Ao3FolderPickerActivity.h"
+#include "FolderPickerActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -189,7 +189,7 @@ void Ao3LibrarySettingsActivity::loop() {
         requestUpdate(true);
       };
       startActivityForResult(
-          std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select AO3 Folder", PickerMode::SINGLE),
+          std::make_unique<FolderPickerActivity>(renderer, mappedInput, "Select AO3 Folder", PickerMode::SINGLE),
           handler);
     } else if (selectorIndex == 1) {
       auto handler = [this](const ActivityResult& res) {
@@ -206,7 +206,7 @@ void Ao3LibrarySettingsActivity::loop() {
       std::string startPath =
           archiveFolderName.empty() ? Ao3ArchiveUtils::DEFAULT_ARCHIVE_ROOT : archiveFolderName;
       startActivityForResult(
-          std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select Archive Folder",
+          std::make_unique<FolderPickerActivity>(renderer, mappedInput, "Select Archive Folder",
                                                     PickerMode::SINGLE, std::vector<std::string>{}, startPath),
           handler);
     } else if (selectorIndex == 2) {
@@ -223,7 +223,7 @@ void Ao3LibrarySettingsActivity::loop() {
       };
       std::string startPath = ao3Folder.empty() ? "/" : ao3Folder;
       startActivityForResult(
-          std::make_unique<Ao3FolderPickerActivity>(renderer, mappedInput, "Select Folders to Exclude",
+          std::make_unique<FolderPickerActivity>(renderer, mappedInput, "Select Folders to Exclude",
                                                     PickerMode::MULTI, excludedFolders, startPath),
           handler);
     } else if (selectorIndex == 3) {
