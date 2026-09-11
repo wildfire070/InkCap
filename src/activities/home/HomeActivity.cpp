@@ -747,6 +747,13 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
   auto showLoadingProgress = [&](const int value) {
+    // These draw directly to the shared renderer outside of render()/
+    // RenderLock. An ambient requestUpdate() (e.g. main.cpp's USB-plug or
+    // battery-percent poll, which fires regardless of the current activity)
+    // can wake the render task to call this activity's own render()
+    // concurrently with this scan -- two tasks touching the same
+    // GfxRenderer with no synchronization otherwise.
+    RenderLock lock(*this);
     if (!showingLoading) {
       showingLoading = true;
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -1464,6 +1471,12 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
       LOG_ERR("HOME", "carousel: failed to allocate progress overlay buffer");
       showProgressPopup = false;
     } else {
+      // These draw directly to the shared renderer outside of render()/
+      // RenderLock. This function is reachable both from render() itself
+      // (already locked -- recursive mutex, safe to nest) and from
+      // loadRecentCovers()/onEnter() (not locked), where an ambient
+      // requestUpdate() can wake the render task concurrently.
+      RenderLock lock(*this);
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       GUI.fillPopupProgress(renderer, popupRect, 0);
       memcpy(progressFrameBuffer, frameBuffer, bufferSize);
@@ -1482,6 +1495,8 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
       break;
     }
     if (showProgressPopup) {
+      // See the earlier RenderLock in this function for why.
+      RenderLock lock(*this);
       memcpy(frameBuffer, progressFrameBuffer, bufferSize);
       GUI.fillPopupProgress(renderer, popupRect, ((i + 1) * 100) / bookCount);
     }
