@@ -133,6 +133,9 @@ void BookActionActivity::loop() {
       if (bookIsArchived) {
         const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath);
         if (!restoredPath.empty()) {
+          // filePath is read by render()'s rowTitle lambda on the render task
+          // with no lock of its own on that side either -- guard the mutation.
+          RenderLock lock(*this);
           filePath = restoredPath;
           bookIsArchived = false;
           wasRestored = true;
