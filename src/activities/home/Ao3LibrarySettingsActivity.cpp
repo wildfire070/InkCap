@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Utf8.h>
 
 #include "../../util/Ao3ArchiveUtils.h"
 #include "../ActivityResult.h"
@@ -73,7 +74,7 @@ std::string Ao3LibrarySettingsActivity::formatFolderPill() const {
   if (ao3Folder.empty()) return "Not Set";
   std::string last = getFolderLastComponent(ao3Folder);
   if (last.length() > 24) {
-    return last.substr(0, 22) + "..";
+    return last.substr(0, utf8SafeTruncateBuffer(last.c_str(), 22)) + "..";
   }
   return last;
 }
@@ -85,7 +86,7 @@ std::string Ao3LibrarySettingsActivity::formatArchiveFolderPill() const {
   if (archiveFolderName.empty()) return std::string(Ao3ArchiveUtils::DEFAULT_ARCHIVE_ROOT) + " (default)";
   std::string last = getFolderLastComponent(archiveFolderName);
   if (last.length() > 24) {
-    return last.substr(0, 22) + "..";
+    return last.substr(0, utf8SafeTruncateBuffer(last.c_str(), 22)) + "..";
   }
   return last;
 }
@@ -98,7 +99,7 @@ std::string Ao3LibrarySettingsActivity::formatExclusionsPill() const {
     result += getFolderLastComponent(excludedFolders[i]);
   }
   if (result.length() > 24) {
-    return result.substr(0, 22) + "..";
+    return result.substr(0, utf8SafeTruncateBuffer(result.c_str(), 22)) + "..";
   }
   return result;
 }

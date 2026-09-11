@@ -6,6 +6,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Utf8.h>
 
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
@@ -627,7 +628,8 @@ void Ao3IndexActivity::render(RenderLock&& lock) {
     // Current book title
     if (!currentBookTitle.empty()) {
       std::string truncatedTitle = currentBookTitle;
-      if (truncatedTitle.length() > 30) truncatedTitle = truncatedTitle.substr(0, 28) + "..";
+      if (truncatedTitle.length() > 30)
+        truncatedTitle = truncatedTitle.substr(0, utf8SafeTruncateBuffer(truncatedTitle.c_str(), 28)) + "..";
       renderer.drawCenteredText(SMALL_FONT_ID, centeredContentTop + 157, truncatedTitle.c_str(), true,
                                 EpdFontFamily::ITALIC);
     }
