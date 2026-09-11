@@ -126,6 +126,15 @@ float loadEpubProgressPercent(const RecentBook& book) {
     return 0.0f;
   }
 
+  if (progress.spineIndex < 0 || progress.spineIndex >= epub.getSpineItemsCount()) {
+    // Stale spineIndex from progress.bin no longer matches this epub's
+    // current spine (e.g. re-indexed after chapters were added/removed) --
+    // calculateProgress()/calculateSizeProgress() don't validate this
+    // themselves, and an out-of-range index here underflows a size_t
+    // subtraction, deterministically reporting 100%.
+    return -1.0f;
+  }
+
   const float chapterProgress = static_cast<float>(progress.pageNumber + 1) / static_cast<float>(progress.pageCount);
   const float progressPercent =
       clampProgressPercent(epub.calculateProgress(progress.spineIndex, chapterProgress) * 100.0f);
