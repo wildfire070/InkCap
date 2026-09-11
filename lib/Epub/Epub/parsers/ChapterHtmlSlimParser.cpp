@@ -2958,6 +2958,12 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       self->currentFootnote.number[self->currentFootnoteLinkTextLen++] = s[i];
     }
     self->currentFootnote.number[self->currentFootnoteLinkTextLen] = '\0';
+    if (self->currentFootnoteLinkTextLen == sizeof(self->currentFootnote.number) - 1) {
+      // Buffer capacity reached -- the cut may have landed mid-UTF-8-sequence.
+      self->currentFootnoteLinkTextLen =
+          utf8SafeTruncateBuffer(self->currentFootnote.number, self->currentFootnoteLinkTextLen);
+      self->currentFootnote.number[self->currentFootnoteLinkTextLen] = '\0';
+    }
   }
 
   uint32_t codepointOffset = callbackVisibleOffset;
