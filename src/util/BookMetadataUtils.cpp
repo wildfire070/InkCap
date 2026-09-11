@@ -12,7 +12,7 @@ namespace BookMetadataUtils {
 namespace {
 
 std::string buildFullPath(std::string basepath, const std::string& entry) {
-  if (basepath.back() != '/') basepath += "/";
+  if (basepath.empty() || basepath.back() != '/') basepath += "/";
   return basepath + entry;
 }
 
