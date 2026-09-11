@@ -8,6 +8,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Serialization.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -920,7 +921,7 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
   if (activeState.fandom[0] != '\0') {
     std::string cleanFandom(activeState.fandom);
     if (cleanFandom.length() > 29) {
-      cleanFandom = cleanFandom.substr(0, 27) + "..";
+      cleanFandom = cleanFandom.substr(0, utf8SafeTruncateBuffer(cleanFandom.c_str(), 27)) + "..";
     }
     strcpy(headerTitle, cleanFandom.c_str());
   }
@@ -1143,7 +1144,7 @@ void Ao3LibraryActivity::renderFilterOverlay() {
     if (!src || src[0] == '\0') return "Any";
     std::string raw(src);
     if (raw.length() > 27) {
-      return raw.substr(0, 25) + "..";
+      return raw.substr(0, utf8SafeTruncateBuffer(raw.c_str(), 25)) + "..";
     }
     return raw;
   };
@@ -1289,7 +1290,7 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
 
   if (metaLoaded && meta.seriesName[0] != 0) {
     if (authorText.length() > 11) {
-      authorText = authorText.substr(0, 11) + ".";
+      authorText = authorText.substr(0, utf8SafeTruncateBuffer(authorText.c_str(), 11)) + ".";
     }
     char seriesBuf[256];
     if (meta.seriesPart > 0) {
