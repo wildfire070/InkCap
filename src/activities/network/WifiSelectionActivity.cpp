@@ -648,8 +648,15 @@ void WifiSelectionActivity::showNetworkListFromAutoConnect() {
 void WifiSelectionActivity::attemptConnection() {
   state = autoConnecting ? WifiSelectionState::AUTO_CONNECTING : WifiSelectionState::CONNECTING;
   connectionStartTime = millis();
-  connectedIP.clear();
-  connectionError.clear();
+  {
+    // connectedIP/connectionError are read by render()'s renderConnected()/
+    // renderConnectionFailed() on the render task with no lock of its own on
+    // that side either -- guard the mutation, since a std::string
+    // reallocation racing those .c_str() reads is UB, not just a stale value.
+    RenderLock lock(*this);
+    connectedIP.clear();
+    connectionError.clear();
+  }
   lastConnectionStatusLogTime = 0;
   lastLoggedWifiStatus = -1;
 #ifndef SIMULATOR
@@ -665,7 +672,10 @@ void WifiSelectionActivity::attemptConnection() {
   WiFi.persistent(false);  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
   if (!WiFi.mode(WIFI_STA)) {
     LOG_ERR("WIFI", "Failed to set station mode before connecting to %s", selectedSSID.c_str());
-    connectionError = tr(STR_ERROR_GENERAL_FAILURE);
+    {
+      RenderLock lock(*this);
+      connectionError = tr(STR_ERROR_GENERAL_FAILURE);
+    }
 #ifndef SIMULATOR
     sConnectionAttemptLoggingActive = false;
 #endif
@@ -734,7 +744,10 @@ void WifiSelectionActivity::checkConnectionStatus() {
     IPAddress ip = WiFi.localIP();
     char ipStr[16];
     snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-    connectedIP = ipStr;
+    {
+      RenderLock lock(*this);
+      connectedIP = ipStr;
+    }
     autoConnecting = false;
 #ifndef SIMULATOR
     sConnectionAttemptLoggingActive = false;
@@ -790,9 +803,12 @@ void WifiSelectionActivity::checkConnectionStatus() {
   }
 
   if (wifiStatusIsConnectionFailure(status)) {
-    connectionError = tr(STR_ERROR_GENERAL_FAILURE);
-    if (status == WL_NO_SSID_AVAIL) {
-      connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
+    {
+      RenderLock lock(*this);
+      connectionError = tr(STR_ERROR_GENERAL_FAILURE);
+      if (status == WL_NO_SSID_AVAIL) {
+        connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
+      }
     }
     LOG_INF("WIFI", "Connection failed: ssid=%s status=%d/%s elapsed=%lums", selectedSSID.c_str(),
             static_cast<int>(status), wifiStatusName(status), now - connectionStartTime);
@@ -816,7 +832,10 @@ void WifiSelectionActivity::checkConnectionStatus() {
   const unsigned long timeoutMs = autoConnecting ? AUTO_CONNECTION_TIMEOUT_MS : CONNECTION_TIMEOUT_MS;
   if (millis() - connectionStartTime > timeoutMs) {
     WiFi.disconnect();
-    connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+    {
+      RenderLock lock(*this);
+      connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+    }
     LOG_INF("WIFI", "Connection timed out: ssid=%s elapsed=%lums lastStatus=%d/%s", selectedSSID.c_str(),
             millis() - connectionStartTime, static_cast<int>(status), wifiStatusName(status));
 #ifndef SIMULATOR
