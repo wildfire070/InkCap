@@ -47,6 +47,11 @@ int SdCardFontManager::loadFilePath(const char* path, const char* familyName, ui
   }
 
   int fontId = computeFontId(font->contentHash(), familyName, pointSize);
+
+  // See unloadAll()'s comment: render() reads these same maps unlocked on
+  // the render task's side, so inserting into them needs the same guard.
+  // Scoped to just the map mutation, not the SD read above.
+  GfxRenderer::MutexGuard guard(renderer);
   // Guard against collision with built-in font IDs (astronomically unlikely
   // with FNV-1a hashes, but provides a safety net)
   if (renderer.getFontMap().count(fontId) != 0) {
@@ -121,6 +126,12 @@ int SdCardFontManager::loadFamilyExtraFile(const char* path, const char* familyN
 }
 
 void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
+  // render() reads fontMap/sdCardFonts_/fallbackFontMap_ unlocked on the
+  // render task's side (it always holds this same mutex for its whole call);
+  // without this, erasing map entries -- and freeing the SdCardFont/glyph
+  // data they point to -- can run concurrently with a lookup mid-render,
+  // which is undefined behavior on std::map, not just a stale read.
+  GfxRenderer::MutexGuard guard(renderer);
   // Drop UI CJK fallbacks before the SD fonts they point at are freed.
   renderer.clearFallbackFonts();
   renderer.clearSdCardFonts();
