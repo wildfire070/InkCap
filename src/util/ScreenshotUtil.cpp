@@ -35,18 +35,23 @@ void ScreenshotUtil::buildFilename(const ScreenshotInfo& info, char* buf, size_t
   // Display spine index as 1-based for user-facing filenames
   const int chapterNum = info.spineIndex + 1;
 
+  int written;
   if (info.readerType == ScreenshotInfo::ReaderType::Epub && info.spineIndex >= 0) {
-    snprintf(buf, bufSize, "/screenshots/%s/%s_ch%d_p%d_%dpct_%lu.bmp", sanitizedTitle, sanitizedTitle, chapterNum,
-             info.currentPage, pct, ts);
+    written = snprintf(buf, bufSize, "/screenshots/%s/%s_ch%d_p%d_%dpct_%lu.bmp", sanitizedTitle, sanitizedTitle,
+                       chapterNum, info.currentPage, pct, ts);
   } else {
-    snprintf(buf, bufSize, "/screenshots/%s/%s_p%d_%dpct_%lu.bmp", sanitizedTitle, sanitizedTitle, info.currentPage,
-             pct, ts);
+    written = snprintf(buf, bufSize, "/screenshots/%s/%s_p%d_%dpct_%lu.bmp", sanitizedTitle, sanitizedTitle,
+                       info.currentPage, pct, ts);
   }
 
-  // Truncate title if total path exceeds FAT32 limit
-  if (strlen(buf) > 255) {
+  // Truncate title if the FULL path (what snprintf would have written given
+  // unlimited space, per its return value) exceeds the FAT32 limit -- not
+  // strlen(buf), which is already capped at bufSize-1 by snprintf itself and
+  // so can never actually exceed 255 when bufSize is 256, making that check
+  // permanently dead.
+  if (written < 0 || static_cast<size_t>(written) > 255) {
     size_t titleLen = strlen(sanitizedTitle);
-    size_t overhead = strlen(buf) - 2 * titleLen;
+    size_t overhead = static_cast<size_t>(written > 0 ? written : bufSize) - 2 * titleLen;
     if (overhead < 255) {
       size_t maxTitleLen = (255 - overhead) / 2;
       // Walk back to a valid UTF-8 boundary to avoid corrupting multibyte characters
