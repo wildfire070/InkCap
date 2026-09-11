@@ -363,6 +363,21 @@ class GfxRenderer {
   void unlockFrameBufferMutex() const { xSemaphoreGiveRecursive(frameBufferMutex_); }
   TaskHandle_t frameBufferMutexHolder() const { return xSemaphoreGetMutexHolder(frameBufferMutex_); }
 
+  // Plain RAII form of the pair above, for callers with no buffer to loan --
+  // e.g. mutating fontMap/sdCardFonts_/fallbackFontMap_ (SdCardFontManager's
+  // unload/load), which render() reads unlocked on the render task's side
+  // too. Nesting-safe like every lock/loan on this mutex.
+  class MutexGuard {
+   public:
+    explicit MutexGuard(const GfxRenderer& renderer) : renderer_(renderer) { renderer_.lockFrameBufferMutex(); }
+    ~MutexGuard() { renderer_.unlockFrameBufferMutex(); }
+    MutexGuard(const MutexGuard&) = delete;
+    MutexGuard& operator=(const MutexGuard&) = delete;
+
+   private:
+    const GfxRenderer& renderer_;
+  };
+
   // Lend the 48 KB framebuffer's bytes to a memory-hungry phase (chapter
   // builds) WITHOUT freeing the allocation, so it never moves and repeated
   // loans cannot fragment the heap. Between release and restore NOTHING may
