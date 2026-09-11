@@ -2,6 +2,7 @@
 
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -301,7 +302,7 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
 
   if (metaLoaded && meta.seriesName[0] != 0) {
     if (authorText.length() > 11) {
-      authorText = authorText.substr(0, 11) + ".";
+      authorText = authorText.substr(0, utf8SafeTruncateBuffer(authorText.c_str(), 11)) + ".";
     }
     char seriesBuf[256];
     if (meta.seriesPart > 0) {
