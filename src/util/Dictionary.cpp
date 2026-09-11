@@ -374,13 +374,16 @@ int Dictionary::readWordInto(HalFile& file, char* buf, size_t bufSize) {
     }
     buf[i++] = static_cast<char>(ch);
   }
-  // Word too long for buffer — consume remaining bytes to stay in sync
-  buf[bufSize - 1] = '\0';
+  // Word too long for buffer — consume remaining bytes to stay in sync.
+  // Back up to the last complete UTF-8 codepoint rather than cutting the
+  // raw byte count, which could split a multi-byte headword mid-character.
+  const int safeLen = utf8SafeTruncateBuffer(buf, static_cast<int>(bufSize - 1));
+  buf[safeLen] = '\0';
   int ch;
   do {
     ch = file.read();
   } while (ch > 0);
-  return static_cast<int>(bufSize - 1);
+  return safeLen;
 }
 
 // ---------------------------------------------------------------------------
@@ -695,6 +698,18 @@ void Dictionary::findPageBounds(HalFile& oft, HalFile& src, uint32_t srcFileSize
 std::string Dictionary::readDefinition(const std::string& folderPath, uint32_t offset, uint32_t size) {
   HalFile dict;
   if (!Storage.openFileForRead("DICT", DictPaths(folderPath).dict().c_str(), dict)) return "";
+
+  const uint64_t fileSize = dict.fileSize64();
+  if (offset >= fileSize) {
+    dict.close();
+    return "";
+  }
+  // size is a raw field straight out of the .idx entry -- clamp against the
+  // actual remaining file size before allocating, since a corrupt/hand-built
+  // dictionary lacking a valid .ifo (the case this is used for) can put an
+  // arbitrary uint32_t here.
+  const uint64_t remaining = fileSize - offset;
+  if (size > remaining) size = static_cast<uint32_t>(remaining);
 
   dict.seekSet(offset);
 
