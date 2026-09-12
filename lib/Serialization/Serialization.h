@@ -52,20 +52,13 @@ static bool tryWriteString(FsFile& file, const std::string& s) {
   return tryWritePod(file, len) && (len == 0 || file.write(reinterpret_cast<const uint8_t*>(s.data()), len) == len);
 }
 
-static void readString(std::istream& is, std::string& s) {
-  uint32_t len;
-  readPod(is, len);
-  s.resize(len);
-  is.read(&s[0], len);
-}
-
-static void readString(FsFile& file, std::string& s) {
-  uint32_t len;
-  readPod(file, len);
-  s.resize(len);
-  file.read(&s[0], len);
-}
-
+// Bounded read of a length-prefixed string. There is no unchecked
+// readString() counterpart on purpose: an earlier one (for both FsFile and
+// std::istream) was removed after review flagged it as a live foot-gun next
+// to this function -- a corrupted length prefix (e.g. from a failed SD
+// write, not just malicious intent) would otherwise drive resize() into an
+// oversized allocation attempt, which aborts under this project's
+// -fno-exceptions build.
 static bool tryReadString(FsFile& file, std::string& s) {
   uint32_t len = 0;
   if (!tryReadPod(file, len)) {

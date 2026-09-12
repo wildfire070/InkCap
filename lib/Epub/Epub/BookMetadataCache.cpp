@@ -50,7 +50,7 @@ uint32_t writeTocEntryTo(F& file, const BookMetadataCache::TocEntry& entry) {
   return pos;
 }
 
-// Uses the bounded tryReadString() rather than readString(): these entries
+// Uses the bounded tryReadString(): these entries
 // can be reached via a seek to a position derived from a corrupted LUT slot
 // (getSpineEntry/getTocEntry/getSpineCumulativeSize below don't validate the
 // seek target), so a garbage length prefix here must fail safely -- return

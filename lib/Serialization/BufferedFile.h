@@ -154,20 +154,15 @@ inline void writeString(BufferedFileWriter& out, const std::string& s) {
   out.write(s.data(), len);
 }
 
-inline void readString(BufferedFileReader& in, std::string& s) {
-  uint32_t len;
-  readPod(in, len);
-  s.resize(len);
-  if (len > 0) {
-    in.read(&s[0], len);
-  }
-}
-
-// Bounded counterpart to readString() above: rejects a length prefix that
+// Bounded read of a length-prefixed string: rejects a length prefix that
 // exceeds the string's max_size(), INT_MAX, or the file's actual remaining
 // bytes, instead of driving resize() into an oversized allocation attempt
-// (which aborts under this project's -fno-exceptions build). Mirrors
-// serialization::tryReadString() in Serialization.h for HalFile.
+// (which aborts under this project's -fno-exceptions build) -- a corrupted
+// length prefix (e.g. from a failed SD write, not just malicious intent) is
+// exactly the kind of input this guards against. Mirrors
+// serialization::tryReadString() in Serialization.h for HalFile. There is no
+// unchecked readString() counterpart on purpose: an earlier one was removed
+// after review flagged it as a live foot-gun sitting next to this function.
 inline bool tryReadString(BufferedFileReader& in, std::string& s) {
   uint32_t len = 0;
   if (in.read(&len, sizeof(len)) != sizeof(len)) {
