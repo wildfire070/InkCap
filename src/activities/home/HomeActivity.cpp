@@ -1048,15 +1048,23 @@ void HomeActivity::onEnter() {
   // rather than in rotation, and never the same one twice running -- a repeat
   // reads as a bug even when it is chance. Not persisted: an SD write is not
   // worth it for flavour text, and a reshuffle after a reboot is harmless.
-  static uint32_t lastQuote = UINT32_MAX;
-  const uint8_t quoteCount = companion::quoteCountFor(CompanionTracker::activeId(), COMPANION.currentMood());
-  if (quoteCount > 1) {
-    uint32_t pick = lastQuote;
-    while (pick == lastQuote) pick = esp_random() % quoteCount;
-    lastQuote = pick;
-    companionQuoteIndex = pick;
-  } else {
-    companionQuoteIndex = 0;
+  {
+    // onEnter() runs unlocked by ActivityManager's own design; drawCompanion()
+    // (called from render()) reads companionQuoteIndex -- guard the write the
+    // same way the dictionary UI onEnter() paths guard their render()-visible
+    // state, against a stale pending render notification from before this
+    // activity became current.
+    RenderLock lock(*this);
+    static uint32_t lastQuote = UINT32_MAX;
+    const uint8_t quoteCount = companion::quoteCountFor(CompanionTracker::activeId(), COMPANION.currentMood());
+    if (quoteCount > 1) {
+      uint32_t pick = lastQuote;
+      while (pick == lastQuote) pick = esp_random() % quoteCount;
+      lastQuote = pick;
+      companionQuoteIndex = pick;
+    } else {
+      companionQuoteIndex = 0;
+    }
   }
 
   const auto& metrics = UITheme::getInstance().getMetrics();

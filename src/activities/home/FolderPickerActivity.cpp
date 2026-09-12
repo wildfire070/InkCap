@@ -55,8 +55,14 @@ void FolderPickerActivity::toggleSelection(const std::string& path) {
 
 void FolderPickerActivity::onEnter() {
   Activity::onEnter();
-  loadDirectories();
-  selectorIndex = 0;
+  {
+    // currentPath/directories are read by render() on the render task with no
+    // lock of its own on that side either -- guard the mutation, same as
+    // every other loadDirectories() call site in this file.
+    RenderLock lock(*this);
+    loadDirectories();
+    selectorIndex = 0;
+  }
   requestUpdate();
 }
 

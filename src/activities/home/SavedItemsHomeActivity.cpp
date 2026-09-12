@@ -63,6 +63,11 @@ SavedItemsHomeActivity::SavedItemsHomeActivity(GfxRenderer& renderer, MappedInpu
       app(uiTarget, uiTarget.deviceContext()) {}
 
 void SavedItemsHomeActivity::reloadSavedBooks() {
+  // Every call site (onEnter() and five loop()-reached spots) runs unlocked
+  // on the main task; render()/buildListScreen() index books[] directly on
+  // the render task with no lock of its own on that side either -- guard the
+  // rebuild here rather than at each call site.
+  RenderLock lock(*this);
   books.clear();
 
   std::vector<BookmarkedBookEntry> bookmarkedBooks;
