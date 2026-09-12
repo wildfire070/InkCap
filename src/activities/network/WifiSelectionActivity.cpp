@@ -226,10 +226,20 @@ void WifiSelectionActivity::onEnter() {
 
   // Reset state
   selectedNetworkIndex = 0;
-  networkRowItems.clear();
-  networkStatuses.clear();
-  networks.clear();
-  realNetworkCount = 0;
+  {
+    // networkRowItems/networkStatuses/networks are read by buildListScreen()/
+    // renderNetworkList() on the render task with no lock of its own on that
+    // side either -- a vector reallocation racing those reads (including
+    // networkRowItems' borrowed c_str() pointers into networkStatuses) is UB,
+    // not just a stale value. Same reasoning as every other mutation site in
+    // this file (showWifiScanFailure(), startWifiScan(),
+    // processWifiScanResults(), rebuildNetworkRowItems()).
+    RenderLock lock(*this);
+    networkRowItems.clear();
+    networkStatuses.clear();
+    networks.clear();
+    realNetworkCount = 0;
+  }
   state = WifiSelectionState::SCANNING;
   selectedSSID.clear();
   {
@@ -340,11 +350,15 @@ void WifiSelectionActivity::releaseWifiForNetworkList() {
 }
 
 void WifiSelectionActivity::showWifiScanFailure() {
-  networkRowItems.clear();
-  networkStatuses.clear();
-  networks.clear();
-  realNetworkCount = 0;
-  appendHiddenNetworkEntry();
+  {
+    // See onEnter()'s identical guard for why.
+    RenderLock lock(*this);
+    networkRowItems.clear();
+    networkStatuses.clear();
+    networks.clear();
+    realNetworkCount = 0;
+    appendHiddenNetworkEntry();
+  }
   autoConnecting = false;
   manualNetworkListRequested = false;
   releaseWifiForNetworkList();
@@ -358,9 +372,13 @@ void WifiSelectionActivity::startWifiScan(const bool autoScan) {
   manualNetworkListRequested = false;
   topIndex = 0;
   state = WifiSelectionState::SCANNING;
-  networkRowItems.clear();
-  networkStatuses.clear();
-  networks.clear();
+  {
+    // See onEnter()'s identical guard for why.
+    RenderLock lock(*this);
+    networkRowItems.clear();
+    networkStatuses.clear();
+    networks.clear();
+  }
   requestUpdate();
 
   // Set WiFi mode to station
@@ -400,53 +418,59 @@ void WifiSelectionActivity::processWifiScanResults() {
   LOG_INF("WIFI", "WiFi scan complete: rawNetworks=%d", scanResult);
 
   // Scan complete, process results: deduplicate in-place, keeping strongest signal
-  networkRowItems.clear();
-  networkStatuses.clear();
-  networks.clear();
-  networks.reserve(scanResult);
   int hiddenNetworks = 0;
   int duplicateNetworks = 0;
+  {
+    // See onEnter()'s identical guard for why. Held across this whole
+    // rebuild (not just the final assignment) since networks is rebuilt
+    // in-place via repeated push_back, which can reallocate at any point.
+    RenderLock lock(*this);
+    networkRowItems.clear();
+    networkStatuses.clear();
+    networks.clear();
+    networks.reserve(scanResult);
 
-  for (int i = 0; i < scanResult; i++) {
-    char ssid[33];
-    strlcpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid));
-    const int32_t rssi = WiFi.RSSI(i);
-    const int authMode = WiFi.encryptionType(i);
+    for (int i = 0; i < scanResult; i++) {
+      char ssid[33];
+      strlcpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid));
+      const int32_t rssi = WiFi.RSSI(i);
+      const int authMode = WiFi.encryptionType(i);
 
-    // Skip hidden networks (empty SSID)
-    if (ssid[0] == '\0') {
-      hiddenNetworks++;
-      continue;
+      // Skip hidden networks (empty SSID)
+      if (ssid[0] == '\0') {
+        hiddenNetworks++;
+        continue;
+      }
+
+      auto it = std::find_if(networks.begin(), networks.end(),
+                             [&ssid](const WifiNetworkInfo& n) { return n.ssid == ssid; });
+      if (it != networks.end()) {
+        duplicateNetworks++;
+      }
+      if (it == networks.end()) {
+        WifiNetworkInfo network;
+        network.ssid = ssid;
+        network.rssi = rssi;
+        network.isEncrypted = (authMode != WIFI_AUTH_OPEN);
+        network.hasSavedPassword = WIFI_STORE.hasSavedCredential(network.ssid);
+        networks.push_back(std::move(network));
+      } else if (rssi > it->rssi) {
+        it->rssi = rssi;
+        it->isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+      }
     }
 
-    auto it =
-        std::find_if(networks.begin(), networks.end(), [&ssid](const WifiNetworkInfo& n) { return n.ssid == ssid; });
-    if (it != networks.end()) {
-      duplicateNetworks++;
-    }
-    if (it == networks.end()) {
-      WifiNetworkInfo network;
-      network.ssid = ssid;
-      network.rssi = rssi;
-      network.isEncrypted = (authMode != WIFI_AUTH_OPEN);
-      network.hasSavedPassword = WIFI_STORE.hasSavedCredential(network.ssid);
-      networks.push_back(std::move(network));
-    } else if (rssi > it->rssi) {
-      it->rssi = rssi;
-      it->isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-    }
+    // Sort: saved-password networks first, then by signal strength (strongest first)
+    std::sort(networks.begin(), networks.end(), [](const WifiNetworkInfo& a, const WifiNetworkInfo& b) {
+      if (a.hasSavedPassword != b.hasSavedPassword) {
+        return a.hasSavedPassword;
+      }
+      return a.rssi > b.rssi;
+    });
+
+    realNetworkCount = networks.size();
+    appendHiddenNetworkEntry();
   }
-
-  // Sort: saved-password networks first, then by signal strength (strongest first)
-  std::sort(networks.begin(), networks.end(), [](const WifiNetworkInfo& a, const WifiNetworkInfo& b) {
-    if (a.hasSavedPassword != b.hasSavedPassword) {
-      return a.hasSavedPassword;
-    }
-    return a.rssi > b.rssi;
-  });
-
-  realNetworkCount = networks.size();
-  appendHiddenNetworkEntry();
 
   WiFi.scanDelete();
   LOG_INF("WIFI", "WiFi scan usable networks=%zu hidden=%d duplicates=%d", realNetworkCount, hiddenNetworks,
@@ -467,6 +491,9 @@ void WifiSelectionActivity::processWifiScanResults() {
 void WifiSelectionActivity::appendHiddenNetworkEntry() {
   // Synthetic list entry that lets the user type an SSID that is not broadcast.
   // ESP32 can join hidden APs as long as the SSID is supplied to WiFi.begin().
+  // RenderLock is recursive, so this is safe whether called standalone or
+  // (as both current call sites do) from within an already-held lock.
+  RenderLock lock(*this);
   WifiNetworkInfo placeholder;
   placeholder.rssi = 0;
   placeholder.isEncrypted = true;  // Treated as encrypted; an empty password still connects open APs
@@ -476,6 +503,8 @@ void WifiSelectionActivity::appendHiddenNetworkEntry() {
 }
 
 void WifiSelectionActivity::rebuildNetworkRowItems() {
+  // See onEnter()'s identical guard for why.
+  RenderLock lock(*this);
   networkRowItems.clear();
   networkStatuses.clear();
   networkStatuses.reserve(networks.size());
