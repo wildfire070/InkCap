@@ -21,11 +21,18 @@ void BookActionActivity::onEnter() {
 
   // Load current status
   std::string cachePath = Epub::cachePathForFilePath(filePath, "/.crosspoint");
-  currentStatus = Ao3Librarian::getBookStatus(cachePath);
-  initialStatus = currentStatus;
+  {
+    // currentStatus/hasAo3LibraryInfo/bookIsArchived are read by render()'s
+    // rowTitle lambda on the render task with no lock of its own on that side
+    // either -- guard the mutation, same as the later writes to
+    // filePath/bookIsArchived further down in this file.
+    RenderLock lock(*this);
+    currentStatus = Ao3Librarian::getBookStatus(cachePath);
+    initialStatus = currentStatus;
 
-  hasAo3LibraryInfo = Storage.exists((cachePath + "/ao3_library_info").c_str());
-  bookIsArchived = Ao3ArchiveUtils::isArchived(filePath);
+    hasAo3LibraryInfo = Storage.exists((cachePath + "/ao3_library_info").c_str());
+    bookIsArchived = Ao3ArchiveUtils::isArchived(filePath);
+  }
 
   requestUpdate(true);
 }

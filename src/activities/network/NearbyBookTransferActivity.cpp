@@ -123,9 +123,15 @@ void NearbyBookTransferActivity::onEnter() {
     setError(tr(STR_NEARBY_TRANSFER_SOURCE_FAILED));
     return;
   }
-  offeredFileSize_ = probe.fileSize64();
-  probe.close();
-  offeredFileName_ = fileNameFromPath(sourcePath_);
+  {
+    // offeredFileSize_/offeredFileName_ are read by render(); guarded here
+    // for the same reason startListening() guards clearing these same
+    // fields further down in this file.
+    RenderLock lock(*this);
+    offeredFileSize_ = probe.fileSize64();
+    probe.close();
+    offeredFileName_ = fileNameFromPath(sourcePath_);
+  }
   if (!safeFileName(offeredFileName_)) {
     setError(tr(STR_NEARBY_TRANSFER_SOURCE_FAILED));
     return;
