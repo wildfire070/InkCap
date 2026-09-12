@@ -16,8 +16,14 @@
 #include <GfxRenderer.h>
 
 namespace {
-constexpr uint8_t kFullVersion = 66;
-constexpr uint8_t kPartialVersion = 0xF6;
+// Mirrors Section.cpp's SECTION_FILE_VERSION/SECTION_FILE_PARTIAL_VERSION,
+// which live in an anonymous namespace there and so aren't reachable from
+// here even via the private-access trick above -- keep these in sync by hand
+// whenever those change (loadSectionFile() rejects anything else as a
+// version mismatch, which is exactly what silently broke this test after a
+// CrossInk sync bumped 66/0xF6 to 75/0xF4 without touching this file).
+constexpr uint8_t kFullVersion = 75;
+constexpr uint8_t kPartialVersion = 0xF4;
 
 ReaderRenderSpec renderSpec() {
   ReaderRenderSpec spec;
