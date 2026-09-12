@@ -66,7 +66,12 @@ void logDictionaryLookupTaskEnd() {
 
 void DictionaryLookupController::startLookup(const std::string& word, bool recordHistory) {
   MemoryBudget::logHeapShape("dict.lookup_start");
-  lookupWord = word;
+  {
+    // render() reads lookupWord directly on the render task; see setState()'s
+    // comment in the header for why this needs the same guard.
+    RenderLock lock;
+    lookupWord = word;
+  }
   foundWord.clear();
   foundLocation = DictLocation{};
   lookupProgress = 0;
@@ -76,7 +81,7 @@ void DictionaryLookupController::startLookup(const std::string& word, bool recor
   lookupReadError = false;
   lookupMatchedStem = false;
   recordHistory_ = recordHistory;
-  state = LookupState::LookingUp;
+  setState(LookupState::LookingUp);
   // CLEANUP: on Auto-only commit, delete only this line (gate below stays — it's the Auto check)
   if (lookupToastEnabled_ && shouldShowPopup()) {
     // Toast overlay: draw popup directly over whatever the user is currently viewing.
@@ -100,7 +105,7 @@ void DictionaryLookupController::startLookupAsSuggestion(const std::string& word
 }
 
 void DictionaryLookupController::setNotFound() {
-  state = LookupState::NotFound;
+  setState(LookupState::NotFound);
 #if CROSSINK_APP_CAP_TOUCH
   if (mappedInput.hasTouch()) {
     altFormUiReady = false;
@@ -121,7 +126,7 @@ void DictionaryLookupController::onExit() {
 DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput() {
   if (state == LookupState::LookingUp) {
     if (lookupDone) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       if (lookupCancelled) {
         nextIsSuggestion = false;
         return LookupEvent::Cancelled;
@@ -142,8 +147,12 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
 
       // Try alt forms
       if (shouldOfferAltForms_ && Dictionary::hasAltForms(cachePath.c_str())) {
-        altFormWord = lookupWord;
-        state = LookupState::AltFormPrompt;
+        {
+          // See startLookup()'s comment on lookupWord -- same guard, same reason.
+          RenderLock lock;
+          altFormWord = lookupWord;
+        }
+        setState(LookupState::AltFormPrompt);
 #if CROSSINK_APP_CAP_TOUCH
         altFormUiReady = false;
         applySharedUiTheme(altFormUiApp, altFormUiTarget);
@@ -180,7 +189,7 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
         || touchAction == ACTION_ALT_FORM_YES
 #endif
     ) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       std::string canonical = Dictionary::resolveAltForm(altFormWord, cachePath.c_str());
       if (!canonical.empty()) {
         auto loc = Dictionary::locate(canonical, {}, cachePath.c_str());
@@ -200,7 +209,7 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
         || headerTapped || touchAction == ACTION_ALT_FORM_NO
 #endif
     ) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       nextIsSuggestion = false;
       // Declining the optional alternate-form lookup completes this lookup.
       // The word-selection activity treats this the same as dismissing a
@@ -210,7 +219,7 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
     }
 #if CROSSINK_APP_CAP_TOUCH
     if (allowCreateClipping_ && touchAction == ACTION_CREATE_CLIPPING) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::CreateClipping;
     }
 #endif
@@ -227,11 +236,11 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
       touchAction = event.action;
     }
     if (state == LookupState::NotFound && allowCreateClipping_ && touchAction == ACTION_CREATE_CLIPPING) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::CreateClipping;
     }
     if (state == LookupState::NotFound && touchAction == ACTION_SWITCH_DICTIONARY) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::SwitchDictionary;
     }
     if (state == LookupState::ReadError) {
@@ -241,17 +250,17 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
       if (mappedInput.hasTouch() && mappedInput.wasScreenTapped(touchX, touchY) && touchX >= switchRect.x &&
           touchX < switchRect.x + switchRect.width && touchY >= switchRect.y &&
           touchY < switchRect.y + switchRect.height) {
-        state = LookupState::Idle;
+        setState(LookupState::Idle);
         return LookupEvent::SwitchDictionary;
       }
     }
 #endif
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::SwitchDictionary;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::NotFoundDismissedDone;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)
@@ -259,7 +268,7 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
         || headerTapped
 #endif
     ) {
-      state = LookupState::Idle;
+      setState(LookupState::Idle);
       return LookupEvent::NotFoundDismissedBack;
     }
     return LookupEvent::None;
@@ -468,7 +477,7 @@ const char* DictionaryLookupController::getFailureMessage() const {
 
 bool DictionaryLookupController::dismissFailureForDictionarySwitch() {
   if (!hasFailureFeedback()) return false;
-  state = LookupState::Idle;
+  setState(LookupState::Idle);
   return true;
 }
 
@@ -514,7 +523,7 @@ void DictionaryLookupController::showMemoryErrorAndReset() {
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   }
   vTaskDelay(1000 / portTICK_PERIOD_MS);
-  state = LookupState::Idle;
+  setState(LookupState::Idle);
   owner.requestUpdate();
 }
 
@@ -559,7 +568,7 @@ void DictionaryLookupController::handleLookupFailed() {
 
 void DictionaryLookupController::showReadError() {
   nextIsSuggestion = false;
-  state = LookupState::ReadError;
+  setState(LookupState::ReadError);
   owner.requestUpdate();
 }
 
@@ -571,6 +580,11 @@ void DictionaryLookupController::progressCallback(void* ctx, int percent) {
 
 bool DictionaryLookupController::cancelCallback(void* ctx) {
   return static_cast<DictionaryLookupController*>(ctx)->lookupCancelRequested;
+}
+
+void DictionaryLookupController::setState(const LookupState newState) {
+  RenderLock lock;
+  state = newState;
 }
 
 void DictionaryLookupController::runLookup() {
