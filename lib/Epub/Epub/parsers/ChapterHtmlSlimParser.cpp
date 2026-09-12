@@ -822,6 +822,14 @@ void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
     currentTableBuffer->unsupported = true;
   }
 
+  // A row that never closes (or a pathological cell count before the
+  // matching </tr>) grows row.cells -- a plain std::vector, not
+  // arena/nothrow-backed -- without any other bound. Guard it the same way
+  // every other unbounded accumulation point in this parser is guarded.
+  if (shouldAbortForLowMemory("table cell")) {
+    return;
+  }
+
   auto& row = currentTableBuffer->rows.back();
   row.hasHeaderCell = row.hasHeaderCell || cell.isHeader;
   row.hasDataCell = row.hasDataCell || !cell.isHeader;
@@ -1716,7 +1724,14 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         const char* idValue = attrValue;
         const bool isTocAnchor =
             std::find(self->tocAnchors.begin(), self->tocAnchors.end(), idValue) != self->tocAnchors.end();
-        if (isTocAnchor || (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
+        // The size cap applies unconditionally -- isTocAnchor only bypasses the
+        // non-navigable-inline-element filter below, not the cap itself. A
+        // chapter can legally repeat an id (HTML doesn't require uniqueness),
+        // and pendingAnchorFromInlineA is forced false for TOC anchors (see
+        // below), so duplicate elements sharing a real TOC target's id would
+        // otherwise each push into anchorData with no bound.
+        if (self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER &&
+            (isTocAnchor || !isNonNavigableInlineElement(name))) {
           // Flush displaced block anchors before overwriting. Keep dense inline <a id>
           // runs coalesced so converter-generated anchors do not churn heap in link-heavy chapters.
           const bool previousAnchorShouldBeRecorded = !self->pendingAnchorFromInlineA;
