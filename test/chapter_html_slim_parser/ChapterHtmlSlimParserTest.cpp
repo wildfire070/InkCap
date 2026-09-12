@@ -15,6 +15,15 @@
 
 namespace {
 
+TEST(ParagraphIndentTest, DoesNotInventIndentWithoutSourceCss) {
+  GfxRenderer renderer;
+
+  for (const bool extraParagraphSpacing : {false, true}) {
+    ParsedText paragraph(extraParagraphSpacing);
+    EXPECT_EQ(paragraph.resolveFirstLineIndent(true, renderer, 0), 0);
+  }
+}
+
 class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
  protected:
   std::string filepath = "unused.xhtml";

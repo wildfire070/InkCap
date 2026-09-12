@@ -502,15 +502,15 @@ ClippingTextMatcher::TokenFragmentResult matchPageWordToToken(const TextBlock& b
                                                            token, tokenLen, tokenOffset);
 }
 
-template <typename Callback>
-bool forEachPageTextLine(const Page& page, Callback&& callback) {
+template <typename Pages, typename Callback>
+bool forEachPageTextLine(const Pages& page, Callback&& callback) {
   using CallbackType = std::remove_reference_t<Callback>;
   return page.forEachTextLine(
       [](const PageTextLine& line, void* context) { return (*static_cast<CallbackType*>(context))(line); }, &callback);
 }
 
-template <typename Callback>
-bool forEachVisiblePageWord(const Page& page, Callback&& callback) {
+template <typename Pages, typename Callback>
+bool forEachVisiblePageWord(const Pages& page, Callback&& callback) {
   uint16_t wordIndex = 0;
   return forEachPageTextLine(page, [&](const PageTextLine& line) {
     const auto& block = *line.block;
@@ -536,9 +536,11 @@ bool forEachVisiblePageWord(const Page& page, Callback&& callback) {
   });
 }
 
-bool matchClipRunFromPageWord(const Page& page, const std::string& clippingText, const uint16_t startPageWord,
+template <typename Pages>
+bool matchClipRunFromPageWord(const Pages& page, const std::string& clippingText, const uint16_t startPageWord,
                               const uint16_t startClipToken, const uint16_t minPartialMatch,
-                              const uint8_t expectedTableColumn, ClippingPageMatch& match) {
+                              const uint8_t expectedTableColumn, ClippingPageMatch& match,
+                              const bool allowShortBoundary = false) {
   const char* cursor = nullptr;
   const char* token = nullptr;
   size_t tokenLen = 0;
@@ -600,19 +602,9 @@ bool matchClipRunFromPageWord(const Page& page, const std::string& clippingText,
     return false;
   }
 
-  // A relayout can split a saved clipping so this page starts mid-clipping.
-  // Accept complete runs (the whole clipping matched, start to end) or
-  // page-boundary partial runs of a meaningful length. Reaching the end of the
-  // clip text is not enough on its own: starting the search at a late token
-  // (e.g. the clipping's last word) trivially "reaches the end" after matching
-  // a single coincidental word, which must not be treated as a full match.
-  const bool completeClipMatch = startClipToken == 0 && reachedClipEnd;
-  if (!completeClipMatch && matchedTokens < minPartialMatch) {
-    const bool startsAtClipBoundary = startClipToken == 0;
-    const bool startsAtPageBoundary = startPageWord == 0;
-    if (!startsAtClipBoundary && !startsAtPageBoundary) {
-      return false;
-    }
+  if (!ClippingTextMatcher::isReliableRun(startClipToken, reachedClipEnd, matchedTokens, minPartialMatch) &&
+      !(allowShortBoundary && (startClipToken == 0 || startPageWord == 0))) {
+    return false;
   }
 
   match.startWord = startPageWord;
@@ -623,8 +615,10 @@ bool matchClipRunFromPageWord(const Page& page, const std::string& clippingText,
   return true;
 }
 
-bool findClippingTextOnPage(const Page& page, const std::string& clippingText, ClippingPageMatch& match,
-                            bool* uniqueMatch = nullptr, const uint8_t expectedTableColumn = UINT8_MAX) {
+template <typename Pages>
+bool findClippingTextInPages(const Pages& page, const std::string& clippingText, ClippingPageMatch& match,
+                             bool* uniqueMatch = nullptr, const uint8_t expectedTableColumn = UINT8_MAX,
+                             const bool allowShortBoundary = false, const uint16_t requiredBoundary = UINT16_MAX) {
   if (clippingText.empty()) return false;
 
   const uint16_t tokenCount = countClipTokens(clippingText);
@@ -652,7 +646,9 @@ bool findClippingTextOnPage(const Page& page, const std::string& clippingText, C
           if (matchPageWordToToken(block, static_cast<uint16_t>(i), token, tokenLen).match !=
                   ClippingTextMatcher::TokenFragmentMatch::MISMATCH &&
               matchClipRunFromPageWord(page, clippingText, wordIndex, tokenIndex, minPartialMatch, expectedTableColumn,
-                                       candidate)) {
+                                       candidate, allowShortBoundary) &&
+              (requiredBoundary == UINT16_MAX ||
+               (candidate.startWord < requiredBoundary && candidate.endWord >= requiredBoundary))) {
             if (matches.record(candidate.startWord, candidate.endWord)) {
               match = candidate;
             }
@@ -679,6 +675,58 @@ uint16_t countVisiblePageWords(const Page& page) {
     return true;
   });
   return count;
+}
+
+// A view over two already-loaded pages; words are visited without copying text.
+struct AdjacentClippingPages {
+  const Page& first;
+  const Page& second;
+
+  bool forEachTextLine(bool (*callback)(const PageTextLine&, void*), void* context) const {
+    return first.forEachTextLine(callback, context) && second.forEachTextLine(callback, context);
+  }
+};
+
+bool findClippingTextOnPage(Section& section, const Page& page, const std::string& clippingText,
+                            ClippingPageMatch& match, bool* uniqueMatch = nullptr,
+                            const uint8_t expectedTableColumn = UINT8_MAX) {
+  if (findClippingTextInPages(page, clippingText, match, uniqueMatch, expectedTableColumn)) return true;
+
+  // Only read a neighbor if this page has an otherwise plausible short fragment.
+  // A coincidental trailing "and" must agree with text across the page break.
+  ClippingPageMatch shortMatch;
+  if (!findClippingTextInPages(page, clippingText, shortMatch, nullptr, expectedTableColumn, true)) return false;
+
+  const uint16_t currentWordCount = countVisiblePageWords(page);
+  if (currentWordCount == 0) return false;
+  for (const int direction : {1, -1}) {
+    const int neighborIndex = section.currentPage + direction;
+    if (neighborIndex < 0 || neighborIndex >= section.pageCount) continue;
+    // Keep at most one temporary neighboring page, and release it on each attempt.
+    // loadPage scopes its reader or reuses the build handle; currentPage is unchanged.
+    auto neighbor = section.loadPage(neighborIndex);
+    if (!neighbor) {
+      LOG_ERR("CLIP", "Could not verify clipping across page %d", neighborIndex);
+      continue;
+    }
+    const bool nextPage = direction > 0;
+    const uint16_t boundary = nextPage ? currentWordCount : countVisiblePageWords(*neighbor);
+    if (boundary == 0) continue;
+    const AdjacentClippingPages pages{nextPage ? page : *neighbor, nextPage ? *neighbor : page};
+    if (!findClippingTextInPages(pages, clippingText, match, uniqueMatch, expectedTableColumn, false, boundary)) {
+      continue;
+    }
+    if (nextPage) {
+      match.endWord = currentWordCount - 1;
+      match.reachesClipEnd = false;
+    } else {
+      match.startWord = 0;
+      match.endWord -= boundary;
+      match.startsAtClipStart = false;
+    }
+    return true;
+  }
+  return false;
 }
 
 bool findClippingStoredRangeOnPage(const Page& page, const Clipping& clipping, const uint16_t currentPage,
@@ -766,7 +814,7 @@ bool pageContainsClippingText(Section& section, const std::string& clippingText,
   if (!loadedPage) return false;
 
   ClippingPageMatch match;
-  return findClippingTextOnPage(*loadedPage, clippingText, match, nullptr, expectedTableColumn);
+  return findClippingTextOnPage(section, *loadedPage, clippingText, match, nullptr, expectedTableColumn);
 }
 
 bool findClippingPageNear(Section& section, const std::string& clippingText, const uint16_t center,
@@ -7428,7 +7476,8 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       if (CLIPPINGS.readClippingText(clipping, clippingText)) {
         bool uniqueTextMatch = false;
         const uint8_t expectedTableColumn = tableColumnForSelection(clipping.tableSelection);
-        matchedText = findClippingTextOnPage(page, clippingText, match, &uniqueTextMatch, expectedTableColumn);
+        matchedText =
+            findClippingTextOnPage(*section, page, clippingText, match, &uniqueTextMatch, expectedTableColumn);
         const bool coversStoredBoundaries = (currentPage != clipping.startPage || match.startsAtClipStart) &&
                                             (currentPage != clipping.endPage || match.reachesClipEnd);
         if (matchedText && uniqueTextMatch && coversStoredBoundaries && legacyWordLayout) {
