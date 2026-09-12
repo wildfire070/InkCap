@@ -28,13 +28,19 @@ void DictionarySuggestionsActivity::onEnter() {
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &DictionarySuggestionsActivity::onRowEvent, this);
   app.setScreen(&DictionarySuggestionsActivity::suggestionsScreen, this);
-  uiItems.clear();
-  uiItems.reserve(suggestions.size());
-  for (size_t i = 0; i < suggestions.size(); ++i) {
-    fui::ListItem item;
-    item.label = suggestions[i].c_str();
-    item.actionValue = static_cast<int16_t>(i);
-    uiItems.push_back(item);
+  {
+    // onEnter() runs unlocked by ActivityManager's own design; render() reads
+    // uiItems via app.render() -- see DictionaryWordSelectActivity's
+    // onEnter() for the same reasoning.
+    RenderLock lock(*this);
+    uiItems.clear();
+    uiItems.reserve(suggestions.size());
+    for (size_t i = 0; i < suggestions.size(); ++i) {
+      fui::ListItem item;
+      item.label = suggestions[i].c_str();
+      item.actionValue = static_cast<int16_t>(i);
+      uiItems.push_back(item);
+    }
   }
   requestUpdate();
 }
