@@ -93,4 +93,8 @@ std::string buildUrl(const std::string& serverUrl, const std::string& path) {
   return encodeUnsafeUrlChars(base + "/" + path);
 }
 
+bool sameOrigin(const std::string& serverUrl, const std::string& url) {
+  return extractHost(ensureProtocol(serverUrl)) == extractHost(ensureProtocol(url));
+}
+
 }  // namespace UrlUtils
