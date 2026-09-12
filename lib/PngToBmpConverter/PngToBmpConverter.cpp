@@ -694,7 +694,15 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   Atkinson1BitDitherer* atkinson1BitDitherer = nullptr;
 
   if (oneBit) {
-    atkinson1BitDitherer = new Atkinson1BitDitherer(outWidth);
+    atkinson1BitDitherer = new (std::nothrow) Atkinson1BitDitherer(outWidth);
+    if (!atkinson1BitDitherer || !atkinson1BitDitherer->isValid()) {
+      LOG_ERR("PNG", "Failed to allocate image ditherer");
+      delete atkinson1BitDitherer;
+      free(rowBuffer);
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
       atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(outWidth, imageLevels);
@@ -707,7 +715,15 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
         return false;
       }
     } else if (USE_FLOYD_STEINBERG) {
-      fsDitherer = new FloydSteinbergDitherer(outWidth, imageLevels);
+      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(outWidth, imageLevels);
+      if (!fsDitherer || !fsDitherer->isValid()) {
+        LOG_ERR("PNG", "Failed to allocate image ditherer");
+        delete fsDitherer;
+        free(rowBuffer);
+        free(ctx.currentRow);
+        free(ctx.previousRow);
+        return false;
+      }
     }
   }
 

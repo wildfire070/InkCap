@@ -303,6 +303,14 @@ Binary layout:
 
 ## `section.bin`
 
+### Version 75
+
+Version 75 keeps the serialized layout unchanged but excludes EPUB elements with
+the HTML `hidden` attribute. Complete files use byte `75`; suspended partials use
+`0xF4`. Both older full and partial layouts rebuild automatically.
+Versions 67–74 and partial sentinel 0xF5 already occur in other local branch
+history; using fresh identifiers avoids accepting those experimental caches.
+
 ### Version 66
 
 Version 66 keeps the version 63 serialized layout unchanged. It was bumped
@@ -409,7 +417,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 66
+#define EXPECTED_VERSION 75
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96

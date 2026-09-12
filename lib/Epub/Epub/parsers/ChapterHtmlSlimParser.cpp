@@ -1703,6 +1703,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->xpathListItemIndex++;
   }
 
+  // Skip before ID/TOC processing: invisible targets must not create anchors
+  // or page breaks on the following visible block. Empty hidden values count.
+  if (getAttribute(atts, "hidden") != nullptr) {
+    self->skipCurrentElement();
+    return;
+  }
+
   // Borrow parser-owned attribute bytes during this callback; copy only when
   // storing an ancestor/id beyond the current element start.
   std::string_view classAttr;
