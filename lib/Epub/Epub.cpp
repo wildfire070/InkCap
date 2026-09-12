@@ -706,6 +706,14 @@ void Epub::discoverCssFilesFromZip() {
   ZipFile zf(filepath);
 
   if (!zf.enumerateFilePaths([&](std::string_view filePath) {
+        // Bounded at the same UINT16_MAX ceiling the dedup pass below already
+        // requires cssFiles.size() to stay under -- without this, a crafted
+        // zip's central directory (attacker-controlled entry count/names) can
+        // grow this vector without limit well before that check ever runs.
+        if (cssFiles.size() >= UINT16_MAX) {
+          return;
+        }
+
         if (!opfDir.empty() && filePath.find(opfDir) != 0) {
           return;
         }
