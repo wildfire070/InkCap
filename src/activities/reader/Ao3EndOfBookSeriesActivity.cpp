@@ -23,7 +23,14 @@
 void Ao3EndOfBookSeriesActivity::onEnter() {
   Activity::onEnter();
   buttonNavigator.setMappedInputManager(mappedInput);
-  loadViewEntries();
+  {
+    // loadViewEntries() clears and rebuilds viewEntries, which render() reads
+    // (including direct indexing) under its own RenderLock -- must not
+    // mutate it unlocked, same reasoning as pageCache's guard further down in
+    // this file.
+    RenderLock lock(*this);
+    loadViewEntries();
+  }
   requestUpdate();
 }
 

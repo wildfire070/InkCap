@@ -232,8 +232,16 @@ void WifiSelectionActivity::onEnter() {
   realNetworkCount = 0;
   state = WifiSelectionState::SCANNING;
   selectedSSID.clear();
-  connectedIP.clear();
-  connectionError.clear();
+  {
+    // connectedIP/connectionError are read by render()'s renderConnected()/
+    // renderConnectionFailed() on the render task with no lock of its own on
+    // that side either -- guard the mutation, since a std::string
+    // reallocation racing those .c_str() reads is UB, not just a stale value.
+    // Same reasoning as every other write site in this file.
+    RenderLock lock(*this);
+    connectedIP.clear();
+    connectionError.clear();
+  }
   enteredPassword.clear();
   usedSavedPassword = false;
   tearDownWifiOnExit = false;
@@ -252,7 +260,13 @@ void WifiSelectionActivity::onEnter() {
   autoAttemptedSsids.reserve(savedCredentialCount);
 
   // Cache MAC address for display
-  cachedMacAddress = getDisplayMacAddress();
+  {
+    // cachedMacAddress is read unconditionally near the top of every
+    // render() call; guard it for the same reason as connectedIP/
+    // connectionError above.
+    RenderLock lock(*this);
+    cachedMacAddress = getDisplayMacAddress();
+  }
 
   uiReady = false;
   visibleRows = 1;

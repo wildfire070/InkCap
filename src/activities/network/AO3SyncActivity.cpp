@@ -43,8 +43,14 @@ void AO3SyncActivity::onEnter() {
   }
   if (ESP.getFreeHeap() < AO3_SYNC_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < AO3_SYNC_MIN_MAX_ALLOC) {
     LOG_ERR("AO3", "Insufficient heap for update check: free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    errorMessage = "Not enough memory";
-    state = AO3SyncState::ERROR;
+    {
+      // errorMessage/state are read by renderError() on the render task with
+      // no lock of its own on that side either -- see performSearch()'s
+      // identical guard for these same fields.
+      RenderLock lock(*this);
+      errorMessage = "Not enough memory";
+      state = AO3SyncState::ERROR;
+    }
     requestUpdate();
     return;
   }
@@ -67,8 +73,14 @@ void AO3SyncActivity::onExit() {
 
 void AO3SyncActivity::onWifiSelectionComplete(bool success) {
   if (!success) {
-    errorMessage = "WiFi Failed";
-    state = AO3SyncState::ERROR;
+    {
+      // Called from ActivityManager's resultHandler invocation, which unlocks
+      // its RenderLock first ("Handler may acquire its own lock") -- same
+      // guard as onEnter() above.
+      RenderLock lock(*this);
+      errorMessage = "WiFi Failed";
+      state = AO3SyncState::ERROR;
+    }
     requestUpdate();
     return;
   }
