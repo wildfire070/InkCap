@@ -191,6 +191,7 @@ void DictHtmlRenderer::reset() {
   normalizedHtml_.clear();
   discardTagUntilClose_ = false;
   tagStack.clear();
+  skippedTagDepth_ = 0;
   parseError = false;
   fmt = FormatState{};
   newlinePending = false;
@@ -276,6 +277,15 @@ void DictHtmlRenderer::emitText(const char* s, int len) {
     }
     if (c == '\t') c = ' ';
     pendingText += c;
+    // pushSpan() (called above on \r/\n, and by flushPending() at tag
+    // boundaries) normally keeps pendingText bounded to one line/run, but a
+    // single unbroken text run with no newlines or tags -- plausible from a
+    // corrupt/hand-built dictionary entry (word_data_size is an unvalidated
+    // file field) -- would otherwise grow this std::string without bound.
+    // Force a flush past a generous single-run length instead.
+    if (pendingText.size() > kMaxPendingTextBytes) {
+      pushSpan();
+    }
   }
 }
 
@@ -288,6 +298,11 @@ void DictHtmlRenderer::flushPending() { pushSpan(); }
 void XMLCALL DictHtmlRenderer::onStart(void* ud, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<DictHtmlRenderer*>(ud);
   if (self->parseError) return;
+
+  if (self->tagStack.size() >= DictHtmlRenderer::kMaxTagNesting) {
+    self->skippedTagDepth_++;
+    return;
+  }
 
   TagAction action = classify(name);
 
@@ -406,6 +421,11 @@ void XMLCALL DictHtmlRenderer::onEnd(void* ud, const XML_Char* name) {
   (void)name;
   auto* self = static_cast<DictHtmlRenderer*>(ud);
   if (self->parseError) return;
+
+  if (self->skippedTagDepth_ > 0) {
+    self->skippedTagDepth_--;
+    return;
+  }
   if (self->tagStack.empty()) return;
 
   StackEntry& entry = self->tagStack.back();

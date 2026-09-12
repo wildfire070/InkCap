@@ -169,6 +169,23 @@ class DictHtmlRenderer {
   void normalizeHtmlChunk(const char* buf, int len, bool isLast);
 
   std::vector<StackEntry> tagStack;
+  // A dictionary entry is normalized into well-formed XML before parsing (see
+  // normalizeHtmlChunk() above), so expat guarantees matched open/close pairs
+  // -- but nothing bounds how deep those pairs can nest. A corrupt/hand-built
+  // dictionary entry (word_data_size is an unvalidated file field, per
+  // Dictionary.cpp's own comment) consisting of a long run of unclosed-looking
+  // tags would otherwise grow tagStack (a plain std::vector, not
+  // arena/nothrow-backed) without bound, aborting the device on allocation
+  // failure under this build's -fno-exceptions. Tags past this depth are
+  // dropped rather than tracked; skippedTagDepth_ lets onEnd() skip their
+  // matching close tags without corrupting tagStack's own pop_back() bookkeeping.
+  static constexpr size_t kMaxTagNesting = 64;
+  size_t skippedTagDepth_ = 0;
+  // Same rationale as kMaxTagNesting, for a single unbroken text run (no
+  // newline or tag boundary to otherwise flush pendingText) -- generous for
+  // any legitimate dictionary entry, which pushSpan() below splits seamlessly
+  // (no newline/indent inserted) if ever hit.
+  static constexpr size_t kMaxPendingTextBytes = 8192;
 
   FormatState fmt;
 
