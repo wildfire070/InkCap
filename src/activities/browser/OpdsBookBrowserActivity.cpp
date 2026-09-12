@@ -63,14 +63,23 @@ void OpdsBookBrowserActivity::onEnter() {
 
   sdFontSystem.releaseLoadedFont(renderer);
 
-  state = BrowserState::CHECK_WIFI;
-  entryCount = 0;
+  {
+    // state/entryCount/searchTemplate/errorMessage/statusMessage are read by
+    // render()/rootScreen()'s screen builders on the render task with no
+    // lock of its own on that side either -- a std::string reallocation
+    // racing those .c_str() reads is UB, not just a stale value. This file
+    // had no RenderLock usage anywhere prior to this fix; every mutation
+    // site below now guards the same fields for the same reason.
+    RenderLock lock(*this);
+    state = BrowserState::CHECK_WIFI;
+    entryCount = 0;
+    searchTemplate = "";
+    errorMessage.clear();
+    statusMessage = tr(STR_CHECKING_WIFI);
+  }
   navigationHistory.clear();
-  searchTemplate = "";
   currentPath = "";
   selectorIndex = 0;
-  errorMessage.clear();
-  statusMessage = tr(STR_CHECKING_WIFI);
 
   uiReady = false;
   visibleRows = 1;
@@ -82,6 +91,7 @@ void OpdsBookBrowserActivity::onEnter() {
   requestUpdate();
 
   if (!ensureEntryBuffer()) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_MEMORY_ERROR);
     requestUpdate();
@@ -458,8 +468,16 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
 }
 
 void OpdsBookBrowserActivity::showLoadingBeforeFetch() {
-  state = BrowserState::LOADING;
-  statusMessage = tr(STR_LOADING);
+  {
+    // See onEnter()'s guard for why. Released before requestUpdateAndWait()
+    // below, which blocks for a render on this same task -- holding the
+    // lock across it would deadlock the render task trying to acquire the
+    // same (non-recursive-across-tasks) mutex. Same reasoning as
+    // AO3SyncActivity::performSearch()'s short RenderLock scopes.
+    RenderLock lock(*this);
+    state = BrowserState::LOADING;
+    statusMessage = tr(STR_LOADING);
+  }
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
     LOG_ERR("OPDS", "Loading screen could not be rendered before feed fetch");
     requestUpdate(true);
@@ -468,6 +486,7 @@ void OpdsBookBrowserActivity::showLoadingBeforeFetch() {
 
 void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   if (!ensureEntryBuffer()) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_MEMORY_ERROR);
     requestUpdate();
@@ -475,31 +494,38 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
 #ifdef SIMULATOR
-  clearEntries();
-  searchTemplate = "simulator://search?query={searchTerms}";
+  {
+    // See onEnter()'s guard for why. Held across this whole block: no
+    // blocking call happens in the simulator path.
+    RenderLock lock(*this);
+    clearEntries();
+    searchTemplate = "simulator://search?query={searchTerms}";
 
-  if (path.empty()) {
-    appendEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "Browse fiction", "", "/fiction", ""});
-    appendEntry(OpdsEntry{OpdsEntryType::BOOK, "The Left Hand of Darkness", "Ursula K. Le Guin",
-                          "/books/the-left-hand-of-darkness.epub", ""});
-    appendEntry(
-        OpdsEntry{OpdsEntryType::BOOK, "A Room of One's Own", "Virginia Woolf", "/books/a-room-of-ones-own.epub", ""});
-    appendEntry(OpdsEntry{OpdsEntryType::BOOK, "Frankenstein", "Mary Shelley", "/books/frankenstein.epub", ""});
-  } else {
-    appendEntry(
-        OpdsEntry{OpdsEntryType::BOOK, "The Dispossessed", "Ursula K. Le Guin", "/books/the-dispossessed.epub", ""});
-    appendEntry(OpdsEntry{OpdsEntryType::BOOK, "Kindred", "Octavia E. Butler", "/books/kindred.epub", ""});
-    appendEntry(OpdsEntry{OpdsEntryType::BOOK, "The Time Machine", "H. G. Wells", "/books/the-time-machine.epub", ""});
+    if (path.empty()) {
+      appendEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "Browse fiction", "", "/fiction", ""});
+      appendEntry(OpdsEntry{OpdsEntryType::BOOK, "The Left Hand of Darkness", "Ursula K. Le Guin",
+                            "/books/the-left-hand-of-darkness.epub", ""});
+      appendEntry(OpdsEntry{OpdsEntryType::BOOK, "A Room of One's Own", "Virginia Woolf",
+                            "/books/a-room-of-ones-own.epub", ""});
+      appendEntry(OpdsEntry{OpdsEntryType::BOOK, "Frankenstein", "Mary Shelley", "/books/frankenstein.epub", ""});
+    } else {
+      appendEntry(
+          OpdsEntry{OpdsEntryType::BOOK, "The Dispossessed", "Ursula K. Le Guin", "/books/the-dispossessed.epub", ""});
+      appendEntry(OpdsEntry{OpdsEntryType::BOOK, "Kindred", "Octavia E. Butler", "/books/kindred.epub", ""});
+      appendEntry(
+          OpdsEntry{OpdsEntryType::BOOK, "The Time Machine", "H. G. Wells", "/books/the-time-machine.epub", ""});
+    }
+
+    selectorIndex = 0;
+    topIndex = 0;
+    state = BrowserState::BROWSING;
   }
-
-  selectorIndex = 0;
-  topIndex = 0;
-  state = BrowserState::BROWSING;
   requestUpdate();
   return;
 #endif
 
   if (server.url.empty()) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_NO_SERVER_URL);
     requestUpdate();
@@ -509,6 +535,15 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   clearEntries();
   const std::string url = UrlUtils::buildUrl(server.url, path);
   LOG_DBG("OPDS", "Fetching: %s", url.c_str());
+  // entries.get() is handed to the parser directly: OpdsParser/OpdsParserStream
+  // write into it incrementally as HTTP data streams in, DURING the blocking
+  // call below -- not guarded by a RenderLock, since that would hold the lock
+  // across a network call (see AO3SyncActivity::performSearch()'s comment on
+  // why that's unsafe: it would reject re-entering from this same task on any
+  // subsequent requestUpdateAndWait()). This is safe without a lock because
+  // entryCount (the only field render() checks before indexing entries[]) is
+  // not updated until after this whole streaming parse completes below --
+  // render() has no way to observe the in-progress buffer.
   OpdsParser parser(entries.get(), MAX_OPDS_FEED_ENTRIES);
   {
     OpdsParserStream stream{parser};
@@ -518,6 +553,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
         url, [&stream](const uint8_t* data, const size_t len) { return stream.write(data, len) == len; }, nullptr,
         server.username, server.password, std::move(downloadOptions));
     if (result != HttpDownloader::OK) {
+      RenderLock lock(*this);
       state = BrowserState::ERROR;
       errorMessage = tr(STR_FETCH_FEED_FAILED);
       requestUpdate();
@@ -526,6 +562,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   if (!parser) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = parser.getErrorReason() == OpdsParserError::BUFFER_MEMORY ? tr(STR_OPDS_FEED_BUFFER_MEMORY_ERROR)
                                                                              : tr(STR_PARSE_FEED_FAILED);
@@ -533,6 +570,10 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     return;
   }
 
+  // See onEnter()'s guard for why. Held across this whole block: entryCount
+  // and entries[] must change together, and the prevUrl branch below
+  // reshuffles entries[] in place.
+  RenderLock lock(*this);
   searchTemplate = parser.getSearchTemplate();
   const auto& nextUrl = parser.getNextPageUrl();
   const auto& prevUrl = parser.getPrevPageUrl();
@@ -574,6 +615,12 @@ void OpdsBookBrowserActivity::clearEntries() {
   // The app's interaction table still references the old row indices until
   // the next render, so stop routing touches while clearing the backing data.
   uiReady = false;
+  // entries[]/entryCount are read by buildBrowsingScreen()/render() on the
+  // render task with no lock of its own on that side either -- guard the
+  // rebuild here rather than at each call site. RenderLock is recursive, so
+  // this nests safely under callers (like fetchFeed()'s success path) that
+  // already hold it.
+  RenderLock lock(*this);
   for (size_t i = 0; entries && i < entryCount; ++i) {
     entries[i] = OpdsEntry{};
   }
@@ -582,6 +629,8 @@ void OpdsBookBrowserActivity::clearEntries() {
 
 bool OpdsBookBrowserActivity::appendEntry(OpdsEntry&& entry) {
   if (!entries || entryCount >= OPDS_BROWSER_ENTRY_CAPACITY) return false;
+  // See clearEntries() for why; recursive-safe under an already-held lock.
+  RenderLock lock(*this);
   entries[entryCount++] = std::move(entry);
   return true;
 }
@@ -612,16 +661,23 @@ void OpdsBookBrowserActivity::navigateBack() {
 }
 
 void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
-  state = BrowserState::DOWNLOADING;
-  statusMessage = book.title;
-  downloadProgress = downloadTotal = 0;
+  {
+    // See onEnter()'s guard for why.
+    RenderLock lock(*this);
+    state = BrowserState::DOWNLOADING;
+    statusMessage = book.title;
+    downloadProgress = downloadTotal = 0;
+  }
   cancelDownload = false;
   goHomeAfterCancel = false;
   requestUpdate(true);
 
 #ifdef SIMULATOR
-  downloadProgress = 1;
-  downloadTotal = 2;
+  {
+    RenderLock lock(*this);
+    downloadProgress = 1;
+    downloadTotal = 2;
+  }
   requestUpdate(true);
   return;
 #endif
@@ -633,6 +689,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   bool useDownloadFolder = downloadFolder[0] != '\0';
   if (useDownloadFolder && !Storage.exists(downloadFolder) && !Storage.mkdir(downloadFolder)) {
     LOG_ERR("OPDS", "Could not create download folder %s", downloadFolder);
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_DOWNLOAD_FAILED);
     requestUpdate();
@@ -709,6 +766,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
+    RenderLock lock(*this);
     state = BrowserState::BROWSING;
   } else if (result == HttpDownloader::ABORTED) {
     LOG_INF("OPDS", "Download cancelled");
@@ -717,8 +775,10 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       return;
     }
     mappedInput.suppressNextBackRelease();
+    RenderLock lock(*this);
     state = BrowserState::BROWSING;
   } else {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_DOWNLOAD_FAILED);
   }
@@ -799,6 +859,10 @@ void OpdsBookBrowserActivity::onWifiSelectionComplete(const bool connected) {
     fetchFeed(currentPath);
   } else {
     // Leave WiFi up; onExit's silent reboot handles teardown without fragmenting.
+    // Called from ActivityManager's resultHandler invocation, which unlocks
+    // its RenderLock first -- see onEnter()'s guard for why errorMessage
+    // needs one here.
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_WIFI_CONN_FAILED);
     requestUpdate();
