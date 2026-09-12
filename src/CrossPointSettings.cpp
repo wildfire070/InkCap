@@ -487,7 +487,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["screenInverted"] = screenInverted;
 }
 
-bool CrossPointSettings::fromJson(JsonVariantConst doc) {
+bool CrossPointSettings::fromJson(JsonVariantConst doc, bool importingCrossPoint) {
   std::lock_guard<std::mutex> lock(_mutex);
   bool needsResave = false;
   auto clamp = [](const uint8_t value, const uint8_t maxValue, const uint8_t fallback) {
@@ -590,6 +590,22 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       value = std::clamp(value, static_cast<uint8_t>(info.valueRange.min), static_cast<uint8_t>(info.valueRange.max));
     }
     this->*(info.valuePtr) = value;
+  }
+
+  // Only the generic-file fallback imports CrossPoint's combined touch mode.
+  // Explicit CrossInk gesture keys identify a CrossInk document, even at the old path.
+  if (importingCrossPoint && doc["pageTurnGesture"].isNull() && doc["previousPageGesture"].isNull()) {
+    disableReaderTouchscreen = 0;
+    if (doc["touchReaderControls"].is<uint8_t>()) {
+      const uint8_t mode = doc["touchReaderControls"].as<uint8_t>();
+      if (mode <= 3) {
+        touchReaderControls = mode == 0 ? TOUCH_READER_OFF : TOUCH_READER_ON;
+        // CrossPoint: 0=off, 1=tap, 2=swipe, 3=inverted tap.
+        pageTurnGesture = mode == 0 ? TAP_AND_SWIPE : mode == 1 ? TAP_ONLY : mode == 2 ? SWIPE_ONLY : INVERTED_TAP;
+        previousPageGesture = pageTurnGesture;
+      }
+    }
+    needsResave = true;
   }
 
   // The old gesture setting controlled both directions. Preserve it on upgrade.
@@ -789,7 +805,7 @@ bool CrossPointSettings::loadFromFile() {
       {
         std::lock_guard<std::mutex> storeLock(storeMutex);
         resaveRequested = false;
-        result = fromJson(doc.as<JsonVariantConst>());
+        result = fromJson(doc.as<JsonVariantConst>(), migrateToCurrentPath);
         resave = resaveRequested;
         resaveRequested = false;
       }
