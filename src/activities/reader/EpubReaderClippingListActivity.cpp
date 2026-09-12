@@ -198,12 +198,18 @@ int EpubReaderClippingListActivity::getDetailPageCount() const {
 }
 
 void EpubReaderClippingListActivity::closeDetail() {
-  detailMode = false;
-  detailPage = 0;
-  detailText.clear();
-  detailLines.clear();
-  detailLayoutWidth = 0;
-  detailLinesPerPage = 0;
+  {
+    // detailText/detailLines are read by renderDetail() on the render task
+    // with no lock of its own on that side either -- guard the mutation.
+    // Called from loop(), same as rebuildDetailLayoutIfNeeded() below.
+    RenderLock lock(*this);
+    detailMode = false;
+    detailPage = 0;
+    detailText.clear();
+    detailLines.clear();
+    detailLayoutWidth = 0;
+    detailLinesPerPage = 0;
+  }
   requestUpdate();
 }
 
@@ -225,16 +231,30 @@ void EpubReaderClippingListActivity::openSelectedDetail() {
   if (!CLIPPINGS.readClippingText(static_cast<size_t>(selectedIndex), text)) {
     text.clear();
   }
-  buildOneLineSnippetText(text, detailText);
-  detailMode = true;
-  detailPage = 0;
-  detailLayoutWidth = 0;
-  detailLinesPerPage = 0;
-  rebuildDetailLayoutIfNeeded();
+  {
+    // See closeDetail()'s identical guard for why.
+    RenderLock lock(*this);
+    buildOneLineSnippetText(text, detailText);
+    detailMode = true;
+    detailPage = 0;
+    detailLayoutWidth = 0;
+    detailLinesPerPage = 0;
+    rebuildDetailLayoutIfNeeded();
+  }
   requestUpdate();
 }
 
 void EpubReaderClippingListActivity::rebuildDetailLayoutIfNeeded() {
+  // detailLayoutWidth/detailLinesPerPage/detailLines are read by
+  // renderDetail() on the render task with no lock of its own on that side
+  // either -- and this function itself is called from BOTH loop() (main
+  // task, via the page-swipe handling below) and renderDetail() (render
+  // task), so even the early-return check below must be guarded: reading
+  // these fields unlocked here could race a concurrent writer, and without
+  // the lock two tasks could enter the mutation below at the same time.
+  // RenderLock is recursive, so this is safe when called from render()
+  // (which already holds it for the whole call).
+  RenderLock lock(*this);
   const int textWidth = getDetailTextWidth();
   const int linesPerPage = getDetailLinesPerPage();
   if (textWidth == detailLayoutWidth && linesPerPage == detailLinesPerPage && !detailLines.empty()) return;
@@ -251,18 +271,24 @@ void EpubReaderClippingListActivity::deleteSelectedClipping() {
 
   if (!CLIPPINGS.removeClippingAt(static_cast<size_t>(selectedIndex))) return;
 
-  detailMode = false;
-  detailText.clear();
-  detailLines.clear();
-  detailLayoutWidth = 0;
-  detailLinesPerPage = 0;
-  if (CLIPPINGS.clippingCount() == 0) {
-    selectedIndex = 0;
-  } else if (selectedIndex >= static_cast<int>(CLIPPINGS.clippingCount())) {
-    selectedIndex = static_cast<int>(CLIPPINGS.clippingCount()) - 1;
+  {
+    // detailText/detailLines/uiItems are all read by render()'s
+    // renderDetail()/buildListScreen() on the render task with no lock of
+    // its own on that side either -- see closeDetail()'s identical guard.
+    RenderLock lock(*this);
+    detailMode = false;
+    detailText.clear();
+    detailLines.clear();
+    detailLayoutWidth = 0;
+    detailLinesPerPage = 0;
+    if (CLIPPINGS.clippingCount() == 0) {
+      selectedIndex = 0;
+    } else if (selectedIndex >= static_cast<int>(CLIPPINGS.clippingCount())) {
+      selectedIndex = static_cast<int>(CLIPPINGS.clippingCount()) - 1;
+    }
+    topIndex = followListSelection(selectedIndex, topIndex, visibleRows, static_cast<int>(CLIPPINGS.clippingCount()));
+    uiItems.resize(CLIPPINGS.clippingCount());
   }
-  topIndex = followListSelection(selectedIndex, topIndex, visibleRows, static_cast<int>(CLIPPINGS.clippingCount()));
-  uiItems.resize(CLIPPINGS.clippingCount());
   requestUpdate();
 }
 
