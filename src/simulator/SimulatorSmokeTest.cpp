@@ -211,6 +211,43 @@ class SimulatorSmokeTest {
         fail("Legacy page gesture migration mismatch");
       }
     }
+    constexpr uint8_t importedGestures[] = {CrossPointSettings::TAP_AND_SWIPE, CrossPointSettings::TAP_ONLY,
+                                            CrossPointSettings::SWIPE_ONLY, CrossPointSettings::INVERTED_TAP};
+    for (uint8_t mode = 0; mode < 4; ++mode) {
+      JsonDocument crosspoint;
+      crosspoint["touchReaderControls"] = mode;
+      crosspoint["disableReaderTouchscreen"] = 1;
+      SETTINGS.fromJson(crosspoint.as<JsonVariantConst>(), true);
+      if (SETTINGS.disableReaderTouchscreen || SETTINGS.touchReaderControls != (mode != 0) ||
+          SETTINGS.pageTurnGesture != importedGestures[mode] ||
+          SETTINGS.previousPageGesture != importedGestures[mode]) {
+        fail("CrossPoint touch settings migration mismatch");
+      }
+      JsonDocument migrated;
+      SETTINGS.toJson(migrated);
+      SETTINGS.disableReaderTouchscreen = 1;
+      SETTINGS.pageTurnGesture = CrossPointSettings::PAGE_TURN_GESTURE_DISABLED;
+      SETTINGS.previousPageGesture = CrossPointSettings::PAGE_TURN_GESTURE_DISABLED;
+      SETTINGS.fromJson(migrated.as<JsonVariantConst>());
+      if (SETTINGS.disableReaderTouchscreen || SETTINGS.touchReaderControls != (mode != 0) ||
+          SETTINGS.pageTurnGesture != importedGestures[mode] ||
+          SETTINGS.previousPageGesture != importedGestures[mode]) {
+        fail("Migrated CrossPoint touch settings did not survive reload");
+      }
+    }
+    // The namespaced file must preserve intentional locks, including older files without gesture keys.
+    JsonDocument locked;
+    locked["touchReaderControls"] = 1;
+    locked["disableReaderTouchscreen"] = 1;
+    SETTINGS.fromJson(locked.as<JsonVariantConst>());
+    if (!SETTINGS.disableReaderTouchscreen) fail("CrossInk touch lock was lost");
+    locked["pageTurnGesture"] = CrossPointSettings::TAP_ONLY;
+    locked["previousPageGesture"] = CrossPointSettings::PAGE_TURN_GESTURE_DISABLED;
+    SETTINGS.fromJson(locked.as<JsonVariantConst>(), true);
+    if (!SETTINGS.disableReaderTouchscreen || SETTINGS.pageTurnGesture != CrossPointSettings::TAP_ONLY ||
+        SETTINGS.previousPageGesture != CrossPointSettings::PAGE_TURN_GESTURE_DISABLED) {
+      fail("Legacy CrossInk gesture settings were treated as CrossPoint");
+    }
     SETTINGS.previousPageGesture = CrossPointSettings::SWIPE_ONLY;
     SETTINGS.pageTurnGesture = CrossPointSettings::TAP_ONLY;
     SETTINGS.customBootscreenEnabled = 0;
