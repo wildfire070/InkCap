@@ -30,4 +30,16 @@ std::string encodeUnsafeUrlChars(const std::string& url);
  */
 std::string buildUrl(const std::string& serverUrl, const std::string& path);
 
+/**
+ * True if `url` and `serverUrl` share the same scheme+host+port (both passed
+ * through ensureProtocol() first). buildUrl() returns a feed-supplied path
+ * verbatim when it is itself an absolute URL (containing "://") -- an
+ * untrusted OPDS feed entry's href can therefore point anywhere, not just at
+ * the configured server. Callers that hold credentials for a specific server
+ * must check this before attaching them to a request built from feed-supplied
+ * content, the same way HttpDownloader already refuses to carry credentials
+ * across a cross-origin redirect.
+ */
+bool sameOrigin(const std::string& serverUrl, const std::string& url);
+
 }  // namespace UrlUtils

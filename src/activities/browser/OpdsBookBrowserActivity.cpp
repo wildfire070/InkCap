@@ -535,6 +535,13 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   clearEntries();
   const std::string url = UrlUtils::buildUrl(server.url, path);
   LOG_DBG("OPDS", "Fetching: %s", url.c_str());
+  // path can itself be an absolute URL to a different host if it came from a
+  // feed-supplied href (buildUrl() returns those verbatim) -- never attach
+  // this server's credentials to a request that isn't actually going to it.
+  const bool credentialsApply = UrlUtils::sameOrigin(server.url, url);
+  static const std::string kNoCredential;
+  const std::string& authUsername = credentialsApply ? server.username : kNoCredential;
+  const std::string& authPassword = credentialsApply ? server.password : kNoCredential;
   // entries.get() is handed to the parser directly: OpdsParser/OpdsParserStream
   // write into it incrementally as HTTP data streams in, DURING the blocking
   // call below -- not guarded by a RenderLock, since that would hold the lock
@@ -551,7 +558,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
     const auto result = HttpDownloader::streamUrl(
         url, [&stream](const uint8_t* data, const size_t len) { return stream.write(data, len) == len; }, nullptr,
-        server.username, server.password, std::move(downloadOptions));
+        authUsername, authPassword, std::move(downloadOptions));
     if (result != HttpDownloader::OK) {
       RenderLock lock(*this);
       state = BrowserState::ERROR;
@@ -685,6 +692,14 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   // Build full download URL relative to the current feed, not the root server URL
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
   std::string downloadUrl = UrlUtils::buildUrl(feedUrl, book.href);
+  // book.href came straight from the parsed feed and can itself be an
+  // absolute URL to a different host (see fetchFeed()'s identical guard) --
+  // never attach this server's credentials to a request that isn't actually
+  // going to it.
+  const bool credentialsApply = UrlUtils::sameOrigin(server.url, downloadUrl);
+  static const std::string kNoCredential;
+  const std::string& authUsername = credentialsApply ? server.username : kNoCredential;
+  const std::string& authPassword = credentialsApply ? server.password : kNoCredential;
   const char* downloadFolder = SETTINGS.opdsDownloadFolder;
   bool useDownloadFolder = downloadFolder[0] != '\0';
   if (useDownloadFolder && !Storage.exists(downloadFolder) && !Storage.mkdir(downloadFolder)) {
@@ -762,7 +777,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
           requestUpdate(true);
         }
       },
-      &cancelRequested, server.username, server.password, downloadOptions);
+      &cancelRequested, authUsername, authPassword, downloadOptions);
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
