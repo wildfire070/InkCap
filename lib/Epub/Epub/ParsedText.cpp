@@ -750,7 +750,8 @@ void ParsedText::ensureRubyCapacity() {
   // and no large contiguous reallocation to avoid). Kept for call-site stability.
 }
 
-int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer& renderer, const int fontId) const {
+int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer& /*renderer*/,
+                                       const int /*fontId*/) const {
   const bool naturalAlign =
       blockStyle.alignment == CssTextAlign::Justify || blockStyle.alignment == CssTextAlign::None ||
       (blockStyle.isRtl ? blockStyle.alignment == CssTextAlign::Right : blockStyle.alignment == CssTextAlign::Left);
@@ -762,9 +763,6 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
       return blockStyle.textIndent;
     }
     return 0;
-  }
-  if (!extraParagraphSpacing) {
-    return renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR) * 3;
   }
   return 0;
 }

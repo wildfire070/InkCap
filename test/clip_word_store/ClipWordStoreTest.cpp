@@ -377,3 +377,22 @@ TEST(ClippingMatchTracker, TreatsDuplicateCandidatesForTheSameRangeAsUnique) {
   EXPECT_FALSE(matches.record(4, 6));
   EXPECT_TRUE(matches.unique());
 }
+
+TEST(ClippingTextMatcher, RejectsCoincidentalShortPageBoundaryRuns) {
+  // Issue #720: a page ends in "and", matching only the start of a longer clipping.
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(0, false, 1, 3));
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(0, false, 2, 3));
+  // The inverse coincidence at the top of a page must not match a clipping tail.
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(5, true, 1, 3));
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(4, true, 2, 3));
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(2, false, 1, 3));
+}
+
+TEST(ClippingTextMatcher, PreservesCompleteShortClippingsAndLongerRelayoutRuns) {
+  EXPECT_TRUE(ClippingTextMatcher::isReliableRun(0, true, 1, 1));
+  EXPECT_TRUE(ClippingTextMatcher::isReliableRun(0, true, 2, 2));
+  EXPECT_TRUE(ClippingTextMatcher::isReliableRun(0, false, 3, 3));
+  EXPECT_TRUE(ClippingTextMatcher::isReliableRun(4, true, 3, 3));
+  EXPECT_TRUE(ClippingTextMatcher::isReliableRun(4, false, 3, 3));
+  EXPECT_FALSE(ClippingTextMatcher::isReliableRun(0, false, 0, 3));
+}
