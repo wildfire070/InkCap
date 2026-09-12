@@ -180,6 +180,12 @@ class DictionaryLookupController {
   std::atomic<bool> lookupCancelRequested = false;
   std::atomic<bool> lookupReadError = false;
 
+  // render() (called from the owning activity's render(RenderLock&&), i.e.
+  // on the render task under that lock) reads state/lookupWord/altFormWord
+  // directly. Route every mutation of state through this so the render-side
+  // read can't observe a torn write from the main task.
+  void setState(LookupState newState);
+
   void runLookup();
   void handleLookupFailed();
   void showReadError();
