@@ -17,7 +17,14 @@ class TocNcxParser final : public Print {
 
   std::string currentLabel;
   std::string currentSrc;
-  uint8_t currentDepth = 0;
+  // Wide enough that open/close balance (increment on <navPoint>, decrement
+  // and zero-check on </navPoint>) stays correct no matter how deep a
+  // crafted NCX nests -- a uint8_t here would wrap past 255 levels, throwing
+  // off the very zero-check this depends on to know when nesting has fully
+  // unwound. The value actually stored (BookMetadataCache::createTocEntry's
+  // `level` parameter) is clamped separately to fit its own uint8_t; this
+  // counter's only job is tracking depth correctly, not fitting in a byte.
+  uint32_t currentDepth = 0;
 
   static void startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void characterData(void* userData, const XML_Char* s, int len);
