@@ -80,4 +80,47 @@ TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheC
   EXPECT_EQ(image.getHeight(), 4);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, HiddenElementsSuppressContentAndResumeVisibleText) {
+  for (const char* tag : {"p", "h1", "span", "div", "a", "table"}) {
+    for (const char* value : {"hidden", "", "false"}) {
+      const XML_Char* attributes[] = {"hidden", value, "style", "display: block", nullptr};
+      ChapterHtmlSlimParser::startElement(&parser, tag, attributes);
+      ChapterHtmlSlimParser::startElement(&parser, "span", nullptr);
+      ChapterHtmlSlimParser::characterData(&parser, "HIDDEN ", 7);
+      ChapterHtmlSlimParser::endElement(&parser, "span");
+      ChapterHtmlSlimParser::endElement(&parser, tag);
+      EXPECT_EQ(parser.currentTextBlock->size(), 0u);
+      EXPECT_EQ(parser.partWordBufferIndex, 0);
+    }
+  }
+  ChapterHtmlSlimParser::characterData(&parser, "Visible ", 8);
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "Visible");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, HiddenImageDoesNotReadImageDataWithoutCss) {
+  parser.cssParser = nullptr;
+  const XML_Char* attributes[] = {"hidden", "", "src", "missing.jpg", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+  ChapterHtmlSlimParser::endElement(&parser, "img");
+  EXPECT_EQ(epub.streamReadCount, 0u);
+  EXPECT_EQ(parser.currentPage, nullptr);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, HiddenIdsDoNotBecomeAnchorsOrTocPageBreaks) {
+  parser.tocAnchors.push_back("hidden-chapter");
+  const XML_Char* idFirst[] = {"id", "hidden-chapter", "hidden", "hidden", nullptr};
+  const XML_Char* hiddenFirst[] = {"hidden", "", "id", "hidden-chapter", nullptr};
+  for (auto* attributes : {idFirst, hiddenFirst}) {
+    ChapterHtmlSlimParser::startElement(&parser, "h1", attributes);
+    ChapterHtmlSlimParser::characterData(&parser, "Hidden", 6);
+    ChapterHtmlSlimParser::endElement(&parser, "h1");
+    EXPECT_TRUE(parser.pendingAnchorId.empty());
+    ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+    EXPECT_TRUE(parser.anchorData.empty());
+    EXPECT_EQ(parser.completedPageCount, 0);
+    ChapterHtmlSlimParser::endElement(&parser, "p");
+  }
+}
+
 }  // namespace

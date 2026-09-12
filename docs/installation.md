@@ -11,6 +11,10 @@ nav_order: 2
 - Xteink X4 Pro
 - Seeed Studio Sticky
 
+Don't have a device yet? Get one directly from [Xteink](https://go.sjv.io/X4RGBb) or [Seeed Studio](https://www.seeedstudio.com/reTerminal-Sticky-p-6861.html?sensecap_affiliate=1Nxo3Gw&referring_service=link).
+
+Note: Your purchases using the above affiliate links help support ongoing development of Crossink.
+
 ## Web Installation via USB
 
 #### For new installs and updates.
