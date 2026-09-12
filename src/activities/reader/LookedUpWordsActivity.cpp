@@ -65,6 +65,12 @@ void LookedUpWordsActivity::onEnter() {
 }
 
 void LookedUpWordsActivity::reloadEntries() {
+  // Every call site (onEnter() and three loop()-reached spots) runs unlocked
+  // on the main task; render() reads entries/labels/uiItems via app.render().
+  // onEnter() runs unlocked by ActivityManager's own design (see
+  // DictionaryWordSelectActivity/DictionaryDefinitionActivity's onEnter()
+  // for the same reasoning), and loop() has no lock by default either.
+  RenderLock lock(*this);
   entries = LookupHistory::load(cachePath);
   labels.clear();
   labels.reserve(entries.size());
