@@ -303,6 +303,22 @@ bool ZipFile::loadAllFileStatSlims() {
     file.read(&sig, 4);
     if (sig != 0x02014b50) break;  // End of list
 
+    // Unlike the reserve() hint above (already capped against totalEntries),
+    // this loop itself was bounded only by actual central-directory bytes on
+    // disk -- a crafted zip could grow fileStatSlimCache without limit.
+    // Capping here closes that, but this is NOT a green light to call this
+    // on a large real EPUB: BookMetadataCache.cpp deliberately avoids this
+    // function entirely for exactly this reason (2000+ chapter books OOM
+    // even well under this cap on ESP32-C3's ~380KB RAM -- see
+    // https://github.com/crosspoint-reader/crosspoint-reader/issues/134).
+    // Prefer loadFileStatSlim() (single-entry lookup) for anything but a
+    // known-small archive.
+    if (fileStatSlimCache.size() >= MAX_ZIP_ENTRIES_RESERVE_HINT) {
+      LOG_ERR("ZIP", "loadAllFileStatSlims: entry count exceeds %u, stopping early",
+              static_cast<unsigned>(MAX_ZIP_ENTRIES_RESERVE_HINT));
+      break;
+    }
+
     FileStatSlim fileStat = {};
 
     file.seekCur(6);
