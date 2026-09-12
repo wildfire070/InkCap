@@ -2550,12 +2550,17 @@ class PublisherParser final : public Print {
       if (!buf) return 0;
       const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
       memcpy(buf, currentBufferPos, toRead);
-      if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
+      // remainingSize is the declared size from the zip entry -- a corrupted/
+      // malicious entry could feed more actual bytes than that, so compare
+      // with <= (not ==) and clamp the subtraction below to avoid underflowing
+      // this size_t, which would otherwise wrap and never report isFinal again.
+      const bool isFinalChunk = remainingSize <= toRead;
+      if (XML_ParseBuffer(parser, static_cast<int>(toRead), isFinalChunk) == XML_STATUS_ERROR) {
         return 0;
       }
       currentBufferPos += toRead;
       remainingInBuffer -= toRead;
-      remainingSize -= toRead;
+      remainingSize -= (remainingSize > toRead) ? toRead : remainingSize;
     }
     return size;
   }
@@ -2769,12 +2774,17 @@ class DescriptionParser final : public Print {
       if (!buf) return 0;
       const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
       memcpy(buf, currentBufferPos, toRead);
-      if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
+      // remainingSize is the declared size from the zip entry -- a corrupted/
+      // malicious entry could feed more actual bytes than that, so compare
+      // with <= (not ==) and clamp the subtraction below to avoid underflowing
+      // this size_t, which would otherwise wrap and never report isFinal again.
+      const bool isFinalChunk = remainingSize <= toRead;
+      if (XML_ParseBuffer(parser, static_cast<int>(toRead), isFinalChunk) == XML_STATUS_ERROR) {
         return 0;
       }
       currentBufferPos += toRead;
       remainingInBuffer -= toRead;
-      remainingSize -= toRead;
+      remainingSize -= (remainingSize > toRead) ? toRead : remainingSize;
     }
     return size;
   }
