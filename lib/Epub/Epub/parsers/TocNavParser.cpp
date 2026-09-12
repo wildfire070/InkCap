@@ -6,6 +6,7 @@
 #include <XmlParserUtils.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -160,8 +161,12 @@ void XMLCALL TocNavParser::endElement(void* userData, const XML_Char* name) {
       }
 
       if (self->cache) {
-        // olDepth gives us the nesting level (1-based from the outer ol)
-        self->cache->createTocEntry(self->currentLabel, href, anchor, self->olDepth);
+        // olDepth gives us the nesting level (1-based from the outer ol).
+        // Clamp to the storage parameter's own range; see olDepth's
+        // declaration for why the counter itself isn't a uint8_t.
+        const uint8_t clampedDepth =
+            static_cast<uint8_t>(std::min<uint32_t>(self->olDepth, std::numeric_limits<uint8_t>::max()));
+        self->cache->createTocEntry(self->currentLabel, href, anchor, clampedDepth);
       }
 
       self->currentLabel.clear();

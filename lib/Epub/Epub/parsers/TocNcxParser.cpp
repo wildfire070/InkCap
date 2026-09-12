@@ -6,6 +6,7 @@
 #include <XmlParserUtils.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -180,7 +181,11 @@ void XMLCALL TocNcxParser::endElement(void* userData, const XML_Char* name) {
       }
 
       if (self->cache) {
-        self->cache->createTocEntry(self->currentLabel, href, anchor, self->currentDepth);
+        // Clamp to the storage parameter's own range; see currentDepth's
+        // declaration for why the counter itself isn't a uint8_t.
+        const uint8_t clampedDepth =
+            static_cast<uint8_t>(std::min<uint32_t>(self->currentDepth, std::numeric_limits<uint8_t>::max()));
+        self->cache->createTocEntry(self->currentLabel, href, anchor, clampedDepth);
       }
 
       // Clear them so we don't re-add them if there are weird XML structures
