@@ -2294,7 +2294,7 @@ bool HomeActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN a
         if (selectedAction == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH) {
           // OptionPopup has already dismissed itself. Repaint Home before flushing
           // so the full refresh cannot preserve the popup in the panel image.
-          initialFullRefresh = true;
+          initialRefreshMode = HalDisplay::FULL_REFRESH;
           requestUpdate();
           return;
         }
@@ -2318,9 +2318,8 @@ void HomeActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto displayHomeBuffer = [this] {
-    const auto refreshMode = initialFullRefresh ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH;
-    initialFullRefresh = false;
-    renderer.displayBuffer(refreshMode);
+    renderer.displayBuffer(initialRefreshMode);
+    initialRefreshMode = HalDisplay::FAST_REFRESH;
   };
 
   if (usesMinimalHomeInteraction()) {

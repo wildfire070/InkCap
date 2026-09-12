@@ -777,7 +777,7 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
       // resolve inside it and no 32KB window is allocated.
       InflateStream inflate;
       if (!inflate.init(false)) {
-        LOG_ERR("ZIP", "Failed to init inflate stream");
+        LOG_ERR("ZIP", "Failed to init inflate stream for %s", filename);
         free(fileReadBuffer);
         free(data);
         return nullptr;
@@ -899,8 +899,8 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
     InflateStream inflate;
     if (!inflate.init(true)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream (free=%u, maxAlloc=%u, chunk=%zu)", ESP.getFreeHeap(),
-              ESP.getMaxAllocHeap(), chunkSize);
+      LOG_ERR("ZIP", "Failed to init inflate stream for %s (free=%u, maxAlloc=%u, chunk=%zu)", filename,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap(), chunkSize);
       free(outputBuffer);
       free(fileReadBuffer);
       return false;
