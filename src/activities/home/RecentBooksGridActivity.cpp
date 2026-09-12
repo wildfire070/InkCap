@@ -216,6 +216,13 @@ void ensureReusableCoverPath(RecentBook& book) {
 }  // namespace
 
 void RecentBooksGridActivity::loadRecentBooks() {
+  // Full vector reassignment, which can free/reallocate the backing store,
+  // while render() indexes recentBooks[]/reads .size() on the render task
+  // with no lock of its own on that side either -- guard the rebuild here
+  // rather than at each of the two call sites (onEnter() and
+  // reloadAfterBookAction()). Same reasoning as the sibling
+  // RecentBooksActivity::loadActiveTabEntries().
+  RenderLock lock(*this);
   recentBooks.clear();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
@@ -233,6 +240,9 @@ void RecentBooksGridActivity::ensureProgressLoaded(const int index) {
     return;
   }
 
+  // .progress/.progressLoaded are read by render() (progress label/circle)
+  // on the render task with no lock of its own on that side either.
+  RenderLock lock(*this);
   recentBooks[index].progress = RecentBookProgress::loadPercent(recentBooks[index].book);
   recentBooks[index].progressLoaded = true;
 }

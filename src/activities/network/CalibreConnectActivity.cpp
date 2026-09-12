@@ -24,14 +24,22 @@ void CalibreConnectActivity::onEnter() {
 
   requestUpdate();
   state = CalibreConnectState::WIFI_SELECTION;
-  connectedIP.clear();
-  connectedSSID.clear();
+  {
+    // connectedIP/connectedSSID/currentUploadName/lastCompleteName/
+    // lastProgressReceived/lastProgressTotal/lastCompleteAt are all read by
+    // render() on the render task with no lock of its own on that side
+    // either -- see the identical guard in loop()'s handleClient() path,
+    // which documents this exact hazard for these same fields.
+    RenderLock lock(*this);
+    connectedIP.clear();
+    connectedSSID.clear();
+    lastProgressReceived = 0;
+    lastProgressTotal = 0;
+    currentUploadName.clear();
+    lastCompleteName.clear();
+    lastCompleteAt = 0;
+  }
   lastHandleClientTime = 0;
-  lastProgressReceived = 0;
-  lastProgressTotal = 0;
-  currentUploadName.clear();
-  lastCompleteName.clear();
-  lastCompleteAt = 0;
   lastProcessedCompleteAt = 0;
   exitRequested = false;
 
@@ -40,14 +48,21 @@ void CalibreConnectActivity::onEnter() {
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& wifi = std::get<WifiResult>(result.data);
+                               // ActivityManager unlocks its RenderLock before invoking
+                               // result handlers ("Handler may acquire its own lock") --
+                               // same guard as above.
+                               RenderLock lock(*this);
                                connectedIP = wifi.ip;
                                connectedSSID = wifi.ssid;
                              }
                              onWifiSelectionComplete(!result.isCancelled);
                            });
   } else {
-    connectedIP = WiFi.localIP().toString().c_str();
-    connectedSSID = WiFi.SSID().c_str();
+    {
+      RenderLock lock(*this);
+      connectedIP = WiFi.localIP().toString().c_str();
+      connectedSSID = WiFi.SSID().c_str();
+    }
     startWebServer();
   }
 }
