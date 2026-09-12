@@ -31,6 +31,16 @@ namespace {
 
 constexpr fui::ActionId ACTION_ROW = 1;
 
+// scanResult (WiFi.scanComplete()'s return value, used below to size and fill
+// `networks`) reflects however many AP beacons the driver captured during the
+// scan window -- attacker-controlled RF environment, not a value this device
+// generates itself (e.g. many nearby APs broadcasting distinct SSIDs). With
+// no cap, both the networks.reserve(scanResult) allocation and the O(n^2)
+// per-network dedup loop below it would grow unboundedly, risking a heap
+// allocation failure (an abort() under this build's -fno-exceptions) well
+// before the list could ever usefully render on an e-ink screen.
+constexpr int MAX_SCAN_NETWORKS = 128;
+
 TouchActionButtons::Layout promptActionLayout(const Rect& screen, const ThemeMetrics& metrics, const int lineHeight) {
   constexpr int totalHeight = TouchActionButtons::kDefaultHeight * 2 + TouchActionButtons::kDefaultGap;
   const int top = screen.y + (screen.height - lineHeight * 3) / 2 + 80;
@@ -416,6 +426,10 @@ void WifiSelectionActivity::processWifiScanResults() {
   }
 
   LOG_INF("WIFI", "WiFi scan complete: rawNetworks=%d", scanResult);
+  const int cappedScanResult = std::min(static_cast<int>(scanResult), MAX_SCAN_NETWORKS);
+  if (cappedScanResult < scanResult) {
+    LOG_ERR("WIFI", "WiFi scan returned %d networks, capping to %d", scanResult, MAX_SCAN_NETWORKS);
+  }
 
   // Scan complete, process results: deduplicate in-place, keeping strongest signal
   int hiddenNetworks = 0;
@@ -428,9 +442,9 @@ void WifiSelectionActivity::processWifiScanResults() {
     networkRowItems.clear();
     networkStatuses.clear();
     networks.clear();
-    networks.reserve(scanResult);
+    networks.reserve(cappedScanResult);
 
-    for (int i = 0; i < scanResult; i++) {
+    for (int i = 0; i < cappedScanResult; i++) {
       char ssid[33];
       strlcpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid));
       const int32_t rssi = WiFi.RSSI(i);

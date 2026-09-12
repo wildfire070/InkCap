@@ -53,11 +53,22 @@ class HttpDownloader {
     std::string bearerToken;
   };
 
+  // Default ceiling for fetchUrl(std::string&) below: this class exists so
+  // large downloads don't need to fit in RAM (see class comment), so the
+  // in-memory overload is meant only for small responses. Without a cap, an
+  // unbounded std::string::append() driven by an arbitrarily large or
+  // infinite response would eventually fail to reallocate and abort the
+  // device under this build's -fno-exceptions -- the same bug class
+  // BookFusionHttpBounds::appendBounded() guards against for BookFusion's
+  // own HTTP responses.
+  static constexpr size_t DEFAULT_MAX_IN_MEMORY_RESPONSE_BYTES = 262144;
+
   /**
-   * Fetch text content from a URL with optional credentials.
+   * Fetch text content from a URL with optional credentials. Aborts (returns
+   * false) if the response exceeds maxBytes.
    */
   static bool fetchUrl(const std::string& url, std::string& outContent, const std::string& username = "",
-                       const std::string& password = "");
+                       const std::string& password = "", size_t maxBytes = DEFAULT_MAX_IN_MEMORY_RESPONSE_BYTES);
 
   static bool fetchUrl(const std::string& url, Stream& stream, const std::string& username = "",
                        const std::string& password = "");
