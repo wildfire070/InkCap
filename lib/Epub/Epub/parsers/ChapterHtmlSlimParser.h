@@ -36,6 +36,17 @@ class ChapterHtmlSlimParser {
   static constexpr uint8_t TABLE_CELL_PADDING = 6;
   static constexpr size_t MAX_INLINE_STYLE_DEPTH = 64;
   static constexpr size_t MAX_BLOCK_STYLE_DEPTH = 16;
+  // ancestorStack_ (below) grows one heap-string-holding entry per open tag
+  // in the chapter's XHTML, which is fully attacker-controlled EPUB content
+  // -- a crafted chapter with a long run of nested tags would otherwise grow
+  // it without bound, aborting the device on allocation failure under this
+  // build's -fno-exceptions (same bug class as MAX_INLINE_STYLE_DEPTH above,
+  // and as DictHtmlRenderer::kMaxTagNesting). Entries past this depth are
+  // simply not pushed; the close-tag handler's "pop ancestor entries at or
+  // below the new depth" loop needs no matching bookkeeping change, since it
+  // pops by comparing each entry's own stored depth against the current
+  // depth, not a per-close-tag counter.
+  static constexpr size_t MAX_CSS_ANCESTOR_DEPTH = 64;
 
   Epub* epub;
   const std::string& filepath;
