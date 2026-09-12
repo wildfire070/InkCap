@@ -1158,6 +1158,26 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
+    // width/height and dataLength are independent fields read straight from
+    // the file with no cross-check -- GfxRenderer's render loops trust
+    // width/height unconditionally to index into a bitmap sized only to
+    // dataLength bytes (pos = y*width+x, byte index pos>>2 for 2-bit or
+    // pos>>3 for 1-bit). A corrupted/malicious .cpfont with a large
+    // width/height but tiny dataLength would read past the glyph's slice of
+    // the shared mini bitmap arena -- for the last glyph, past the arena
+    // itself. Reject any glyph whose data can't actually cover its own
+    // claimed dimensions.
+    const EpdGlyph& g = s.miniGlyphs[mapIdx];
+    const uint32_t pixelCount = static_cast<uint32_t>(g.width) * g.height;
+    const uint32_t requiredBytes = s.header.is2Bit ? (pixelCount + 3) / 4 : (pixelCount + 7) / 8;
+    if (g.dataLength < requiredBytes) {
+      LOG_ERR("SDCF", "Prewarm: glyph %dx%d needs %u bytes but dataLength is %u (style %u, glyph %d)", g.width,
+              g.height, requiredBytes, g.dataLength, styleIdx, gIdx);
+      delete[] readOrder;
+      delete[] mappings;
+      freeStyleMiniData(s);
+      return failPrewarm(static_cast<int>(cpCount));
+    }
     lastReadIndex = gIdx;
   }
 
@@ -1736,6 +1756,22 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   if (file.read(reinterpret_cast<uint8_t*>(&tempGlyph), sizeof(EpdGlyph)) != sizeof(EpdGlyph)) {
     LOG_ERR("SDCF", "Overflow: failed to read glyph metadata for U+%04X style %u", codepoint, styleIdx);
     return nullptr;
+  }
+  // See prewarmStyle()'s identical check for why: width/height and
+  // dataLength are independent fields with no cross-check on disk, and
+  // GfxRenderer's render loops trust width/height unconditionally to index
+  // into this glyph's bitmap, which is allocated to exactly dataLength bytes
+  // below -- a corrupted/malicious .cpfont with a large width/height but
+  // tiny dataLength would read past that allocation.
+  {
+    const uint32_t pixelCount = static_cast<uint32_t>(tempGlyph.width) * tempGlyph.height;
+    const uint32_t requiredBytes = s.header.is2Bit ? (pixelCount + 3) / 4 : (pixelCount + 7) / 8;
+    if (tempGlyph.dataLength < requiredBytes) {
+      LOG_ERR("SDCF",
+              "Overflow: glyph %dx%d for U+%04X needs %u bytes but dataLength is %u -- rendering as %s",
+              tempGlyph.width, tempGlyph.height, codepoint, requiredBytes, tempGlyph.dataLength, "\xEF\xBF\xBD");
+      return nullptr;
+    }
   }
 
   // Read bitmap data into temporary (if any)
