@@ -254,17 +254,22 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
 
   // See SdCardFontManager::unloadAll()'s comment: render() reads fontMap/
   // fallbackFontMap_ unlocked on the render task's side, so this lookup and
-  // the setFallbackFont() writes below need the same guard.
-  GfxRenderer::MutexGuard guard(renderer);
-  const auto readerIt = renderer.getFontMap().find(manager_.getFontId(familyName));
-  if (readerIt == renderer.getFontMap().end()) return;
-
-  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+  // the setFallbackFont() writes below need the same guard. Scoped tightly
+  // around just those two touches -- NOT around loadFamilyExtraSize()'s SD
+  // reads below, which would otherwise stall the render task for the
+  // duration of up to kUiFontSizes' worth of file loads (loadFilePath()
+  // already guards its own map mutation internally).
   bool hasCjk = false;
-  for (const uint32_t cp : kCjkProbes) {
-    if (readerIt->second.hasCodepoint(cp)) {
-      hasCjk = true;
-      break;
+  {
+    GfxRenderer::MutexGuard guard(renderer);
+    const auto readerIt = renderer.getFontMap().find(manager_.getFontId(familyName));
+    if (readerIt == renderer.getFontMap().end()) return;
+    static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+    for (const uint32_t cp : kCjkProbes) {
+      if (readerIt->second.hasCodepoint(cp)) {
+        hasCjk = true;
+        break;
+      }
     }
   }
   if (!hasCjk) {
@@ -275,6 +280,7 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
   for (const auto& ui : kUiFontSizes) {
     const int sdFontId = manager_.loadFamilyExtraSize(*family, renderer, ui.pointSize);
     if (sdFontId != 0) {
+      GfxRenderer::MutexGuard guard(renderer);
       renderer.setFallbackFont(ui.fontId, sdFontId);
     } else {
       LOG_DBG("SDFS", "No %u pt SD glyphs for UI fallback in %s", ui.pointSize, familyName.c_str());
@@ -285,17 +291,18 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
 void SdCardFontSystem::setupUiFallbacksDirect(GfxRenderer& renderer, const char* familyName) {
   if (!familyName || familyName[0] == '\0') return;
 
-  // See setupUiFallbacks() above.
-  GfxRenderer::MutexGuard guard(renderer);
-  const auto readerIt = renderer.getFontMap().find(manager_.getFontId(manager_.currentFamilyName()));
-  if (readerIt == renderer.getFontMap().end()) return;
-
-  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+  // See setupUiFallbacks() above -- same tight scoping rationale.
   bool hasCjk = false;
-  for (const uint32_t cp : kCjkProbes) {
-    if (readerIt->second.hasCodepoint(cp)) {
-      hasCjk = true;
-      break;
+  {
+    GfxRenderer::MutexGuard guard(renderer);
+    const auto readerIt = renderer.getFontMap().find(manager_.getFontId(manager_.currentFamilyName()));
+    if (readerIt == renderer.getFontMap().end()) return;
+    static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+    for (const uint32_t cp : kCjkProbes) {
+      if (readerIt->second.hasCodepoint(cp)) {
+        hasCjk = true;
+        break;
+      }
     }
   }
   if (!hasCjk) return;
@@ -307,7 +314,10 @@ void SdCardFontSystem::setupUiFallbacksDirect(GfxRenderer& renderer, const char*
       continue;
     }
     const int sdFontId = manager_.loadFamilyExtraFile(path, familyName, pointSize, renderer);
-    if (sdFontId != 0) renderer.setFallbackFont(ui.fontId, sdFontId);
+    if (sdFontId != 0) {
+      GfxRenderer::MutexGuard guard(renderer);
+      renderer.setFallbackFont(ui.fontId, sdFontId);
+    }
   }
 }
 
