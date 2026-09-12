@@ -310,6 +310,15 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     LOG_ERR("FONT", "Font manifest download attempt failed (%d/%d, error=%d)", attempt, FONT_MANIFEST_MAX_ATTEMPTS,
             result);
   }
+  // errorMessage_ is read by render()'s ERROR-state block on the render task
+  // with no lock of its own on that side either -- every assignment to it
+  // for the rest of this function is guarded by this one lock. Safe to hold
+  // across everything below: the blocking network retries are already done
+  // (the loop above), and nothing remaining calls requestUpdateAndWait() or
+  // makes another blocking call (JSON parsing, SD I/O, and
+  // fontInstaller_.refreshRegistry()/rebuildListItems() are all synchronous
+  // local work).
+  RenderLock lock(*this);
   if (result != HttpDownloader::OK) {
     Storage.remove(MANIFEST_TMP);
     if (result == HttpDownloader::ABORTED) {
@@ -596,7 +605,14 @@ void FontDownloadActivity::updateAll() {
     }
 
     ManifestFamily family = manifestFamilies_[nextFamilyIndex];
-    activeDownloadFamilyName_ = family.name;
+    {
+      // activeDownloadFamilyName_ is read via .c_str() by render()'s
+      // DOWNLOADING-state block on the render task with no lock of its own
+      // on that side either -- see fetchAndParseManifest()'s errorMessage_
+      // guard for the same reasoning.
+      RenderLock lock(*this);
+      activeDownloadFamilyName_ = family.name;
+    }
     selectedIndex_ = 0;
     clearManifestFamilies();
 
@@ -730,7 +746,11 @@ bool FontDownloadActivity::computeFileCrc32(const char* path, uint32_t& outCrc) 
 void FontDownloadActivity::returnToFamilyList() {
   hasRetryFamily_ = false;
   retryFamily_ = ManifestFamily();
-  activeDownloadFamilyName_.clear();
+  {
+    // See updateAll()'s identical guard for why.
+    RenderLock lock(*this);
+    activeDownloadFamilyName_.clear();
+  }
 
   if (manifestReloadNeeded_) {
     {
@@ -782,7 +802,11 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     requestUpdate(true);
   };
 
-  activeDownloadFamilyName_ = family.name;
+  {
+    // See updateAll()'s identical guard for why.
+    RenderLock lock(*this);
+    activeDownloadFamilyName_ = family.name;
+  }
   downloadingFamilyIndex_ = -1;
   for (size_t i = 0; i < manifestFamilyCount_; ++i) {
     if (&manifestFamilies_[i] == &family) {
@@ -1175,9 +1199,14 @@ void FontDownloadActivity::loop() {
       hasRetryFamily_ = false;
       retryFamily_ = ManifestFamily();
       manifestReloadNeeded_ = false;
-      activeDownloadFamilyName_.clear();
-      errorMessage_.clear();
-      errorHint_.clear();
+      {
+        // See updateAll()'s activeDownloadFamilyName_ guard and
+        // fetchAndParseManifest()'s errorMessage_ guard for why.
+        RenderLock lock(*this);
+        activeDownloadFamilyName_.clear();
+        errorMessage_.clear();
+        errorHint_.clear();
+      }
       if (manifestFamilyCount_ == 0) {
         finishAfterBackPress();
       } else {

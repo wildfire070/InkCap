@@ -129,17 +129,26 @@ void BookFusionBrowserActivity::onEnter() {
   Activity::onEnter();
   sdFontSystem.releaseLoadedFont(renderer);
 
-  state = BrowserState::CHECK_WIFI;
-  selectedCategory = 0;
-  currentCategory = 0;
-  bookshelves = BookFusionBookshelfList{};
-  bookshelvesLoaded = false;
-  currentBookshelfId = 0;
-  currentBookshelfName.clear();
-  page = BookFusionSearchResult{};
-  selectorIndex = 0;
-  errorMessage.clear();
-  statusMessage = tr(STR_CHECKING_WIFI);
+  {
+    // currentBookshelfName/errorMessage/statusMessage are read via .c_str()
+    // by render()'s screen-builder helpers on the render task with no lock
+    // of its own on that side either -- this file had no RenderLock usage
+    // anywhere prior to this fix (except downloadBook()'s progress
+    // callback); every mutation site below now guards the same fields for
+    // the same reason, matching OpdsBookBrowserActivity's identical fix.
+    RenderLock lock(*this);
+    state = BrowserState::CHECK_WIFI;
+    selectedCategory = 0;
+    currentCategory = 0;
+    bookshelves = BookFusionBookshelfList{};
+    bookshelvesLoaded = false;
+    currentBookshelfId = 0;
+    currentBookshelfName.clear();
+    page = BookFusionSearchResult{};
+    selectorIndex = 0;
+    errorMessage.clear();
+    statusMessage = tr(STR_CHECKING_WIFI);
+  }
 
   uiReady = false;
   visibleRows = 1;
@@ -159,6 +168,7 @@ void BookFusionBrowserActivity::onEnter() {
     // short-lived fallback connection (see resolveClient()).
     checkAndConnectWifi();
   } else {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_BF_NO_TOKEN_MSG);
     requestUpdate();
@@ -910,8 +920,18 @@ void BookFusionBrowserActivity::render(RenderLock&&) {
 }
 
 void BookFusionBrowserActivity::showLoadingBeforeFetch() {
-  state = BrowserState::LOADING;
-  statusMessage = tr(STR_LOADING);
+  {
+    // statusMessage is read via .c_str() by render()'s buildStatusScreen()/
+    // buildDownloadScreen() on the render task with no lock of its own on
+    // that side either. Released before requestUpdateAndWait() below, which
+    // blocks for a render on this same task -- holding the lock across it
+    // would deadlock the render task trying to acquire the same mutex from
+    // a different task. Same reasoning as OpdsBookBrowserActivity's
+    // identical showLoadingBeforeFetch().
+    RenderLock lock(*this);
+    state = BrowserState::LOADING;
+    statusMessage = tr(STR_LOADING);
+  }
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
     LOG_ERR("BFBrowser", "Loading screen could not be rendered before fetch");
     requestUpdate(true);
@@ -925,20 +945,26 @@ int BookFusionBrowserActivity::totalMenuRows() const {
 void BookFusionBrowserActivity::selectCategory(int index) {
   if (index < 0 || index >= totalMenuRows()) return;
   selectedCategory = index;
-  // A search from a previous category/shelf (or a global one) shouldn't
-  // silently carry over onto this newly picked one.
-  activeSearchQuery.clear();
-  searchIsGlobal = false;
-  if (index < NUM_CATEGORIES) {
-    currentCategory = index;
-    currentBookshelfId = 0;
-    currentBookshelfName.clear();
-  } else {
-    const size_t shelfIdx = static_cast<size_t>(index - NUM_CATEGORIES);
-    if (shelfIdx >= bookshelves.shelves.size()) return;
-    currentCategory = -1;
-    currentBookshelfId = bookshelves.shelves[shelfIdx].id;
-    currentBookshelfName = bookshelves.shelves[shelfIdx].name;
+  {
+    // activeSearchQuery/currentBookshelfName are read via .c_str() by
+    // render()'s screen-builder helpers on the render task with no lock of
+    // its own on that side either.
+    RenderLock lock(*this);
+    // A search from a previous category/shelf (or a global one) shouldn't
+    // silently carry over onto this newly picked one.
+    activeSearchQuery.clear();
+    searchIsGlobal = false;
+    if (index < NUM_CATEGORIES) {
+      currentCategory = index;
+      currentBookshelfId = 0;
+      currentBookshelfName.clear();
+    } else {
+      const size_t shelfIdx = static_cast<size_t>(index - NUM_CATEGORIES);
+      if (shelfIdx >= bookshelves.shelves.size()) return;
+      currentCategory = -1;
+      currentBookshelfId = bookshelves.shelves[shelfIdx].id;
+      currentBookshelfName = bookshelves.shelves[shelfIdx].name;
+    }
   }
   selectorIndex = 0;
   topIndex = 0;
@@ -1059,7 +1085,11 @@ void BookFusionBrowserActivity::launchSearch(const bool global) {
 void BookFusionBrowserActivity::performSearch(const std::string& query, const bool global) {
   if (query.empty()) {
     const bool wasGlobal = searchIsGlobal;
-    activeSearchQuery.clear();
+    {
+      // See onEnter()'s identical guard for why.
+      RenderLock lock(*this);
+      activeSearchQuery.clear();
+    }
     searchIsGlobal = false;
     if (wasGlobal) {
       // A global search has no category/shelf of its own to fall back to --
@@ -1079,14 +1109,18 @@ void BookFusionBrowserActivity::performSearch(const std::string& query, const bo
     return;
   }
 
-  activeSearchQuery = query;
-  searchIsGlobal = global;
-  if (global) {
-    // No category/shelf filter for a global search -- clear whatever was
-    // current so loadPage() doesn't intersect it with one.
-    currentCategory = -1;
-    currentBookshelfId = 0;
-    currentBookshelfName.clear();
+  {
+    // See onEnter()'s identical guard for why.
+    RenderLock lock(*this);
+    activeSearchQuery = query;
+    searchIsGlobal = global;
+    if (global) {
+      // No category/shelf filter for a global search -- clear whatever was
+      // current so loadPage() doesn't intersect it with one.
+      currentCategory = -1;
+      currentBookshelfId = 0;
+      currentBookshelfName.clear();
+    }
   }
   state = BrowserState::BROWSING;
   selectorIndex = 0;
@@ -1108,7 +1142,12 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   // The previous page's books are dead weight once we've decided to
   // navigate; free them before the fetch instead of after, so they aren't
   // sitting in heap alongside the TLS handshake below.
-  page = BookFusionSearchResult{};
+  {
+    // page is read by render()'s buildBrowsingScreen() on the render task
+    // with no lock of its own on that side either.
+    RenderLock lock(*this);
+    page = BookFusionSearchResult{};
+  }
 
   // The e-ink framebuffer(s) are a permanent multi-KB heap resident that caps
   // the largest contiguous allocatable block well below what wolfSSL needs
@@ -1152,16 +1191,20 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   }
 
   if (err != BookFusionSyncClient::OK) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = BookFusionSyncClient::errorString(err);
     requestUpdate();
     return;
   }
 
-  page = std::move(result);
-  selectorIndex = 0;
-  topIndex = 0;
-  state = BrowserState::BROWSING;
+  {
+    RenderLock lock(*this);
+    page = std::move(result);
+    selectorIndex = 0;
+    topIndex = 0;
+    state = BrowserState::BROWSING;
+  }
   requestUpdate();
 }
 
@@ -1171,22 +1214,30 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   // directly regardless of row state, so refuse here too rather than burn
   // bandwidth on a file the device can't open.
   if (!bookFusionFormatIsEpub(book)) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_BF_FORMAT_UNSUPPORTED);
     requestUpdate();
     return;
   }
 
-  state = BrowserState::DOWNLOADING;
-  downloadTitle = book.title;
-  downloadAuthor = book.author;
-  statusMessage = tr(STR_CONNECTING);
-  downloadProgress = 0;
-  // From the search API response, not the live transfer -- lets the
-  // filesize/estimate line show immediately (matches InsiderPhD's fork).
-  // The transfer's own progress callback overwrites this with the actual
-  // measured total once it starts, which is authoritative if it differs.
-  downloadTotal = book.downloadSize;
+  {
+    // downloadTitle/downloadAuthor/statusMessage are read via .c_str() by
+    // render()'s buildDownloadScreen() on the render task with no lock of
+    // its own on that side either. Released before requestUpdateAndWait()
+    // below, which blocks for a render on this same task.
+    RenderLock lock(*this);
+    state = BrowserState::DOWNLOADING;
+    downloadTitle = book.title;
+    downloadAuthor = book.author;
+    statusMessage = tr(STR_CONNECTING);
+    downloadProgress = 0;
+    // From the search API response, not the live transfer -- lets the
+    // filesize/estimate line show immediately (matches InsiderPhD's fork).
+    // The transfer's own progress callback overwrites this with the actual
+    // measured total once it starts, which is authoritative if it differs.
+    downloadTotal = book.downloadSize;
+  }
   goHomeAfterCancel = false;
 
   // Must actually wait for this render (not just requestUpdate(true), which
@@ -1224,6 +1275,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   // download.
   BookFusionSyncClient::endSession();
   if (urlErr != BookFusionSyncClient::OK) {
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = BookFusionSyncClient::errorString(urlErr);
     requestUpdate();
@@ -1234,6 +1286,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   const bool useDownloadFolder = downloadFolder[0] != '\0';
   if (useDownloadFolder && !Storage.exists(downloadFolder) && !Storage.mkdir(downloadFolder)) {
     LOG_ERR("BFBrowser", "Could not create download folder %s", downloadFolder);
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_DOWNLOAD_FAILED);
     requestUpdate();
@@ -1255,7 +1308,10 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   // with it -- confirmed via a reproducible restart loop. The download
   // screen simply renders without a cover.
 
-  statusMessage = tr(STR_DOWNLOAD_WAIT);
+  {
+    RenderLock lock(*this);
+    statusMessage = tr(STR_DOWNLOAD_WAIT);
+  }
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
     LOG_ERR("BFBrowser", "Downloading screen could not be rendered before transfer");
     requestUpdate(true);
@@ -1345,6 +1401,14 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     ESP.restart();
   }
 
+  // state/errorMessage are read by render()'s buildStatusScreen()/
+  // rootScreen() switch on the render task with no lock of its own on that
+  // side either. Safe to hold across the rest of this function: nothing
+  // remaining calls requestUpdateAndWait() or makes another blocking
+  // network call (epub.load() and RECENT_BOOKS.addOrUpdateBook() are
+  // synchronous local SD work, same as other activities that hold
+  // RenderLock across SD I/O).
+  RenderLock lock(*this);
   if (result == HttpDownloader::OK) {
     BookFusionBookIdStore::saveBookId(filename, book.bookId);
 
@@ -1405,12 +1469,23 @@ void BookFusionBrowserActivity::loadShelvesAndShowMenu() {
   sdFontSystem.releaseForNetwork(renderer);
   renderer.releaseFrameBuffersForNetwork();
 
-  bookshelves = BookFusionBookshelfList{};
+  {
+    // totalMenuRows() (read by render()'s buildCategoryScreen()) only
+    // touches bookshelves.shelves when bookshelvesLoaded is true -- clear
+    // the gate before the fetch below, not just bookshelves itself, since
+    // bookshelvesLoaded could still be true here from a previous successful
+    // load and searchBookshelves() mutates bookshelves in place *during*
+    // the blocking network call that follows (which must not run under this
+    // lock). Without this, render() could read bookshelves.shelves mid-fill.
+    RenderLock lock(*this);
+    bookshelvesLoaded = false;
+    bookshelves = BookFusionBookshelfList{};
+  }
   const auto err = BookFusionSyncClient::searchBookshelves(bookshelves);
   // Best-effort: a failed fetch just means the menu shows categories only,
   // same as if the user has no shelves at all -- not worth an error screen.
-  bookshelvesLoaded = err == BookFusionSyncClient::OK;
-  if (!bookshelvesLoaded) {
+  const bool loaded = err == BookFusionSyncClient::OK;
+  if (!loaded) {
     LOG_ERR("BFBrowser", "searchBookshelves failed: %s", BookFusionSyncClient::errorString(err).c_str());
   }
 
@@ -1419,7 +1494,11 @@ void BookFusionBrowserActivity::loadShelvesAndShowMenu() {
     ESP.restart();
   }
 
-  state = BrowserState::CATEGORY_SELECTION;
+  {
+    RenderLock lock(*this);
+    bookshelvesLoaded = loaded;
+    state = BrowserState::CATEGORY_SELECTION;
+  }
   requestUpdate();
 }
 
@@ -1435,6 +1514,10 @@ void BookFusionBrowserActivity::onWifiSelectionComplete(const bool connected) {
   if (connected) {
     loadShelvesAndShowMenu();
   } else {
+    // Called from ActivityManager's resultHandler invocation, which unlocks
+    // its RenderLock first -- see onEnter()'s guard for why errorMessage
+    // needs one here.
+    RenderLock lock(*this);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_WIFI_CONN_FAILED);
     requestUpdate();

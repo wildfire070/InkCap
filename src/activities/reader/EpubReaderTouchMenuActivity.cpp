@@ -1055,10 +1055,17 @@ void EpubReaderTouchMenuActivity::openPane(const ReaderDrawerPane pane) {
   state.pane = pane;
   state.paneTopIndex = 0;
   state.selectedIndex = 0;
-  paneRows.clear();
-  if (pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
-  if (pane == ReaderDrawerPane::DictionaryFont) {
-    paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
+  {
+    // paneRows is read via activeRows() by render()'s screen-builder helpers
+    // on the render task with no lock of its own on that side either -- a
+    // vector reallocation racing that read is UB, not just a stale value.
+    // Same reasoning as previewDirty elsewhere in this file.
+    RenderLock lock(*this);
+    paneRows.clear();
+    if (pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
+    if (pane == ReaderDrawerPane::DictionaryFont) {
+      paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
+    }
   }
   requestUpdate();
 }
@@ -1075,10 +1082,14 @@ void EpubReaderTouchMenuActivity::closePane() {
   } else {
     state.pane = ReaderDrawerPane::Root;
   }
-  paneRows.clear();
-  if (state.pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
-  if (state.pane == ReaderDrawerPane::DictionaryFont) {
-    paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
+  {
+    // See openPane()'s identical guard for why.
+    RenderLock lock(*this);
+    paneRows.clear();
+    if (state.pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
+    if (state.pane == ReaderDrawerPane::DictionaryFont) {
+      paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
+    }
   }
   state.paneTopIndex = 0;
   state.selectedIndex = 0;
@@ -1100,7 +1111,13 @@ void EpubReaderTouchMenuActivity::activateListIndex(const int index) {
   if (state.pane == ReaderDrawerPane::Dictionary) {
     if (index < 0 || index >= static_cast<int>(dictionaryPaths.size())) return;
     if (saveBookDictionary(dictionaryPaths[static_cast<size_t>(index)])) {
-      bookDictionaryPath = dictionaryPaths[static_cast<size_t>(index)];
+      {
+        // bookDictionaryPath is read via rowValue() by render()'s
+        // buildRootRows() on the render task with no lock of its own on
+        // that side either -- see openPane()'s identical guard for why.
+        RenderLock lock(*this);
+        bookDictionaryPath = dictionaryPaths[static_cast<size_t>(index)];
+      }
       state.tab = ReaderDrawerTab::Settings;
       state.pane = ReaderDrawerPane::Root;
       state.selectedIndex = 1;
@@ -1112,7 +1129,11 @@ void EpubReaderTouchMenuActivity::activateListIndex(const int index) {
     if (index < 0 || index >= static_cast<int>(fontSettingIndexes.size())) return;
     if (state.pendingFontIndex == index) {
       state.pane = ReaderDrawerPane::ReaderFont;
-      paneRows = {RowId::FontFamily, RowId::FontSize};
+      {
+        // See openPane()'s identical guard for why.
+        RenderLock lock(*this);
+        paneRows = {RowId::FontFamily, RowId::FontSize};
+      }
       state.pendingFontIndex = -1;
       state.selectedIndex = 0;
       requestUpdate();
@@ -1430,12 +1451,19 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
 void EpubReaderTouchMenuActivity::openEnumOptions(const RowId row, const StrId title, std::vector<std::string> labels,
                                                   std::vector<uint8_t> values, const int selectedIndex) {
   if (labels.empty() || labels.size() != values.size()) return;
-  enumOptionRow = row;
-  enumOptionTitle = title;
-  enumOptionLabels = std::move(labels);
-  enumOptionValues = std::move(values);
-  enumOptionSelectedIndex =
-      static_cast<int16_t>(std::clamp(selectedIndex, 0, static_cast<int>(enumOptionLabels.size()) - 1));
+  {
+    // enumOptionLabels is read (indexed, via .c_str()) by render()'s
+    // buildEnumOptionsPane() on the render task with no lock of its own on
+    // that side either -- a vector move-assignment racing that read is UB,
+    // not just a stale value. Same reasoning as openPane()'s paneRows guard.
+    RenderLock lock(*this);
+    enumOptionRow = row;
+    enumOptionTitle = title;
+    enumOptionLabels = std::move(labels);
+    enumOptionValues = std::move(values);
+    enumOptionSelectedIndex =
+        static_cast<int16_t>(std::clamp(selectedIndex, 0, static_cast<int>(enumOptionLabels.size()) - 1));
+  }
   previewedEnumOptionIndex = -1;
   enumOptionReturnPane = state.pane;
   state.pane = ReaderDrawerPane::EnumOptions;
