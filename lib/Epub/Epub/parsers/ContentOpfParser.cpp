@@ -7,6 +7,7 @@
 #include <XmlParserUtils.h>
 
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <string_view>
 
@@ -521,8 +522,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       }
     }
 
-    // Collect CSS files
-    if (self->collectCssFiles && mediaType == MEDIA_TYPE_CSS) {
+    // Collect CSS files. Bounded at the same UINT16_MAX ceiling
+    // Epub::discoverCssFilesFromZip()'s equivalent push_back already
+    // enforces for this same cssFiles vector via a different code path --
+    // without this, a crafted manifest with an attacker-controlled number of
+    // <item> entries can grow it without limit before that check (or the
+    // UINT16_MAX-sized allocations Epub.cpp makes once cssFiles is populated)
+    // ever runs.
+    if (self->collectCssFiles && mediaType == MEDIA_TYPE_CSS && self->cssFiles.size() < UINT16_MAX) {
       self->cssFiles.push_back(href);
     }
 
