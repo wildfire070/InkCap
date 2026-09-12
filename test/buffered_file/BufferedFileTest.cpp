@@ -141,9 +141,9 @@ TEST(BufferedFile, BufferedSerializationMatchesExistingWireFormat) {
   std::string value;
   serialization::readPod(reader, number);
   EXPECT_EQ(number, 0x12345678U);
-  serialization::readString(reader, value);
+  ASSERT_TRUE(serialization::tryReadString(reader, value));
   EXPECT_EQ(value, std::string("a\0b", 3));
-  serialization::readString(reader, value);
+  ASSERT_TRUE(serialization::tryReadString(reader, value));
   EXPECT_TRUE(value.empty());
 }
 

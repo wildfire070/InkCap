@@ -1145,19 +1145,6 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
-    // Sanity-check the raw on-disk dataLength before it feeds the
-    // totalBitmapSize sum below -- a corrupted/malicious .cpfont could
-    // otherwise wrap that sum, causing an undersized allocation that the
-    // unbounded write loop further down then overflows.
-    static constexpr uint32_t MAX_GLYPH_DATA_LENGTH = 65536;
-    if (s.miniGlyphs[mapIdx].dataLength > MAX_GLYPH_DATA_LENGTH) {
-      LOG_ERR("SDCF", "Prewarm: unreasonable glyph data length %u (style %u, glyph %d)",
-              s.miniGlyphs[mapIdx].dataLength, styleIdx, gIdx);
-      delete[] readOrder;
-      delete[] mappings;
-      freeStyleMiniData(s);
-      return failPrewarm(static_cast<int>(cpCount));
-    }
     // width/height and dataLength are independent fields read straight from
     // the file with no cross-check -- GfxRenderer's render loops trust
     // width/height unconditionally to index into a bitmap sized only to
@@ -1184,10 +1171,10 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
   uint32_t totalBitmapSize = 0;
 
   if (!metadataOnly) {
-    // Compute total bitmap size. Each dataLength was already capped above,
-    // but check the running sum too: enough glyphs at that cap could still
-    // wrap a uint32_t, and a wrapped (small) total would pass straight to
-    // ensureArrayCapacity below and undersize the allocation.
+    // Compute total bitmap size. dataLength is a uint16_t (max 65535), but
+    // enough glyphs summed together could still wrap a uint32_t, and a
+    // wrapped (small) total would pass straight to ensureBitmapCapacity
+    // below and undersize the allocation.
     bool bitmapSizeOverflowed = false;
     for (uint32_t i = 0; i < validCount; i++) {
       const uint32_t next = totalBitmapSize + s.miniGlyphs[i].dataLength;
