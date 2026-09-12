@@ -531,11 +531,14 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const size_t maxBytes) {
   outContent.clear();
   return fetchUrl(
       url,
-      [&outContent](const uint8_t* data, size_t len) {
+      [&outContent, maxBytes](const uint8_t* data, size_t len) {
+        if (outContent.size() + len > maxBytes) {
+          return false;
+        }
         outContent.append(reinterpret_cast<const char*>(data), len);
         return true;
       },
