@@ -187,7 +187,17 @@ void DictionaryWordSelectActivity::onEnter() {
   mappedInput.setReaderTouchscreenOverride(true);
   ignoreInitialBackRelease_ = mappedInput.isPressed(MappedInputManager::Button::Back);
   const bool consumeInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm);
-  if (!buildWorkingSet(consumeInitialConfirm)) {
+  bool builtWorkingSet;
+  {
+    // buildWorkingSet() populates navigator's word/row arrays, which render()
+    // reads (getCurrentFlatIndex()/renderHighlight*()) -- guard it the same
+    // way the OOM-popup draw below already documents needing to be guarded
+    // against a stale pending render notification from before this activity
+    // became current.
+    RenderLock lock(*this);
+    builtWorkingSet = buildWorkingSet(consumeInitialConfirm);
+  }
+  if (!builtWorkingSet) {
     if (workingSetMemoryError_) {
       // onEnter() runs unlocked by design (ActivityManager::loop() releases
       // its RenderLock right before calling onEnter()), but this activity

@@ -343,7 +343,16 @@ void DictionaryDefinitionActivity::onEnter() {
     // exact visible glyph/style data only.
     renderer.releaseSdCardFontForLowMemory(definitionFontId_, /*preserveAdvanceTable=*/true);
   }
-  wrapText();
+  {
+    // onEnter() runs unlocked by design (ActivityManager::loop() releases its
+    // RenderLock right before calling onEnter()). wrapText() populates
+    // layout state render() reads; the FoundDefinition re-lookup path further
+    // down already guards its own wrapText() call for the identical reason
+    // (a stale pending render notification from before this activity became
+    // current) -- this first population was just missed.
+    RenderLock lock(*this);
+    wrapText();
+  }
   requestUpdate();
   // SD write overlaps the e-ink refresh kicked by requestUpdate() on the render task.
   LookupHistory::addWordIf(cachePath, historyWord, historyStatus, recordHistory);
