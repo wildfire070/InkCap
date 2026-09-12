@@ -138,6 +138,14 @@ jobs:
           path: .pio/build/x4-classic/firmware-x4-classic.bin
           if-no-files-found: error
 
+      - name: Upload Sticky firmware artifact
+        if: matrix.environment == 'sticky'
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-sticky
+          path: .pio/build/sticky/firmware-sticky.bin
+          if-no-files-found: error
+
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.
   test-status:

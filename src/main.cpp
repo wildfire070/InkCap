@@ -556,15 +556,13 @@ CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
   return action;
 }
 
-void notifyQuickLockChanged(const bool restoringAfterWake = false) {
+void notifyQuickLockChanged() {
   const bool locked = buttonShortcutController.isQuickLocked();
   x4ProHomeKeyTapPending = false;
   mappedInputManager.clearInjectedReleases();
   LOG_DBG("MAIN", "Quick Lock %s", locked ? "enabled" : "disabled");
   if (locked) {
-    if (!restoringAfterWake) {
-      APP_STATE.quickLockRestoreFrontlight = Frontlight.isOn();
-    }
+    APP_STATE.quickLockRestoreFrontlight = Frontlight.isOn();
     Frontlight.setOn(false);
     activityManager.notifyInputLockChanged(true);
     int top = 0;
@@ -1068,8 +1066,7 @@ bool readWakeShortPressFromNvs() {
 
 void mirrorWakeShortPressToNvs() {
 #ifndef SIMULATOR
-  const uint8_t expected =
-      (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP || APP_STATE.quickLockResumePending) ? 1 : 0;
+  const uint8_t expected = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP ? 1 : 0;
   nvs_handle_t handle;
   if (nvs_open(WAKE_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
   uint8_t current = 0;
@@ -1157,11 +1154,10 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.begin();
   display.setInverted(SETTINGS.screenInverted != 0);
   // FreeInkUI headers need more than 4 KB once the render loop and nested
-  // screen builders share the task stack. KOReader Sync and OPDS need the
-  // reader stack on S3 devices because their deferred Wi-Fi transitions can
-  // render a parent screen before the child activity is promoted. Other
-  // lightweight network targets use 8 KB; reader rendering retains its 16 KB
-  // budget.
+  // screen builders share the task stack. Some S3 network flows can render a
+  // parent screen before their deferred Wi-Fi child is promoted, so their
+  // caller selects the reader-sized stack. Lightweight network targets use
+  // 8 KB; reader rendering retains its 16 KB budget.
   activityManager.begin(useReaderRenderStack ? READER_RENDER_TASK_STACK_BYTES : NETWORK_RENDER_TASK_STACK_BYTES);
 
   // Initialize font decompressor for compressed reader fonts
@@ -1244,16 +1240,17 @@ void setup() {
   const bool isNetworkResume = snapshotTarget >= static_cast<uint32_t>(NetworkBootTarget::OTA);
   const bool followsWakeLightPolicy =
       isNetworkResume || (snapshotPayload & SILENT_REBOOT_FOLLOW_LIGHT_WAKE_POLICY) != 0;
-  // KOReader Sync, OPDS, and File Transfer can render their parent screens
-  // while a deferred Wi-Fi child is completing. On S3 devices, keep the
-  // reader-sized render stack without loading the rest of the reader
+  // KOReader Sync, OPDS, File Transfer, and Manage Fonts can render their
+  // parent screens while a deferred Wi-Fi child is completing. On S3 devices,
+  // keep the reader-sized render stack without loading the rest of the reader
   // resources. C3 devices retain the smaller network stack to preserve their
   // tighter internal-RAM budget.
   const bool useReaderRenderStack =
       !isNetworkResume ||
       (FREEINK_MCU_S3 && (snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_SYNC) ||
                           snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::OPDS) ||
-                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::FILE_TRANSFER)));
+                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::FILE_TRANSFER) ||
+                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::MANAGE_FONTS)));
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
@@ -1366,10 +1363,6 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   logBootHeap("boot state ready");
-  // X4 Pro wakes through a POWERON reset, so keep its frontlight off until
-  // the saved Quick Lock is explicitly unlocked below.
-  const bool restoreQuickLockAfterWake = APP_STATE.quickLockResumePending && isSleepWake && !recoveryFirmwareMode &&
-                                         !rebootedFromPanic && !isNetworkResume && !isSilentReboot;
   // Internal silent restarts retain the current light state. Network entry and
   // exit restarts must honor Restore on Wake like a normal user wake.
   const bool wasLightOnBeforeSleep = SETTINGS.frontlightOn != 0;
@@ -1391,9 +1384,6 @@ void setup() {
       restoreLightOn = false;
     }
   }
-  if (restoreQuickLockAfterWake) {
-    restoreLightOn = false;
-  }
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   if (recoveryFirmwareMode) {
@@ -1409,17 +1399,12 @@ void setup() {
   // skips the panel-clearing pass and the X3 initial-full-sync arming (see
   // HalDisplay::begin), so the first paint is FAST_REFRESH (~500ms) over the
   // retained frame and input dispatches against a visible UI.
-  // X4 Pro cuts its switched rails during sleep and wakes with a POWERON reset,
-  // while C3 boards normally report DEEPSLEEP. HalGPIO normalizes both hardware
-  // paths to PowerButton, so use that route with the one-shot persisted flag.
-  const auto quickLockResumeTrigger = static_cast<QuickLockTrigger>(APP_STATE.quickLockResumeTrigger);
   if (APP_STATE.quickLockResumePending) {
-    // Consume this before routing so a later cold boot cannot inherit a stale
-    // lock if reader restoration itself fails.
+    // A timeout wake starts an unlocked session. Keep this separate from the
+    // persisted short Power-button wake policy used before settings load.
     APP_STATE.quickLockResumePending = false;
-    APP_STATE.quickLockResumeTrigger = static_cast<uint8_t>(QuickLockTrigger::None);
+    APP_STATE.quickLockRestoreFrontlight = false;
     APP_STATE.saveToFile();
-    mirrorWakeShortPressToNvs();
   }
   // A boot-screen folder or an explicitly selected BMP opts a reader into
   // seeing its boot image after a power-button wake as well as a cold boot.
@@ -1577,7 +1562,10 @@ void setup() {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale
     // openEpubPath + lastSleepFromReader from a prior session.
-    activityManager.goHome(HomeMenuItem::NONE, true);
+    // X4's HALF refresh is the same single-pass clean transition already used
+    // by network screens. Keep X3's existing full refresh behavior unchanged.
+    const auto homeRefreshMode = gpio.deviceIsX3() ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
+    activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
@@ -1610,19 +1598,6 @@ void setup() {
     gpio.update();
     delay(10);
     gpio.update();
-  }
-
-  if (restoreQuickLockAfterWake) {
-    // Finish queued navigation (including Reader -> EPUB/TXT/XTC) before
-    // locking: the locked main loop intentionally does not dispatch activities.
-    // Waiting for a render alone would paint the temporary Reader loader and
-    // strand its pending transition, losing the page and its orientation.
-    activityManager.loop();
-    // Paint the reconstructed route before saving the badge backdrop. The wake
-    // release remains swallowed, so it cannot immediately unlock the device.
-    (void)activityManager.requestUpdateAndWait();
-    buttonShortcutController.restoreQuickLock(millis(), quickLockResumeTrigger);
-    notifyQuickLockChanged(true);
   }
 
   allowSleepAt = millis() + 2000;
@@ -1779,10 +1754,9 @@ void loop() {
     if (sleepTimeoutMs > 0 && buttonShortcutController.shouldQuickLockSleep(millis(), sleepTimeoutMs)) {
       LOG_DBG("SLP", "Quick Lock timeout triggered after %lu ms", sleepTimeoutMs);
       APP_STATE.quickLockResumePending = true;
-      APP_STATE.quickLockResumeTrigger = static_cast<uint8_t>(buttonShortcutController.quickLockTrigger());
       enterDeepSleep(true);
       // The simulator's deep sleep returns, unlike hardware. Keep its next
-      // test loop from treating the marker as a real reboot restore.
+      // test loop from treating the marker as a real reboot resume.
 #ifdef SIMULATOR
       APP_STATE.quickLockResumePending = false;
 #endif
