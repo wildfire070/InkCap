@@ -875,7 +875,14 @@ void XtcReaderActivity::openReadingStats() {
     return;
   }
   startActivityForResult(std::move(bookStats), [this](const ActivityResult&) {
-    if (xtc) stats = BookReadingStats::load(xtc->getCachePath());
+    // render() reads stats (a multi-field struct with std::array members, not
+    // a single-word store) via formatTimeLeftLabel() on the render task;
+    // guard this reassignment the same way deleteBookStats()/deleteBookCache()
+    // already guard theirs.
+    if (xtc) {
+      RenderLock lock(*this);
+      stats = BookReadingStats::load(xtc->getCachePath());
+    }
     globalStats = GlobalReadingStats::load();
     resumeReadingStatsTimer("book_stats_return");
     requestUpdate();
