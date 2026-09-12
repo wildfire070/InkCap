@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 struct ZipInflateCtx {
   HalFile* file = nullptr;
@@ -458,7 +459,19 @@ long ZipFile::getDataOffset(const FileStatSlim& fileStat) {
 
   const uint16_t filenameLength = pLocalHeader[26] + (pLocalHeader[27] << 8);
   const uint16_t extraOffset = pLocalHeader[28] + (pLocalHeader[29] << 8);
-  return fileOffset + localHeaderSize + filenameLength + extraOffset;
+  const uint64_t dataOffset = fileOffset + localHeaderSize + filenameLength + extraOffset;
+  // fileStat.localHeaderOffset is an unvalidated uint32_t straight from the
+  // zip's central directory. The sum above is computed in uint64_t, but this
+  // function returns `long` (32-bit on this target) -- without this check, a
+  // localHeaderOffset near UINT32_MAX plus the header/name/extra sizes could
+  // overflow on the implicit narrowing conversion, silently wrapping to a
+  // small, wrong-but-still-positive offset that bypasses every caller's
+  // `if (offset < 0) return false;` guard instead of failing loudly.
+  if (dataOffset > static_cast<uint64_t>(std::numeric_limits<long>::max())) {
+    LOG_ERR("ZIP", "Local header offset overflow: %llu", static_cast<unsigned long long>(dataOffset));
+    return -1;
+  }
+  return static_cast<long>(dataOffset);
 }
 
 bool ZipFile::loadZipDetails() {
