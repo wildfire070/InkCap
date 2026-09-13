@@ -19,6 +19,7 @@ enum PageElementTag : uint8_t {
   TAG_PageTableFragment = 3,
   TAG_PageHorizontalRule = 4,
   TAG_PageCssBorderBox = 5,
+  TAG_PageHrSectRule = 6,
 };
 
 // represents something that has been added to a page
@@ -120,6 +121,33 @@ class PageCssBorderBox final : public PageElement {
   bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageCssBorderBox; }
   static std::unique_ptr<PageCssBorderBox> deserialize(FsFile& file);
+};
+
+// The FanFicFare ".hr-sect" divider (see BlockStyle::hrSectDivider): two
+// short horizontal lines flanking one already-centered line of text, e.g.
+// "——— ✦ ———". The real CSS draws this with ::before/::after
+// pseudo-elements and flexbox, neither supported here; this reproduces the
+// visual result directly from the line's own centering math instead --
+// `textGap` (the line's wordXpos(0)) is the distance from this element's
+// left edge to where the text starts, and by construction of centering the
+// same gap applies symmetrically on the right, so no separate measurement
+// of the text's own width is needed.
+class PageHrSectRule final : public PageElement {
+  int16_t contentWidth;
+  int16_t textGap;
+
+ public:
+  static constexpr uint8_t MARGIN = 6;  // approximates the CSS's `margin: 0px 8px` around the pseudo-element bars
+
+  PageHrSectRule(const int16_t contentWidth, const int16_t textGap, const int16_t xPos, const int16_t yPos)
+      : PageElement(xPos, yPos), contentWidth(contentWidth), textGap(textGap) {}
+
+  int16_t getContentWidth() const { return contentWidth; }
+  int16_t getTextGap() const { return textGap; }
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  bool serialize(FsFile& file) override;
+  PageElementTag getTag() const override { return TAG_PageHrSectRule; }
+  static std::unique_ptr<PageHrSectRule> deserialize(FsFile& file);
 };
 
 struct TableFragmentCell {
