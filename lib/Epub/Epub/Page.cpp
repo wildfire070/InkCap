@@ -159,6 +159,75 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(FsFile& file
   return std::unique_ptr<PageHorizontalRule>(rule);
 }
 
+void PageCssBorderBox::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
+                              const bool foregroundBlack) {
+  (void)fontId;
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  const int left = xPos + xOffset;
+  const int top = yPos + yOffset;
+  const int right = left + width - 1;
+  const int bottom = top + height - 1;
+
+  if (borderTop) {
+    renderer.drawLine(left, top, right, top, THICKNESS, foregroundBlack);
+  }
+  if (borderBottom) {
+    // The thickness overload only grows downward in y (see drawLine's
+    // implementation), so start THICKNESS-1 rows above the bottom edge to
+    // keep the whole stroke inside the box instead of spilling past it.
+    const int strokeTop = bottom - (THICKNESS - 1);
+    renderer.drawLine(left, strokeTop, right, strokeTop, THICKNESS, foregroundBlack);
+  }
+  if (borderLeft) {
+    for (int i = 0; i < THICKNESS; ++i) {
+      renderer.drawLine(left + i, top, left + i, bottom, foregroundBlack);
+    }
+  }
+  if (borderRight) {
+    for (int i = 0; i < THICKNESS; ++i) {
+      renderer.drawLine(right - i, top, right - i, bottom, foregroundBlack);
+    }
+  }
+}
+
+bool PageCssBorderBox::serialize(FsFile& file) {
+  const auto sides = static_cast<uint8_t>((borderTop ? 1 : 0) | (borderRight ? 2 : 0) | (borderBottom ? 4 : 0) |
+                                          (borderLeft ? 8 : 0));
+  return serialization::tryWritePod(file, xPos) && serialization::tryWritePod(file, yPos) &&
+         serialization::tryWritePod(file, width) && serialization::tryWritePod(file, height) &&
+         serialization::tryWritePod(file, sides);
+}
+
+std::unique_ptr<PageCssBorderBox> PageCssBorderBox::deserialize(FsFile& file) {
+  int16_t xPos = 0;
+  int16_t yPos = 0;
+  int16_t width = 0;
+  int16_t height = 0;
+  uint8_t sides = 0;
+  if (!serialization::tryReadPod(file, xPos) || !serialization::tryReadPod(file, yPos) ||
+      !serialization::tryReadPod(file, width) || !serialization::tryReadPod(file, height) ||
+      !serialization::tryReadPod(file, sides)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated PageCssBorderBox metadata");
+    return nullptr;
+  }
+
+  if (width <= 0 || height <= 0) {
+    LOG_ERR("PGE", "Deserialization failed: invalid css border box metadata (width=%d height=%d)", width, height);
+    return nullptr;
+  }
+
+  auto* box = new (std::nothrow) PageCssBorderBox(width, height, (sides & 1) != 0, (sides & 2) != 0,
+                                                   (sides & 4) != 0, (sides & 8) != 0, xPos, yPos);
+  if (!box) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageCssBorderBox");
+    return nullptr;
+  }
+  return std::unique_ptr<PageCssBorderBox>(box);
+}
+
 bool TableFragmentCell::serialize(FsFile& file) const {
   if (colSpan == 0 || colSpan > MAX_TABLE_CELLS_PER_ROW || lines.size() > MAX_TABLE_LINES_PER_CELL) {
     LOG_ERR("PTB", "Serialization failed: invalid cell span/line count (span=%u lines=%u)", colSpan,
@@ -526,6 +595,7 @@ uint16_t Page::imageEstimateUnits(const uint16_t viewportHeight) const {
         hasReadableContent = true;
         break;
       case TAG_PageHorizontalRule:
+      case TAG_PageCssBorderBox:
         break;
     }
   }
@@ -642,6 +712,12 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
         return nullptr;
       }
       page->elements.push_back(std::move(rule));
+    } else if (tag == TAG_PageCssBorderBox) {
+      auto box = PageCssBorderBox::deserialize(file);
+      if (!box) {
+        return nullptr;
+      }
+      page->elements.push_back(std::move(box));
     } else {
       LOG_ERR("PGE", "Deserialization failed: Unknown tag %u", tag);
       return nullptr;

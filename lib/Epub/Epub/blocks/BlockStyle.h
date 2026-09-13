@@ -46,6 +46,13 @@ struct BlockStyle {
   // a full line-height gap when the <br> block stays empty (section-break use case).
   // NOT propagated through getCombinedBlockStyle so it can't leak into sibling blocks.
   bool fromBrElement = false;
+  // Presence-only border sides (see CssStyle.h). Belongs strictly to the
+  // element that declared it -- getCombinedBlockStyle starts from a copy of
+  // the child style, so these are never inherited from an ancestor block.
+  bool borderTop = false;
+  bool borderRight = false;
+  bool borderBottom = false;
+  bool borderLeft = false;
 
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
@@ -161,6 +168,10 @@ struct BlockStyle {
     if (cssStyle.hasPageBreakAfter()) {
       blockStyle.pageBreakAfter = cssStyle.pageBreakAfter;
     }
+    if (cssStyle.hasBorderTop()) blockStyle.borderTop = cssStyle.borderTop;
+    if (cssStyle.hasBorderRight()) blockStyle.borderRight = cssStyle.borderRight;
+    if (cssStyle.hasBorderBottom()) blockStyle.borderBottom = cssStyle.borderBottom;
+    if (cssStyle.hasBorderLeft()) blockStyle.borderLeft = cssStyle.borderLeft;
     return blockStyle;
   }
 };

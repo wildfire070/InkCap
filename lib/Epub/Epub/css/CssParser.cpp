@@ -69,8 +69,9 @@ constexpr size_t MAX_SELECTOR_LENGTH = 256;
 constexpr size_t CSS_LENGTH_FIELD_COUNT = 11;
 constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
 constexpr size_t CSS_FIXED_STYLE_BYTES = 5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) +
-                                         4 * sizeof(uint8_t) + 2 * sizeof(uint8_t) + sizeof(uint32_t);
-static_assert(CSS_FIXED_STYLE_BYTES == 70,
+                                         4 * sizeof(uint8_t) + 2 * sizeof(uint8_t) + 4 * sizeof(uint8_t) +
+                                         sizeof(uint32_t);
+static_assert(CSS_FIXED_STYLE_BYTES == 74,
               "CssStyle cache payload changed; update read/writeCssStylePayload and bump CSS_CACHE_VERSION");
 
 // Check if character is CSS whitespace
@@ -234,6 +235,46 @@ bool tryInterpretBackgroundBlack(std::string_view value, bool& out) {
   }
 
   return false;
+}
+
+// Presence-only border parsing: this fork renders every border as a fixed-
+// thickness solid black line, so only whether a side has ANY visible border
+// matters -- width/style/color specifics are intentionally not tracked (same
+// simplification as tryInterpretBackgroundBlack's bool-not-a-color choice).
+// The border shorthand is "<width> || <style> || <color>" in any order; only
+// the leading numeric token (if any) is inspected, since a real zero width
+// ("0"/"0px") is the only way authors express "no border" other than the
+// none/hidden keywords.
+bool tryInterpretBorderPresence(std::string_view value, bool& out) {
+  value = trimCssWhitespace(stripTrailingImportant(value));
+  if (value.empty()) return false;
+
+  if (iequalsAscii(value, "none") || iequalsAscii(value, "hidden")) {
+    out = false;
+    return true;
+  }
+
+  std::string_view firstToken = value;
+  const size_t spacePos = value.find_first_of(" \t\n\r\f");
+  if (spacePos != std::string_view::npos) firstToken = value.substr(0, spacePos);
+
+  size_t unitStart = firstToken.size();
+  for (size_t i = 0; i < firstToken.size(); ++i) {
+    const char c = firstToken[i];
+    if (!std::isdigit(c) && c != '.' && c != '-' && c != '+') {
+      unitStart = i;
+      break;
+    }
+  }
+  float numericValue = 0.0f;
+  if (tryParseNumber(firstToken.substr(0, unitStart), numericValue)) {
+    out = numericValue != 0.0f;
+  } else {
+    // No leading number (e.g. "solid", "solid #9b9b9b") -- CSS defaults
+    // border-width to "medium" (non-zero) when omitted, so treat as present.
+    out = true;
+  }
+  return true;
 }
 
 }  // anonymous namespace
@@ -531,6 +572,36 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     if (tryInterpretCssPageBreak(value, pageBreakAfter)) {
       style.pageBreakAfter = pageBreakAfter;
       style.defined.pageBreakAfter = 1;
+    }
+  } else if (iequalsAscii(name, "border")) {
+    bool present = false;
+    if (tryInterpretBorderPresence(value, present)) {
+      style.borderTop = style.borderRight = style.borderBottom = style.borderLeft = present;
+      style.defined.borderTop = style.defined.borderRight = style.defined.borderBottom = style.defined.borderLeft = 1;
+    }
+  } else if (iequalsAscii(name, "border-top")) {
+    bool present = false;
+    if (tryInterpretBorderPresence(value, present)) {
+      style.borderTop = present;
+      style.defined.borderTop = 1;
+    }
+  } else if (iequalsAscii(name, "border-right")) {
+    bool present = false;
+    if (tryInterpretBorderPresence(value, present)) {
+      style.borderRight = present;
+      style.defined.borderRight = 1;
+    }
+  } else if (iequalsAscii(name, "border-bottom")) {
+    bool present = false;
+    if (tryInterpretBorderPresence(value, present)) {
+      style.borderBottom = present;
+      style.defined.borderBottom = 1;
+    }
+  } else if (iequalsAscii(name, "border-left")) {
+    bool present = false;
+    if (tryInterpretBorderPresence(value, present)) {
+      style.borderLeft = present;
+      style.defined.borderLeft = 1;
     }
   }
 }
@@ -983,7 +1054,11 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
       !writeByte(static_cast<uint8_t>(style.backgroundBlack ? 1 : 0)) ||
       !writeByte(static_cast<uint8_t>(style.verticalAlign)) || !writeByte(static_cast<uint8_t>(style.direction)) ||
       !writeByte(static_cast<uint8_t>(style.pageBreakBefore ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.pageBreakAfter ? 1 : 0))) {
+      !writeByte(static_cast<uint8_t>(style.pageBreakAfter ? 1 : 0)) ||
+      !writeByte(static_cast<uint8_t>(style.borderTop ? 1 : 0)) ||
+      !writeByte(static_cast<uint8_t>(style.borderRight ? 1 : 0)) ||
+      !writeByte(static_cast<uint8_t>(style.borderBottom ? 1 : 0)) ||
+      !writeByte(static_cast<uint8_t>(style.borderLeft ? 1 : 0))) {
     return false;
   }
 
@@ -1010,6 +1085,10 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   if (style.defined.pageBreakBefore) definedBits |= 1 << 20;
   if (style.defined.pageBreakAfter) definedBits |= 1 << 21;
   if (style.defined.fontVariantCaps) definedBits |= 1 << 22;
+  if (style.defined.borderTop) definedBits |= 1 << 23;
+  if (style.defined.borderRight) definedBits |= 1 << 24;
+  if (style.defined.borderBottom) definedBits |= 1 << 25;
+  if (style.defined.borderLeft) definedBits |= 1 << 26;
   return writeBytes(&definedBits, sizeof(definedBits));
 }
 
@@ -1056,6 +1135,15 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.pageBreakBefore = pageBreakVal != 0;
   if (file.read(&pageBreakVal, 1) != 1) return false;
   style.pageBreakAfter = pageBreakVal != 0;
+  uint8_t borderVal = 0;
+  if (file.read(&borderVal, 1) != 1) return false;
+  style.borderTop = borderVal != 0;
+  if (file.read(&borderVal, 1) != 1) return false;
+  style.borderRight = borderVal != 0;
+  if (file.read(&borderVal, 1) != 1) return false;
+  style.borderBottom = borderVal != 0;
+  if (file.read(&borderVal, 1) != 1) return false;
+  style.borderLeft = borderVal != 0;
 
   uint32_t definedBits = 0;
   if (file.read(&definedBits, sizeof(definedBits)) != sizeof(definedBits)) return false;
@@ -1081,6 +1169,10 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.defined.pageBreakBefore = (definedBits & 1 << 20) != 0;
   style.defined.pageBreakAfter = (definedBits & 1 << 21) != 0;
   style.defined.fontVariantCaps = (definedBits & 1 << 22) != 0;
+  style.defined.borderTop = (definedBits & 1 << 23) != 0;
+  style.defined.borderRight = (definedBits & 1 << 24) != 0;
+  style.defined.borderBottom = (definedBits & 1 << 25) != 0;
+  style.defined.borderLeft = (definedBits & 1 << 26) != 0;
   return true;
 }
 
