@@ -697,11 +697,13 @@ void ChapterHtmlSlimParser::flushLongTextRunIfNeeded(const bool force) {
     return;
   }
 
-  const int horizontalInset = currentTextBlock->getBlockStyle().totalHorizontalInset();
+  const BlockStyle& runBlockStyle = currentTextBlock->getBlockStyle();
+  const int horizontalInset = runBlockStyle.totalHorizontalInset();
   const uint16_t effectiveWidth =
       (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  const int effectiveFontId = runBlockStyle.headingFontId != 0 ? runBlockStyle.headingFontId : fontId;
   if (!currentTextBlock->layoutAndExtractLines(
-          renderer, fontId, effectiveWidth,
+          renderer, effectiveFontId, effectiveWidth,
           [this](const std::shared_ptr<TextBlock>& textBlock, const uint32_t offset) {
             addLineToPage(textBlock, offset);
           },
@@ -975,6 +977,31 @@ void ChapterHtmlSlimParser::finalizePendingCloseBorderBoxes() {
     }
     borderBoxCount_--;
   }
+}
+
+// Resolves a block's CSS font-size (if any) to a real font resource via
+// fontSizeLadder_, once per block. Deliberately does NOT implement residual
+// glyph scaling (GfxRenderer has no scaled-text-rendering primitive at all
+// today; see the block-level-only note in FontSizeLadder.h) -- when the
+// nearest rung isn't a real match (ladder empty, or too far from the
+// requested size to matter) or the chapter's one auxiliary font slot is
+// already claimed by an earlier, differently-sized block, blockStyle.headingFontId
+// simply stays 0 (render with the body font, no visual change) rather than
+// approximating via scaling. See FontDecompressor::MAX_PAGE_SLOTS=4 for why
+// only one non-body font can be resident per chapter (body regular/bold/
+// italic + one auxiliary is exactly that budget).
+void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
+  if (blockStyle.fontResolved) return;
+  blockStyle.fontResolved = true;
+  if (blockStyle.fontSizeMultiplier == 1.0f) return;
+
+  const FontSizeLadder::Resolved resolved = fontSizeLadder_.resolve(blockStyle.fontSizeMultiplier * 100.0f);
+  if (resolved.fontId == 0) return;  // no ladder, or the body font is already the closest match
+
+  if (auxFontId_ == 0) auxFontId_ = resolved.fontId;
+  if (resolved.fontId != auxFontId_) return;  // aux slot already claimed by a differently-sized block
+
+  blockStyle.headingFontId = resolved.fontId;
 }
 
 // Called from addLineToPage() once currentPage/currentPageNextY are settled
@@ -2784,6 +2811,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
     auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
         headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
+    self->resolveBlockFont(accumulated);
     if (self->blockStyleCount_ < MAX_BLOCK_STYLE_DEPTH) {
       accumulated.depth = self->depth;  // Track depth for matching pop
       self->blockStyleBuf_[self->blockStyleCount_++] = accumulated;
@@ -2819,6 +2847,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->currentCssStyle = cssStyle;
       auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
           userAlignmentBlockStyle, BlockStyle::CombineAxis::Horizontal);
+      self->resolveBlockFont(accumulated);
       if (self->blockStyleCount_ < MAX_BLOCK_STYLE_DEPTH) {
         accumulated.depth = self->depth;  // Track depth for matching pop
         self->blockStyleBuf_[self->blockStyleCount_++] = accumulated;
@@ -3940,7 +3969,8 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     return;
   }
 
-  const int lineHeight = effectiveLineHeight() + line->getRubyShift(renderer.getFontAscenderSize(fontId));
+  const int lineFontId = line->getBlockStyle().headingFontId != 0 ? line->getBlockStyle().headingFontId : fontId;
+  const int lineHeight = effectiveLineHeight(lineFontId) + line->getRubyShift(renderer.getFontAscenderSize(lineFontId));
 
   if (!currentPage) {
     if (!startNewPage("line layout")) {
@@ -3999,8 +4029,10 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
   currentPageNextY += lineHeight;
 }
 
-int ChapterHtmlSlimParser::effectiveLineHeight() const {
-  return std::max(1, static_cast<int>(renderer.getLineHeight(fontId) * lineCompression + 0.5f));
+int ChapterHtmlSlimParser::effectiveLineHeight() const { return effectiveLineHeight(fontId); }
+
+int ChapterHtmlSlimParser::effectiveLineHeight(const int fontIdForLine) const {
+  return std::max(1, static_cast<int>(renderer.getLineHeight(fontIdForLine) * lineCompression + 0.5f));
 }
 
 void ChapterHtmlSlimParser::makePages() {

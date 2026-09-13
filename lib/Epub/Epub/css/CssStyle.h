@@ -103,6 +103,7 @@ struct CssPropertyFlags {
   uint32_t borderRight : 1;
   uint32_t borderBottom : 1;
   uint32_t borderLeft : 1;
+  uint32_t fontSize : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -130,13 +131,14 @@ struct CssPropertyFlags {
         borderTop(0),
         borderRight(0),
         borderBottom(0),
-        borderLeft(0) {}
+        borderLeft(0),
+        fontSize(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
-           pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft;
+           pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft || fontSize;
   }
 
   void clearAll() {
@@ -146,6 +148,7 @@ struct CssPropertyFlags {
     imageHeight = imageWidth = display = backgroundBlack = verticalAlign = direction = 0;
     pageBreakBefore = pageBreakAfter = fontVariantCaps = 0;
     borderTop = borderRight = borderBottom = borderLeft = 0;
+    fontSize = 0;
   }
 };
 
@@ -187,6 +190,11 @@ struct CssStyle {
   bool borderRight = false;
   bool borderBottom = false;
   bool borderLeft = false;
+  // Unitless multiplier of the BODY em size (1.0 = same size as the body
+  // font), normalized from whatever unit/keyword the CSS used at parse time
+  // (see CssParser's font-size handling). Block-level only: resolved once
+  // per block against a FontSizeLadder, never per inline run/word.
+  float fontSizeMultiplier = 1.0f;
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -297,6 +305,10 @@ struct CssStyle {
       borderLeft = base.borderLeft;
       defined.borderLeft = 1;
     }
+    if (base.hasFontSize()) {
+      fontSizeMultiplier = base.fontSizeMultiplier;
+      defined.fontSize = 1;
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -325,6 +337,7 @@ struct CssStyle {
   [[nodiscard]] bool hasBorderRight() const { return defined.borderRight; }
   [[nodiscard]] bool hasBorderBottom() const { return defined.borderBottom; }
   [[nodiscard]] bool hasBorderLeft() const { return defined.borderLeft; }
+  [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
@@ -343,6 +356,7 @@ struct CssStyle {
     pageBreakBefore = false;
     pageBreakAfter = false;
     borderTop = borderRight = borderBottom = borderLeft = false;
+    fontSizeMultiplier = 1.0f;
     defined.clearAll();
   }
 };

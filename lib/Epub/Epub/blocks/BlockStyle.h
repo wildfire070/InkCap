@@ -53,6 +53,15 @@ struct BlockStyle {
   bool borderRight = false;
   bool borderBottom = false;
   bool borderLeft = false;
+  // Block-level font-size resolution (see FontSizeLadder.h and
+  // ChapterHtmlSlimParser's resolveBlockFont). fontSizeMultiplier is the raw
+  // CSS value (unitless, relative to the body em size); headingFontId is 0
+  // ("use the body font") unless the ladder found a real pre-rendered font
+  // resource close enough to render natively. fontResolved guards against
+  // re-resolving a block whose style is read more than once.
+  float fontSizeMultiplier = 1.0f;
+  int32_t headingFontId = 0;
+  bool fontResolved = false;
 
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
@@ -172,6 +181,7 @@ struct BlockStyle {
     if (cssStyle.hasBorderRight()) blockStyle.borderRight = cssStyle.borderRight;
     if (cssStyle.hasBorderBottom()) blockStyle.borderBottom = cssStyle.borderBottom;
     if (cssStyle.hasBorderLeft()) blockStyle.borderLeft = cssStyle.borderLeft;
+    if (cssStyle.hasFontSize()) blockStyle.fontSizeMultiplier = cssStyle.fontSizeMultiplier;
     return blockStyle;
   }
 };
