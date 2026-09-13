@@ -231,16 +231,33 @@ TEST_F(ChapterHtmlSlimParserTest, FontSizeResolvesToNearestLadderRungWhenExactMa
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 999);
 }
 
-TEST_F(ChapterHtmlSlimParserTest, FontSizeWithNoLadderMatchKeepsBodyFont) {
-  // Ladder has only a 133% rung; 175% is far enough that the ladder's own
-  // dead-zone/nearest-rung logic still picks it (see FontSizeLadderTest for
-  // that math) -- but with an EMPTY ladder there is nothing to snap to at
-  // all, so the body font (headingFontId == 0) must be kept.
+TEST_F(ChapterHtmlSlimParserTest, FontSizeWithNoLadderMatchFallsBackToResidualScale) {
+  // With an EMPTY ladder (e.g. an SD-card body font, whose id never matches a
+  // built-in family's rungs) there is no real font resource to snap to, so
+  // the body font stays the render font (headingFontId == 0) -- but rather
+  // than silently dropping font-size entirely, the desired 175% is kept as a
+  // residual scale that GfxRenderer::drawTextScaled() resamples at render time.
   const XML_Char* attributes[] = {"style", "font-size: 1.75em", nullptr};
   ChapterHtmlSlimParser::startElement(&parser, "h1", attributes);
 
   ASSERT_NE(parser.currentTextBlock, nullptr);
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 0);
+  EXPECT_FLOAT_EQ(parser.currentTextBlock->getBlockStyle().fontSizeResidualScale, 1.75f);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FontSizeResidualScaleIsClampedToSaneRange) {
+  // A pathological CSS value (way beyond any real heading/pre use) must not
+  // produce illegibly tiny or oversized resampled text.
+  const XML_Char* hugeAttrs[] = {"style", "font-size: 6em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", hugeAttrs);
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_FLOAT_EQ(parser.currentTextBlock->getBlockStyle().fontSizeResidualScale, 2.0f);
+  ChapterHtmlSlimParser::endElement(&parser, "h1");
+
+  const XML_Char* tinyAttrs[] = {"style", "font-size: 0.1em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", tinyAttrs);
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_FLOAT_EQ(parser.currentTextBlock->getBlockStyle().fontSizeResidualScale, 0.6f);
 }
 
 TEST_F(ChapterHtmlSlimParserTest, SecondDifferentlySizedBlockFallsBackOnceAuxSlotIsClaimed) {
@@ -261,6 +278,31 @@ TEST_F(ChapterHtmlSlimParserTest, SecondDifferentlySizedBlockFallsBackOnceAuxSlo
   // claimed by 111 -- this block must keep the body font, not claim a second.
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 0);
   EXPECT_EQ(parser.auxFontId_, 111);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, LayoutWidthForBlockNarrowsBudgetByResidualScale) {
+  // Laying out UNSCALED text against width/scale, then rendering the result
+  // scaled, is exactly equivalent to laying it out at native scale -- this is
+  // the whole mechanism that lets residual-scale rendering reuse ParsedText's
+  // word-wrap/hyphenation/ruby code completely unmodified. Verify the math
+  // directly since the test harness's stub GfxRenderer always measures text
+  // at zero width, so wrap-overflow can't be observed through a real layout.
+  BlockStyle enlarging;
+  enlarging.fontSizeResidualScale = 1.75f;
+  EXPECT_EQ(parser.layoutWidthForBlock(enlarging, 350), 200);  // 350 / 1.75
+
+  BlockStyle shrinking;
+  shrinking.fontSizeResidualScale = 0.5f;
+  EXPECT_EQ(parser.layoutWidthForBlock(shrinking, 100), 200);  // 100 / 0.5
+
+  // A block that resolved to a real ladder font renders at native size via
+  // that font's own glyphs -- no width adjustment, regardless of scale.
+  BlockStyle ladderResolved;
+  ladderResolved.headingFontId = 42;
+  ladderResolved.fontSizeResidualScale = 1.75f;
+  EXPECT_EQ(parser.layoutWidthForBlock(ladderResolved, 350), 350);
+
+  EXPECT_EQ(parser.layoutWidthForBlock(BlockStyle{}, 350), 350);
 }
 
 TEST_F(ChapterHtmlSlimParserTest, OrderedListItemsAreNumbered) {
