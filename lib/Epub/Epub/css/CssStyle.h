@@ -99,6 +99,10 @@ struct CssPropertyFlags {
   uint32_t pageBreakBefore : 1;
   uint32_t pageBreakAfter : 1;
   uint32_t fontVariantCaps : 1;
+  uint32_t borderTop : 1;
+  uint32_t borderRight : 1;
+  uint32_t borderBottom : 1;
+  uint32_t borderLeft : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -122,13 +126,17 @@ struct CssPropertyFlags {
         direction(0),
         pageBreakBefore(0),
         pageBreakAfter(0),
-        fontVariantCaps(0) {}
+        fontVariantCaps(0),
+        borderTop(0),
+        borderRight(0),
+        borderBottom(0),
+        borderLeft(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
-           pageBreakAfter || fontVariantCaps;
+           pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft;
   }
 
   void clearAll() {
@@ -137,6 +145,7 @@ struct CssPropertyFlags {
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
     imageHeight = imageWidth = display = backgroundBlack = verticalAlign = direction = 0;
     pageBreakBefore = pageBreakAfter = fontVariantCaps = 0;
+    borderTop = borderRight = borderBottom = borderLeft = 0;
   }
 };
 
@@ -170,6 +179,14 @@ struct CssStyle {
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
   bool pageBreakBefore = false;
   bool pageBreakAfter = false;
+  // Presence-only border support: e-ink rendering draws a fixed-thickness solid
+  // black line per side when set, ignoring the CSS width/style/color specifics
+  // (matches this file's existing "backgroundBlack is a bool, not a color"
+  // simplification). Any border value other than none/0/0px sets these true.
+  bool borderTop = false;
+  bool borderRight = false;
+  bool borderBottom = false;
+  bool borderLeft = false;
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -264,6 +281,22 @@ struct CssStyle {
       fontVariantCaps = base.fontVariantCaps;
       defined.fontVariantCaps = 1;
     }
+    if (base.hasBorderTop()) {
+      borderTop = base.borderTop;
+      defined.borderTop = 1;
+    }
+    if (base.hasBorderRight()) {
+      borderRight = base.borderRight;
+      defined.borderRight = 1;
+    }
+    if (base.hasBorderBottom()) {
+      borderBottom = base.borderBottom;
+      defined.borderBottom = 1;
+    }
+    if (base.hasBorderLeft()) {
+      borderLeft = base.borderLeft;
+      defined.borderLeft = 1;
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -288,6 +321,10 @@ struct CssStyle {
   [[nodiscard]] bool hasPageBreakBefore() const { return defined.pageBreakBefore; }
   [[nodiscard]] bool hasPageBreakAfter() const { return defined.pageBreakAfter; }
   [[nodiscard]] bool hasFontVariantCaps() const { return defined.fontVariantCaps; }
+  [[nodiscard]] bool hasBorderTop() const { return defined.borderTop; }
+  [[nodiscard]] bool hasBorderRight() const { return defined.borderRight; }
+  [[nodiscard]] bool hasBorderBottom() const { return defined.borderBottom; }
+  [[nodiscard]] bool hasBorderLeft() const { return defined.borderLeft; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
@@ -305,6 +342,7 @@ struct CssStyle {
     verticalAlign = CssVerticalAlign::Baseline;
     pageBreakBefore = false;
     pageBreakAfter = false;
+    borderTop = borderRight = borderBottom = borderLeft = false;
     defined.clearAll();
   }
 };
