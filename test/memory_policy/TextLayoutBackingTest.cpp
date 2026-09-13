@@ -87,3 +87,30 @@ TEST_F(TextLayoutBackingTest, AllocationFailureReturnsWithoutPartialLinesOrLeaks
   EXPECT_TRUE(fakeheap::live.empty());
 }
 #endif
+
+TEST_F(TextLayoutBackingTest, SerializeRoundTripsBlockLevelFontSizeResolution) {
+  // A cached section reloads TextBlocks directly, without re-running
+  // ChapterHtmlSlimParser::resolveBlockFont() -- these two fields must
+  // survive serialize/deserialize or a reopened book silently loses
+  // block-level font-size resolution until the cache is next rebuilt.
+  BlockStyle style;
+  style.fontSizeMultiplier = 1.75f;
+  style.headingFontId = 424242;
+  style.fontResolved = true;
+
+  TextBlock block({"Title"}, {0}, {EpdFontFamily::REGULAR}, {}, {}, {}, {}, {}, style);
+  ASSERT_TRUE(block.valid());
+
+  FsFile output;
+  ASSERT_TRUE(Storage.openFileForWrite("test", "fontsize", output));
+  ASSERT_TRUE(block.serialize(output));
+  output.close();
+
+  FsFile input;
+  ASSERT_TRUE(Storage.openFileForRead("test", "fontsize", input));
+  auto reloaded = TextBlock::deserialize(input);
+  ASSERT_NE(reloaded, nullptr);
+  EXPECT_FLOAT_EQ(reloaded->getBlockStyle().fontSizeMultiplier, 1.75f);
+  EXPECT_EQ(reloaded->getBlockStyle().headingFontId, 424242);
+  EXPECT_TRUE(reloaded->getBlockStyle().fontResolved);
+}

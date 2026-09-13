@@ -731,6 +731,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   bool changeReaderFontSize(bool larger, FontSizeStepMode mode = FontSizeStepMode::Wrap);
   int getReaderFontId() const;
   int getBuiltInReaderFontId() const;
+  int getBuiltInReaderFontId(FONT_SIZE size) const;
 
   // If count_only is true, returns the number of settings items that would be written.
   uint8_t writeSettings(HalFile& file, bool count_only = false) const;

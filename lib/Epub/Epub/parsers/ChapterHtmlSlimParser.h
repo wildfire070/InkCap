@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Epub/EpubRenderMode.h"
+#include "Epub/FontSizeLadder.h"
 #include "Epub/FootnoteEntry.h"
 #include "Epub/Page.h"
 #include "Epub/ParsedText.h"
@@ -183,6 +184,17 @@ class ChapterHtmlSlimParser {
   BorderBoxScope borderBoxStack_[MAX_BORDER_BOX_DEPTH];
   size_t borderBoxCount_ = 0;
 
+  // The body font's sibling sizes (see FontSizeLadder.h), set via
+  // setFontSizeLadder() before parsing starts; empty (all-default) unless the
+  // caller supplied one. auxFontId_ is the ONE non-body font this chapter may
+  // additionally hold resident, budgeted against FontDecompressor's 4 page
+  // slots (body regular/bold/italic + one auxiliary) -- the first block whose
+  // resolved font differs from the body claims this slot; any later block
+  // that would need a DIFFERENT font just keeps its own body-font rendering
+  // instead (no crisp swap, but never a second aux slot).
+  FontSizeLadder fontSizeLadder_;
+  int32_t auxFontId_ = 0;
+
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;
@@ -295,6 +307,7 @@ class ChapterHtmlSlimParser {
   void completeCurrentPage();
   void makePages();
   int effectiveLineHeight() const;
+  int effectiveLineHeight(int fontIdForLine) const;
   bool isPreviewBuild() const { return !previewAnchor.empty() && previewMaxPages > 0; }
   bool isScanningForPreviewAnchor() const { return isPreviewBuild() && !previewAnchorFound; }
   bool handlePreviewScanStart(const XML_Char** atts);
@@ -312,6 +325,7 @@ class ChapterHtmlSlimParser {
   void emitHorizontalRule(const BlockStyle& blockStyle);
   void beginCssBorderBoxIfNeeded(const BlockStyle& blockStyle);
   void endCssBorderBoxIfNeeded();
+  void resolveBlockFont(BlockStyle& blockStyle);
   void materializeOpenBorderBoxesIfNeeded();
   void finalizeOpenBorderBoxesForPageBreak();
   void finalizePendingCloseBorderBoxes();
@@ -379,6 +393,12 @@ class ChapterHtmlSlimParser {
         tocAnchors(std::move(tocAnchors)) {}
 
   ~ChapterHtmlSlimParser();
+  // Must be called before parsing starts if block-level font-size resolution
+  // is wanted (see resolveBlockFont). Deliberately not a constructor
+  // parameter -- ReaderRenderSpec::fontSizeLadder is optional, settings-
+  // derived data the caller may not always have on hand, and this keeps the
+  // already-long positional constructor unchanged.
+  void setFontSizeLadder(const FontSizeLadder& ladder) { fontSizeLadder_ = ladder; }
   bool parseAndBuildPages();
   bool beginParse();
   ParseStatus parseStep();

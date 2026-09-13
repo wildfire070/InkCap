@@ -2,6 +2,7 @@
 #include <cstdint>
 
 #include "EpubRenderMode.h"
+#include "FontSizeLadder.h"
 
 // The resolved text-rendering configuration a reader hands to the layout
 // engine. Section-cache validation keys on every field: a section file built
@@ -27,6 +28,10 @@ struct ReaderRenderSpec {
   bool guideReadingEnabled = false;
   uint8_t wordSpacing = 0;
   EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
+  // Deliberately excluded from readerRenderSpecSignature() below: this is a
+  // deterministic function of fontId (already part of the signature), so
+  // hashing it too would be redundant, not more correct.
+  FontSizeLadder fontSizeLadder;
 };
 
 inline uint32_t readerRenderSpecSignature(const ReaderRenderSpec& spec) {

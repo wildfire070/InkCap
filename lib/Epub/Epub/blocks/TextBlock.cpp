@@ -231,13 +231,18 @@ bool TextBlock::hasRuby() const {
   return false;
 }
 
-void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y,
+void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const int x, const int y,
                        const bool foregroundBlack) const {
   if (!isValid) {
     LOG_ERR("TXB", "Render skipped: invalid block");
     return;
   }
 
+  // Prefer this line's own resolved block-level font-size font (see
+  // ChapterHtmlSlimParser::resolveBlockFont/FontSizeLadder.h) over the
+  // chapter body font the caller passed in -- shadows the parameter so every
+  // existing `fontId` use below picks this up with no further changes.
+  const int fontId = blockStyle.headingFontId != 0 ? blockStyle.headingFontId : bodyFontId;
   const bool scanning = renderer.isFontCacheScanning();
   const int ascender = renderer.getFontAscenderSize(fontId);
   for (uint16_t i = 0; i < numWords; i++) {
@@ -419,7 +424,13 @@ bool TextBlock::serialize(HalFile& file) const {
          serialization::tryWritePod(file, blockStyle.textIndent) &&
          serialization::tryWritePod(file, blockStyle.textIndentDefined) &&
          serialization::tryWritePod(file, blockStyle.isRtl) &&
-         serialization::tryWritePod(file, blockStyle.directionDefined);
+         serialization::tryWritePod(file, blockStyle.directionDefined) &&
+         // A cached section reloads TextBlocks directly, without re-running
+         // ChapterHtmlSlimParser::resolveBlockFont() -- persist its resolved
+         // output here or a reopened book would silently lose block-level
+         // font-size resolution until the cache is next invalidated/rebuilt.
+         serialization::tryWritePod(file, blockStyle.fontSizeMultiplier) &&
+         serialization::tryWritePod(file, blockStyle.headingFontId);
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
@@ -525,10 +536,13 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       !serialization::tryReadPod(file, blockStyle.textIndent) ||
       !serialization::tryReadPod(file, blockStyle.textIndentDefined) ||
       !serialization::tryReadPod(file, blockStyle.isRtl) ||
-      !serialization::tryReadPod(file, blockStyle.directionDefined)) {
+      !serialization::tryReadPod(file, blockStyle.directionDefined) ||
+      !serialization::tryReadPod(file, blockStyle.fontSizeMultiplier) ||
+      !serialization::tryReadPod(file, blockStyle.headingFontId)) {
     LOG_ERR("TXB", "Deserialization failed: truncated block style metadata");
     return nullptr;
   }
+  blockStyle.fontResolved = true;  // already resolved when this was cached; never re-resolve on reload
 
   return block;
 }

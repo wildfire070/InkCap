@@ -165,6 +165,42 @@ TEST(CssBorderPropertyTest, StyleOnlyValueWithoutExplicitWidthIsPresent) {
   EXPECT_TRUE(style.borderTop);
 }
 
+TEST(CssFontSizePropertyTest, EmValueSetsExactMultiplier) {
+  // Mirrors the real ".fff_titlepage .title h1 { font-size: 1.75em; }" case.
+  const auto style = CssParser::parseInlineStyle("font-size: 1.75em");
+  ASSERT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.75f);
+}
+
+TEST(CssFontSizePropertyTest, PercentValueDividesBy100) {
+  const auto style = CssParser::parseInlineStyle("font-size: 125%");
+  ASSERT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.25f);
+}
+
+TEST(CssFontSizePropertyTest, PxValueDividesBy16) {
+  const auto style = CssParser::parseInlineStyle("font-size: 20px");
+  ASSERT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.25f);
+}
+
+TEST(CssFontSizePropertyTest, SmallerKeywordFoldsOntoSmall) {
+  const auto style = CssParser::parseInlineStyle("font-size: smaller");
+  ASSERT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 0.8f);
+}
+
+TEST(CssFontSizePropertyTest, LargerKeywordFoldsOntoLarge) {
+  const auto style = CssParser::parseInlineStyle("font-size: larger");
+  ASSERT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.2f);
+}
+
+TEST(CssFontSizePropertyTest, InvalidKeywordIsNotSet) {
+  const auto style = CssParser::parseInlineStyle("font-size: inherit");
+  EXPECT_FALSE(style.hasFontSize());
+}
+
 TEST_F(CssDescendantDepthTest, FivePlusPartSelectorIsRejectedNotMismatched) {
   // A 5-part selector (4 context parts + subject) exceeds MAX_DESCENDANT_CONTEXT_PARTS's
   // "4 context parts" budget only when it has 5 context parts (6 total) -- but a selector
