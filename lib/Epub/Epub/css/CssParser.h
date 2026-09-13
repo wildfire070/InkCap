@@ -3,6 +3,7 @@
 #include <Arena.h>
 #include <HalStorage.h>
 
+#include <array>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -24,10 +25,13 @@
  *   - Class selectors: .classname
  *   - Combined: element.classname
  *   - Grouped: selector1, selector2 { }
- *   - Two-part descendant: ancestor subject (e.g. "div p", "section.chapter p")
+ *   - Descendant selectors of up to 5 simple parts (e.g. "div p",
+ *     "section.chapter p", ".fff_titlepage .title h1"), matched
+ *     existentially: every context part just needs to match *some* open
+ *     ancestor, not necessarily its immediate parent or in nesting order.
  *
  * Not supported (silently ignored):
- *   - Three-or-more-part descendant selectors
+ *   - Descendant selectors of more than 5 simple parts
  *   - Child/sibling combinators (>, +, ~)
  *   - Pseudo-classes and pseudo-elements
  *   - Media queries (content is skipped)
@@ -56,9 +60,13 @@ class CssParser {
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
   static constexpr uint32_t CSS_CACHE_MAGIC = 0x435843FF;  // bytes: 0xFF, "CXC"
-  static constexpr uint8_t CSS_CACHE_VERSION = 15;
+  static constexpr uint8_t CSS_CACHE_VERSION = 16;
 
   static constexpr size_t MAX_DESCENDANT_RULES = 100;
+  // Ancestor-context parts a descendant selector may carry ahead of its subject
+  // (e.g. ".fff_titlepage .title h1" has 2). 4 comfortably covers the deepest
+  // selector observed in real EPUB stylesheets (4-part) with headroom to spare.
+  static constexpr size_t MAX_DESCENDANT_CONTEXT_PARTS = 4;
   static constexpr size_t CSS_INDEX_BYTES_PER_RULE = 8;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
@@ -165,8 +173,13 @@ class CssParser {
   static constexpr uint8_t CSS_CACHE_FLAG_PARTIAL = 1 << 0;
 
   struct DescendantRule {
-    std::string ancestorSelector;  // e.g. "div", ".chapter", "section.body"
-    std::string subjectSelector;   // e.g. "p", ".indent", "p.indent"
+    // Ancestor-context parts, outermost first; only the first `contextCount`
+    // entries are populated (e.g. a 2-part rule like "div p" has contextCount
+    // == 1, contextSelectors[0] == "div"). Unused trailing entries are
+    // default-constructed empty strings, which cost no heap allocation (SSO).
+    std::array<std::string, MAX_DESCENDANT_CONTEXT_PARTS> contextSelectors;
+    uint8_t contextCount = 0;
+    std::string subjectSelector;  // e.g. "p", ".indent", "p.indent"
     CssStyle style;
   };
 

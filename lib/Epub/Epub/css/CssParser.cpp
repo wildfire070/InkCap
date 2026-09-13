@@ -621,13 +621,22 @@ bool CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
         if (isDescendantSelector) {
           if (descendantRules_.size() >= MAX_DESCENDANT_RULES) return;
 
-          std::string_view parts[2];
+          // Up to MAX_DESCENDANT_CONTEXT_PARTS ancestor-context parts plus one
+          // subject (the rightmost part). Anything longer is rejected below,
+          // same as the prior hard "exactly 2" cutoff was.
+          constexpr size_t kMaxParts = CssParser::MAX_DESCENDANT_CONTEXT_PARTS + 1;
+          std::string_view parts[kMaxParts];
           size_t partCount = 0;
+          bool tooManyParts = false;
           forEachDelimitedToken(sel, isCssWhitespace, [&](std::string_view part) {
-            if (partCount < 2) parts[partCount] = part;
+            if (partCount < kMaxParts) {
+              parts[partCount] = part;
+            } else {
+              tooManyParts = true;
+            }
             ++partCount;
           });
-          if (partCount != 2) return;
+          if (tooManyParts || partCount < 2) return;
 
           auto isSimpleSelector = [](std::string_view s) -> bool {
             int dotCount = 0;
@@ -637,10 +646,22 @@ bool CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
             }
             return dotCount <= 1;
           };
-          if (!isSimpleSelector(parts[0]) || !isSimpleSelector(parts[1])) return;
+          for (size_t i = 0; i < partCount; ++i) {
+            if (!isSimpleSelector(parts[i])) return;
+          }
 
+          const std::string_view subject = parts[partCount - 1];
+          const size_t contextCount = partCount - 1;
+
+          auto sameContext = [&](const DescendantRule& rule) {
+            if (rule.contextCount != contextCount) return false;
+            for (size_t i = 0; i < contextCount; ++i) {
+              if (!iequalsAscii(rule.contextSelectors[i], parts[i])) return false;
+            }
+            return true;
+          };
           auto it = std::find_if(descendantRules_.begin(), descendantRules_.end(), [&](const DescendantRule& rule) {
-            return iequalsAscii(rule.ancestorSelector, parts[0]) && iequalsAscii(rule.subjectSelector, parts[1]);
+            return sameContext(rule) && iequalsAscii(rule.subjectSelector, subject);
           });
           if (it != descendantRules_.end()) {
             it->style.applyOver(style);
@@ -649,7 +670,14 @@ bool CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
               limitReached = true;
               return;
             }
-            descendantRules_.push_back({std::string(parts[0]), std::string(parts[1]), style});
+            DescendantRule rule;
+            rule.contextCount = static_cast<uint8_t>(contextCount);
+            for (size_t i = 0; i < contextCount; ++i) {
+              rule.contextSelectors[i] = std::string(parts[i]);
+            }
+            rule.subjectSelector = std::string(subject);
+            rule.style = style;
+            descendantRules_.push_back(std::move(rule));
           }
           return;
         }
@@ -850,15 +878,30 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
     result.applyOver(matchedStyle);
   }
 
-  // 2. Apply two-part descendant rules — higher specificity than bare element, lower than class.
+  // 2. Apply descendant rules (up to MAX_DESCENDANT_CONTEXT_PARTS ancestor-context
+  // parts) — higher specificity than bare element, lower than class. Each context
+  // part just needs to match SOME open ancestor (existential, no adjacency/nesting-
+  // order check), the same approximation used when this only supported 2-part rules.
   if (!ancestors.empty() && !descendantRules_.empty()) {
     for (const auto& rule : descendantRules_) {
       if (!selectorMatchesElement(rule.subjectSelector, tagName, classAttr)) continue;
-      for (const auto& anc : ancestors) {
-        if (selectorMatchesElement(rule.ancestorSelector, anc.tag, anc.classAttr)) {
-          result.applyOver(rule.style);
+
+      bool allContextPartsMatched = true;
+      for (uint8_t partIdx = 0; partIdx < rule.contextCount; ++partIdx) {
+        bool partMatched = false;
+        for (const auto& anc : ancestors) {
+          if (selectorMatchesElement(rule.contextSelectors[partIdx], anc.tag, anc.classAttr)) {
+            partMatched = true;
+            break;
+          }
+        }
+        if (!partMatched) {
+          allContextPartsMatched = false;
           break;
         }
+      }
+      if (allContextPartsMatched) {
+        result.applyOver(rule.style);
       }
     }
   }
@@ -1155,7 +1198,12 @@ CssParser::CacheStatus CssParser::inspectCache() const {
     return CacheStatus::Invalid;
   }
   for (uint16_t i = 0; i < descendantCount; ++i) {
-    for (uint8_t selectorIndex = 0; selectorIndex < 2; ++selectorIndex) {
+    uint8_t contextCount = 0;
+    if (!readExact(&contextCount, sizeof(contextCount)) || contextCount > MAX_DESCENDANT_CONTEXT_PARTS) {
+      return CacheStatus::Invalid;
+    }
+    // contextCount context selectors, then the subject selector: all non-empty.
+    for (uint8_t selectorIndex = 0; selectorIndex < static_cast<uint8_t>(contextCount + 1); ++selectorIndex) {
       uint16_t selectorLen = 0;
       if (!readExact(&selectorLen, sizeof(selectorLen)) || selectorLen == 0 || selectorLen > MAX_SELECTOR_LENGTH ||
           !skipBytes(selectorLen)) {
@@ -1247,15 +1295,24 @@ bool CssParser::saveToCache(const bool complete) const {
     }
   }
 
-  // Write descendant rules: count, then (ancestorSelector, subjectSelector, CssStyle) per entry
+  // Write descendant rules: count, then (contextCount, contextSelectors[0..contextCount),
+  // subjectSelector, CssStyle) per entry.
   const auto descendantCount = static_cast<uint16_t>(descendantRules_.size());
   writeBytes(&descendantCount, sizeof(descendantCount));
   for (const auto& rule : descendantRules_) {
-    const auto ancLen = static_cast<uint16_t>(rule.ancestorSelector.size());
-    if (!writeBytes(&ancLen, sizeof(ancLen)) || !writeBytes(rule.ancestorSelector.data(), ancLen)) {
+    if (!writeByte(rule.contextCount)) {
       writeOk = false;
       break;
     }
+    for (uint8_t partIdx = 0; partIdx < rule.contextCount; ++partIdx) {
+      const auto& ctx = rule.contextSelectors[partIdx];
+      const auto ctxLen = static_cast<uint16_t>(ctx.size());
+      if (!writeBytes(&ctxLen, sizeof(ctxLen)) || !writeBytes(ctx.data(), ctxLen)) {
+        writeOk = false;
+        break;
+      }
+    }
+    if (!writeOk) break;
     const auto subLen = static_cast<uint16_t>(rule.subjectSelector.size());
     if (!writeBytes(&subLen, sizeof(subLen)) || !writeBytes(rule.subjectSelector.data(), subLen) ||
         !writeCssStylePayload(file, rule.style)) {
@@ -1516,8 +1573,24 @@ bool CssParser::loadFromCache() {
         out.resize(len);
         return file.read(&out[0], len) == len;
       };
+      uint8_t contextCount = 0;
+      if (file.read(&contextCount, sizeof(contextCount)) != sizeof(contextCount) ||
+          contextCount > MAX_DESCENDANT_CONTEXT_PARTS) {
+        LOG_DBG("CSS", "Truncated/invalid CSS cache reading descendant rule context count");
+        rulesBySelector_.clear();
+        descendantRules_.clear();
+        return false;
+      }
       DescendantRule rule;
-      if (!readStr(rule.ancestorSelector) || !readStr(rule.subjectSelector)) {
+      rule.contextCount = contextCount;
+      bool contextOk = true;
+      for (uint8_t partIdx = 0; partIdx < contextCount; ++partIdx) {
+        if (!readStr(rule.contextSelectors[partIdx])) {
+          contextOk = false;
+          break;
+        }
+      }
+      if (!contextOk || !readStr(rule.subjectSelector)) {
         LOG_DBG("CSS", "Truncated CSS cache reading descendant rule selectors");
         rulesBySelector_.clear();
         descendantRules_.clear();
