@@ -300,6 +300,57 @@ TEST_F(ChapterHtmlSlimParserTest, PlainDivProducesNoHrSectRule) {
   }
 }
 
+// FanFicFare title pages list metadata as <dt>/<dd> pairs. Real-world markup
+// marks a specific dd `display: inline` so its label ("Series:") and value
+// stay on one line, while an otherwise-identical sibling dd with no such
+// override (e.g. "Tags:") renders as its own block/paragraph -- see
+// BlockDisplayDdStartsANewBlockFromItsDt below for the contrasting case.
+// dt/dd are ordinary block tags otherwise (matching the HTML spec's suggested
+// default rendering), so both must push/pop the block-style stack like any
+// other BLOCK_TAGS member unless CSS says display:inline.
+TEST_F(ChapterHtmlSlimParserTest, InlineDisplayDdContinuesTheSameBlockAsItsDt) {
+  ChapterHtmlSlimParser::startElement(&parser, "dt", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Series:", 7);
+  ChapterHtmlSlimParser::endElement(&parser, "dt");
+
+  const XML_Char* attributes[] = {"style", "display: inline", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "dd", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Value", 5);
+  ChapterHtmlSlimParser::endElement(&parser, "dd");
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->size(), 2u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BlockDisplayDdStartsANewBlockFromItsDt) {
+  ChapterHtmlSlimParser::startElement(&parser, "dt", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Tags:", 5);
+  ChapterHtmlSlimParser::endElement(&parser, "dt");
+
+  ChapterHtmlSlimParser::startElement(&parser, "dd", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Explicit", 8);
+  ChapterHtmlSlimParser::endElement(&parser, "dd");
+
+  // The dt's "Tags:" was flushed into its own page/block when dd opened a new
+  // one, so the current block should hold only dd's own word.
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->size(), 1u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, InlineBlockDisplayAlsoCountsAsInlineForDd) {
+  ChapterHtmlSlimParser::startElement(&parser, "dt", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Series:", 7);
+  ChapterHtmlSlimParser::endElement(&parser, "dt");
+
+  const XML_Char* attributes[] = {"style", "display: inline-block", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "dd", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Value", 5);
+  ChapterHtmlSlimParser::endElement(&parser, "dd");
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->size(), 2u);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, FontSizeResolvesToNearestLadderRungWhenExactMatch) {
   parser.fontSizeLadder_.addRung(999, 175);  // fake "175% of body" rung
 
