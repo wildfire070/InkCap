@@ -1871,6 +1871,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   std::string_view classAttr;
   std::string_view styleAttr;
   const char* dirAttr = nullptr;
+  const char* alignAttr = nullptr;
   if (atts != nullptr) {
     for (int i = 0; atts[i]; i += 2) {
       const char* attrValue = atts[i + 1] ? atts[i + 1] : "";
@@ -1878,6 +1879,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         classAttr = attrValue;
       } else if (strcmp(atts[i], "style") == 0) {
         styleAttr = attrValue;
+      } else if (strcmp(atts[i], "align") == 0) {
+        alignAttr = attrValue;
       } else if (strcmp(atts[i], "id") == 0) {
         if (self->isPreviewBuild() && self->previewAnchorFound && strcmp(attrValue, self->previewAnchor.c_str()) == 0) {
           continue;
@@ -1955,6 +1958,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (!cssStyle.hasDirection() && self->effectiveDirectionDefined) {
     cssStyle.direction = self->effectiveDirection;
     cssStyle.defined.direction = 1;
+  }
+
+  // Legacy presentational `align="center"` etc. -- still emitted by some EPUB
+  // converters/editors alongside or instead of CSS. Only a fallback: any real
+  // CSS rule or inline style (already folded into cssStyle above) wins, same
+  // as `dir` above and matching real browser cascade precedence.
+  if (alignAttr && alignAttr[0] != '\0' && !cssStyle.hasTextAlign()) {
+    cssStyle.textAlign = CssParser::interpretAlignment(alignAttr);
+    cssStyle.defined.textAlign = 1;
   }
 
   // font-variant-caps is inherited in CSS; propagate the parent's small-caps
