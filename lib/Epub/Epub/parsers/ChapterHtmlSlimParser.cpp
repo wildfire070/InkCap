@@ -3152,6 +3152,22 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
   }
 
+  // computeStyleForElement() only matches an element's own tag/class -- it has
+  // no general CSS inheritance from ancestors, so a publisher who sets
+  // text-align directly on <body> (a common way to pick left-align over this
+  // parser's own Justify default, instead of repeating it on every <p>) would
+  // otherwise never reach any paragraph at all. <body> is the one ancestor
+  // whose own style beginParse() already threads through every block via the
+  // root stack entry's inheritance (BlockStyle::getCombinedBlockStyle), so
+  // update that entry here, the one place <body> itself is actually seen. A
+  // forced reader alignment (paragraphAlignment != None) always wins instead,
+  // same as every other Book's-Style-only override in this parser.
+  if (strcmp(name, "body") == 0 && self->paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None) &&
+      cssStyle.hasTextAlign()) {
+    self->blockStyleBuf_[0].alignment = cssStyle.textAlign;
+    self->blockStyleBuf_[0].textAlignDefined = true;
+  }
+
   // Unprocessed tag, just increasing depth and continue forward
   self->pushCssAncestor(self->depth, name, classAttr);
   self->depth += 1;
