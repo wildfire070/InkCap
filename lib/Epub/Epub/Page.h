@@ -18,6 +18,7 @@ enum PageElementTag : uint8_t {
   TAG_PageImage = 2,  // New tag
   TAG_PageTableFragment = 3,
   TAG_PageHorizontalRule = 4,
+  TAG_PageCssBorderBox = 5,
 };
 
 // represents something that has been added to a page
@@ -73,6 +74,52 @@ class PageHorizontalRule final : public PageElement {
   bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageHorizontalRule; }
   static std::unique_ptr<PageHorizontalRule> deserialize(FsFile& file);
+};
+
+// A CSS border rendered around (a fragment of) a block element, e.g.
+// blockquote{border-left:...}. Presence-only per side (see CssStyle.h) with a
+// fixed thickness, matching PageHorizontalRule's own fixed-thickness approach.
+// One block can produce several of these across a page break -- each page's
+// box independently covers just that page's fragment of the block; see
+// ChapterHtmlSlimParser's borderBoxStack_ for the open/close/page-break
+// lifecycle that creates and finalizes them.
+class PageCssBorderBox final : public PageElement {
+  int16_t width;
+  int16_t height;
+  bool borderTop;
+  bool borderRight;
+  bool borderBottom;
+  bool borderLeft;
+
+ public:
+  static constexpr uint8_t THICKNESS = 2;
+
+  PageCssBorderBox(const int16_t width, const int16_t height, const bool borderTop, const bool borderRight,
+                   const bool borderBottom, const bool borderLeft, const int16_t xPos, const int16_t yPos)
+      : PageElement(xPos, yPos),
+        width(width),
+        height(height),
+        borderTop(borderTop),
+        borderRight(borderRight),
+        borderBottom(borderBottom),
+        borderLeft(borderLeft) {}
+
+  // Patches the final height once the block (or its fragment on this page) is
+  // fully laid out -- the box starts with a placeholder height at open time,
+  // since a block's rendered height isn't known until its content/page-break
+  // point is reached.
+  void setHeight(const int16_t newHeight) { height = newHeight; }
+  int16_t getHeight() const { return height; }
+  int16_t getWidth() const { return width; }
+  bool hasBorderTop() const { return borderTop; }
+  bool hasBorderRight() const { return borderRight; }
+  bool hasBorderBottom() const { return borderBottom; }
+  bool hasBorderLeft() const { return borderLeft; }
+
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  bool serialize(FsFile& file) override;
+  PageElementTag getTag() const override { return TAG_PageCssBorderBox; }
+  static std::unique_ptr<PageCssBorderBox> deserialize(FsFile& file);
 };
 
 struct TableFragmentCell {

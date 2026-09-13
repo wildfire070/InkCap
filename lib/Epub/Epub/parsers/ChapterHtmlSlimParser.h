@@ -47,6 +47,10 @@ class ChapterHtmlSlimParser {
   // pops by comparing each entry's own stored depth against the current
   // depth, not a per-close-tag counter.
   static constexpr size_t MAX_CSS_ANCESTOR_DEPTH = 64;
+  // Nested bordered blocks (e.g. a bordered <div> containing a bordered
+  // <blockquote>) are rare in real EPUBs; a small cap keeps borderBoxStack_'s
+  // footprint negligible while still covering realistic nesting.
+  static constexpr size_t MAX_BORDER_BOX_DEPTH = 4;
 
   Epub* epub;
   const std::string& filepath;
@@ -143,6 +147,42 @@ class ChapterHtmlSlimParser {
   size_t inlineStyleCount_ = 0;
   BlockStyle* blockStyleBuf_ = nullptr;
   size_t blockStyleCount_ = 0;
+
+  // Tracks CSS border boxes (see PageCssBorderBox in Page.h) currently open
+  // across the block-style stack, depth-tagged the same way blockStyleBuf_
+  // is. Pushing a scope (beginCssBorderBoxIfNeeded) is pure bookkeeping --
+  // it does NOT touch currentPage/currentPageNextY, since a tag-open handler
+  // has no guarantee a page exists yet (pages are created lazily). `elem` is
+  // null until addLineToPage() actually materializes a PageCssBorderBox the
+  // first time this block places a line on a page; on a page break,
+  // finalizeOpenBorderBoxesForPageBreak() finalizes the old box's height and
+  // clears `elem` back to null so the next addLineToPage() call rematerializes
+  // an independent box on the new page -- so a bordered block spanning a page
+  // break needs no cross-page height tracking beyond this small fixed stack.
+  // MAX_BORDER_BOX_DEPTH=4 entries, plain members rather than arena-backed
+  // like the larger inline/block style stacks above, since the footprint is
+  // already negligible.
+  struct BorderBoxScope {
+    int depth = 0;
+    int16_t x = 0;
+    int16_t y = 0;  // valid only once elem != nullptr
+    int16_t width = 0;
+    bool borderTop = false;
+    bool borderRight = false;
+    bool borderBottom = false;
+    bool borderLeft = false;
+    PageCssBorderBox* elem = nullptr;  // owned by currentPage->elements
+    // Set by endCssBorderBoxIfNeeded() when the block's close tag is reached,
+    // but the scope is NOT popped yet: this block's text is still sitting
+    // unflushed in currentTextBlock at that point (flushed lazily, only once
+    // the NEXT startNewTextBlock() call's makePages() runs) -- see
+    // finalizePendingCloseBorderBoxes()'s doc comment for why the actual pop
+    // has to wait until that flush actually happens.
+    bool pendingClose = false;
+  };
+  BorderBoxScope borderBoxStack_[MAX_BORDER_BOX_DEPTH];
+  size_t borderBoxCount_ = 0;
+
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;
@@ -270,6 +310,11 @@ class ChapterHtmlSlimParser {
   static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);
   void emitHorizontalRule(const BlockStyle& blockStyle);
+  void beginCssBorderBoxIfNeeded(const BlockStyle& blockStyle);
+  void endCssBorderBoxIfNeeded();
+  void materializeOpenBorderBoxesIfNeeded();
+  void finalizeOpenBorderBoxesForPageBreak();
+  void finalizePendingCloseBorderBoxes();
   void finalizeCurrentTableCell();
   void emitBufferedTableAsParagraphs(BufferedTable& table);
   void emitBufferedTableAsFragments(BufferedTable& table);

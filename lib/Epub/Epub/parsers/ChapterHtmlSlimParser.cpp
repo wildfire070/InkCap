@@ -916,6 +916,116 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   }
 }
 
+// Records that a block opening now has a border, to be materialized onto a
+// page lazily (see materializeOpenBorderBoxesIfNeeded). Pure bookkeeping --
+// deliberately does NOT touch currentPage/currentPageNextY, since a tag-open
+// handler has no guarantee a page exists yet (pages are created on demand by
+// addLineToPage). No-op when the block declares no border side, or the stack
+// is already at MAX_BORDER_BOX_DEPTH (an overflow here just means the
+// block's border is silently skipped, not a correctness bug -- borders are
+// decorative).
+void ChapterHtmlSlimParser::beginCssBorderBoxIfNeeded(const BlockStyle& blockStyle) {
+  if (!blockStyle.borderTop && !blockStyle.borderRight && !blockStyle.borderBottom && !blockStyle.borderLeft) {
+    return;
+  }
+  if (borderBoxCount_ >= MAX_BORDER_BOX_DEPTH) {
+    LOG_ERR("EHP", "border box stack overflow, skipping border for this block");
+    return;
+  }
+
+  BorderBoxScope scope;
+  scope.depth = depth;
+  scope.x = blockStyle.leftInset();
+  scope.width = std::max<int16_t>(1, static_cast<int16_t>(viewportWidth - blockStyle.totalHorizontalInset()));
+  scope.borderTop = blockStyle.borderTop;
+  scope.borderRight = blockStyle.borderRight;
+  scope.borderBottom = blockStyle.borderBottom;
+  scope.borderLeft = blockStyle.borderLeft;
+  scope.elem = nullptr;
+  borderBoxStack_[borderBoxCount_++] = scope;
+}
+
+// Marks the border box (if any) opened by the block whose close tag was just
+// reached as ready to close -- mirrors blockStyleBuf_'s own depth-matched pop
+// a few lines above every call site of this function, EXCEPT the actual pop
+// is deferred (see finalizePendingCloseBorderBoxes): this block's text is
+// still sitting unflushed in currentTextBlock right now (ChapterHtmlSlimParser
+// only lays buffered text out into pages lazily, at the next
+// startNewTextBlock() call's makePages()), so popping here would discard the
+// scope before addLineToPage() ever gets a chance to materialize/size its box.
+void ChapterHtmlSlimParser::endCssBorderBoxIfNeeded() {
+  if (borderBoxCount_ == 0 || borderBoxStack_[borderBoxCount_ - 1].depth != depth) {
+    return;
+  }
+  borderBoxStack_[borderBoxCount_ - 1].pendingClose = true;
+}
+
+// Called at the end of makePages(), once this block's buffered text has been
+// fully laid out into lines and placed via addLineToPage() (which already
+// materialized/sized each open box for this page). Pops every scope marked
+// pendingClose from the top of the stack -- LIFO order matches how nested
+// bordered blocks actually close in valid HTML -- finalizing each one's final
+// height first. A block that never placed a line (elem still null, e.g. an
+// empty bordered element) simply has nothing to finalize.
+void ChapterHtmlSlimParser::finalizePendingCloseBorderBoxes() {
+  while (borderBoxCount_ > 0 && borderBoxStack_[borderBoxCount_ - 1].pendingClose) {
+    BorderBoxScope& scope = borderBoxStack_[borderBoxCount_ - 1];
+    if (scope.elem) {
+      scope.elem->setHeight(std::max<int16_t>(1, static_cast<int16_t>(currentPageNextY - scope.y)));
+    }
+    borderBoxCount_--;
+  }
+}
+
+// Called from addLineToPage() once currentPage/currentPageNextY are settled
+// for the line about to be placed (after any page break has already been
+// resolved). Materializes a PageCssBorderBox for every open scope that
+// doesn't have one yet on the CURRENT page -- true the first time a bordered
+// block places a line, and again after a page break clears `elem` back to
+// null (see finalizeOpenBorderBoxesForPageBreak). Reserves top spacing for a
+// newly (re)materialized top border so it never collides with the line about
+// to be drawn at the same y (matters most right after a page break, but is
+// correct on a block's very first page too).
+void ChapterHtmlSlimParser::materializeOpenBorderBoxesIfNeeded() {
+  if (!currentPage) return;
+  for (size_t i = 0; i < borderBoxCount_; ++i) {
+    BorderBoxScope& scope = borderBoxStack_[i];
+    if (scope.elem) continue;
+
+    auto box = makeUniqueNoThrow<PageCssBorderBox>(scope.width, static_cast<int16_t>(1), scope.borderTop,
+                                                   scope.borderRight, scope.borderBottom, scope.borderLeft, scope.x,
+                                                   currentPageNextY);
+    if (!box) {
+      LOG_ERR("EHP", "Failed to create PageCssBorderBox");
+      continue;
+    }
+    scope.y = currentPageNextY;
+    scope.elem = box.get();
+    currentPage->elements.push_back(std::move(box));
+
+    if (scope.borderTop) {
+      currentPageNextY = static_cast<int16_t>(currentPageNextY + PageCssBorderBox::THICKNESS + 2);
+    }
+  }
+}
+
+// Called right before a normal line-layout page break (addLineToPage, before
+// completeCurrentPage()/startNewPage()): finalizes every open border box's
+// height to the OLD page's bottom, then clears `elem` so
+// materializeOpenBorderBoxesIfNeeded() creates an independent replacement box
+// on whatever page comes next -- a bordered block spanning a page break needs
+// no other cross-page height bookkeeping. Must run before the page
+// transition, while currentPageNextY still reflects the old page.
+void ChapterHtmlSlimParser::finalizeOpenBorderBoxesForPageBreak() {
+  for (size_t i = 0; i < borderBoxCount_; ++i) {
+    BorderBoxScope& scope = borderBoxStack_[i];
+    if (scope.elem) {
+      scope.elem->setHeight(std::max<int16_t>(1, static_cast<int16_t>(currentPageNextY - scope.y)));
+      scope.elem = nullptr;
+    }
+  }
+}
+
 void ChapterHtmlSlimParser::emitBufferedTableAsParagraphs(BufferedTable& table) {
   if (!currentPage) {
     if (!startNewPage("table paragraph fallback")) {
@@ -2681,6 +2791,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       LOG_ERR("EHP", "block style stack overflow (header)");
     }
     self->startNewTextBlock(accumulated.withoutBottom());
+    self->beginCssBorderBoxIfNeeded(accumulated);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
   } else if (matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) || strcmp(name, "caption") == 0) {
@@ -2726,6 +2837,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       } else {
         self->startNewTextBlock(accumulated.withoutBottom());
       }
+      self->beginCssBorderBoxIfNeeded(accumulated);
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
@@ -3430,6 +3542,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
         self->currentTextBlock->setBlockStyle(style.addBottom(self->blockStyleBuf_[self->blockStyleCount_ - 1]));
       }
       self->blockStyleCount_--;
+      self->endCssBorderBoxIfNeeded();
       self->updateEffectiveInlineStyle();
     }
   }
@@ -3836,6 +3949,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
   }
 
   if (currentPageNextY + lineHeight > viewportHeight) {
+    finalizeOpenBorderBoxesForPageBreak();
     completeCurrentPage();
     completedPageCount++;
     stopPreviewIfPageLimitReached();
@@ -3846,6 +3960,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
       return;
     }
   }
+  materializeOpenBorderBoxesIfNeeded();
 
   setCurrentPageVisibleOffset(visibleOffset);
 
@@ -3934,6 +4049,11 @@ void ChapterHtmlSlimParser::makePages() {
   if (lowMemoryAbort) {
     return;
   }
+
+  // This block's lines are now all placed (addLineToPage already
+  // materialized/sized any open border box for the page(s) they landed on),
+  // so any box whose owning element already closed can now be finalized.
+  finalizePendingCloseBorderBoxes();
 
   // Fallback: transfer any remaining pending footnotes to current page.
   // Normally addLineToPage handles this via word-index tracking, but this catches

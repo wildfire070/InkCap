@@ -125,6 +125,46 @@ TEST_F(CssDescendantDepthTest, FourPartSelectorAppliesWhenAllContextPartsPresent
   EXPECT_EQ(style.textDecoration, CssTextDecoration::Underline);
 }
 
+TEST(CssBorderPropertyTest, BorderShorthandSetsAllFourSides) {
+  const auto style = CssParser::parseInlineStyle("border: 1px solid #000");
+  EXPECT_TRUE(style.hasBorderTop());
+  EXPECT_TRUE(style.hasBorderRight());
+  EXPECT_TRUE(style.hasBorderBottom());
+  EXPECT_TRUE(style.hasBorderLeft());
+  EXPECT_TRUE(style.borderTop);
+  EXPECT_TRUE(style.borderRight);
+  EXPECT_TRUE(style.borderBottom);
+  EXPECT_TRUE(style.borderLeft);
+}
+
+TEST(CssBorderPropertyTest, ZeroWidthBorderIsNotPresent) {
+  const auto style = CssParser::parseInlineStyle("border: 0");
+  EXPECT_TRUE(style.hasBorderTop());
+  EXPECT_FALSE(style.borderTop);
+}
+
+TEST(CssBorderPropertyTest, NoneKeywordIsNotPresent) {
+  const auto style = CssParser::parseInlineStyle("border-bottom: none");
+  EXPECT_TRUE(style.hasBorderBottom());
+  EXPECT_FALSE(style.borderBottom);
+}
+
+TEST(CssBorderPropertyTest, PerSidePropertiesAreIndependent) {
+  // Mirrors the real "blockquote{border-left:0.5px solid #9b9b9b}" case.
+  const auto style = CssParser::parseInlineStyle("border-left: 0.5px solid #9b9b9b");
+  EXPECT_TRUE(style.hasBorderLeft());
+  EXPECT_TRUE(style.borderLeft);
+  EXPECT_FALSE(style.hasBorderTop());
+  EXPECT_FALSE(style.hasBorderRight());
+  EXPECT_FALSE(style.hasBorderBottom());
+}
+
+TEST(CssBorderPropertyTest, StyleOnlyValueWithoutExplicitWidthIsPresent) {
+  const auto style = CssParser::parseInlineStyle("border-top: solid");
+  EXPECT_TRUE(style.hasBorderTop());
+  EXPECT_TRUE(style.borderTop);
+}
+
 TEST_F(CssDescendantDepthTest, FivePlusPartSelectorIsRejectedNotMismatched) {
   // A 5-part selector (4 context parts + subject) exceeds MAX_DESCENDANT_CONTEXT_PARTS's
   // "4 context parts" budget only when it has 5 context parts (6 total) -- but a selector
