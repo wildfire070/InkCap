@@ -228,6 +228,56 @@ std::unique_ptr<PageCssBorderBox> PageCssBorderBox::deserialize(FsFile& file) {
   return std::unique_ptr<PageCssBorderBox>(box);
 }
 
+void PageHrSectRule::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
+                            const bool foregroundBlack) {
+  (void)fontId;
+  if (contentWidth <= 0) {
+    return;
+  }
+
+  const int left = xPos + xOffset;
+  const int y = yPos + yOffset;
+  const int right = left + contentWidth - 1;
+  const int leftLineEnd = left + textGap - MARGIN;
+  const int rightLineStart = left + (contentWidth - textGap) + MARGIN;
+
+  if (leftLineEnd > left) {
+    renderer.drawLine(left, y, leftLineEnd, y, foregroundBlack);
+  }
+  if (right > rightLineStart) {
+    renderer.drawLine(rightLineStart, y, right, y, foregroundBlack);
+  }
+}
+
+bool PageHrSectRule::serialize(FsFile& file) {
+  return serialization::tryWritePod(file, xPos) && serialization::tryWritePod(file, yPos) &&
+         serialization::tryWritePod(file, contentWidth) && serialization::tryWritePod(file, textGap);
+}
+
+std::unique_ptr<PageHrSectRule> PageHrSectRule::deserialize(FsFile& file) {
+  int16_t xPos = 0;
+  int16_t yPos = 0;
+  int16_t contentWidth = 0;
+  int16_t textGap = 0;
+  if (!serialization::tryReadPod(file, xPos) || !serialization::tryReadPod(file, yPos) ||
+      !serialization::tryReadPod(file, contentWidth) || !serialization::tryReadPod(file, textGap)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated PageHrSectRule metadata");
+    return nullptr;
+  }
+
+  if (contentWidth <= 0) {
+    LOG_ERR("PGE", "Deserialization failed: invalid hr-sect rule metadata (contentWidth=%d)", contentWidth);
+    return nullptr;
+  }
+
+  auto* rule = new (std::nothrow) PageHrSectRule(contentWidth, textGap, xPos, yPos);
+  if (!rule) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageHrSectRule");
+    return nullptr;
+  }
+  return std::unique_ptr<PageHrSectRule>(rule);
+}
+
 bool TableFragmentCell::serialize(FsFile& file) const {
   if (colSpan == 0 || colSpan > MAX_TABLE_CELLS_PER_ROW || lines.size() > MAX_TABLE_LINES_PER_CELL) {
     LOG_ERR("PTB", "Serialization failed: invalid cell span/line count (span=%u lines=%u)", colSpan,
@@ -596,6 +646,7 @@ uint16_t Page::imageEstimateUnits(const uint16_t viewportHeight) const {
         break;
       case TAG_PageHorizontalRule:
       case TAG_PageCssBorderBox:
+      case TAG_PageHrSectRule:
         break;
     }
   }
@@ -718,6 +769,12 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
         return nullptr;
       }
       page->elements.push_back(std::move(box));
+    } else if (tag == TAG_PageHrSectRule) {
+      auto rule = PageHrSectRule::deserialize(file);
+      if (!rule) {
+        return nullptr;
+      }
+      page->elements.push_back(std::move(rule));
     } else {
       LOG_ERR("PGE", "Deserialization failed: Unknown tag %u", tag);
       return nullptr;

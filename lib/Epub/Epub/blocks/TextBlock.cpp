@@ -444,7 +444,8 @@ bool TextBlock::serialize(HalFile& file) const {
          // font-size resolution until the cache is next invalidated/rebuilt.
          serialization::tryWritePod(file, blockStyle.fontSizeMultiplier) &&
          serialization::tryWritePod(file, blockStyle.headingFontId) &&
-         serialization::tryWritePod(file, blockStyle.fontSizeResidualScale);
+         serialization::tryWritePod(file, blockStyle.fontSizeResidualScale) &&
+         serialization::tryWritePod(file, blockStyle.hrSectDivider);
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
@@ -553,7 +554,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       !serialization::tryReadPod(file, blockStyle.directionDefined) ||
       !serialization::tryReadPod(file, blockStyle.fontSizeMultiplier) ||
       !serialization::tryReadPod(file, blockStyle.headingFontId) ||
-      !serialization::tryReadPod(file, blockStyle.fontSizeResidualScale)) {
+      !serialization::tryReadPod(file, blockStyle.fontSizeResidualScale) ||
+      !serialization::tryReadPod(file, blockStyle.hrSectDivider)) {
     LOG_ERR("TXB", "Deserialization failed: truncated block style metadata");
     return nullptr;
   }

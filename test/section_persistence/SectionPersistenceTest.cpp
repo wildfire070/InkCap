@@ -22,10 +22,10 @@ namespace {
 // whenever those change (loadSectionFile() rejects anything else as a
 // version mismatch, which is exactly what silently broke this test after an
 // earlier CrossInk sync bumped 66/0xF6 to 75/0xF4 without touching this file).
-constexpr uint8_t kFullVersion = 78;
-constexpr uint8_t kPartialVersion = 0xF7;
-constexpr uint8_t kPreviousFullVersion = 77;
-constexpr uint8_t kPreviousPartialVersion = 0xF6;
+constexpr uint8_t kFullVersion = 79;
+constexpr uint8_t kPartialVersion = 0xF8;
+constexpr uint8_t kPreviousFullVersion = 78;
+constexpr uint8_t kPreviousPartialVersion = 0xF7;
 
 ReaderRenderSpec renderSpec() {
   ReaderRenderSpec spec;
