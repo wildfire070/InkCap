@@ -14,9 +14,11 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <new>
 #include <string_view>
 
@@ -709,7 +711,7 @@ void ChapterHtmlSlimParser::flushLongTextRunIfNeeded(const bool force) {
       (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
   const int effectiveFontId = runBlockStyle.headingFontId != 0 ? runBlockStyle.headingFontId : fontId;
   if (!currentTextBlock->layoutAndExtractLines(
-          renderer, effectiveFontId, effectiveWidth,
+          renderer, effectiveFontId, layoutWidthForBlock(runBlockStyle, effectiveWidth),
           [this](const std::shared_ptr<TextBlock>& textBlock, const uint32_t offset) {
             addLineToPage(textBlock, offset);
           },
@@ -1002,7 +1004,15 @@ void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
   if (blockStyle.fontSizeMultiplier == 1.0f) return;
 
   const FontSizeLadder::Resolved resolved = fontSizeLadder_.resolve(blockStyle.fontSizeMultiplier * 100.0f);
-  if (resolved.fontId == 0) return;  // no ladder, or the body font is already the closest match
+  if (resolved.fontId == 0) {
+    // No ladder (e.g. an SD-card body font, whose id never matches a built-in
+    // family's rungs) or the nearest rung is just the body font itself --
+    // fall back to resampling the body font's own glyphs rather than
+    // silently dropping font-size entirely. Clamp to guard a pathological
+    // CSS value from producing illegibly tiny or oversized text.
+    blockStyle.fontSizeResidualScale = std::clamp(resolved.residual, 0.6f, 2.0f);
+    return;
+  }
 
   if (auxFontId_ == 0) auxFontId_ = resolved.fontId;
   if (resolved.fontId != auxFontId_) return;  // aux slot already claimed by a differently-sized block
@@ -4002,8 +4012,19 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     return;
   }
 
-  const int lineFontId = line->getBlockStyle().headingFontId != 0 ? line->getBlockStyle().headingFontId : fontId;
-  const int lineHeight = effectiveLineHeight(lineFontId) + line->getRubyShift(renderer.getFontAscenderSize(lineFontId));
+  const BlockStyle& lineStyle = line->getBlockStyle();
+  const int lineFontId = lineStyle.headingFontId != 0 ? lineStyle.headingFontId : fontId;
+  // A residual-scaled line (see BlockStyle::fontSizeResidualScale) is rendered
+  // with resampled, larger/smaller glyphs -- vertical spacing must scale the
+  // same way or lines drawn at 1.3x, say, would collide with/gap from
+  // neighboring lines still spaced at the unscaled body line height.
+  const float lineScale = lineStyle.headingFontId != 0 ? 1.0f : lineStyle.fontSizeResidualScale;
+  const int scaledLineHeight = lineScale == 1.0f ? effectiveLineHeight(lineFontId)
+                                                  : static_cast<int>(std::lround(effectiveLineHeight(lineFontId) * lineScale));
+  const int scaledAscender = lineScale == 1.0f
+                                  ? renderer.getFontAscenderSize(lineFontId)
+                                  : static_cast<int>(std::lround(renderer.getFontAscenderSize(lineFontId) * lineScale));
+  const int lineHeight = scaledLineHeight + line->getRubyShift(scaledAscender);
 
   if (!currentPage) {
     if (!startNewPage("line layout")) {
@@ -4068,6 +4089,15 @@ int ChapterHtmlSlimParser::effectiveLineHeight(const int fontIdForLine) const {
   return std::max(1, static_cast<int>(renderer.getLineHeight(fontIdForLine) * lineCompression + 0.5f));
 }
 
+uint16_t ChapterHtmlSlimParser::layoutWidthForBlock(const BlockStyle& blockStyle, const uint16_t effectiveWidth) const {
+  if (blockStyle.headingFontId != 0 || blockStyle.fontSizeResidualScale == 1.0f) {
+    return effectiveWidth;
+  }
+  const float virtualWidth = static_cast<float>(effectiveWidth) / blockStyle.fontSizeResidualScale;
+  const long rounded = std::lround(virtualWidth);
+  return static_cast<uint16_t>(std::clamp<long>(rounded, 1, std::numeric_limits<uint16_t>::max()));
+}
+
 void ChapterHtmlSlimParser::makePages() {
   if (shouldAbortForLowMemory("page layout")) {
     return;
@@ -4102,9 +4132,17 @@ void ChapterHtmlSlimParser::makePages() {
   const int horizontalInset = blockStyle.totalHorizontalInset();
   const uint16_t effectiveWidth =
       (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  // Must match flushLongTextRunIfNeeded()'s effectiveFontId: a block resolved
+  // to a ladder font (BlockStyle::headingFontId) needs to be WORD-WRAPPED
+  // using that font's own metrics, not the body's -- headings are short and
+  // almost always flush through here rather than the long-run path above, so
+  // using plain `fontId` left every ladder-resolved heading wrapping against
+  // the wrong (body) font's glyph widths.
+  const int effectiveFontId = blockStyle.headingFontId != 0 ? blockStyle.headingFontId : fontId;
 
   if (!currentTextBlock->layoutAndExtractLines(
-          renderer, fontId, effectiveWidth, [this](const std::shared_ptr<TextBlock>& textBlock, const uint32_t offset) {
+          renderer, effectiveFontId, layoutWidthForBlock(blockStyle, effectiveWidth),
+          [this](const std::shared_ptr<TextBlock>& textBlock, const uint32_t offset) {
             addLineToPage(textBlock, offset);
           })) {
     LOG_ERR("EHP", "Failed to lay out text block");

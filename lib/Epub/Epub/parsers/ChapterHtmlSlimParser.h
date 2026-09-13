@@ -322,6 +322,14 @@ class ChapterHtmlSlimParser {
   void makePages();
   int effectiveLineHeight() const;
   int effectiveLineHeight(int fontIdForLine) const;
+  // Narrows `effectiveWidth` for a block that will render at
+  // fontSizeResidualScale != 1.0 (see BlockStyle.h / resolveBlockFont): laying
+  // out unscaled text against width/scale, then rendering the result scaled,
+  // is exactly equivalent to laying it out at native scale, without touching
+  // any of ParsedText's word-wrap/hyphenation/ruby measurement code. A no-op
+  // (returns effectiveWidth unchanged) once the block has a real headingFontId
+  // or no residual scale is set.
+  uint16_t layoutWidthForBlock(const BlockStyle& blockStyle, uint16_t effectiveWidth) const;
   bool isPreviewBuild() const { return !previewAnchor.empty() && previewMaxPages > 0; }
   bool isScanningForPreviewAnchor() const { return isPreviewBuild() && !previewAnchorFound; }
   bool handlePreviewScanStart(const XML_Char** atts);

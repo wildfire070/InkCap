@@ -58,10 +58,17 @@ struct BlockStyle {
   // CSS value (unitless, relative to the body em size); headingFontId is 0
   // ("use the body font") unless the ladder found a real pre-rendered font
   // resource close enough to render natively. fontResolved guards against
-  // re-resolving a block whose style is read more than once.
+  // re-resolving a block whose style is read more than once. When the ladder
+  // can't map the desired size onto a real font resource (empty ladder, e.g.
+  // an SD-card body font, or the nearest rung is just the body font itself),
+  // headingFontId stays 0 and fontSizeResidualScale carries the leftover
+  // scale instead, clamped to ~0.6x-2x -- GfxRenderer::drawTextScaled()
+  // resamples the body font's own glyphs rather than leaving font-size with
+  // no visual effect at all.
   float fontSizeMultiplier = 1.0f;
   int32_t headingFontId = 0;
   bool fontResolved = false;
+  float fontSizeResidualScale = 1.0f;
 
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }

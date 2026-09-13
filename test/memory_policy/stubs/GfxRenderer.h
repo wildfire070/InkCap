@@ -36,6 +36,8 @@ class GfxRenderer {
   template <class... Args>
   void drawText(Args...) const {}
   template <class... Args>
+  void drawTextScaled(Args...) const {}
+  template <class... Args>
   void fillRect(Args...) const {}
   bool isSdCardFont(int) const { return false; }
   bool releaseSdCardFontForLowMemory(int, bool = false) { return false; }
