@@ -70,3 +70,76 @@ TEST_F(CssArenaBackingTest, ExternalHydrationPreservesInternalAndExternalReserve
     EXPECT_TRUE(fakeheap::live.empty());
   }
 }
+
+struct CssDescendantDepthTest : testing::Test {
+  void SetUp() override {
+    fakeheap::reset();
+    Storage.reset();
+  }
+  void TearDown() override {
+    EXPECT_TRUE(fakeheap::live.empty());
+    Storage.reset();
+  }
+  // ".fff_titlepage .title h1" (3-part) and ".fff_titlepage dl .inline dd"
+  // (4-part) mirror the real selectors found in FanFicFare's stylesheet.
+  static constexpr const char* kCss =
+      ".fff_titlepage .title h1 { font-weight: normal; } "
+      ".fff_titlepage dl .inline dd { text-decoration: underline; }";
+  // Populates `out` by round-tripping kCss through saveToCache/loadFromCache
+  // (CssParser is non-copyable and non-movable, so this takes an out-param
+  // rather than returning by value).
+  void buildAndRoundTripThroughCache(CssParser& out) {
+    Storage.put("input.css", {std::string(kCss).begin(), std::string(kCss).end()});
+    FsFile file;
+    ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
+    CssParser writer("book");
+    ASSERT_TRUE(writer.loadFromStream(file));
+    file.close();
+    ASSERT_TRUE(writer.saveToCache());
+    ASSERT_TRUE(out.loadFromCache());
+  }
+};
+
+TEST_F(CssDescendantDepthTest, ThreePartSelectorAppliesWhenBothContextPartsPresent) {
+  CssParser css("book");
+  buildAndRoundTripThroughCache(css);
+  const auto style = css.resolveStyle("h1", "", {{0, "body", "fff_titlepage"}, {1, "div", "title"}});
+  EXPECT_TRUE(style.hasFontWeight());
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Normal);
+}
+
+TEST_F(CssDescendantDepthTest, ThreePartSelectorDoesNotApplyWithOnlyOneContextPartPresent) {
+  CssParser css("book");
+  buildAndRoundTripThroughCache(css);
+  // Only ".title" is present in the ancestor stack; ".fff_titlepage" is missing.
+  const auto style = css.resolveStyle("h1", "", {{0, "div", "title"}});
+  EXPECT_FALSE(style.hasFontWeight());
+}
+
+TEST_F(CssDescendantDepthTest, FourPartSelectorAppliesWhenAllContextPartsPresent) {
+  CssParser css("book");
+  buildAndRoundTripThroughCache(css);
+  const auto style =
+      css.resolveStyle("dd", "", {{0, "body", "fff_titlepage"}, {1, "dl", ""}, {2, "div", "inline"}});
+  EXPECT_TRUE(style.hasTextDecoration());
+  EXPECT_EQ(style.textDecoration, CssTextDecoration::Underline);
+}
+
+TEST_F(CssDescendantDepthTest, FivePlusPartSelectorIsRejectedNotMismatched) {
+  // A 5-part selector (4 context parts + subject) exceeds MAX_DESCENDANT_CONTEXT_PARTS's
+  // "4 context parts" budget only when it has 5 context parts (6 total) -- but a selector
+  // with exactly 5 total parts (4 context + 1 subject) IS the supported boundary. Confirm a
+  // 6-total-part selector (5 context parts) is silently dropped rather than partially matched.
+  const std::string css6Parts =
+      "a b c d e f { font-weight: bold; }";  // 5 context parts + subject "f"
+  Storage.put("six.css", {css6Parts.begin(), css6Parts.end()});
+  FsFile file;
+  ASSERT_TRUE(Storage.openFileForRead("test", "six.css", file));
+  CssParser parser("book6");
+  ASSERT_TRUE(parser.loadFromStream(file));
+  file.close();
+  EXPECT_TRUE(parser.empty());
+  const auto style =
+      parser.resolveStyle("f", "", {{0, "a", ""}, {1, "b", ""}, {2, "c", ""}, {3, "d", ""}, {4, "e", ""}});
+  EXPECT_FALSE(style.hasFontWeight());
+}
