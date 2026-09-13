@@ -88,7 +88,11 @@ static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5"
 static constexpr const char* const BLOCK_TAGS[] = {"p",  "li", "div",      "br",      "blockquote",
                                                      "dt", "dd", "details", "summary"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
-static constexpr const char* const ITALIC_TAGS[] = {"i", "em"};
+// dfn/cite carry the same browser-default italic styling as i/em -- confirmed
+// on real books that use <dfn> for foreign-language dialogue and <cite> for
+// an attribution line, with no CSS backing (relying purely on the semantic
+// tag's own default rendering).
+static constexpr const char* const ITALIC_TAGS[] = {"i", "em", "dfn", "cite"};
 static constexpr const char* const UNDERLINE_TAGS[] = {"u", "ins"};
 static constexpr const char* const STRIKETHROUGH_TAGS[] = {"s", "strike", "del"};
 static constexpr const char* const IMAGE_TAGS[] = {"img", "image"};
@@ -210,6 +214,25 @@ bool matches(const char* tag_name, const char* const* possible_tags, size_t coun
     }
   }
   return false;
+}
+
+// Parses a legacy HTML width=/height= attribute value -- a bare number in the
+// implied unit (pixels), optionally suffixed with "px" or "%". Used as a
+// fallback for <img> sizing when no CSS width/height applies at all (confirmed
+// on real books: an image downloaded at full resolution, sized down purely via
+// these attributes with no matching CSS class or inline style).
+bool tryParseHtmlImageLength(const char* value, CssLength& out) {
+  if (!value || value[0] == '\0') return false;
+  char* endPtr = nullptr;
+  const float parsed = std::strtof(value, &endPtr);
+  if (endPtr == value || !(parsed > 0.0f)) return false;
+  if (strcmp(endPtr, "%") == 0) {
+    out = CssLength(parsed, CssUnit::Percent);
+    return true;
+  }
+  if (endPtr[0] != '\0' && strcmp(endPtr, "px") != 0) return false;
+  out = CssLength(parsed);
+  return true;
 }
 
 // Word-boundary-safe check for one space-separated class token, e.g. for
@@ -2336,6 +2359,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS))) {
     std::string src;
     std::string alt;
+    const char* htmlWidthAttr = nullptr;
+    const char* htmlHeightAttr = nullptr;
     if (atts != nullptr) {
       bool amznM8Removed = false;
       for (int i = 0; atts[i]; i += 2) {
@@ -2345,6 +2370,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           src = atts[i + 1];
         } else if (strcmp(atts[i], "alt") == 0) {
           alt = atts[i + 1];
+        } else if (strcmp(atts[i], "width") == 0) {
+          htmlWidthAttr = atts[i + 1];
+        } else if (strcmp(atts[i], "height") == 0) {
+          htmlHeightAttr = atts[i + 1];
         } else if (strncmp(atts[i], "data-AmznRemoved-M8", 19) == 0) {
           amznM8Removed = true;
         }
@@ -2472,6 +2501,22 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   // Merge inline style (e.g. style="height: 2em") so it overrides stylesheet rules
                   if (!styleAttr.empty()) {
                     imgStyle.applyOver(CssParser::parseInlineStyle(styleAttr));
+                  }
+                }
+                // CSS always wins; the legacy attributes only fill the gap they
+                // leave, same as the align="" fallback elsewhere in this parser.
+                if (!imgStyle.hasImageWidth() && htmlWidthAttr) {
+                  CssLength parsed;
+                  if (tryParseHtmlImageLength(htmlWidthAttr, parsed)) {
+                    imgStyle.imageWidth = parsed;
+                    imgStyle.defined.imageWidth = 1;
+                  }
+                }
+                if (!imgStyle.hasImageHeight() && htmlHeightAttr) {
+                  CssLength parsed;
+                  if (tryParseHtmlImageLength(htmlHeightAttr, parsed)) {
+                    imgStyle.imageHeight = parsed;
+                    imgStyle.defined.imageHeight = 1;
                   }
                 }
                 const bool hasCssHeight = imgStyle.hasImageHeight();
