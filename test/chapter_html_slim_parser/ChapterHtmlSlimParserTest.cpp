@@ -72,6 +72,30 @@ TEST_P(ChapterHtmlSlimParserTest, KeepsCssVerticalAlignAndInternalLinkMetadata) 
 INSTANTIATE_TEST_SUITE_P(CssVerticalAlign, ChapterHtmlSlimParserTest,
                          ::testing::Values("vertical-align: super", "vertical-align: sub"));
 
+// <dfn>/<cite> carry the same browser-default italic styling as <i>/<em> --
+// confirmed on real books that use <dfn> for foreign-language dialogue and
+// <cite> for an attribution line, with no CSS backing at all (relying purely
+// on the semantic tag's own default rendering).
+TEST_F(ChapterHtmlSlimParserTest, DfnGetsDefaultItalicStyling) {
+  ChapterHtmlSlimParser::startElement(&parser, "dfn", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Bonjour", 7);
+  ChapterHtmlSlimParser::endElement(&parser, "dfn");
+
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  const auto style = parser.currentTextBlock->getWordStyleAt(0);
+  EXPECT_NE(static_cast<uint8_t>(style) & static_cast<uint8_t>(EpdFontFamily::ITALIC), 0u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CiteGetsDefaultItalicStyling) {
+  ChapterHtmlSlimParser::startElement(&parser, "cite", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Seneca", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "cite");
+
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  const auto style = parser.currentTextBlock->getWordStyleAt(0);
+  EXPECT_NE(static_cast<uint8_t>(style) & static_cast<uint8_t>(EpdFontFamily::ITALIC), 0u);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, LegacyAlignAttributeAppliesWhenNoCssTextAlign) {
   // Some EPUB converters/editors still emit the legacy presentational
   // align="" HTML attribute instead of (or alongside) CSS -- confirmed on a
@@ -154,6 +178,59 @@ TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheC
   const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
   EXPECT_EQ(image.getWidth(), 480);
   EXPECT_EQ(image.getHeight(), 4);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, HtmlWidthAttributeSizesImageWhenNoCssApplies) {
+  // Some authors size a decorative inline image purely via the legacy HTML
+  // width=/height= attributes, with no CSS at all -- confirmed on a real book
+  // whose embedded Tumblr image was downloaded at its full 1200x1600
+  // resolution, with width="150" (height omitted) expressing the intended
+  // small display size. Previously ignored entirely, so the image rendered
+  // scaled to fill the viewport instead (roughly 480x640: ~10x the area).
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 1200;
+  epub.optimizerImageHeight = 1600;
+  const XML_Char* attributes[] = {"src", "photo.jpg", "width", "150", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  ASSERT_EQ(parser.currentPage->elements.front()->getTag(), TAG_PageImage);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 150);
+  EXPECT_EQ(image.getHeight(), 200);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, HtmlHeightAttributeSizesImageWhenNoCssApplies) {
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 1200;
+  epub.optimizerImageHeight = 1600;
+  const XML_Char* attributes[] = {"src", "photo.jpg", "height", "200", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 150);
+  EXPECT_EQ(image.getHeight(), 200);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CssImageWidthOverridesHtmlWidthAttribute) {
+  // Real CSS/inline style must win over the legacy attribute, matching the
+  // established align="" fallback precedent -- the attribute only fills a
+  // gap, it never competes with an actual style rule.
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 1200;
+  epub.optimizerImageHeight = 1600;
+  const XML_Char* attributes[] = {"src", "photo.jpg", "width", "150", "style", "width: 60px", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 60);
 }
 
 TEST_F(ChapterHtmlSlimParserTest, HiddenElementsSuppressContentAndResumeVisibleText) {
