@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bitset>
 
 namespace {
 // Deterministic 2-bit glyphs with negative bearings and descenders. Both the
@@ -235,4 +236,69 @@ TEST(AbsoluteImageRaster, BitmapPlanesPreserveFourTonesAndWhiteMargins) {
   renderer.setRenderMode(GfxRenderer::BW);
   EXPECT_EQ(display.canceled, 1);
   file.close();
+}
+
+namespace {
+size_t countDifferingBits(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+  size_t count = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    count += std::bitset<8>(static_cast<uint8_t>(a[i] ^ b[i])).count();
+  }
+  return count;
+}
+}  // namespace
+
+// drawTextScaled() is the fallback rendering path for a block-level CSS
+// font-size FontSizeLadder couldn't map onto a real pre-rendered font
+// resource (see BlockStyle::fontSizeResidualScale) -- most commonly an
+// SD-card body font, whose id never matches a built-in family's ladder
+// rungs. scale == 1.0 must reuse drawText()'s exact existing pixel path.
+TEST(EpubTextGrayscaleTest, DrawTextScaledAtNativeScaleMatchesDrawTextExactly) {
+  fakeheap::reset(true);
+  Storage.reset();
+  RasterFont fixture(12);
+  HalDisplay display;
+  GfxRenderer renderer(display);
+  renderer.begin();
+  renderer.insertFont(1, EpdFontFamily(&fixture.font));
+
+  renderer.clearScreen();
+  renderer.drawText(1, 25, 60, "Abc");
+  const auto unscaled = display.bw;
+
+  renderer.clearScreen();
+  renderer.drawTextScaled(1, 25, 60, "Abc", true, EpdFontFamily::REGULAR, 1.0f);
+  EXPECT_EQ(display.bw, unscaled);
+}
+
+// A scale != 1.0 must actually resample the glyphs: enlarging paints a
+// visibly bigger ink footprint, shrinking a visibly smaller one -- not just
+// leave font-size with zero effect (the bug this fallback exists to fix).
+TEST(EpubTextGrayscaleTest, DrawTextScaledResizesInkFootprint) {
+  fakeheap::reset(true);
+  Storage.reset();
+  RasterFont fixture(12);
+  HalDisplay display;
+  GfxRenderer renderer(display);
+  renderer.begin();
+  renderer.insertFont(1, EpdFontFamily(&fixture.font));
+
+  renderer.clearScreen();
+  const auto blank = display.bw;
+
+  renderer.clearScreen();
+  renderer.drawText(1, 25, 60, "Abc");
+  const size_t nativeInk = countDifferingBits(display.bw, blank);
+  ASSERT_GT(nativeInk, 0u);
+
+  renderer.clearScreen();
+  renderer.drawTextScaled(1, 25, 60, "Abc", true, EpdFontFamily::REGULAR, 1.6f);
+  const size_t enlargedInk = countDifferingBits(display.bw, blank);
+  EXPECT_GT(enlargedInk, nativeInk);
+
+  renderer.clearScreen();
+  renderer.drawTextScaled(1, 25, 60, "Abc", true, EpdFontFamily::REGULAR, 0.6f);
+  const size_t shrunkInk = countDifferingBits(display.bw, blank);
+  EXPECT_LT(shrunkInk, nativeInk);
+  EXPECT_GT(shrunkInk, 0u);
 }
