@@ -52,6 +52,9 @@ class ChapterHtmlSlimParser {
   // <blockquote>) are rare in real EPUBs; a small cap keeps borderBoxStack_'s
   // footprint negligible while still covering realistic nesting.
   static constexpr size_t MAX_BORDER_BOX_DEPTH = 4;
+  // List nesting beyond this is essentially unheard of in fiction EPUBs; a
+  // small cap keeps listStack_'s footprint negligible either way.
+  static constexpr size_t MAX_LIST_NESTING = 8;
 
   Epub* epub;
   const std::string& filepath;
@@ -183,6 +186,17 @@ class ChapterHtmlSlimParser {
   };
   BorderBoxScope borderBoxStack_[MAX_BORDER_BOX_DEPTH];
   size_t borderBoxCount_ = 0;
+
+  // Tracks whether the nearest open <ol>/<ul> ancestor is ordered, and (if
+  // so) the running item count, depth-tagged the same way blockStyleBuf_ is.
+  // <li> consults the top entry to decide bullet ("*") vs "N." numbering.
+  struct ListMarkerContext {
+    int depth = 0;
+    bool ordered = false;
+    uint16_t counter = 0;
+  };
+  ListMarkerContext listStack_[MAX_LIST_NESTING];
+  size_t listStackCount_ = 0;
 
   // The body font's sibling sizes (see FontSizeLadder.h), set via
   // setFontSizeLadder() before parsing starts; empty (all-default) unless the
