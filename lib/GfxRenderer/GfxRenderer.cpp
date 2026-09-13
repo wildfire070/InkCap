@@ -11,6 +11,7 @@
 #include <freertos/task.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "FontCacheManager.h"
 
@@ -859,6 +860,76 @@ static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::Render
   }
 }
 
+// Render a glyph resampled to an arbitrary runtime scale. Generalizes the two
+// fixed-ratio resamplers above (renderCharScaled's 1/2 for SUP/SUB,
+// renderCharSmallCaps's 3/4) to any factor, magnify or minify: for scale < 1
+// each destination pixel samples a source region and lights up on any ink in
+// it (preserves thin strokes a nearest-neighbor minify would skip); for
+// scale >= 1 that region collapses to one source pixel, i.e. nearest-neighbor
+// magnification -- crisp rather than blurry on a binary/2-bit glyph, and
+// adequate at the modest factors (~0.6x-2x) block-level CSS font-size uses.
+// No cross-family glyph fallback, matching renderCharSmallCaps's own scope.
+static void renderCharAtScale(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
+                              const EpdFontFamily& fontFamily, const uint32_t cp, const int cursorX,
+                              const int cursorY, const bool pixelState, const EpdFontFamily::Style style,
+                              const float scale) {
+  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
+  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
+  if (!glyph) return;
+
+  const EpdFontData* fontData = fontFamily.getData(style);
+  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  if (!bitmap) return;
+
+  const int srcW = glyph->width;
+  const int srcH = glyph->height;
+  if (srcW <= 0 || srcH <= 0 || scale <= 0.0f) return;
+  const int dstW = std::max(1, static_cast<int>(std::lround(srcW * scale)));
+  const int dstH = std::max(1, static_cast<int>(std::lround(srcH * scale)));
+  const int baseX = cursorX + static_cast<int>(std::lround(glyph->left * scale));
+  const int baseY = cursorY - static_cast<int>(std::lround(glyph->top * scale));
+
+  for (int dstY = 0; dstY < dstH; dstY++) {
+    const int srcY = static_cast<int>(dstY / scale);
+    if (srcY >= srcH) continue;
+    const int srcYEnd = std::min(srcH, std::max(srcY + 1, static_cast<int>((dstY + 1) / scale)));
+    for (int dstX = 0; dstX < dstW; dstX++) {
+      const int srcX = static_cast<int>(dstX / scale);
+      if (srcX >= srcW) continue;
+      const int srcXEnd = std::min(srcW, std::max(srcX + 1, static_cast<int>((dstX + 1) / scale)));
+
+      if (fontData->is2Bit) {
+        uint8_t maxRaw = 0;
+        for (int sampleY = srcY; sampleY < srcYEnd; sampleY++) {
+          for (int sampleX = srcX; sampleX < srcXEnd; sampleX++) {
+            const int pos = sampleY * srcW + sampleX;
+            const uint8_t byte = bitmap[pos >> 2];
+            const uint8_t raw = (byte >> ((3 - (pos & 3)) * 2)) & 0x3;
+            if (raw > maxRaw) maxRaw = raw;
+          }
+        }
+        draw2BitFontPixel(renderer, renderMode, baseX + dstX, baseY + dstY, maxRaw, pixelState);
+      } else {
+        bool hasInk = false;
+        for (int sampleY = srcY; sampleY < srcYEnd && !hasInk; sampleY++) {
+          for (int sampleX = srcX; sampleX < srcXEnd; sampleX++) {
+            const int pos = sampleY * srcW + sampleX;
+            const uint8_t byte = bitmap[pos >> 3];
+            const uint8_t bit = 7 - (pos & 7);
+            if ((byte >> bit) & 1) {
+              hasInk = true;
+              break;
+            }
+          }
+        }
+        if (hasInk) {
+          renderer.drawPixel(baseX + dstX, baseY + dstY, pixelState);
+        }
+      }
+    }
+  }
+}
+
 template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
@@ -1158,15 +1229,23 @@ void GfxRenderer::endTextClip() const {
   textClipActive_ = false;
 }
 
+void GfxRenderer::drawTextScaled(const int fontId, const int x, const int y, const char* text, const bool black,
+                                 const EpdFontFamily::Style style, const float scale,
+                                 const BidiUtils::BidiBaseDir baseDir) const {
+  drawText(fontId, x, y, text, black, style, baseDir, scale);
+}
+
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
-                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
+                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir,
+                           const float scale) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;
   }
 
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
-  const int yPos = y + getFontAscenderSize(resolvedFontId);
+  const int yPos = y + (scale == 1.0f ? getFontAscenderSize(resolvedFontId)
+                                       : static_cast<int>(std::lround(getFontAscenderSize(resolvedFontId) * scale)));
   int lastBaseX = x;
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;
@@ -1226,7 +1305,11 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       if (prevScaledSmallCap || scaledSmallCap) {
         kernFP = smallCapsAdvanceFP(kernFP);
       }
-      lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);  // snap 12.4 fixed-point to nearest pixel
+      int32_t deltaFP = prevAdvanceFP + kernFP;
+      if (scale != 1.0f) {
+        deltaFP = static_cast<int32_t>(std::lround(deltaFP * scale));
+      }
+      lastBaseX += fp4::toPixel(deltaFP);  // snap 12.4 fixed-point to nearest pixel
     }
 
     if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
@@ -1303,9 +1386,13 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
     if (isSupSub) {
       // yPos already carries the vertical offset applied by TextBlock::render().
+      // Not compounded with `scale`: SUP/SUB inside a block-level custom
+      // font-size does not occur in practice (see drawTextScaled's doc comment).
       renderCharScaled(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
     } else if (scaledSmallCap) {
       renderCharSmallCaps(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+    } else if (scale != 1.0f) {
+      renderCharAtScale(*this, renderMode, font, cp, lastBaseX, yPos, black, style, scale);
     } else {
       renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
     }

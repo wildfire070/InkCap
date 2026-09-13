@@ -292,9 +292,24 @@ class GfxRenderer {
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
                         EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                         BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+  // `scale` is an internal implementation detail shared with drawTextScaled()
+  // below (default 1.0f keeps every existing call site's behavior byte-for-
+  // byte identical); call drawTextScaled() directly instead of passing this.
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
-                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, float scale = 1.0f) const;
+  // Like drawText(), but resamples each glyph's bitmap to `scale` instead of
+  // drawing it at native size. Fallback path for a block-level CSS font-size
+  // that FontSizeLadder couldn't map onto a real pre-rendered font resource --
+  // an SD-card font (its id never matches a built-in family's ladder rungs) or
+  // a desired size close enough to the body font's own that the ladder just
+  // returns it unchanged. See BlockStyle::fontSizeResidualScale. Scope cut:
+  // SUP/SUB and small-caps runs render at their own existing fixed scale,
+  // unmultiplied by `scale` -- combining mid-word superscript/small-caps with
+  // a block-level custom font-size does not occur in practice (FanFicFare
+  // title-page headings and `pre` blocks are plain text).
+  void drawTextScaled(int fontId, int x, int y, const char* text, bool black, EpdFontFamily::Style style, float scale,
+                      BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   // Guard text/background pixels while a table cell is rendered. The guard is
   // intentionally single-level and scoped by the caller; nested use is a
   // programming error caught in debug builds.
