@@ -250,6 +250,56 @@ TEST_F(ChapterHtmlSlimParserTest, BorderBoxSplitAcrossAPageBreakProducesTwoIndep
   EXPECT_EQ(currentPageBoxCount, 1);
 }
 
+// The FanFicFare ".hr-sect" divider (see BlockStyle::hrSectDivider /
+// PageHrSectRule): CssParser doesn't support the pseudo-elements/flexbox the
+// real CSS draws its flanking lines with, so ChapterHtmlSlimParser detects
+// the class name directly and reproduces the visual result from the
+// already-centered line's own word position instead.
+//
+// This test target's stub GfxRenderer measures every word at 0px, which
+// (unrelated to hr-sect) makes the real word-wrap/line-extraction pipeline
+// produce lines with no recoverable word data here -- so unlike the CSS
+// border-box tests, this checks the block-style detection directly rather
+// than the resulting PageHrSectRule's geometry. The actual rule-drawing
+// geometry is verified visually against a real book with EpubRenderPreview
+// (real fonts, real widths) -- see the plan's Verification section.
+TEST_F(ChapterHtmlSlimParserTest, HrSectClassSetsBlockStyleFlag) {
+  const XML_Char* attributes[] = {"class", "hr-sect", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_TRUE(parser.currentTextBlock->getBlockStyle().hrSectDivider);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PlainDivDoesNotSetHrSectFlag) {
+  ChapterHtmlSlimParser::startElement(&parser, "div", nullptr);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_FALSE(parser.currentTextBlock->getBlockStyle().hrSectDivider);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, UnrelatedClassDoesNotSetHrSectFlag) {
+  // hasClassToken() must be word-boundary-safe: a class that merely contains
+  // "hr-sect" as a substring must not match.
+  const XML_Char* attributes[] = {"class", "not-hr-sect-related", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_FALSE(parser.currentTextBlock->getBlockStyle().hrSectDivider);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PlainDivProducesNoHrSectRule) {
+  ChapterHtmlSlimParser::startElement(&parser, "div", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Just a div", 10);
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);  // flush trailing content
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  for (const auto& element : parser.currentPage->elements) {
+    EXPECT_NE(element->getTag(), TAG_PageHrSectRule);
+  }
+}
+
 TEST_F(ChapterHtmlSlimParserTest, FontSizeResolvesToNearestLadderRungWhenExactMatch) {
   parser.fontSizeLadder_.addRung(999, 175);  // fake "175% of body" rung
 

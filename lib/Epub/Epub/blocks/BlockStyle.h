@@ -70,6 +70,15 @@ struct BlockStyle {
   bool fontResolved = false;
   float fontSizeResidualScale = 1.0f;
 
+  // Set directly from a class="...hr-sect..." token match in
+  // ChapterHtmlSlimParser::startElement(), not derived from CssStyle/CSS
+  // rules at all -- FanFicFare's own boilerplate stylesheet draws this
+  // decorative divider's flanking lines via ::before/::after pseudo-elements
+  // and flexbox, neither of which CssParser supports, so the class name
+  // itself is the only signal. addLineToPage() uses it to draw two short
+  // horizontal lines flanking this block's (already CSS-centered) content.
+  bool hrSectDivider = false;
+
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
   [[nodiscard]] int16_t rightInset() const { return marginRight + paddingRight; }

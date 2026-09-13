@@ -204,6 +204,22 @@ bool matches(const char* tag_name, const char* const* possible_tags, size_t coun
   return false;
 }
 
+// Word-boundary-safe check for one space-separated class token, e.g. for
+// class="foo hr-sect bar" and token "hr-sect" -- a plain substring search
+// would also match a hypothetical "not-hr-sect" class.
+bool hasClassToken(std::string_view classAttr, std::string_view token) {
+  size_t start = 0;
+  while (start <= classAttr.size()) {
+    size_t end = classAttr.find(' ', start);
+    if (end == std::string_view::npos) end = classAttr.size();
+    if (classAttr.substr(start, end - start) == token) {
+      return true;
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
 const char* getAttribute(const XML_Char** atts, const char* attrName) {
   if (!atts) return nullptr;
   for (int i = 0; atts[i]; i += 2) {
@@ -2875,6 +2891,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->currentCssStyle = cssStyle;
       auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
           userAlignmentBlockStyle, BlockStyle::CombineAxis::Horizontal);
+      accumulated.hrSectDivider = hasClassToken(classAttr, "hr-sect");
       self->resolveBlockFont(accumulated);
       if (self->blockStyleCount_ < MAX_BLOCK_STYLE_DEPTH) {
         accumulated.depth = self->depth;  // Track depth for matching pop
@@ -4091,6 +4108,28 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     return;
   }
   currentPage->elements.push_back(std::move(pageLine));
+
+  // The FanFicFare ".hr-sect" divider (see BlockStyle::hrSectDivider): draw
+  // the two flanking lines the real CSS would via ::before/::after
+  // pseudo-elements + flexbox, neither of which we support. This line's own
+  // centering already put word 0 at the correct symmetric gap from each
+  // edge -- see PageHrSectRule's own comment for why no separate text-width
+  // measurement is needed. Applies per line, so content that wraps to more
+  // than one line gets an independently-centered flanking pair on each.
+  if (lineStyle.hrSectDivider) {
+    const int16_t contentWidth = static_cast<int16_t>(viewportWidth - lineStyle.totalHorizontalInset());
+    const int16_t textGap = line->wordCount() > 0 ? line->wordXpos(0) : 0;
+    if (textGap - PageHrSectRule::MARGIN > 0 && (contentWidth - textGap) - PageHrSectRule::MARGIN > 0) {
+      auto hrSectRule = makeUniqueNoThrow<PageHrSectRule>(contentWidth, textGap, xOffset,
+                                                          static_cast<int16_t>(currentPageNextY + lineHeight / 2));
+      if (hrSectRule) {
+        currentPage->elements.push_back(std::move(hrSectRule));
+      } else {
+        LOG_ERR("EHP", "Failed to create PageHrSectRule");
+      }
+    }
+  }
+
   markCurrentPageFromCurrentTextBlock();
   currentPageNextY += lineHeight;
 }
