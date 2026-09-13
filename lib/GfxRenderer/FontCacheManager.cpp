@@ -117,7 +117,12 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
     }
   }
   if (fontSlot == scanFontCount_) {
-    if (scanFontCount_ >= MAX_SCAN_FONTS) return;
+    if (scanFontCount_ >= MAX_SCAN_FONTS) {
+      LOG_ERR("FCM", "recordText: all %u scan font slots full, dropping font %d entirely -- its glyphs will hit the "
+                     "slow on-demand path unprewarmed",
+              MAX_SCAN_FONTS, fontId);
+      return;
+    }
     scanFontIds_[scanFontCount_++] = fontId;
   }
 
