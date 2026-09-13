@@ -104,6 +104,15 @@ class CssParser {
   [[nodiscard]] static CssStyle parseInlineStyle(std::string_view styleValue);
 
   /**
+   * Map a CSS/legacy-HTML text-alignment keyword ("left", "center", "right",
+   * "justify", "start", "end") to CssTextAlign. Exposed publicly (not just
+   * used internally for `text-align:` declarations) so callers can apply the
+   * same mapping to the legacy presentational `align=""` HTML attribute as a
+   * fallback when no CSS/inline style provides text-align.
+   */
+  static CssTextAlign interpretAlignment(std::string_view val);
+
+  /**
    * Check if any rules have been loaded
    */
   [[nodiscard]] bool empty() const {
@@ -247,7 +256,6 @@ class CssParser {
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 
   // Individual property value parsers
-  static CssTextAlign interpretAlignment(std::string_view val);
   static CssFontStyle interpretFontStyle(std::string_view val);
   static CssFontWeight interpretFontWeight(std::string_view val);
   static CssFontVariantCaps interpretFontVariantCaps(std::string_view val);

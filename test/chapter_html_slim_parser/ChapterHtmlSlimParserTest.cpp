@@ -72,6 +72,35 @@ TEST_P(ChapterHtmlSlimParserTest, KeepsCssVerticalAlignAndInternalLinkMetadata) 
 INSTANTIATE_TEST_SUITE_P(CssVerticalAlign, ChapterHtmlSlimParserTest,
                          ::testing::Values("vertical-align: super", "vertical-align: sub"));
 
+TEST_F(ChapterHtmlSlimParserTest, LegacyAlignAttributeAppliesWhenNoCssTextAlign) {
+  // Some EPUB converters/editors still emit the legacy presentational
+  // align="" HTML attribute instead of (or alongside) CSS -- confirmed on a
+  // real AO3 fanfic chapter whose author's-note paragraphs used
+  // <p align="center">/<p align="left"> with no matching CSS rule, which
+  // rendered flat left-aligned on-device instead of the intended alternation.
+  // paragraphAlignment=None ("Book's Style") is required for either the CSS
+  // or this fallback to have any effect -- a forced reader alignment always
+  // wins over both, same as CSS always wins over this fallback below.
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);
+  const XML_Char* attributes[] = {"align", "center", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Center);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CssTextAlignOverridesLegacyAlignAttribute) {
+  // Real CSS/inline style must win over the legacy attribute, matching
+  // browser cascade precedence -- the fallback only fills a gap, it never
+  // competes with an actual style rule.
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);
+  const XML_Char* attributes[] = {"align", "center", "style", "text-align: left", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Left);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheCompressedImage) {
   epub.optimizerImageAvailable = true;
   epub.optimizerImageWidth = 800;
