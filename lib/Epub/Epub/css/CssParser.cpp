@@ -601,7 +601,13 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     }
   } else if (iequalsAscii(name, "display")) {
     const std::string_view displayValue = stripTrailingImportant(value);
-    style.display = iequalsAscii(displayValue, "none") ? CssDisplay::None : CssDisplay::Block;
+    if (iequalsAscii(displayValue, "none")) {
+      style.display = CssDisplay::None;
+    } else if (iequalsAscii(displayValue, "inline") || iequalsAscii(displayValue, "inline-block")) {
+      style.display = CssDisplay::Inline;
+    } else {
+      style.display = CssDisplay::Block;
+    }
     style.defined.display = 1;
   } else if (iequalsAscii(name, "background") || iequalsAscii(name, "background-color")) {
     bool backgroundBlack = false;

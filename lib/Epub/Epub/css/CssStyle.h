@@ -69,8 +69,12 @@ constexpr CssTextDecoration operator&(const CssTextDecoration a, const CssTextDe
 constexpr uint8_t CSS_TEXT_DECORATION_MASK =
     static_cast<uint8_t>(CssTextDecoration::Underline) | static_cast<uint8_t>(CssTextDecoration::LineThrough);
 
-// Display options - only None and Block are relevant for e-ink rendering
-enum class CssDisplay : uint8_t { Block = 0, None = 1 };
+// Display options relevant for e-ink rendering. Inline does not create a new
+// block/line -- it's used to tell apart elements like <dt>/<dd> that FanFicFare
+// (and similar EPUB generators) mark `display: inline` in specific contexts
+// (e.g. a Series row) from their ordinary block-level siblings (e.g. a Tags
+// row) in otherwise-identical markup.
+enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2 };
 
 // Vertical alignment options for inline elements (e.g. superscript/subscript)
 enum class CssVerticalAlign : uint8_t { Baseline = 0, Super = 1, Sub = 2 };
