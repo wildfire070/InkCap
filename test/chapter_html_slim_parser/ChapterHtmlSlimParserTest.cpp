@@ -221,6 +221,48 @@ TEST_F(ChapterHtmlSlimParserTest, BorderBoxSplitAcrossAPageBreakProducesTwoIndep
   EXPECT_EQ(currentPageBoxCount, 1);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, FontSizeResolvesToNearestLadderRungWhenExactMatch) {
+  parser.fontSizeLadder_.addRung(999, 175);  // fake "175% of body" rung
+
+  const XML_Char* attributes[] = {"style", "font-size: 1.75em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 999);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FontSizeWithNoLadderMatchKeepsBodyFont) {
+  // Ladder has only a 133% rung; 175% is far enough that the ladder's own
+  // dead-zone/nearest-rung logic still picks it (see FontSizeLadderTest for
+  // that math) -- but with an EMPTY ladder there is nothing to snap to at
+  // all, so the body font (headingFontId == 0) must be kept.
+  const XML_Char* attributes[] = {"style", "font-size: 1.75em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", attributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 0);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SecondDifferentlySizedBlockFallsBackOnceAuxSlotIsClaimed) {
+  parser.fontSizeLadder_.addRung(111, 150);
+  parser.fontSizeLadder_.addRung(222, 200);
+
+  const XML_Char* firstAttrs[] = {"style", "font-size: 1.5em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", firstAttrs);
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 111);
+  EXPECT_EQ(parser.auxFontId_, 111);
+  ChapterHtmlSlimParser::endElement(&parser, "h1");
+
+  const XML_Char* secondAttrs[] = {"style", "font-size: 2em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", secondAttrs);
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  // 200% would resolve to fontId 222, but the one aux slot is already
+  // claimed by 111 -- this block must keep the body font, not claim a second.
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().headingFontId, 0);
+  EXPECT_EQ(parser.auxFontId_, 111);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, HiddenIdsDoNotBecomeAnchorsOrTocPageBreaks) {
   parser.tocAnchors.push_back("hidden-chapter");
   const XML_Char* idFirst[] = {"id", "hidden-chapter", "hidden", "hidden", nullptr};

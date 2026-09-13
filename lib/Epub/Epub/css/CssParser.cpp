@@ -70,8 +70,8 @@ constexpr size_t CSS_LENGTH_FIELD_COUNT = 11;
 constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
 constexpr size_t CSS_FIXED_STYLE_BYTES = 5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) +
                                          4 * sizeof(uint8_t) + 2 * sizeof(uint8_t) + 4 * sizeof(uint8_t) +
-                                         sizeof(uint32_t);
-static_assert(CSS_FIXED_STYLE_BYTES == 74,
+                                         sizeof(float) + sizeof(uint32_t);
+static_assert(CSS_FIXED_STYLE_BYTES == 78,
               "CssStyle cache payload changed; update read/writeCssStylePayload and bump CSS_CACHE_VERSION");
 
 // Check if character is CSS whitespace
@@ -275,6 +275,71 @@ bool tryInterpretBorderPresence(std::string_view value, bool& out) {
     out = true;
   }
   return true;
+}
+
+// Normalizes a CSS font-size value to a unitless multiplier of the BODY em
+// size (1.0 = same as body). CSS "medium" == 16px == 12pt is the reference
+// point for px/pt. Keyword steps and the smaller/larger fold are the same
+// simplification jpirnay/witchhunt-reader (a sibling fork) uses: real CSS
+// relative-to-PARENT semantics for smaller/larger are not implemented here,
+// only fixed absolute-size steps.
+bool tryInterpretFontSizeMultiplier(std::string_view value, float& out) {
+  value = trimCssWhitespace(stripTrailingImportant(value));
+  if (value.empty()) return false;
+
+  if (iequalsAscii(value, "xx-small")) {
+    out = 0.6f;
+    return true;
+  }
+  if (iequalsAscii(value, "x-small")) {
+    out = 0.75f;
+    return true;
+  }
+  if (iequalsAscii(value, "small") || iequalsAscii(value, "smaller")) {
+    out = 0.8f;
+    return true;
+  }
+  if (iequalsAscii(value, "medium")) {
+    out = 1.0f;
+    return true;
+  }
+  if (iequalsAscii(value, "large") || iequalsAscii(value, "larger")) {
+    out = 1.2f;
+    return true;
+  }
+  if (iequalsAscii(value, "x-large")) {
+    out = 1.4f;
+    return true;
+  }
+  if (iequalsAscii(value, "xx-large")) {
+    out = 1.6f;
+    return true;
+  }
+
+  size_t unitStart = value.size();
+  for (size_t i = 0; i < value.size(); ++i) {
+    const char c = value[i];
+    if (!std::isdigit(c) && c != '.' && c != '-' && c != '+') {
+      unitStart = i;
+      break;
+    }
+  }
+  float numericValue = 0.0f;
+  if (!tryParseNumber(value.substr(0, unitStart), numericValue)) return false;
+
+  const std::string_view unit = value.substr(unitStart);
+  if (unit == "%") {
+    out = numericValue / 100.0f;
+  } else if (iequalsAscii(unit, "em") || iequalsAscii(unit, "rem")) {
+    out = numericValue;
+  } else if (iequalsAscii(unit, "pt")) {
+    out = numericValue / 12.0f;
+  } else if (iequalsAscii(unit, "px") || unit.empty()) {
+    out = numericValue / 16.0f;
+  } else {
+    return false;
+  }
+  return out > 0.0f;
 }
 
 }  // anonymous namespace
@@ -602,6 +667,12 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     if (tryInterpretBorderPresence(value, present)) {
       style.borderLeft = present;
       style.defined.borderLeft = 1;
+    }
+  } else if (iequalsAscii(name, "font-size")) {
+    float multiplier = 1.0f;
+    if (tryInterpretFontSizeMultiplier(value, multiplier)) {
+      style.fontSizeMultiplier = multiplier;
+      style.defined.fontSize = 1;
     }
   }
 }
@@ -1058,7 +1129,8 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
       !writeByte(static_cast<uint8_t>(style.borderTop ? 1 : 0)) ||
       !writeByte(static_cast<uint8_t>(style.borderRight ? 1 : 0)) ||
       !writeByte(static_cast<uint8_t>(style.borderBottom ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.borderLeft ? 1 : 0))) {
+      !writeByte(static_cast<uint8_t>(style.borderLeft ? 1 : 0)) ||
+      !writeBytes(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier))) {
     return false;
   }
 
@@ -1089,6 +1161,7 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   if (style.defined.borderRight) definedBits |= 1 << 24;
   if (style.defined.borderBottom) definedBits |= 1 << 25;
   if (style.defined.borderLeft) definedBits |= 1 << 26;
+  if (style.defined.fontSize) definedBits |= 1 << 27;
   return writeBytes(&definedBits, sizeof(definedBits));
 }
 
@@ -1144,6 +1217,9 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.borderBottom = borderVal != 0;
   if (file.read(&borderVal, 1) != 1) return false;
   style.borderLeft = borderVal != 0;
+  if (file.read(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier)) != sizeof(style.fontSizeMultiplier)) {
+    return false;
+  }
 
   uint32_t definedBits = 0;
   if (file.read(&definedBits, sizeof(definedBits)) != sizeof(definedBits)) return false;
@@ -1173,6 +1249,7 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.defined.borderRight = (definedBits & 1 << 24) != 0;
   style.defined.borderBottom = (definedBits & 1 << 25) != 0;
   style.defined.borderLeft = (definedBits & 1 << 26) != 0;
+  style.defined.fontSize = (definedBits & 1 << 27) != 0;
   return true;
 }
 

@@ -1015,10 +1015,43 @@ CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
   return spec;
 }
 
+namespace {
+// Builds the body font's ladder of sibling built-in sizes (see
+// FontSizeLadder.h). Returns an empty ladder when bodyFontId isn't one of the
+// CURRENT family's own built-in ids -- which is exactly what happens when an
+// SD card font is active (getReaderFontId() returns the SD resolver's id,
+// never one of the flash *_FONT_ID constants), so no separate SD-font check
+// is needed here.
+FontSizeLadder buildReaderFontSizeLadder(const CrossPointSettings& settings, const int bodyFontId) {
+  static constexpr CrossPointSettings::FONT_SIZE kSizes[] = {
+      CrossPointSettings::TINY, CrossPointSettings::SMALL, CrossPointSettings::MEDIUM, CrossPointSettings::LARGE};
+  static constexpr uint8_t kPointSizes[] = {10, 12, 14, 16};
+  static_assert(std::size(kSizes) == std::size(kPointSizes));
+
+  int bodyPointSize = 0;
+  for (size_t i = 0; i < std::size(kSizes); ++i) {
+    if (settings.getBuiltInReaderFontId(kSizes[i]) == bodyFontId) {
+      bodyPointSize = kPointSizes[i];
+      break;
+    }
+  }
+
+  FontSizeLadder ladder;
+  if (bodyPointSize == 0) return ladder;  // bodyFontId isn't a built-in of this family (e.g. an SD font)
+
+  for (size_t i = 0; i < std::size(kSizes); ++i) {
+    ladder.addRung(settings.getBuiltInReaderFontId(kSizes[i]),
+                   static_cast<uint16_t>(kPointSizes[i] * 100 / bodyPointSize));
+  }
+  return ladder;
+}
+}  // namespace
+
 ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWidth, const uint16_t viewportHeight,
                                                       const EpubRenderMode renderMode) const {
   ReaderRenderSpec spec;
   spec.fontId = getReaderFontId();
+  spec.fontSizeLadder = buildReaderFontSizeLadder(*this, spec.fontId);
   spec.lineCompression = getReaderLineCompression();
   spec.extraParagraphSpacing = extraParagraphSpacing != 0;
   spec.forceParagraphIndents = forceParagraphIndents != 0;
@@ -1189,13 +1222,16 @@ int CrossPointSettings::getReaderFontId() const {
   return getBuiltInReaderFontId();
 }
 
-int CrossPointSettings::getBuiltInReaderFontId() const {
-  const FONT_SIZE effectiveSize = getEffectiveReaderFontSize();
+int CrossPointSettings::getBuiltInReaderFontId() const { return getBuiltInReaderFontId(getEffectiveReaderFontSize()); }
 
+// Explicit-size overload used by getBuiltInReaderFontId() above (with the
+// member's own effective size) and by buildReaderFontSizeLadder() (which
+// needs every size of the current family, not just the effective one).
+int CrossPointSettings::getBuiltInReaderFontId(const FONT_SIZE size) const {
   switch (fontFamily) {
     case LEXENDDECA:
     default:
-      switch (effectiveSize) {
+      switch (size) {
         case TINY:
           return LEXENDDECA_10_FONT_ID;
         case SMALL:
@@ -1208,7 +1244,7 @@ int CrossPointSettings::getBuiltInReaderFontId() const {
       }
       return getFallbackReaderFontIdForFamily(LEXENDDECA);
     case BITTER:
-      switch (effectiveSize) {
+      switch (size) {
         case TINY:
           return BITTER_10_FONT_ID;
         case SMALL:
