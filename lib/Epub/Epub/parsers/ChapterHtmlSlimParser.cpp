@@ -78,7 +78,15 @@ static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5"
 // a static paginated reader with no collapse/expand interactivity to
 // replicate, so treating them as plain blocks (like div) is the correct,
 // and only sensible, static rendering.
-static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote", "details", "summary"};
+// dt/dd default to block-level (matching the HTML spec's suggested rendering),
+// but real EPUB stylesheets (FanFicFare's title-page metadata list in
+// particular) sometimes mark a specific dd `display: inline` to keep a label
+// and its value on one line (e.g. "Series: X") while a sibling dd with no such
+// override stays block-level (e.g. a "Tags:" list) -- see the
+// CssDisplay::Inline handling below, which skips the block-starting behavior
+// for those.
+static constexpr const char* const BLOCK_TAGS[] = {"p",  "li", "div",      "br",      "blockquote",
+                                                     "dt", "dd", "details", "summary"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
 static constexpr const char* const ITALIC_TAGS[] = {"i", "em"};
 static constexpr const char* const UNDERLINE_TAGS[] = {"u", "ins"};
@@ -2866,7 +2874,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->beginCssBorderBoxIfNeeded(accumulated);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
-  } else if (matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) || strcmp(name, "caption") == 0) {
+  } else if ((matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) || strcmp(name, "caption") == 0) &&
+             !(cssStyle.hasDisplay() && cssStyle.display == CssDisplay::Inline)) {
     if (self->headingOpenerActive) {
       self->headingOpenerActive = false;
     }
@@ -3097,8 +3106,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     } else {
       LOG_ERR("EHP", "list marker stack overflow, nested list falls back to bullets");
     }
-  } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
-    // Handle span and other inline elements for CSS styling
+  } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name) ||
+             (cssStyle.hasDisplay() && cssStyle.display == CssDisplay::Inline)) {
+    // Handle span and other inline elements for CSS styling. The display:inline
+    // check catches a BLOCK_TAGS member (e.g. <dd>) explicitly marked inline by
+    // its own CSS -- see the matching skip on the block-starting branch above.
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
         cssStyle.hasBackgroundBlack() || cssStyle.hasVerticalAlign() || cssStyle.hasDirection() ||
         cssStyle.hasFontVariantCaps()) {
