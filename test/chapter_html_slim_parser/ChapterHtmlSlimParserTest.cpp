@@ -101,6 +101,44 @@ TEST_F(ChapterHtmlSlimParserTest, CssTextAlignOverridesLegacyAlignAttribute) {
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Left);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, BodyTextAlignBecomesTheDefaultForPlainParagraphs) {
+  // computeStyleForElement() only matches an element's own tag/class, not full
+  // CSS inheritance -- confirmed on a real book (stylesheet.css sets
+  // body{text-align:left}) whose plain <p>s rendered justified instead of
+  // left-aligned on-device, since "Book's Style" mode's own Justify default
+  // (see beginParse()) never saw body's override at all.
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);
+  const XML_Char* attributes[] = {"style", "text-align: left", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "body", attributes);
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Left);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ParagraphsOwnCssTextAlignOverridesInheritedBodyAlignment) {
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);
+  const XML_Char* bodyAttributes[] = {"style", "text-align: left", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "body", bodyAttributes);
+  const XML_Char* pAttributes[] = {"style", "text-align: center", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", pAttributes);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Center);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ForcedReaderAlignmentIgnoresBodyTextAlign) {
+  // A forced reader alignment setting always wins, same as every other
+  // Book's-Style-only override in this parser (align="", font-size ladder, etc).
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::Center);
+  const XML_Char* attributes[] = {"style", "text-align: left", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "body", attributes);
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+
+  ASSERT_NE(parser.currentTextBlock, nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Center);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheCompressedImage) {
   epub.optimizerImageAvailable = true;
   epub.optimizerImageWidth = 800;
