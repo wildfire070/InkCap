@@ -263,6 +263,78 @@ TEST_F(ChapterHtmlSlimParserTest, SecondDifferentlySizedBlockFallsBackOnceAuxSlo
   EXPECT_EQ(parser.auxFontId_, 111);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, OrderedListItemsAreNumbered) {
+  ChapterHtmlSlimParser::startElement(&parser, "ol", nullptr);
+
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "1.");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "2.");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+
+  ChapterHtmlSlimParser::endElement(&parser, "ol");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, UnorderedListItemsKeepTheBullet) {
+  ChapterHtmlSlimParser::startElement(&parser, "ul", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "\xe2\x80\xa2");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+  ChapterHtmlSlimParser::endElement(&parser, "ul");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, LiWithNoListAncestorKeepsTheBullet) {
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "\xe2\x80\xa2");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, NestedOrderedListRestartsItsOwnNumbering) {
+  ChapterHtmlSlimParser::startElement(&parser, "ul", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+
+  ChapterHtmlSlimParser::startElement(&parser, "ol", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "1.");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+  ChapterHtmlSlimParser::endElement(&parser, "ol");
+
+  // Back in the outer <ul>, a sibling <li> keeps using bullets.
+  ChapterHtmlSlimParser::startElement(&parser, "li", nullptr);
+  ASSERT_GE(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "\xe2\x80\xa2");
+  ChapterHtmlSlimParser::endElement(&parser, "li");
+  ChapterHtmlSlimParser::endElement(&parser, "ul");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SummaryStartsANewBlockInsteadOfContinuingInline) {
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Before", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "Before");
+  const ParsedText* beforeBlock = parser.currentTextBlock.get();
+
+  // Opening <summary> here must start a genuinely NEW block (a fresh
+  // ParsedText, flushing "Before" via makePages -> addLineToPage), not treat
+  // <summary> as inline text that would run together with "Before".
+  ChapterHtmlSlimParser::startElement(&parser, "summary", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Note", 4);
+  ChapterHtmlSlimParser::endElement(&parser, "summary");
+
+  EXPECT_NE(parser.currentTextBlock.get(), beforeBlock);
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "Note");
+}
+
 TEST_F(ChapterHtmlSlimParserTest, HiddenIdsDoNotBecomeAnchorsOrTocPageBreaks) {
   parser.tocAnchors.push_back("hidden-chapter");
   const XML_Char* idFirst[] = {"id", "hidden-chapter", "hidden", "hidden", nullptr};

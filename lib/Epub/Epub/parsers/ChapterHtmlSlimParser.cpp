@@ -70,7 +70,13 @@ constexpr uint32_t MIN_FREE_HEAP_FOR_RICH_TABLE = 96U * 1024U;
 constexpr uint32_t MIN_MAX_ALLOC_FOR_RICH_TABLE = 56U * 1024U;
 
 static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
-static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
+// details/summary aren't in any tag table by default, so they'd otherwise
+// fall through to the generic inline/span branch -- their content would run
+// together with surrounding text instead of starting its own block. This is
+// a static paginated reader with no collapse/expand interactivity to
+// replicate, so treating them as plain blocks (like div) is the correct,
+// and only sensible, static rendering.
+static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote", "details", "summary"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
 static constexpr const char* const ITALIC_TAGS[] = {"i", "em"};
 static constexpr const char* const UNDERLINE_TAGS[] = {"u", "ins"};
@@ -2870,9 +2876,22 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
-        self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR, false, false,
-                                        self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
-                                        self->visibleTextOffset);
+        // Nearest open <ol>/<ul> ancestor (top of the stack) decides numbered
+        // vs bulleted; an <li> with no list ancestor at all (malformed
+        // markup) keeps today's bullet, matching the existing fallback.
+        if (self->listStackCount_ > 0 && self->listStack_[self->listStackCount_ - 1].ordered) {
+          ListMarkerContext& listCtx = self->listStack_[self->listStackCount_ - 1];
+          ++listCtx.counter;
+          char marker[16];
+          snprintf(marker, sizeof(marker), "%u.", static_cast<unsigned>(listCtx.counter));
+          self->currentTextBlock->addWord(marker, EpdFontFamily::REGULAR, false, false,
+                                          self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
+                                          self->visibleTextOffset);
+        } else {
+          self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR, false, false,
+                                          self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
+                                          self->visibleTextOffset);
+        }
         self->pendingListMarkerDepth = self->depth;
       }
     }
@@ -3030,6 +3049,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       LOG_ERR("EHP", "inline style stack overflow (sup/sub)");
     }
     self->updateEffectiveInlineStyle();
+  } else if (strcmp(name, "ol") == 0 || strcmp(name, "ul") == 0) {
+    if (self->listStackCount_ < MAX_LIST_NESTING) {
+      ListMarkerContext ctx;
+      ctx.depth = self->depth;
+      ctx.ordered = strcmp(name, "ol") == 0;
+      self->listStack_[self->listStackCount_++] = ctx;
+    } else {
+      LOG_ERR("EHP", "list marker stack overflow, nested list falls back to bullets");
+    }
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
     // Handle span and other inline elements for CSS styling
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
@@ -3520,6 +3548,11 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 
   if (strcmp(name, "li") == 0 && self->pendingListMarkerDepth == self->depth) {
     self->pendingListMarkerDepth = -1;
+  }
+
+  if ((strcmp(name, "ol") == 0 || strcmp(name, "ul") == 0) && self->listStackCount_ > 0 &&
+      self->listStack_[self->listStackCount_ - 1].depth == self->depth) {
+    self->listStackCount_--;
   }
 
   // Leaving bold tag
