@@ -116,6 +116,111 @@ TEST_F(ChapterHtmlSlimParserTest, HiddenImageDoesNotReadImageDataWithoutCss) {
   EXPECT_EQ(parser.currentPage, nullptr);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, BlockquoteBorderLeftProducesOneBorderBoxWithOnlyThatSide) {
+  const XML_Char* attributes[] = {"style", "border-left: 0.5px solid #9b9b9b", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "blockquote", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Quoted text", 11);
+  ChapterHtmlSlimParser::endElement(&parser, "blockquote");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);  // flush onto a page
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  int borderBoxCount = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() != TAG_PageCssBorderBox) continue;
+    ++borderBoxCount;
+    const auto& box = static_cast<const PageCssBorderBox&>(*element);
+    EXPECT_TRUE(box.hasBorderLeft());
+    EXPECT_FALSE(box.hasBorderTop());
+    EXPECT_FALSE(box.hasBorderRight());
+    EXPECT_FALSE(box.hasBorderBottom());
+    EXPECT_GT(box.getHeight(), 0);
+  }
+  EXPECT_EQ(borderBoxCount, 1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, AllFourBorderSidesProduceOneBoxWithAllSidesSet) {
+  const XML_Char* attributes[] = {"style", "border: 1px solid #000", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Boxed text", 10);
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  int borderBoxCount = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() != TAG_PageCssBorderBox) continue;
+    ++borderBoxCount;
+    const auto& box = static_cast<const PageCssBorderBox&>(*element);
+    EXPECT_TRUE(box.hasBorderTop());
+    EXPECT_TRUE(box.hasBorderRight());
+    EXPECT_TRUE(box.hasBorderBottom());
+    EXPECT_TRUE(box.hasBorderLeft());
+  }
+  EXPECT_EQ(borderBoxCount, 1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BlockWithoutBorderProducesNoBorderBox) {
+  ChapterHtmlSlimParser::startElement(&parser, "blockquote", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Plain quote", 11);
+  ChapterHtmlSlimParser::endElement(&parser, "blockquote");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  for (const auto& element : parser.currentPage->elements) {
+    EXPECT_NE(element->getTag(), TAG_PageCssBorderBox);
+  }
+}
+
+// A bordered block whose content is forced to split across a page break must
+// produce two independent PageCssBorderBox fragments (one per page), each
+// covering only that page's portion of the block -- not one box that somehow
+// spans the break, and not a crash/corruption from the depth-matched stack.
+TEST_F(ChapterHtmlSlimParserTest, BorderBoxSplitAcrossAPageBreakProducesTwoIndependentFragments) {
+  std::vector<std::unique_ptr<Page>> completedPages;
+  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t) {
+    completedPages.push_back(std::move(page));
+  };
+  // The stub GfxRenderer measures every glyph/word at 0px width, so pixel-width
+  // wrapping never kicks in here -- force multiple lines the way real HTML
+  // does regardless of measured width, via explicit <br/>. getLineHeight() is
+  // fixed at 16px, so a 32px viewport fits exactly 2 such lines before a 3rd
+  // forces a break.
+  parser.viewportHeight = 32;
+
+  const XML_Char* attributes[] = {"style", "border-left: 1px solid #000", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "blockquote", attributes);
+  for (int i = 0; i < 5; ++i) {
+    ChapterHtmlSlimParser::characterData(&parser, "word", 4);
+    ChapterHtmlSlimParser::startElement(&parser, "br", nullptr);
+    ChapterHtmlSlimParser::endElement(&parser, "br");
+  }
+  ChapterHtmlSlimParser::endElement(&parser, "blockquote");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);  // flush trailing content
+
+  ASSERT_GE(completedPages.size(), 1u) << "test setup should have forced at least one page break";
+
+  // The border box on the (now-completed) first page should be finalized
+  // with a positive height and only the declared side set.
+  int firstPageBoxCount = 0;
+  for (const auto& element : completedPages.front()->elements) {
+    if (element->getTag() != TAG_PageCssBorderBox) continue;
+    ++firstPageBoxCount;
+    const auto& box = static_cast<const PageCssBorderBox&>(*element);
+    EXPECT_TRUE(box.hasBorderLeft());
+    EXPECT_GT(box.getHeight(), 0);
+  }
+  EXPECT_EQ(firstPageBoxCount, 1);
+
+  // The current (new) page should have its own independent border box too.
+  ASSERT_NE(parser.currentPage, nullptr);
+  int currentPageBoxCount = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() != TAG_PageCssBorderBox) continue;
+    ++currentPageBoxCount;
+  }
+  EXPECT_EQ(currentPageBoxCount, 1);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, HiddenIdsDoNotBecomeAnchorsOrTocPageBreaks) {
   parser.tocAnchors.push_back("hidden-chapter");
   const XML_Char* idFirst[] = {"id", "hidden-chapter", "hidden", "hidden", nullptr};

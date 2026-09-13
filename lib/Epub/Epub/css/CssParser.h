@@ -60,7 +60,7 @@ class CssParser {
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
   static constexpr uint32_t CSS_CACHE_MAGIC = 0x435843FF;  // bytes: 0xFF, "CXC"
-  static constexpr uint8_t CSS_CACHE_VERSION = 16;
+  static constexpr uint8_t CSS_CACHE_VERSION = 17;
 
   static constexpr size_t MAX_DESCENDANT_RULES = 100;
   // Ancestor-context parts a descendant selector may carry ahead of its subject

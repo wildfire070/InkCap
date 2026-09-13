@@ -57,3 +57,5 @@ void PageHorizontalRule::render(GfxRenderer&, int, int, int, bool) {}
 bool PageHorizontalRule::serialize(FsFile&) { return false; }
 void PageTableFragment::render(GfxRenderer&, int, int, int, bool) {}
 bool PageTableFragment::serialize(FsFile&) { return false; }
+void PageCssBorderBox::render(GfxRenderer&, int, int, int, bool) {}
+bool PageCssBorderBox::serialize(FsFile&) { return false; }
