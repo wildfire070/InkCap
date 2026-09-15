@@ -4,13 +4,17 @@
 
 - Hidden folders can be created using the web file manager now when prefixed with a dot.
 - Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
+- Two-finger Screen Rotation can be turned off in Settings > Controls > Taps & Gestures on multi-touch devices.
 
 ### Changed
 
 - Web portal pages reuse browser-cached content after checking for firmware updates.
+- Rapid queued EPUB page turns defer text anti-aliasing and image loading until the final page, making intermediate turns faster.
 
 ### Fixed
 
+- Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
+- OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
 - Importing CrossPoint settings preserves tap and swipe modes without carrying over a stale reader touchscreen lock.
 - Saved clippings no longer highlight unrelated single words at page boundaries when matching text after a layout change.
 - Quick Lock sleep now respects the configured short Power-button wake behavior.
