@@ -2,12 +2,15 @@
 
 #include <cstdint>
 
+#include "PoolBudget.h"
+
 namespace MemoryBudget {
 struct Snapshot {
   uint32_t freeHeap = UINT32_MAX;
   uint32_t maxAllocHeap = UINT32_MAX;
 };
 inline constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_FREE = 0;
+inline constexpr uint32_t JPEG_DECODER_APPROX_BYTES = 0;
 inline Snapshot snapshot() { return {}; }
 inline bool hasHeapForEpubTextLayoutStart(Snapshot) { return true; }
 inline bool hasHeap(Snapshot, uint32_t, uint32_t) { return true; }
