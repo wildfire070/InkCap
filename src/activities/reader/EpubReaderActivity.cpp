@@ -2319,7 +2319,7 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   sdFontSystem.setSettingsPersistenceCallback(nullptr, nullptr);
-  clearPendingManualPageTurns();
+  clearPendingManualPageTurns(/*requestRecoveryRedraw=*/false);
   mappedInput.setReaderTouchscreenOverride(false);
 
   // The image callbacks hold the Epub as a raw context pointer.
@@ -5584,13 +5584,22 @@ void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
 void EpubReaderActivity::requestManualPageTurn(const bool isForwardTurn, const char* source) {
   finishManualPageTurnBrakeIfReady();
   const ManualPageTurnRequest request{isForwardTurn, source};
+  const auto enqueueManualTurn = [this, request]() {
+    if (pendingManualPageTurns.enqueue(request) == ManualPageTurnQueue::EnqueueResult::Cancelled) {
+      // A reversal needs a redraw only if the render task already committed to
+      // deferring quality work for the page that has now become final again.
+      if (queuedTurnRendering.cancelDeferred()) {
+        requestUpdate();
+      }
+    }
+  };
   if (pendingManualPageTurns.hasPending()) {
-    pendingManualPageTurns.enqueue(request);
+    enqueueManualTurn();
     return;
   }
 
   if (RenderLock::peek() || (millis() - lastPageTurnTime) < MIN_MANUAL_PAGE_TURN_GAP_MS) {
-    pendingManualPageTurns.enqueue(request);
+    enqueueManualTurn();
     return;
   }
 
@@ -5613,12 +5622,20 @@ bool EpubReaderActivity::drainPendingManualPageTurn() {
   }
 
   if (request.isForward) cancelSilentNextChapterPrefetchForForwardTurn();
+  // This successor replaces the currently displayed page, so a prior deferred
+  // quality pass no longer needs recovery.
+  queuedTurnRendering.clear();
   pendingManualPageTurns.markDispatched(request);
   pageTurn(request.isForward, request.source);
   return true;
 }
 
-void EpubReaderActivity::clearPendingManualPageTurns() { pendingManualPageTurns.clear(); }
+void EpubReaderActivity::clearPendingManualPageTurns(const bool requestRecoveryRedraw) {
+  pendingManualPageTurns.clear();
+  if (queuedTurnRendering.cancelDeferred() && requestRecoveryRedraw) {
+    requestUpdate();
+  }
+}
 
 void EpubReaderActivity::finishManualPageTurnBrakeIfReady() {
   if (pendingManualPageTurns.hasDispatched() && !RenderLock::peek() &&
@@ -7135,15 +7152,33 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
 #endif
 
   const bool pageHasImages = page->hasImages();
-  const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
-  const bool needsImageGrayscale = pageHasImages;
-  const bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack;
-  const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
-  const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
-  const bool overlapRefresh =
-      tiledGrayscale && !pageHasImages && pagesUntilFullRefresh > 1 && renderer.supportsAsyncGrayscaleBase();
+  bool needsImageGrayscale = pageHasImages;
+  bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack;
   const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
+
+  // The pending count excludes the page currently being rendered. Decide
+  // before checking image caches or materializing image data, so an
+  // intermediate queued page can use placeholders instead of doing I/O that
+  // the final page will immediately replace.
+  bool deferQueuedTurnRendering = false;
+  if (updatePanel) {
+    const bool canDeferRendering = needsTextGrayscale || pageHasImages;
+    if (canDeferRendering && pendingManualPageTurns.hasPending()) {
+      queuedTurnRendering.beginDecision();
+      deferQueuedTurnRendering = queuedTurnRendering.finishDecision(pendingManualPageTurns.hasPending());
+    } else {
+      queuedTurnRendering.clear();
+    }
+  }
+  const bool deferImageLoading = deferQueuedTurnRendering && pageHasImages;
+  if (deferQueuedTurnRendering) {
+    needsTextGrayscale = false;
+  }
+  if (deferImageLoading) {
+    needsImageGrayscale = false;
+  }
+  const bool pageHasImagesNeedingDecode = !deferImageLoading && pageHasImages && page->hasImagesNeedingDecode();
 
   const auto finalizeBufferComposition = [&]() {
     drawClippingHighlights(*page, fontId, orientedMarginTop, orientedMarginLeft);
@@ -7157,7 +7192,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   };
 
   const auto composePageBuffer = [&]() {
-    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+    if (deferImageLoading) {
+      page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
+                                        /*renderCachedImages=*/false);
+    } else {
+      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+    }
     finalizeBufferComposition();
   };
 
@@ -7176,7 +7216,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     renderer.clearScreen(ReaderUtils::readerBackgroundColor());
   }
-  if (pageHasImages) {
+  if (pageHasImages && !deferImageLoading) {
     // Show the new page's placeholders before ZIP extraction or sidecar
     // materialization. The loan can overwrite the framebuffer, so rebuild
     // the complete page after returning it; the panel keeps the preview.
@@ -7223,7 +7263,11 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (!updatePanel) {
     return true;
   }
-  if (pageHasImages) {
+  const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
+  const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
+  const bool overlapRefresh =
+      tiledGrayscale && !pageHasImages && pagesUntilFullRefresh > 1 && renderer.supportsAsyncGrayscaleBase();
+  if (pageHasImages && !deferImageLoading) {
     // Keep the legacy blank/base sequence unless the controller can transition
     // directly to the complete image base.
     int16_t imgX, imgY, imgW, imgH;

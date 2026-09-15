@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 /**
@@ -51,6 +52,9 @@ class HttpDownloader {
     // username/password Basic auth below. Same same-origin redirect gating
     // applies to both: never sent across a redirect to a different origin.
     std::string bearerToken;
+    // Borrowed only for this synchronous request. Basic credentials are sent
+    // only to this origin; empty keeps the request URL as the credential origin.
+    std::string_view authorizationOrigin;
   };
 
   // Default ceiling for fetchUrl(std::string&) below: this class exists so
