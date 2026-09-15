@@ -78,14 +78,12 @@ add_subdirectory(koreader_http_bounds)
 
 add_subdirectory(pxc_v2)
 add_subdirectory(memory_policy)
-
 add_subdirectory(epub_grayscale)
 add_subdirectory(epub_render_preview)
 
 add_subdirectory(ui_symbol_fallback)
-
 add_subdirectory(absolute_grayscale)
-
 add_subdirectory(buffered_file)
 add_subdirectory(ota_boot_switch)
 add_subdirectory(http_redirect_policy)
+add_subdirectory(hal_file_stream)
