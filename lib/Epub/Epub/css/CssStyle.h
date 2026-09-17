@@ -79,6 +79,9 @@ enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2 };
 // Vertical alignment options for inline elements (e.g. superscript/subscript)
 enum class CssVerticalAlign : uint8_t { Baseline = 0, Super = 1, Sub = 2 };
 
+// List markers supported by the EPUB renderer.
+enum class CssListStyleType : uint8_t { Disc = 0, None = 1 };
+
 // Bitmask for tracking which properties have been explicitly set
 struct CssPropertyFlags {
   uint32_t textAlign : 1;
@@ -108,6 +111,7 @@ struct CssPropertyFlags {
   uint32_t borderBottom : 1;
   uint32_t borderLeft : 1;
   uint32_t fontSize : 1;
+  uint32_t listStyleType : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -136,13 +140,15 @@ struct CssPropertyFlags {
         borderRight(0),
         borderBottom(0),
         borderLeft(0),
-        fontSize(0) {}
+        fontSize(0),
+        listStyleType(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
-           pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft || fontSize;
+           pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
+           fontSize || listStyleType;
   }
 
   void clearAll() {
@@ -153,6 +159,7 @@ struct CssPropertyFlags {
     pageBreakBefore = pageBreakAfter = fontVariantCaps = 0;
     borderTop = borderRight = borderBottom = borderLeft = 0;
     fontSize = 0;
+    listStyleType = 0;
   }
 };
 
@@ -199,6 +206,7 @@ struct CssStyle {
   // (see CssParser's font-size handling). Block-level only: resolved once
   // per block against a FontSizeLadder, never per inline run/word.
   float fontSizeMultiplier = 1.0f;
+  CssListStyleType listStyleType = CssListStyleType::Disc;
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -313,6 +321,10 @@ struct CssStyle {
       fontSizeMultiplier = base.fontSizeMultiplier;
       defined.fontSize = 1;
     }
+    if (base.hasListStyleType()) {
+      listStyleType = base.listStyleType;
+      defined.listStyleType = 1;
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -342,6 +354,7 @@ struct CssStyle {
   [[nodiscard]] bool hasBorderBottom() const { return defined.borderBottom; }
   [[nodiscard]] bool hasBorderLeft() const { return defined.borderLeft; }
   [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
+  [[nodiscard]] bool hasListStyleType() const { return defined.listStyleType; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
@@ -361,6 +374,7 @@ struct CssStyle {
     pageBreakAfter = false;
     borderTop = borderRight = borderBottom = borderLeft = false;
     fontSizeMultiplier = 1.0f;
+    listStyleType = CssListStyleType::Disc;
     defined.clearAll();
   }
 };
