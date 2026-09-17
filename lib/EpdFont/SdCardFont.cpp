@@ -1150,8 +1150,6 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     if (g.dataLength < requiredBytes) {
       LOG_ERR("SDCF", "Prewarm: glyph %dx%d needs %u bytes but dataLength is %u (style %u, glyph %d)", g.width,
               g.height, requiredBytes, g.dataLength, styleIdx, gIdx);
-      delete[] readOrder;
-      delete[] mappings;
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
@@ -1179,8 +1177,6 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     }
     if (bitmapSizeOverflowed) {
       LOG_ERR("SDCF", "Prewarm: total bitmap size overflowed (style %u)", styleIdx);
-      delete[] readOrder;
-      delete[] mappings;
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
@@ -1234,8 +1230,6 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       // past the buffer before it happens.
       if (miniBitmapOffset > s.miniBitmapCapacity || glyph.dataLength > s.miniBitmapCapacity - miniBitmapOffset) {
         LOG_ERR("SDCF", "Prewarm: bitmap write would overflow buffer (style %u)", styleIdx);
-        delete[] readOrder;
-        delete[] mappings;
         freeStyleMiniData(s);
         return failPrewarm(static_cast<int>(cpCount));
       }
