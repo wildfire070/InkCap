@@ -84,9 +84,9 @@ static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5"
 // and its value on one line (e.g. "Series: X") while a sibling dd with no such
 // override stays block-level (e.g. a "Tags:" list) -- see the
 // CssDisplay::Inline handling below, which skips the block-starting behavior
-// for those.
-static constexpr const char* const BLOCK_TAGS[] = {"p",  "li", "div",      "br",      "blockquote",
-                                                     "dt", "dd", "details", "summary"};
+// for those. ul/ol are block-level so list containers get proper insets.
+static constexpr const char* const BLOCK_TAGS[] = {"p",  "li", "div",      "br",      "blockquote", "ul",
+                                                     "ol", "dt", "dd", "details", "summary"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
 // dfn/cite carry the same browser-default italic styling as i/em -- confirmed
 // on real books that use <dfn> for foreign-language dialogue and <cite> for
@@ -2969,23 +2969,34 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
-        // Nearest open <ol>/<ul> ancestor (top of the stack) decides numbered
-        // vs bulleted; an <li> with no list ancestor at all (malformed
-        // markup) keeps today's bullet, matching the existing fallback.
-        if (self->listStackCount_ > 0 && self->listStack_[self->listStackCount_ - 1].ordered) {
-          ListMarkerContext& listCtx = self->listStack_[self->listStackCount_ - 1];
-          ++listCtx.counter;
+        bool markerAdded = false;
+        if (self->listContextCount_ > 0 && self->listContexts_[self->listContextCount_ - 1].styleNone) {
+          // Marker-free list item.
+        } else if (self->listContextCount_ > 0 && self->listContexts_[self->listContextCount_ - 1].ordered) {
+          auto& list = self->listContexts_[self->listContextCount_ - 1];
           char marker[16];
-          snprintf(marker, sizeof(marker), "%u.", static_cast<unsigned>(listCtx.counter));
+          snprintf(marker, sizeof(marker), "%u.", static_cast<unsigned>(++list.counter));
           self->currentTextBlock->addWord(marker, EpdFontFamily::REGULAR, false, false,
                                           self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
                                           self->visibleTextOffset);
+          markerAdded = true;
         } else {
           self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR, false, false,
                                           self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
                                           self->visibleTextOffset);
+          markerAdded = true;
         }
-        self->pendingListMarkerDepth = self->depth;
+        if (markerAdded) self->pendingListMarkerDepth = self->depth;
+      } else if (strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) {
+        if (self->listContextCount_ < self->listContexts_.size()) {
+          auto& list = self->listContexts_[self->listContextCount_++];
+          list = {};
+          list.ordered = strcmp(name, "ol") == 0;
+          list.styleNone = cssStyle.hasListStyleType() && cssStyle.listStyleType == CssListStyleType::None;
+          list.depth = self->depth;
+        } else {
+          LOG_ERR("EHP", "list context stack overflow");
+        }
       }
     }
   } else if (matches(name, UNDERLINE_TAGS, std::size(UNDERLINE_TAGS))) {
@@ -3142,15 +3153,6 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       LOG_ERR("EHP", "inline style stack overflow (sup/sub)");
     }
     self->updateEffectiveInlineStyle();
-  } else if (strcmp(name, "ol") == 0 || strcmp(name, "ul") == 0) {
-    if (self->listStackCount_ < MAX_LIST_NESTING) {
-      ListMarkerContext ctx;
-      ctx.depth = self->depth;
-      ctx.ordered = strcmp(name, "ol") == 0;
-      self->listStack_[self->listStackCount_++] = ctx;
-    } else {
-      LOG_ERR("EHP", "list marker stack overflow, nested list falls back to bullets");
-    }
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name) ||
              (cssStyle.hasDisplay() && cssStyle.display == CssDisplay::Inline)) {
     // Handle span and other inline elements for CSS styling. The display:inline
@@ -3661,10 +3663,9 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   if (strcmp(name, "li") == 0 && self->pendingListMarkerDepth == self->depth) {
     self->pendingListMarkerDepth = -1;
   }
-
-  if ((strcmp(name, "ol") == 0 || strcmp(name, "ul") == 0) && self->listStackCount_ > 0 &&
-      self->listStack_[self->listStackCount_ - 1].depth == self->depth) {
-    self->listStackCount_--;
+  if ((strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) && self->listContextCount_ > 0 &&
+      self->listContexts_[self->listContextCount_ - 1].depth == self->depth) {
+    self->listContextCount_--;
   }
 
   // Leaving bold tag
@@ -3872,6 +3873,7 @@ bool ChapterHtmlSlimParser::beginParse() {
   htmlEnded_ = false;
   parseFileOffset_ = 0;
   parseFileSize_ = 0;
+  listContextCount_ = 0;
   // Runs before the render pass opens the file, so only one reader is ever open at a time.
   if (isPreviewBuild()) {
     locatePreviewBlockStart();

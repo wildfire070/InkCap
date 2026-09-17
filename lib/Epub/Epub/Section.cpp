@@ -1,6 +1,7 @@
 #include "Section.h"
 
 #include <Arduino.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <InflateStream.h>
@@ -30,11 +31,12 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // body font).
 // v79: TextBlocks persist hrSectDivider (the FanFicFare ".hr-sect" divider flag
 // addLineToPage() uses to draw its flanking lines).
-constexpr uint8_t SECTION_FILE_VERSION = 79;
+// v80: Ordered lists, marker suppression, and list-container insets affect page layout.
+constexpr uint8_t SECTION_FILE_VERSION = 80;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF8;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF9;
 constexpr uint32_t HEADER_SIZE =
     sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(bool) +
     sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) +
@@ -766,6 +768,12 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
+  }
+
+  // Reclaim rebuildable font data before CSS and layout allocate their
+  // working buffers. Font objects remain registered and reload on demand.
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->releaseSdFontCaches();
   }
 
   const auto localPath = epub->getSpineItem(spineIndex).href;
@@ -1686,6 +1694,13 @@ std::optional<uint16_t> Section::getPageForVisibleTextOffset(const uint32_t offs
     // An extension build starts from page zero while its previously committed
     // partial remains readable.  Its shorter live prefix must not hide a page
     // that the committed cache already knows how to resolve.
+  }
+
+  // A from-scratch build (no partial ever committed for this cache key) has nothing on
+  // disk yet: an offset beyond the live prefix above just hasn't been laid out, and
+  // openFileForRead() would fail every call until the build catches up or finishes.
+  if (build_ && !partial_) {
+    return std::nullopt;
   }
 
   FsFile f;

@@ -575,11 +575,19 @@ inline SettingInfo buildCompanionCharacterSetting() {
   }
   return s;
 }
+// 106: crossink/development's own base list (100 regular + 2 optional tilt
+// entries) plus this branch's own unconditional additions (Companion, AO3
+// Library, BookFusion) it doesn't have -- counted directly against the
+// add()/optional-add() calls below rather than reused verbatim, since
+// upstream's own count excludes all three.
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 106;
 
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
-    v.reserve(77);
+    // Reserve the maximum final size. Growing this process-lifetime vector
+    // would otherwise leave it holding roughly twice the memory it needs.
+    v.reserve(BASE_SETTINGS_CAPACITY);
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
 
     // --- Display ---

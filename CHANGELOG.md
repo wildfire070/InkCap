@@ -8,13 +8,26 @@
 
 ### Changed
 
+- PNG, XTC, and image-dithering scratch buffers use fewer heap allocations to reduce fragmentation.
+- The shared settings catalog keeps its initial allocation instead of retaining unused vector capacity.
+- SPI SD-card transfers are batched through the ESP32 hardware FIFO for faster reads.
+- SD-card font prewarming releases temporary lookup buffers before allocating large glyph bitmaps.
 - UC8179 grayscale images use a slightly longer waveform for stronger midtone separation.
 - EPUB image preparation writes extracted data in chunks and reuses two cached images on PSRAM readers.
 - Web portal pages reuse browser-cached content after checking for firmware updates.
 - Rapid queued EPUB page turns defer text anti-aliasing and image loading until the final page, making intermediate turns faster.
+- Grayscale sleep screen images use the panel's direct grayscale waveform where supported, which folds the base frame into the grayscale pass instead of refreshing the screen separately first.
 
 ### Fixed
 
+- OPDS Wi-Fi selection and search entry stay awake while the user is actively choosing or typing.
+- USB Drive exits cleanly when a connected host is unplugged without ejecting first.
+- EPUB ordered lists show numbers, respect marker-free styles, and retain their container indentation.
+- EPUB chapter layout releases rebuildable font caches first, reducing low-memory failures on X3/X4.
+- KOReader Sync uploads retain exact text-node positions, including zero offsets and UTF-8 text.
+- Saved clipping highlights now retain Focus Reading's custom-font glyphs instead of showing replacement characters.
+- EPUB dictionary lookup can select an individual part of a hyphenated word.
+- Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
 - The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
@@ -29,6 +42,8 @@
 - End-of-book selection remains consistent during concurrent redraws.
 - Image dithering reports low-memory failures instead of aborting during buffer allocation.
 - The debugging monitor plots CrossInk heap and PSRAM logs separately; ZIP failures identify the affected EPUB entry.
+- Many progressive JPEG images that store brightness and color in separate scans now render instead of appearing blank.
+- PNG sleep overlays preserve four evenly spaced grayscale levels on supported displays.
 
 - Exiting Calibre Wireless on X4 now returns Home with one clean screen refresh instead of repeated blank flashes.
 - Manage Fonts no longer crashes after Wi-Fi connects on ESP32-S3 readers.
