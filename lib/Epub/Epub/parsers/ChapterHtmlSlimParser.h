@@ -5,6 +5,7 @@
 #include <ZipFile.h>
 #include <expat.h>
 
+#include <array>
 #include <climits>
 #include <functional>
 #include <memory>
@@ -52,9 +53,6 @@ class ChapterHtmlSlimParser {
   // <blockquote>) are rare in real EPUBs; a small cap keeps borderBoxStack_'s
   // footprint negligible while still covering realistic nesting.
   static constexpr size_t MAX_BORDER_BOX_DEPTH = 4;
-  // List nesting beyond this is essentially unheard of in fiction EPUBs; a
-  // small cap keeps listStack_'s footprint negligible either way.
-  static constexpr size_t MAX_LIST_NESTING = 8;
 
   Epub* epub;
   const std::string& filepath;
@@ -187,17 +185,6 @@ class ChapterHtmlSlimParser {
   BorderBoxScope borderBoxStack_[MAX_BORDER_BOX_DEPTH];
   size_t borderBoxCount_ = 0;
 
-  // Tracks whether the nearest open <ol>/<ul> ancestor is ordered, and (if
-  // so) the running item count, depth-tagged the same way blockStyleBuf_ is.
-  // <li> consults the top entry to decide bullet ("*") vs "N." numbering.
-  struct ListMarkerContext {
-    int depth = 0;
-    bool ordered = false;
-    uint16_t counter = 0;
-  };
-  ListMarkerContext listStack_[MAX_LIST_NESTING];
-  size_t listStackCount_ = 0;
-
   // The body font's sibling sizes (see FontSizeLadder.h), set via
   // setFontSizeLadder() before parsing starts; empty (all-default) unless the
   // caller supplied one. auxFontId_ is the ONE non-body font this chapter may
@@ -259,6 +246,14 @@ class ChapterHtmlSlimParser {
   int tableRowIndex = 0;
   int tableColIndex = 0;
   int pendingListMarkerDepth = -1;
+  struct ListContext {
+    bool ordered = false;
+    bool styleNone = false;
+    uint32_t counter = 0;
+    int depth = 0;
+  };
+  std::array<ListContext, MAX_BLOCK_STYLE_DEPTH> listContexts_{};
+  size_t listContextCount_ = 0;
   bool currentTableCellIsHeader = false;
   uint8_t currentTableCellColSpan = 1;
   uint32_t currentTableCellVisibleOffset = 0;

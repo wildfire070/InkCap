@@ -1,6 +1,7 @@
 #include "EpubReaderActivity.h"
 
 #include <Arduino.h>
+#include <BidiUtils.h>
 #include <Epub/Page.h>
 #include <Epub/PageCountEstimator.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 for the AO3 origin cache hash
@@ -50,6 +51,7 @@
 #endif
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
+#include "FocusReadingText.h"
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
@@ -5242,7 +5244,9 @@ bool EpubReaderActivity::executeShortPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
-      return handleGlobalPowerButtonAction(static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn));
+      // The global dispatcher pauses briefly after wake, so retain the reader
+      // fallback for that first release and use the configured short action.
+      return handleGlobalPowerButtonAction(static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn));
     default:
       return false;
   }
@@ -7596,7 +7600,22 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
         renderer.beginTextClip(orientedMarginLeft + line.clipX, orientedMarginTop + line.clipY, line.clipWidth,
                                line.clipHeight);
       }
-      renderer.drawText(fontId, wordX, wordY, visibleText, true, textStyle);
+      // Match TextBlock::render()'s Focus Reading split. The prewarm pass
+      // loaded the leading run as bold, so redrawing it as regular here can
+      // miss the glyph bitmap for SD-card fonts and show replacement marks.
+      const uint8_t focusBoundary = block.focusBoundary(wordIndex);
+      const uint16_t wordLength = block.wordTextLen(wordIndex);
+      const int fullWordX = orientedMarginLeft + line.xPos + geometry.xOffset;
+      const auto baseDir = static_cast<BidiUtils::BidiBaseDir>(
+          BidiUtils::detectParagraphLevel(wordText, block.getBlockStyle().isRtl ? 1 : 0));
+      if (!FocusReadingText::drawSplitRuns(
+              wordText, wordLength, focusBoundary, fullWordX, block.focusRunOffset(wordIndex), textStyle,
+              baseDir == BidiUtils::BidiBaseDir::RTL,
+              [&](const int runX, const char* runText, const EpdFontFamily::Style runStyle) {
+                renderer.drawText(fontId, runX, wordY, runText, true, runStyle, baseDir);
+              })) {
+        renderer.drawText(fontId, wordX, wordY, visibleText, true, textStyle);
+      }
       if (line.clipWidth > 0 && line.clipHeight > 0) {
         renderer.endTextClip();
       }
