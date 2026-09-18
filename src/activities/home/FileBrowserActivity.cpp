@@ -1346,11 +1346,6 @@ std::string getFileExtension(const std::string& filename) {
   return filename.substr(pos);
 }
 
-// AO3 library: cheap glance status shown in the value column, e.g. "Reading".
-// BookStatus::START (no status set) renders as nothing to avoid cluttering
-// the common case of non-AO3 books.
-const char* ao3StatusGlance(BookStatus status) { return status == BookStatus::START ? "" : getStatusLabel(status); }
-
 // Case-folds a sort key so e.g. a stylised lowercase AO3 title ("// devotion")
 // doesn't sort after every ordinarily-capitalized title just because uppercase
 // letters precede lowercase ones in byte order -- a plain std::string compare
@@ -1703,10 +1698,6 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
       auto cached = visibleStatusCache.find(entryIndex);
       rowStatus = cached != visibleStatusCache.end() ? cached->second
                                                      : (visibleStatusCache[entryIndex] = getBookStatus(fullPath));
-      const char* glance = ao3StatusGlance(rowStatus);
-      if (glance[0] != '\0') {
-        values[i] = values[i].empty() ? glance : std::string(glance) + " " + values[i];
-      }
       auto bfCached = visibleBookFusionCache.find(entryIndex);
       isBookFusion = bfCached != visibleBookFusionCache.end()
                          ? bfCached->second
