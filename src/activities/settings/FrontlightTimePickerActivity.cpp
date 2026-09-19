@@ -1,6 +1,7 @@
 #include "FrontlightTimePickerActivity.h"
 
 #include <FreeInkUIGfxRenderer.h>
+#include <FreeInkUIIcon.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
