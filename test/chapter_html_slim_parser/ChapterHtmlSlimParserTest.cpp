@@ -363,7 +363,7 @@ TEST_F(ChapterHtmlSlimParserTest, BlockWithoutBorderProducesNoBorderBox) {
 // spans the break, and not a crash/corruption from the depth-matched stack.
 TEST_F(ChapterHtmlSlimParserTest, BorderBoxSplitAcrossAPageBreakProducesTwoIndependentFragments) {
   std::vector<std::unique_ptr<Page>> completedPages;
-  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t) {
+  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
     completedPages.push_back(std::move(page));
   };
   // The stub GfxRenderer measures every glyph/word at 0px width, so pixel-width
