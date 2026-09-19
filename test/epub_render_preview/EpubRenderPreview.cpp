@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
 
   Epub epub;
   std::vector<std::unique_ptr<Page>> completedPages;
-  auto completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t) {
+  auto completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
     completedPages.push_back(std::move(page));
   };
 
