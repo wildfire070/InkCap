@@ -1,6 +1,7 @@
 #include "KeyboardEntryActivity.h"
 
 #include <BidiUtils.h>
+#include <FreeInkUIIcon.h>
 #include <HalGPIO.h>
 #include <I18n.h>
 

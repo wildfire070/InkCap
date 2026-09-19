@@ -2,9 +2,11 @@
 
 ### Added
 
+- EPUBs with stable page numbers can jump directly to a specific stable page from the reader menu.
 - Hidden folders can be created using the web file manager now when prefixed with a dot.
 - Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
 - Two-finger Screen Rotation can be turned off in Settings > Controls > Taps & Gestures on multi-touch devices.
+- Go to % and Go to Stable Page use a numeric keypad for typing an exact destination, including decimal percentages. Touch devices use the keypad exclusively; button-only devices keep the slider by default and hold Confirm/Select to switch to the keypad.
 
 ### Changed
 
@@ -44,9 +46,15 @@
 - The debugging monitor plots CrossInk heap and PSRAM logs separately; ZIP failures identify the affected EPUB entry.
 - Many progressive JPEG images that store brightness and color in separate scans now render instead of appearing blank.
 - PNG sleep overlays preserve four evenly spaced grayscale levels on supported displays.
-
 - Exiting Calibre Wireless on X4 now returns Home with one clean screen refresh instead of repeated blank flashes.
 - Manage Fonts no longer crashes after Wi-Fi connects on ESP32-S3 readers.
+- Editing font settings from the top drawer's global settings within a book now applies those changes when no per-book font settings exist.
+- Per-book reading stats now write to a backup file first.
+- Paragraph-alignment previews remain available on text-heavy pages instead of disappearing when the preview sample is full.
+- Quick Actions assignments stay visible in button-combo settings, and X4 Classic can use the Up + Down shortcut.
+- Sync Progress from the reader menu opens KOReader setup when credentials have not been configured.
+- Button-combo settings no longer offer Sleep because the same combo cannot wake the reader.
+- EPUB variation selectors no longer appear as missing-glyph boxes after otherwise supported symbols.
 
 ## [v1.5.1] - 2026-09-10
 
