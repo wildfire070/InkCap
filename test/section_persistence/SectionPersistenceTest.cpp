@@ -22,10 +22,10 @@ namespace {
 // whenever those change (loadSectionFile() rejects anything else as a
 // version mismatch, which is exactly what silently broke this test after an
 // earlier CrossInk sync bumped 66/0xF6 to 75/0xF4 without touching this file).
-constexpr uint8_t kFullVersion = 80;
-constexpr uint8_t kPartialVersion = 0xF9;
-constexpr uint8_t kPreviousFullVersion = 79;
-constexpr uint8_t kPreviousPartialVersion = 0xF8;
+constexpr uint8_t kFullVersion = 81;
+constexpr uint8_t kPartialVersion = 0xF8;
+constexpr uint8_t kPreviousFullVersion = 80;
+constexpr uint8_t kPreviousPartialVersion = 0xF9;
 
 ReaderRenderSpec renderSpec() {
   ReaderRenderSpec spec;
@@ -170,4 +170,26 @@ TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
     EXPECT_FALSE(Storage.exists(harness.section.filePath.c_str()));
   }
 }
+TEST_F(SectionPersistenceTest, RejectsACacheBuiltWithDifferentCharacterSpacing) {
+  SectionHarness harness;
+  harness.spec.characterSpacing = 1;
+  harness.begin();
+  harness.appendPages(1);
+  ASSERT_TRUE(harness.commit(kFullVersion));
+  harness.finishSuccessfulCommit();
+
+  {
+    // Same spacing: the cache is reusable.
+    Section sameSpacing(harness.epub, 0, harness.renderer);
+    EXPECT_TRUE(sameSpacing.loadSectionFile(harness.spec));
+  }
+
+  // Any other spacing must not reuse lines that were laid out with the old glyph gaps.
+  ReaderRenderSpec other = harness.spec;
+  other.characterSpacing = -1;
+  Section differentSpacing(harness.epub, 0, harness.renderer);
+  EXPECT_FALSE(differentSpacing.loadSectionFile(other));
+  EXPECT_FALSE(Storage.exists(harness.section.filePath.c_str()));
+}
+
 }  // namespace

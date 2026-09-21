@@ -117,3 +117,57 @@ TEST_F(TextLayoutBackingTest, SerializeRoundTripsBlockLevelFontSizeResolution) {
   EXPECT_TRUE(reloaded->getBlockStyle().fontResolved);
   EXPECT_FLOAT_EQ(reloaded->getBlockStyle().fontSizeResidualScale, 1.3f);
 }
+
+namespace {
+struct SpacingLayout {
+  size_t lines = 0;
+  bool allStamped = true;
+};
+
+SpacingLayout layoutWithCharacterSpacing(const int8_t spacing) {
+  ParsedText text(false, false, false, false, false, 0, BlockStyle(), false, spacing);
+  const std::vector<std::string> words = {"A", "paragraph", "with", "different", "word", "lengths", "and", "text."};
+  for (int i = 0; i < 200; ++i) text.addWord(words[i % words.size()], EpdFontFamily::REGULAR);
+  GfxRenderer renderer;
+  SpacingLayout result;
+  EXPECT_TRUE(text.layoutAndExtractLines(renderer, 0, 240, [&](std::shared_ptr<TextBlock> block, uint32_t, uint32_t) {
+    ++result.lines;
+    if (block->getBlockStyle().characterSpacing != spacing) result.allStamped = false;
+  }));
+  return result;
+}
+}  // namespace
+
+TEST_F(TextLayoutBackingTest, CharacterSpacingChangesLineBreaksAndStampsEveryLine) {
+  const auto normal = layoutWithCharacterSpacing(0);
+  const auto wide = layoutWithCharacterSpacing(2);
+  const auto tight = layoutWithCharacterSpacing(-2);
+  ASSERT_GT(normal.lines, 1U);
+  // Wider glyph gaps fill lines sooner; tighter gaps fit more words per line.
+  EXPECT_GT(wide.lines, normal.lines);
+  EXPECT_LT(tight.lines, normal.lines);
+  EXPECT_TRUE(normal.allStamped);
+  EXPECT_TRUE(wide.allStamped);
+  EXPECT_TRUE(tight.allStamped);
+}
+
+TEST_F(TextLayoutBackingTest, SerializeRoundTripsCharacterSpacing) {
+  // Cached lines reload without re-running layout, so the spacing they were drawn with must persist.
+  for (const int8_t spacing : {int8_t{-2}, int8_t{0}, int8_t{2}}) {
+    BlockStyle style;
+    style.characterSpacing = spacing;
+    TextBlock block({"Title"}, {0}, {EpdFontFamily::REGULAR}, {}, {}, {}, {}, {}, style);
+    ASSERT_TRUE(block.valid());
+
+    FsFile output;
+    ASSERT_TRUE(Storage.openFileForWrite("test", "spacing", output));
+    ASSERT_TRUE(block.serialize(output));
+    output.close();
+
+    FsFile input;
+    ASSERT_TRUE(Storage.openFileForRead("test", "spacing", input));
+    auto reloaded = TextBlock::deserialize(input);
+    ASSERT_NE(reloaded, nullptr);
+    EXPECT_EQ(reloaded->getBlockStyle().characterSpacing, spacing);
+  }
+}

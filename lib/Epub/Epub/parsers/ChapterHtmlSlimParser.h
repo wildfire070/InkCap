@@ -104,6 +104,7 @@ class ChapterHtmlSlimParser {
   bool focusReadingEnabled;
   bool guideReadingEnabled;
   uint8_t wordSpacing;
+  int8_t characterSpacing = 0;
   CssParser* cssParser;
   bool embeddedStyle;
   uint8_t imageRendering;
@@ -421,6 +422,7 @@ class ChapterHtmlSlimParser {
         tocAnchors(std::move(tocAnchors)) {}
 
   ~ChapterHtmlSlimParser();
+  void setCharacterSpacing(const int8_t pixels) { characterSpacing = pixels; }
   // Must be called before parsing starts if block-level font-size resolution
   // is wanted (see resolveBlockFont). Deliberately not a constructor
   // parameter -- ReaderRenderSpec::fontSizeLadder is optional, settings-

@@ -193,6 +193,72 @@ TEST(EpubTextRaster, VariationSelectorsDoNotDrawOrAdvance) {
   }
 }
 
+TEST(EpubTextRaster, CharacterSpacingWidensGlyphGapsButNeverSpaces) {
+  for (const bool sd : {false, true}) {
+    SCOPED_TRACE(testing::Message() << "sd=" << sd);
+    fakeheap::reset(true);
+    Storage.reset();
+    RasterFont fixture(12);
+    SdCardFont sdFont;
+    HalDisplay display;
+    GfxRenderer renderer(display);
+    renderer.begin();
+    if (sd) {
+      Storage.put("font.cpfont", fixture.file());
+      ASSERT_TRUE(sdFont.load("font.cpfont"));
+      // Layout measures SD fonts from their advance table -- the path production uses for every .cpfont.
+      ASSERT_GE(sdFont.buildAdvanceTable("abcd "), 0);
+      ASSERT_TRUE(sdFont.hasAdvanceTable());
+      renderer.insertFont(1, EpdFontFamily(sdFont.getEpdFont()));
+      renderer.registerSdCardFont(1, &sdFont);
+    } else {
+      renderer.insertFont(1, EpdFontFamily(&fixture.font));
+    }
+    const auto style = EpdFontFamily::REGULAR;
+    const auto advance = [&](const char* text, const int8_t tracking) {
+      return renderer.getTextAdvanceX(1, text, style, 0, tracking);
+    };
+
+    // A gap is added between adjacent glyphs only: n glyphs -> n - 1 gaps, and none around a space.
+    EXPECT_EQ(advance("a", 3), advance("a", 0));
+    EXPECT_EQ(advance("ab", 3), advance("ab", 0) + 3);
+    EXPECT_EQ(advance("abc", 2), advance("abc", 0) + 4);
+    EXPECT_EQ(advance("abc", -1), advance("abc", 0) - 2);
+    EXPECT_EQ(advance("a b", 3), advance("a b", 0));
+    EXPECT_EQ(advance("ab cd", 2), advance("ab cd", 0) + 4);  // one gap inside each word, none at the space
+    // Tracking also applies to the boundary with a following codepoint (attached tokens), but not a space.
+    EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, 'b', 3), renderer.getTextAdvanceX(1, "a", style, 'b', 0) + 3);
+    EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, ' ', 3), renderer.getTextAdvanceX(1, "a", style, ' ', 0));
+    EXPECT_EQ(renderer.getKerning(1, 'a', 'b', style, 3), renderer.getKerning(1, 'a', 'b', style, 0) + 3);
+    EXPECT_EQ(renderer.getKerning(1, 'a', ' ', style, 3), renderer.getKerning(1, 'a', ' ', style, 0));
+
+    // Drawing agrees with measuring: 'b' lands exactly where the measured advance says it should.
+    // (SD glyph bitmaps load on demand, so drawing is compared for the built-in font only.)
+    if (sd) {
+      renderer.removeFont(1);
+      continue;
+    }
+    const int x = 25;
+    for (const int8_t tracking : {int8_t{-2}, int8_t{2}}) {
+      renderer.clearScreen();
+      renderer.drawText(1, x, 40, "ab", true, style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
+      const auto together = display.bw;
+      renderer.clearScreen();
+      renderer.drawText(1, x, 40, "a");
+      renderer.drawText(1, x + renderer.getTextAdvanceX(1, "a", style) + tracking, 40, "b");
+      EXPECT_EQ(display.bw, together) << "tracking=" << static_cast<int>(tracking);
+    }
+    // Zero tracking is byte-identical to the old behavior.
+    renderer.clearScreen();
+    renderer.drawText(1, x, 40, "ab cd");
+    const auto plain = display.bw;
+    renderer.clearScreen();
+    renderer.drawText(1, x, 40, "ab cd", true, style, BidiUtils::BidiBaseDir::AUTO, 1.0f, 0);
+    EXPECT_EQ(display.bw, plain);
+    renderer.removeFont(1);
+  }
+}
+
 TEST(AbsoluteImageRaster, TextMatchesBlackWhiteInBothPlanesAndCancellationResetsMode) {
   fakeheap::reset(true);
   Storage.reset();

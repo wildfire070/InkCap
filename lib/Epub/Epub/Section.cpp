@@ -33,15 +33,16 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v79: TextBlocks persist hrSectDivider (the FanFicFare ".hr-sect" divider flag
 // addLineToPage() uses to draw its flanking lines).
 // v80: Ordered lists, marker suppression, and list-container insets affect page layout.
-constexpr uint8_t SECTION_FILE_VERSION = 80;
+// v81: Character spacing joins the header (cache validation); TextBlocks persist it per line.
+constexpr uint8_t SECTION_FILE_VERSION = 81;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF9;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF8;
 constexpr uint32_t HEADER_SIZE =
     sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(bool) +
     sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) +
-    sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint32_t) +
+    sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(int8_t) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint32_t) +
     sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 constexpr size_t SECTION_HTML_STREAM_CHUNK_SIZE = 8192;
 constexpr size_t LOW_MEMORY_SECTION_HTML_STREAM_CHUNK_SIZE = 1024;
@@ -210,7 +211,8 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) +
                                    sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
                                    sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) +
-                                   sizeof(spec.guideReadingEnabled) + sizeof(spec.wordSpacing) + sizeof(uint8_t) +
+                                   sizeof(spec.guideReadingEnabled) + sizeof(spec.wordSpacing) +
+                                   sizeof(spec.characterSpacing) + sizeof(uint8_t) +
                                    sizeof(pageCount) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
                                    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
                 "Header size mismatch");
@@ -228,6 +230,7 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
          serialization::tryWritePod(file, spec.focusReadingEnabled) &&
          serialization::tryWritePod(file, spec.guideReadingEnabled) &&
          serialization::tryWritePod(file, spec.wordSpacing) &&
+         serialization::tryWritePod(file, spec.characterSpacing) &&
          serialization::tryWritePod(file, static_cast<uint8_t>(spec.renderMode)) &&
          serialization::tryWritePod(file,
                                     pageCount) &&  // Placeholder for page count (will be initially 0, patched later)
@@ -292,6 +295,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileFocusReadingEnabled;
     bool fileGuideReadingEnabled;
     uint8_t fileWordSpacing;
+    int8_t fileCharacterSpacing;
     uint8_t fileRenderMode;
     if (!serialization::tryReadPod(file, fileFontId) || !serialization::tryReadPod(file, fileLineCompression) ||
         !serialization::tryReadPod(file, fileExtraParagraphSpacing) ||
@@ -302,7 +306,8 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         !serialization::tryReadPod(file, fileEmbeddedStyle) || !serialization::tryReadPod(file, fileImageRendering) ||
         !serialization::tryReadPod(file, fileFocusReadingEnabled) ||
         !serialization::tryReadPod(file, fileGuideReadingEnabled) ||
-        !serialization::tryReadPod(file, fileWordSpacing) || !serialization::tryReadPod(file, fileRenderMode)) {
+        !serialization::tryReadPod(file, fileWordSpacing) ||
+        !serialization::tryReadPod(file, fileCharacterSpacing) || !serialization::tryReadPod(file, fileRenderMode)) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: truncated section header");
       clearCache();
@@ -316,7 +321,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
         spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled ||
         spec.guideReadingEnabled != fileGuideReadingEnabled || spec.wordSpacing != fileWordSpacing ||
-        static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
+        spec.characterSpacing != fileCharacterSpacing || static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
       clearCache();
@@ -633,6 +638,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
       buildOptions.isPreview() ? std::string(buildOptions.previewAnchor) : std::string{}, buildOptions.previewMaxPages,
       buildOptions.referenceUnitsAreCharacters);
   visitor.setFontSizeLadder(spec.fontSizeLadder);
+  visitor.setCharacterSpacing(spec.characterSpacing);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   bool cancelled = false;
   bool success = false;
@@ -968,6 +974,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   }
 
   ctx->parser->setFontSizeLadder(spec.fontSizeLadder);
+  ctx->parser->setCharacterSpacing(spec.characterSpacing);
 
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   build_ = std::move(ctx);
