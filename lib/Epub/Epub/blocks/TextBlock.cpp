@@ -16,11 +16,11 @@ namespace {
 constexpr uint16_t MAX_WORDS_PER_TEXT_BLOCK = 512;
 
 uint16_t measureBackgroundWidth(const GfxRenderer& renderer, const int fontId, const char* word,
-                                const EpdFontFamily::Style style) {
+                                const EpdFontFamily::Style style, const int8_t tracking) {
   if (word[0] == ' ' && word[1] == '\0') {
     return renderer.getSpaceWidth(fontId, style);
   }
-  return static_cast<uint16_t>(std::max(0, renderer.getTextAdvanceX(fontId, word, style)));
+  return static_cast<uint16_t>(std::max(0, renderer.getTextAdvanceX(fontId, word, style, 0, tracking)));
 }
 
 bool isWhitespaceOnlyBackgroundToken(const char* word) {
@@ -252,6 +252,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
   // multiplying each by `scale` maps it back to real pixels, exactly
   // reproducing native-scale layout without touching ParsedText at all.
   const float scale = blockStyle.headingFontId == 0 ? blockStyle.fontSizeResidualScale : 1.0f;
+  const int8_t tracking = blockStyle.characterSpacing;  // letter-spacing, laid out by ParsedText
   const auto scaled = [scale](const int value) {
     return scale == 1.0f ? value : static_cast<int>(std::lround(value * scale));
   };
@@ -266,7 +267,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
         static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(word, blockStyle.isRtl ? 1 : 0));
 
     if ((wordFlags(i) & WORD_FLAG_BACKGROUND_BLACK) != 0 && isWhitespaceOnlyBackgroundToken(word)) {
-      const uint16_t backgroundWidth = static_cast<uint16_t>(scaled(measureBackgroundWidth(renderer, fontId, word, currentStyle)));
+      const uint16_t backgroundWidth = static_cast<uint16_t>(scaled(measureBackgroundWidth(renderer, fontId, word, currentStyle, tracking)));
       if (backgroundWidth > 0) {
         renderer.fillRect(wordX, y, backgroundWidth, ascender, true);
       }
@@ -292,14 +293,14 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
       boldBuf[boldLen] = '\0';
       const int secondRunX = wordX + scaled(focusRunOffset(i));
       if (baseDir == BidiUtils::BidiBaseDir::RTL) {
-        renderer.drawTextScaled(fontId, wordX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir);
-        renderer.drawTextScaled(fontId, secondRunX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir);
+        renderer.drawTextScaled(fontId, wordX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir, tracking);
+        renderer.drawTextScaled(fontId, secondRunX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir, tracking);
       } else {
-        renderer.drawTextScaled(fontId, wordX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir);
-        renderer.drawTextScaled(fontId, secondRunX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir);
+        renderer.drawTextScaled(fontId, wordX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir, tracking);
+        renderer.drawTextScaled(fontId, secondRunX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir, tracking);
       }
     } else {
-      renderer.drawTextScaled(fontId, wordX, wordY, word, foregroundBlack, currentStyle, scale, baseDir);
+      renderer.drawTextScaled(fontId, wordX, wordY, word, foregroundBlack, currentStyle, scale, baseDir, tracking);
     }
 
     if (i < rubyTexts.size() && !rubyTexts[i].empty() && (currentStyle & EpdFontFamily::RUBY_CONTINUE) == 0) {
@@ -309,33 +310,33 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
       }
       int groupWidth = 0;
       for (uint16_t j = 0; j < groupWords; ++j) {
-        groupWidth += renderer.getTextAdvanceX(fontId, wordText(i + j), wordStyle(i + j));
+        groupWidth += renderer.getTextAdvanceX(fontId, wordText(i + j), wordStyle(i + j), 0, tracking);
       }
       groupWidth = scaled(groupWidth);
-      const int rubyWidth = scaled(renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP));
+      const int rubyWidth = scaled(renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP, 0, tracking));
       // ParsedText reserves any edge overhang in the line layout, so the ruby
       // can remain centered over its base text without screen-edge clamping.
       const int rubyX = wordX + (groupWidth - rubyWidth) / 2;
       renderer.drawTextScaled(fontId, rubyX, wordY - ascender, rubyTexts[i].c_str(), foregroundBlack,
-                              EpdFontFamily::SUP, scale, baseDir);
+                              EpdFontFamily::SUP, scale, baseDir, tracking);
     }
 
     const uint16_t dotOffset = guideDotXOffset(i);
     if (dotOffset > 0) {
       renderer.drawTextScaled(fontId, wordX + scaled(dotOffset), wordY, "\xc2\xb7", foregroundBlack,
-                              EpdFontFamily::REGULAR, scale, baseDir);
+                              EpdFontFamily::REGULAR, scale, baseDir, tracking);
     }
 
     if (!scanning && (currentStyle & EpdFontFamily::UNDERLINE) != 0) {
       int startX = wordX;
-      int underlineWidth = scaled(renderer.getTextWidth(fontId, word, currentStyle, baseDir));
+      int underlineWidth = scaled(renderer.getTextWidth(fontId, word, currentStyle, baseDir, tracking));
       const int underlineY = wordY + ascender + 2;
 
       if (hasSyntheticIndentPrefix(word, wordLen)) {
         const char* visiblePtr = word + 3;
-        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle));
+        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
         startX = wordX + prefixWidth;
-        underlineWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir));
+        underlineWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir, tracking));
       }
 
       if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
@@ -359,14 +360,14 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
 
     if ((currentStyle & EpdFontFamily::STRIKETHROUGH) != 0) {
       int startX = wordX;
-      int strikeWidth = scaled(renderer.getTextWidth(fontId, word, currentStyle, baseDir));
+      int strikeWidth = scaled(renderer.getTextWidth(fontId, word, currentStyle, baseDir, tracking));
       const int strikeY = y + ascender / 2 + 6;
 
       if (hasSyntheticIndentPrefix(word, wordLen)) {
         const char* visiblePtr = word + 3;
-        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle));
+        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
         startX = wordX + prefixWidth;
-        strikeWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir));
+        strikeWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir, tracking));
       }
 
       if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
@@ -438,6 +439,7 @@ bool TextBlock::serialize(HalFile& file) const {
          serialization::tryWritePod(file, blockStyle.textIndentDefined) &&
          serialization::tryWritePod(file, blockStyle.isRtl) &&
          serialization::tryWritePod(file, blockStyle.directionDefined) &&
+         serialization::tryWritePod(file, blockStyle.characterSpacing) &&
          // A cached section reloads TextBlocks directly, without re-running
          // ChapterHtmlSlimParser::resolveBlockFont() -- persist its resolved
          // output here or a reopened book would silently lose block-level
@@ -552,6 +554,7 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       !serialization::tryReadPod(file, blockStyle.textIndentDefined) ||
       !serialization::tryReadPod(file, blockStyle.isRtl) ||
       !serialization::tryReadPod(file, blockStyle.directionDefined) ||
+      !serialization::tryReadPod(file, blockStyle.characterSpacing) ||
       !serialization::tryReadPod(file, blockStyle.fontSizeMultiplier) ||
       !serialization::tryReadPod(file, blockStyle.headingFontId) ||
       !serialization::tryReadPod(file, blockStyle.fontSizeResidualScale) ||
