@@ -343,16 +343,29 @@ unsigned long inspectRead(void* ctx, const unsigned long offset, unsigned char* 
 // regular anchor, then dedup by role (first file wins).
 void refineVectorStyles(const char* dirPath, std::vector<SdCardFontFileInfo>& files) {
   using freeink::font::FtFont;
-  for (auto& info : files) {
+  for (size_t i = 0; i < files.size();) {
+    auto& info = files[i];
     HalFile f = Storage.open(info.path.c_str());
-    if (!f || f.isDirectory()) continue;
-    FtFont::FaceInfo face;
-    if (FtFont::inspectStream(&inspectRead, &f, static_cast<unsigned long>(f.size()), face) !=
-        FtFont::InspectResult::Ok) {
-      continue;  // unreadable/unsupported: keep the filename-derived role
+    if (!f || f.isDirectory()) {
+      ++i;
+      continue;
     }
-    info.style = static_cast<uint8_t>((face.weight >= 600 ? 1 : 0) | (face.italic ? 2 : 0));
+    FtFont::FaceInfo face;
+    const auto result = FtFont::inspectStream(&inspectRead, &f, static_cast<unsigned long>(f.size()), face);
+    if (result == FtFont::InspectResult::Unsupported) {
+      // The pinned FreeType build has only the TrueType driver: CFF/PostScript-outline .otf files
+      // cannot be opened. Drop the file so the family is not listed (or that style is synthesized from
+      // the regular face) instead of silently falling back to the built-in font when selected.
+      LOG_ERR("SDREG", "Skipping unsupported font file (CFF/PostScript outlines?): %s", info.path.c_str());
+      files.erase(files.begin() + i);
+      continue;
+    }
+    if (result == FtFont::InspectResult::Ok) {
+      info.style = static_cast<uint8_t>((face.weight >= 600 ? 1 : 0) | (face.italic ? 2 : 0));
+    }  // unreadable: keep the filename-derived role
+    ++i;
   }
+  if (files.empty()) return;
   bool haveRegular = false;
   for (const auto& info : files) haveRegular = haveRegular || info.style == 0;
   if (!haveRegular && !files.empty()) {
@@ -416,13 +429,19 @@ void SdCardFontRegistry::appendVectorFamilies() {
         if (!parseVectorFontName(name, baseLen)) continue;
         std::string familyName(name, baseLen);
         if (findSummary(familyName)) continue;  // existing family (cpfont or earlier vector) wins
-        SdCardFontFamilyInfo family;
-        family.name = std::move(familyName);
-        family.vector = true;
         SdCardFontFileInfo info;
         info.path = std::string(rootPath) + "/" + name;
         info.pointSize = 0;
         info.style = 0;
+        {
+          std::vector<SdCardFontFileInfo> probe;
+          probe.push_back(info);
+          refineVectorStyles(rootPath, probe);  // drops it when the engine cannot open the file
+          if (probe.empty()) continue;
+        }
+        SdCardFontFamilyInfo family;
+        family.name = std::move(familyName);
+        family.vector = true;
         family.files.push_back(std::move(info));
         families_.push_back(std::move(family));
         ++added;

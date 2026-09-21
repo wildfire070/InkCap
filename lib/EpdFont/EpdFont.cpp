@@ -235,6 +235,13 @@ const EpdGlyph* EpdFont::findGlyph(const uint32_t cp) const {
     }
   }
 
+  // Vector (TTF) fonts carry no interval table: glyphs are rasterized on demand by the miss handler.
+  // EpdFontFamily's probing lookups (findGlyphData/getFallbackCodepoint) call ONLY findGlyph(), so
+  // without this every codepoint reads as missing and the renderer substitutes tofu.
+  if (data->vectorBitmapHandler != nullptr && data->glyphMissHandler != nullptr) {
+    return data->glyphMissHandler(data->glyphMissCtx, cp);
+  }
+
   return nullptr;
 }
 
@@ -243,8 +250,9 @@ const EpdGlyph* EpdFont::getGlyph(const uint32_t cp) const {
     return glyph;
   }
 
-  // Codepoint not in interval table — try on-demand loading (SD card fonts).
-  if (data->glyphMissHandler) {
+  // Codepoint not in interval table — try on-demand loading (SD card fonts). Vector fonts already
+  // ran their miss handler inside findGlyph() above.
+  if (data->glyphMissHandler && data->vectorBitmapHandler == nullptr) {
     const EpdGlyph* loaded = data->glyphMissHandler(data->glyphMissCtx, cp);
     if (loaded) return loaded;
   }
