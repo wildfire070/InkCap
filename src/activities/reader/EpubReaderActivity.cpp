@@ -103,7 +103,8 @@ constexpr uint8_t PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION = 5;
 constexpr uint8_t PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION = 6;
 constexpr uint8_t PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION = 7;
 constexpr uint8_t PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION = 8;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 9;
+constexpr uint8_t PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION = 9;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 10;
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
 constexpr uint8_t READER_SETTINGS_FLAG_RENDER_MODE = 1 << 2;
@@ -1120,6 +1121,7 @@ void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.readerFontPointSize = SETTINGS.readerFontPointSize;
   out.lineHeightPercent = SETTINGS.lineHeightPercent;
   out.wordSpacing = SETTINGS.wordSpacing;
+  out.characterSpacing = SETTINGS.characterSpacing;
   out.orientation = SETTINGS.orientation;
   out.screenMarginVertical = SETTINGS.screenMarginVertical;
   out.screenMarginHorizontal = SETTINGS.screenMarginHorizontal;
@@ -1155,6 +1157,7 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   }
   SETTINGS.lineHeightPercent = CrossPointSettings::clampedLineHeightPercent(in.lineHeightPercent);
   SETTINGS.wordSpacing = std::min<uint8_t>(in.wordSpacing, CrossPointSettings::MAX_WORD_SPACING);
+  SETTINGS.characterSpacing = std::min<uint8_t>(in.characterSpacing, CrossPointSettings::MAX_CHARACTER_SPACING);
   SETTINGS.orientation = in.orientation < CrossPointSettings::ORIENTATION_COUNT ? in.orientation : SETTINGS.orientation;
   SETTINGS.screenMarginVertical = std::clamp<uint8_t>(in.screenMarginVertical, CrossPointSettings::MIN_SCREEN_MARGIN,
                                                       CrossPointSettings::MAX_SCREEN_MARGIN);
@@ -1183,9 +1186,11 @@ using BookReaderSettingsData = EpubReaderActivity::BookReaderSettingsData;
 
 bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettingsSnapshot& out,
                                 const bool includesWordSpacing, const bool includesIndexingMethod,
-                                const bool includesSplitScreenMargins, const bool includesLegacyReaderDarkMode) {
+                                const bool includesSplitScreenMargins, const bool includesLegacyReaderDarkMode,
+                                const bool includesCharacterSpacing) {
   if (!(readU8(file, out.fontFamily) && readU8(file, out.readerFontPointSize) && readU8(file, out.lineHeightPercent) &&
-        (!includesWordSpacing || readU8(file, out.wordSpacing)) && readU8(file, out.orientation))) {
+        (!includesWordSpacing || readU8(file, out.wordSpacing)) &&
+        (!includesCharacterSpacing || readU8(file, out.characterSpacing)) && readU8(file, out.orientation))) {
     return false;
   }
 
@@ -1222,6 +1227,7 @@ bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettings
 bool writeReaderSettingsSnapshot(FsFile& file, const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   return writeU8(file, in.fontFamily) && writeU8(file, in.readerFontPointSize) && writeU8(file, in.lineHeightPercent) &&
          writeU8(file, std::min<uint8_t>(in.wordSpacing, CrossPointSettings::MAX_WORD_SPACING)) &&
+         writeU8(file, std::min<uint8_t>(in.characterSpacing, CrossPointSettings::MAX_CHARACTER_SPACING)) &&
          writeU8(file, in.orientation) && writeU8(file, in.screenMarginVertical) &&
          writeU8(file, in.screenMarginHorizontal) && writeU8(file, in.publisherPageNumbers) &&
          writeU8(file, in.paragraphAlignment) && writeU8(file, in.embeddedStyle) &&
@@ -1271,7 +1277,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
       version != PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -1284,6 +1291,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
   // Version 2 books inherit the current global indexing method instead of
   // silently changing modes when their older custom settings are loaded.
   snapshot.indexingMethod = data.readerSettings.indexingMethod;
+  // Books saved before character spacing existed likewise inherit the current global value.
+  snapshot.characterSpacing = data.readerSettings.characterSpacing;
   bool ok = readU8(file, flags) && readU16(file, seconds);
   if (ok) {
     ok = readU8(file, renderMode);
@@ -1292,7 +1301,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
     ok = readReaderSettingsSnapshot(file, snapshot, version >= PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION,
                                     version >= PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION,
                                     version >= PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION,
-                                    version <= PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION);
+                                    version <= PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION,
+                                    version > PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION);
   }
   if (ok && version >= PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION) {
     ok = readExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName));
