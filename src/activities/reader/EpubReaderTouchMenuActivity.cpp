@@ -528,6 +528,7 @@ ReaderSettingsDraft EpubReaderTouchMenuActivity::captureSettings() {
   std::strncpy(value.sdFontFamilyName.data(), SETTINGS.sdFontFamilyName, value.sdFontFamilyName.size() - 1);
   value.lineHeightPercent = SETTINGS.lineHeightPercent;
   value.wordSpacing = SETTINGS.wordSpacing;
+  value.characterSpacing = SETTINGS.characterSpacing;
   value.screenMarginVertical = SETTINGS.screenMarginVertical;
   value.screenMarginHorizontal = SETTINGS.screenMarginHorizontal;
   value.orientation = SETTINGS.orientation;
@@ -553,6 +554,7 @@ void EpubReaderTouchMenuActivity::applySettings(const ReaderSettingsDraft& value
   SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
   SETTINGS.lineHeightPercent = value.lineHeightPercent;
   SETTINGS.wordSpacing = value.wordSpacing;
+  SETTINGS.characterSpacing = value.characterSpacing;
   SETTINGS.screenMarginVertical = value.screenMarginVertical;
   SETTINGS.screenMarginHorizontal = value.screenMarginHorizontal;
   SETTINGS.orientation = value.orientation;
@@ -1461,6 +1463,7 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
     case RowId::Alignment:
     case RowId::Images:
     case RowId::RenderMode:
+    case RowId::CharacterSpacing:
       showEnumOptions(row);
       return;
     case RowId::IndexingMethod:
@@ -1671,6 +1674,13 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
       raw = {0, 1, 2, 3, 4};
       currentRaw = draft.paragraphAlignment;
       break;
+    case RowId::CharacterSpacing:
+      title = StrId::STR_CHARACTER_SPACING;
+      labels = {tr(STR_SPACING_MINUS_2), tr(STR_SPACING_MINUS_1), tr(STR_SPACING_ZERO), tr(STR_SPACING_PLUS_1),
+                tr(STR_SPACING_PLUS_2)};
+      raw = {0, 1, 2, 3, 4};
+      currentRaw = draft.characterSpacing;
+      break;
     case RowId::Images:
       title = StrId::STR_IMAGES;
       labels = {tr(STR_IMAGES_DISPLAY), tr(STR_IMAGES_PLACEHOLDER), tr(STR_IMAGES_SUPPRESS)};
@@ -1804,6 +1814,10 @@ void EpubReaderTouchMenuActivity::selectEnumOption(const int index) {
       draft.paragraphAlignment = value;
       enumOptionSelectedIndex = static_cast<int16_t>(index);
       previewedEnumOptionIndex = -1;
+      markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
+      break;
+    case RowId::CharacterSpacing:
+      draft.characterSpacing = value;
       markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
       break;
     case RowId::Images:
@@ -2100,6 +2114,7 @@ void EpubReaderTouchMenuActivity::renderPreviewText(const ReaderSettingsDraft& p
                             previewSettings.sdFontFamilyName == sourceSettings.sdFontFamilyName &&
                             previewSettings.lineHeightPercent == sourceSettings.lineHeightPercent &&
                             previewSettings.wordSpacing == sourceSettings.wordSpacing &&
+                            previewSettings.characterSpacing == sourceSettings.characterSpacing &&
                             previewSettings.screenMarginVertical == sourceSettings.screenMarginVertical &&
                             previewSettings.screenMarginHorizontal == sourceSettings.screenMarginHorizontal &&
                             previewSettings.paragraphAlignment == sourceSettings.paragraphAlignment &&
@@ -2126,7 +2141,10 @@ void EpubReaderTouchMenuActivity::renderPreviewText(const ReaderSettingsDraft& p
   previewModel->renderText(renderer, previewFontId, previewSettings.screenMarginHorizontal, previewYOffset,
                            previewWidth, previewSettings.lineHeightPercent, previewSettings.wordSpacing,
                            previewSettings.paragraphAlignment, previewSettings.focusReadingEnabled,
-                           previewSettings.guideReadingEnabled, ReaderUtils::readerForegroundBlack());
+                           previewSettings.guideReadingEnabled, ReaderUtils::readerForegroundBlack(),
+                           static_cast<int8_t>(std::min<uint8_t>(previewSettings.characterSpacing,
+                                                                 CrossPointSettings::MAX_CHARACTER_SPACING) -
+                                               CrossPointSettings::CHARACTER_SPACING_OFFSET));
   renderer.endTextClip();
 }
 
@@ -2336,6 +2354,8 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
       return tr(STR_DICTIONARY_FONT);
     case RowId::Spacing:
       return tr(STR_SPACING);
+    case RowId::CharacterSpacing:
+      return tr(STR_CHARACTER_SPACING);
     case RowId::TextAa:
       return tr(STR_TEXT_AA);
     case RowId::Focus:
@@ -2476,6 +2496,12 @@ const char* EpubReaderTouchMenuActivity::rowValue(const RowId row, char* buffer,
       static const std::array<StrId, 3> labels = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER,
                                                   StrId::STR_IMAGES_SUPPRESS};
       return I18N.get(labels[std::min<size_t>(draft.imageRendering, labels.size() - 1)]);
+    }
+    case RowId::CharacterSpacing: {
+      static const std::array<StrId, 5> labels = {StrId::STR_SPACING_MINUS_2, StrId::STR_SPACING_MINUS_1,
+                                                  StrId::STR_SPACING_ZERO, StrId::STR_SPACING_PLUS_1,
+                                                  StrId::STR_SPACING_PLUS_2};
+      return I18N.get(labels[std::min<size_t>(draft.characterSpacing, labels.size() - 1)]);
     }
     case RowId::RenderMode: {
       static const std::array<StrId, 3> labels = {StrId::STR_RENDER_MODE_CROSSINK_DEFAULT,

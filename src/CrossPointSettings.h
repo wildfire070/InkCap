@@ -548,6 +548,14 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t lineSpacing = NORMAL;  // migration only; new saves use lineHeightPercent
   uint8_t lineHeightPercent = 100;
   uint8_t wordSpacing = 0;
+  // Letter-spacing between adjacent non-space glyphs. Stored as a picker index 0..4 that maps to
+  // -2..+2 px (default 2 = 0 px), so it persists like the other enum settings.
+  static constexpr uint8_t CHARACTER_SPACING_OFFSET = 2;
+  static constexpr uint8_t MAX_CHARACTER_SPACING = 4;
+  uint8_t characterSpacing = CHARACTER_SPACING_OFFSET;
+  int8_t getCharacterSpacingPx() const {
+    return static_cast<int8_t>(std::min<uint8_t>(characterSpacing, MAX_CHARACTER_SPACING) - CHARACTER_SPACING_OFFSET);
+  }
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
