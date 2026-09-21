@@ -101,6 +101,47 @@ TEST(TouchReaderPreviewModel, NormalWordSpacingRemovesTheAdditionalPreviewGap) {
   EXPECT_EQ(renderer.drawCalls[1].x, 5);
 }
 
+TEST(TouchReaderPreviewModel, CharacterSpacingWidensWordsAndIsHandedToTheRenderer) {
+  Page page;
+  page.elements.push_back(std::make_unique<PageLine>(makeLine({"aa", "bb"}), 0, 0));
+
+  GfxRenderer renderer;
+  TouchReaderPreviewModel model;
+  ASSERT_TRUE(model.capture(page, renderer, 1, 100));
+
+  const auto secondWordX = [&](const int8_t spacing) {
+    renderer.drawCalls.clear();
+    model.renderText(renderer, 2, 0, 0, 40, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true,
+                     spacing);
+    EXPECT_EQ(renderer.drawCalls.size(), 2U);
+    for (const auto& call : renderer.drawCalls) EXPECT_EQ(call.tracking, spacing);
+    return renderer.drawCalls[1].x;
+  };
+  // "aa" is 4 px wide plus one gap between its two glyphs, then the 1 px word gap.
+  EXPECT_EQ(secondWordX(0), 5);
+  EXPECT_EQ(secondWordX(2), 7);
+  EXPECT_EQ(secondWordX(-1), 4);
+}
+
+TEST(TouchReaderPreviewModel, CharacterSpacingReflowsPreviewText) {
+  Page page;
+  page.elements.push_back(std::make_unique<PageLine>(makeLine({"aa", "bb", "cc", "dd"}), 0, 0));
+
+  GfxRenderer renderer;
+  TouchReaderPreviewModel model;
+  ASSERT_TRUE(model.capture(page, renderer, 1, 100));
+
+  // Four 4 px words and three 1 px gaps fit a 19 px line; +2 px glyph gaps make each word 6 px, so they wrap.
+  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 0);
+  ASSERT_EQ(renderer.drawCalls.size(), 4U);
+  EXPECT_EQ(renderer.drawCalls[3].y, 0);
+
+  renderer.drawCalls.clear();
+  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 2);
+  ASSERT_EQ(renderer.drawCalls.size(), 4U);
+  EXPECT_GT(renderer.drawCalls[3].y, 0);
+}
+
 TEST(TouchReaderPreviewModel, WordSpacingUsesSourceWhitespaceInsteadOfPixelGaps) {
   Page page;
   // The source's Focus/SD-font metrics can put this word at the same x
