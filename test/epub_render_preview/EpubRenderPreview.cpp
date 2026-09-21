@@ -7,7 +7,7 @@
 //
 // Usage:
 //   EpubRenderPreview <chapter.xhtml> <stylesheet.css> <output-prefix>
-//                     [--sd-font] [--width W] [--height H] [--bitter]
+//                     [--sd-font] [--width W] [--height H] [--bitter] [--char-spacing PX]
 //
 // --sd-font simulates reading with a custom SD-card font: the body font is
 // registered under an id the FontSizeLadder never contains, so any
@@ -131,7 +131,7 @@ void writeBmp(const std::string& path, const uint8_t* bw, int width, int height,
 int main(int argc, char** argv) {
   if (argc < 4) {
     std::cerr << "Usage: " << argv[0]
-              << " <chapter.xhtml> <stylesheet.css> <output-prefix> [--sd-font] [--width W] [--height H] [--bitter]\n";
+              << " <chapter.xhtml> <stylesheet.css> <output-prefix> [--sd-font] [--width W] [--height H] [--bitter] [--char-spacing PX]\n";
     return 1;
   }
   const std::string chapterPath = argv[1];
@@ -141,6 +141,7 @@ int main(int argc, char** argv) {
   bool useBitter = false;
   int width = 480;
   int height = 800;
+  int characterSpacing = 0;
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--sd-font") {
@@ -151,6 +152,8 @@ int main(int argc, char** argv) {
       width = std::atoi(argv[++i]);
     } else if (arg == "--height" && i + 1 < argc) {
       height = std::atoi(argv[++i]);
+    } else if (arg == "--char-spacing" && i + 1 < argc) {
+      characterSpacing = std::atoi(argv[++i]);
     }
   }
 
@@ -264,6 +267,7 @@ int main(int argc, char** argv) {
                                nullptr,
                                &cssParser};
   parser.setFontSizeLadder(ladder);
+  parser.setCharacterSpacing(static_cast<int8_t>(characterSpacing));
 
   if (!parser.parseAndBuildPages()) {
     std::cerr << "parseAndBuildPages() failed to open " << chapterPath << "\n";
