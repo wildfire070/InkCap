@@ -66,6 +66,9 @@ int barsForRssi(int rssi, int currentBars) {
 
 void CrossPointWebServerActivity::onEnter() {
   Activity::onEnter();
+  // Build or refresh the compact on-disk font index before Wi-Fi starts. The
+  // C3 has substantially more contiguous heap here than while serving HTTP.
+  sdFontSystem.ensureRegistry();
   sdFontSystem.releaseForNetwork(renderer);
 
   LOG_DBG("WEBACT", "Free heap at onEnter: %d bytes", ESP.getFreeHeap());

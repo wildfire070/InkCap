@@ -1,6 +1,7 @@
 #include "FileBrowserActivity.h"
 
 #include <Arduino.h>
+#include <Epub.h>
 #include <FreeInkUIIcon.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -8,6 +9,10 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <SdCardFontSystem.h>
+#include <Txt.h>
+#include <Utf8.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <cctype>
@@ -27,6 +32,7 @@
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/settings/SettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "activities/util/OptionSelectionActivity.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
@@ -36,6 +42,7 @@
 #include "components/icons/listIcons.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "util/BookMoveUtils.h"
 
 namespace fui = freeink::ui;
 
@@ -454,6 +461,7 @@ void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const st
       return;
     }
     ImageFolderIndex::invalidateForPath(fullPath.c_str());
+    sdFontSystem.markRegistryDirtyForPath(fullPath.c_str());
 
     if (isPinnedSleepFavorite(fullPath)) {
       unpinSleepFavorite();
@@ -497,6 +505,7 @@ void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, con
       return;
     }
     ImageFolderIndex::invalidateForPath(dirPath.c_str());
+    sdFontSystem.markRegistryDirtyForPath(dirPath.c_str());
 
     for (const auto& metadataPath : metadataPaths) {
       BookActions::clearFileMetadata(metadataPath);
@@ -578,6 +587,7 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::BookInfo:
                              case FileBrowserAction::PinToHome:
                              case FileBrowserAction::UnpinFromHome:
+                             case FileBrowserAction::Rename:
                                return;
                            }
                          });
@@ -695,6 +705,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
   const size_t bookRow = selectorIndex;
   const std::string fullPath = buildFullPath(basepath, entry);
   std::vector<FileBrowserActionActivity::MenuItem> items = BookActions::buildBookActionItems(fullPath, false);
+  items.insert(items.begin(), {FileBrowserAction::Rename, StrId::STR_RENAME});
 
   if (BookActions::canSendNearby(fullPath)) {
     items.push_back({FileBrowserAction::SendNearby, StrId::STR_SEND_NEARBY_BOOK});
@@ -727,6 +738,9 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
         switch (action) {
           case FileBrowserAction::BookInfo:
             openBookDetails(bookRow);
+            return;
+          case FileBrowserAction::Rename:
+            startRenameFile(fullPath, entry);
             return;
           case FileBrowserAction::SendNearby:
             activityManager.goToNearbyBookSend(fullPath, false);
@@ -885,6 +899,130 @@ void FileBrowserActivity::openBookDetails(const size_t row) {
         }
         requestUpdate();
       });
+}
+
+void FileBrowserActivity::startRenameFile(const std::string& fullPath, const std::string& entry) {
+  const std::string extension = getFileExtension(entry);
+  if (entry.size() <= extension.size() || extension.size() + 1 >= NAME_BUFFER_SIZE) {
+    LOG_ERR("FileBrowser", "Invalid rename source: %s", entry.c_str());
+    return;
+  }
+
+  const std::string initialStem = utf8ComposeNfc(entry.substr(0, entry.size() - extension.size()));
+  const size_t maxStemLength = NAME_BUFFER_SIZE - extension.size() - 1;
+  auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_RENAME), initialStem,
+                                                           maxStemLength, InputType::Text, 1);
+  if (!keyboard) {
+    LOG_ERR("FileBrowser", "OOM: rename keyboard");
+    return;
+  }
+
+  startActivityForResult(std::move(keyboard), [this, fullPath, entry, extension](const ActivityResult& result) {
+    if (result.isCancelled) return;
+    const auto* keyboardResult = std::get_if<KeyboardResult>(&result.data);
+    if (!keyboardResult) {
+      LOG_ERR("FileBrowser", "Rename returned an unexpected result");
+      return;
+    }
+    renameFile(fullPath, entry, keyboardResult->text, extension);
+  });
+}
+
+void FileBrowserActivity::renameFile(const std::string& oldPath, const std::string& oldEntry,
+                                     const std::string& newStem, const std::string& extension) {
+  const std::string newEntry = newStem + extension;
+  if (newEntry.size() >= NAME_BUFFER_SIZE || !FsHelpers::isSafePathComponent(newEntry)) {
+    LOG_ERR("FileBrowser", "Invalid rename target: %s", newEntry.c_str());
+    return;
+  }
+  if (newEntry == utf8ComposeNfc(oldEntry)) return;
+
+  const std::string parentPath = FsHelpers::extractFolderPath(oldPath);
+  const std::string newPath = (parentPath == "/" ? parentPath : parentPath + "/") + newEntry;
+  if (Storage.exists(newPath.c_str())) {
+    LOG_ERR("FileBrowser", "Rename target already exists: %s", newPath.c_str());
+    return;
+  }
+
+  std::string oldCachePath;
+  const char* bookType = nullptr;
+  if (FsHelpers::hasEpubExtension(oldPath)) {
+    oldCachePath = Epub::cachePathForFilePath(oldPath, "/.crosspoint");
+    bookType = "epub";
+  } else if (FsHelpers::hasXtcExtension(oldPath)) {
+    oldCachePath = Xtc(oldPath, "/.crosspoint").getCachePath();
+    bookType = "xtc";
+  } else if (FsHelpers::hasTxtExtension(oldPath) || FsHelpers::hasMarkdownExtension(oldPath)) {
+    oldCachePath = Txt(oldPath, "/.crosspoint").getCachePath();
+    bookType = "txt";
+  }
+
+  std::string title = getFileName(oldEntry);
+  std::string author;
+  if (bookType) {
+    const auto& recentBooks = RECENT_BOOKS.getBooks();
+    const auto recent = std::find_if(recentBooks.begin(), recentBooks.end(),
+                                     [&oldPath](const RecentBook& book) { return book.path == oldPath; });
+    if (recent != recentBooks.end()) {
+      if (!recent->title.empty()) title = recent->title;
+      author = recent->author;
+    }
+  }
+
+  if (!Storage.rename(oldPath.c_str(), newPath.c_str())) {
+    LOG_ERR("FileBrowser", "Failed to rename file: %s -> %s", oldPath.c_str(), newPath.c_str());
+    return;
+  }
+
+  if (bookType) {
+    const auto migration =
+        BookMoveUtils::migrateRenamedBookState(oldPath, newPath, oldCachePath, title, author, bookType);
+    if (migration == BookMoveUtils::RenameMigrationResult::RolledBack) {
+      LOG_ERR("FileBrowser", "Could not migrate reader state; rolling back file rename: %s -> %s", newPath.c_str(),
+              oldPath.c_str());
+      if (Storage.rename(newPath.c_str(), oldPath.c_str())) return;
+
+      LOG_ERR("FileBrowser", "Failed to roll back file rename: %s -> %s", newPath.c_str(), oldPath.c_str());
+      const auto recovery =
+          BookMoveUtils::migrateRenamedBookState(oldPath, newPath, oldCachePath, title, author, bookType);
+      if (recovery == BookMoveUtils::RenameMigrationResult::RolledBack) {
+        if (Storage.rename(newPath.c_str(), oldPath.c_str())) return;
+        if (Storage.exists(newPath.c_str())) {
+          LOG_ERR("FileBrowser", "Could not recover a consistent path after rename failure: %s", newPath.c_str());
+        }
+      }
+    }
+    if (migration == BookMoveUtils::RenameMigrationResult::KeepRenamed) {
+      LOG_ERR("FileBrowser", "Rename kept new path after incomplete state rollback: %s", newPath.c_str());
+    }
+  }
+
+  bool appStateChanged = false;
+  if (APP_STATE.favoriteSleepImagePath == oldPath) {
+    APP_STATE.favoriteSleepImagePath = newPath;
+    appStateChanged = true;
+  }
+  if (APP_STATE.favoriteBootImagePath == oldPath) {
+    APP_STATE.favoriteBootImagePath = newPath;
+    appStateChanged = true;
+  }
+  if (appStateChanged && !APP_STATE.saveToFile()) {
+    LOG_ERR("FileBrowser", "Failed to save renamed favorite image path");
+  }
+
+  ImageFolderIndex::invalidateForPath(oldPath.c_str());
+  ImageFolderIndex::invalidateForPath(newPath.c_str());
+  {
+    RenderLock lock(*this);
+    loadFilesLocked();
+    selectorIndex = findEntry(newEntry);
+    if (entryCount() > 0 && selectorIndex >= entryCount()) selectorIndex = entryCount() - 1;
+    topIndex = followListSelection(static_cast<int>(selectorIndex), 0, visibleRows, static_cast<int>(entryCount()));
+    listNav.reset(static_cast<int>(selectorIndex));
+    listNav.top = topIndex;
+    listNav.visibleRows = visibleRows;
+  }
+  requestUpdate(true);
 }
 
 void FileBrowserActivity::toggleHiddenFiles() {

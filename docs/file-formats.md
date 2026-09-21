@@ -779,3 +779,39 @@ because PSRAM devices now admit streamed stylesheet sources up to 512 KiB
 internal-memory guards still apply. Rebuilding an invalid CSS cache also
 invalidates section caches through the existing EPUB-load path, so books that
 previously cached zero rules can restore hidden content and layout rules.
+
+## `/.crosspoint/font-catalog.bin`
+
+### Version 1
+
+Disposable font metadata cache, shared by reader, settings and web font controls.
+The 24-byte little-endian header contains magic `0x46434931`, version, a 64-bit
+inventory fingerprint, family count (maximum 128), and a reserved zero field.
+It is followed by 152-byte family summaries: a NUL-terminated 128-byte name,
+32-bit detail offset/byte count/FNV-1a hash, 16-bit file count, minimum/maximum
+point sizes, four reserved zero bytes, and a 32-bit FNV-1a
+checksum of the preceding summary bytes. Detail blocks follow the summaries.
+Each detail is three bytes (point size, style, path length) followed by the
+UTF-8 path bytes. Paths are at most 255 bytes; families contain at most 256
+files. The whole cache is capped at 2 MiB.
+
+Names/range labels load without retaining file paths. Only a requested family
+hydrates its detail vector. Missing, incompatible or malformed summaries rebuild
+the catalog by scanning names first and writing one family's paths at a time;
+invalid detail blocks invalidate the cache for the next request.
+Temporary memory failures preserve the font selection and cache for retry.
+Writers finish and sync `font-catalog.tmp` before replacing the cache. An
+interrupted replacement is safe because no user data is stored here.
+
+On first font metadata access after boot or explicit invalidation, an inventory
+walk checks names, directory kinds and file lengths in both font roots and their
+immediate subdirectories. It reads no font contents on an index hit, and is not
+repeated when catalog RAM is released and reloaded during the same session. This
+detects externally added/removed files and changed lengths after restarting;
+same-length content-only edits outside the firmware are not detectable by that
+check. Firmware upload/delete/move/download paths invalidate explicitly,
+including failed dedicated font uploads; USB Drive invalidates before handing
+the card to the host. Manage Fonts performs a full rescan; alternatively remove
+this cache to force reinspection after external same-length font changes.
+
+EPUB layout cache versions and identities are unchanged by this catalog.

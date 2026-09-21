@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <SdCardFontSystem.h>
 
 #include <algorithm>
 
@@ -334,6 +335,7 @@ void BmpViewerActivity::promptDeleteImage() {
           return;
         }
         ImageFolderIndex::invalidateForPath(path.c_str());
+        sdFontSystem.markRegistryDirtyForPath(path.c_str());
         if (APP_STATE.favoriteSleepImagePath == path) {
           unpinSleepFavorite();
         }
@@ -409,6 +411,7 @@ void BmpViewerActivity::showContextMenu() {
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::PinToHome:
                              case FileBrowserAction::UnpinFromHome:
+                             case FileBrowserAction::Rename:
                                return;
                            }
                          });
