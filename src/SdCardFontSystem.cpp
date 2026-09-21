@@ -526,22 +526,10 @@ void SdCardFontSystem::setupTtfUiFallbacks(GfxRenderer& renderer) {
 void SdCardFontSystem::loadTtfFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer,
                                      const bool registryWasDirty) {
   // Vector fonts render at any size; snap the reader size onto the family's offered steps.
-  uint8_t size = SETTINGS.getSdFontTargetPointSize();
-  {
-    const auto sizes = family.availableSizes();
-    uint8_t bestDiff = UINT8_MAX;
-    for (const uint8_t candidate : sizes) {
-      const uint8_t diff = candidate > size ? candidate - size : size - candidate;
-      if (diff < bestDiff || (diff == bestDiff && candidate < size)) {
-        bestDiff = diff;
-        size = candidate;
-        if (diff == 0) break;
-      }
-    }
-    if (size != SETTINGS.readerFontPointSize) {
-      SETTINGS.readerFontPointSize = size;
-      persistSettingsChange();
-    }
+  const uint8_t size = closestPointSize(family.availableSizes(), SETTINGS.getSdFontTargetPointSize());
+  if (size != SETTINGS.readerFontPointSize) {
+    SETTINGS.readerFontPointSize = size;
+    persistSettingsChange();
   }
 
   // Already loaded, same family + size, and disk unchanged: nothing to do.

@@ -41,6 +41,23 @@ struct SdCardFontFamilyInfo {
   std::vector<uint8_t> availableSizes() const;
 };
 
+// The offered step nearest to `target` (ties go to the smaller step); `target` itself when `sizes` is empty.
+// `target` stays fixed while scanning -- comparing against the running best instead drifts to the first steps.
+inline uint8_t closestPointSize(const std::vector<uint8_t>& sizes, const uint8_t target) {
+  uint8_t best = target;
+  uint8_t bestDiff = UINT8_MAX;
+  bool found = false;
+  for (const uint8_t candidate : sizes) {
+    const uint8_t diff = candidate > target ? candidate - target : target - candidate;
+    if (!found || diff < bestDiff || (diff == bestDiff && candidate < best)) {
+      best = candidate;
+      bestDiff = diff;
+      found = true;
+    }
+  }
+  return best;
+}
+
 class SdCardFontRegistry {
  public:
   static constexpr int MAX_SD_FAMILIES = 128;

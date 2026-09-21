@@ -10,6 +10,7 @@
 #include "EpdFont.h"
 #include "EpdFontData.h"
 #include "EpdFontFamily.h"
+#include "SdCardFontRegistry.h"
 
 namespace {
 
@@ -70,6 +71,27 @@ TEST(VectorFontLookupTest, FindGlyphStaysSideEffectFreeForNonVectorFonts) {
   EXPECT_EQ(gMissCalls, 0);
   EXPECT_EQ(font.getGlyph('A'), &gGlyphA);
   EXPECT_EQ(gMissCalls, 1);
+}
+
+TEST(VectorFontSizeSnapTest, KeepsAnOfferedSizeUnchanged) {
+  // Regression: the loader used to overwrite its own target while scanning and always landed on 9pt.
+  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
+  for (const uint8_t size : steps) EXPECT_EQ(closestPointSize(steps, size), size);
+}
+
+TEST(VectorFontSizeSnapTest, SnapsBetweenStepsAndBreaksTiesToTheSmaller) {
+  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
+  EXPECT_EQ(closestPointSize(steps, 11), 10);  // 10 and 12 are equally close
+  EXPECT_EQ(closestPointSize(steps, 13), 12);
+  EXPECT_EQ(closestPointSize(steps, 15), 14);
+  EXPECT_EQ(closestPointSize(steps, 19), 18);
+}
+
+TEST(VectorFontSizeSnapTest, ClampsOutsideTheRangeAndPassesThroughWhenEmpty) {
+  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
+  EXPECT_EQ(closestPointSize(steps, 5), 8);
+  EXPECT_EQ(closestPointSize(steps, 40), 20);
+  EXPECT_EQ(closestPointSize({}, 14), 14);
 }
 
 }  // namespace
