@@ -19,6 +19,25 @@
 #include "FontCacheManager.h"
 
 namespace {
+// Extra pixels between two adjacent glyphs (letter-spacing). Never around a space, so word gaps stay
+// under the separate word-spacing control; `leftCp == 0` means there is no preceding glyph.
+constexpr int trackingBetween(const uint32_t leftCp, const uint32_t rightCp, const int8_t tracking) {
+  const auto isSpace = [](const uint32_t cp) { return cp == ' ' || cp == 0xA0 || cp == 0x3000; };
+  return leftCp == 0 || isSpace(leftCp) || isSpace(rightCp) ? 0 : tracking;
+}
+
+// Number of glyph boundaries in `text` that receive tracking (combining/variation marks add none).
+int countTrackingGaps(const char* text) {
+  int gaps = 0;
+  uint32_t prev = 0;
+  while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
+    if (utf8IsVariationSelector(cp) || utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) continue;
+    if (trackingBetween(prev, cp, 1) != 0) ++gaps;
+    prev = cp;
+  }
+  return gaps;
+}
+
 
 /**
  * Resolves the requested style to the best available style in the given SD card font.
@@ -1177,7 +1196,7 @@ const char* resolveVisualText(const char* text, std::string& visualBuffer, const
 }  // namespace
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
-                              const BidiUtils::BidiBaseDir baseDir) const {
+                              const BidiUtils::BidiBaseDir baseDir, const int8_t tracking) const {
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
@@ -1190,8 +1209,9 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   std::string visualBuffer;
   const char* textCursor = resolveVisualText(text, visualBuffer, baseDir);
   if ((style & EpdFontFamily::SMALL_CAPS) != 0) {
-    return getTextAdvanceX(resolvedFontId, textCursor, style);
+    return getTextAdvanceX(resolvedFontId, textCursor, style, 0, tracking);
   }
+  const int trackingPx = tracking == 0 ? 0 : countTrackingGaps(textCursor) * tracking;
 
   // SD-card fonts can measure from their persistent advance table during layout.
   auto sdIt = sdCardFonts_.find(resolvedFontId);
@@ -1208,7 +1228,7 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
       if (utf8IsVariationSelector(cp)) continue;
       widthFP += resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx);
     }
-    return fp4::toPixel(widthFP);
+    return fp4::toPixel(widthFP) + trackingPx;
   }
 
   const auto fontIt = fontMap.find(resolvedFontId);
@@ -1219,7 +1239,7 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 
   int w = 0, h = 0;
   fontIt->second.getTextDimensions(textCursor, &w, &h, style);
-  return w;
+  return w + trackingPx;
 }
 
 void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* text, const bool black,
@@ -1244,13 +1264,13 @@ void GfxRenderer::endTextClip() const {
 
 void GfxRenderer::drawTextScaled(const int fontId, const int x, const int y, const char* text, const bool black,
                                  const EpdFontFamily::Style style, const float scale,
-                                 const BidiUtils::BidiBaseDir baseDir) const {
-  drawText(fontId, x, y, text, black, style, baseDir, scale);
+                                 const BidiUtils::BidiBaseDir baseDir, const int8_t tracking) const {
+  drawText(fontId, x, y, text, black, style, baseDir, scale, tracking);
 }
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
                            const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir,
-                           const float scale) const {
+                           const float scale, const int8_t tracking) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;
@@ -1324,7 +1344,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       if (scale != 1.0f) {
         deltaFP = static_cast<int32_t>(std::lround(deltaFP * scale));
       }
-      lastBaseX += fp4::toPixel(deltaFP);  // snap 12.4 fixed-point to nearest pixel
+      int trackPx = trackingBetween(prevCp, cp, tracking);
+      if (scale != 1.0f) trackPx = static_cast<int>(std::lround(trackPx * scale));  // layout was in unscaled space
+      lastBaseX += fp4::toPixel(deltaFP) + trackPx;  // snap 12.4 fixed-point to nearest pixel
     }
 
     if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
@@ -2878,18 +2900,18 @@ int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const 
 }
 
 int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
-                            const EpdFontFamily::Style style) const {
+                            const EpdFontFamily::Style style, const int8_t tracking) const {
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) return 0;
-  const int kernFP = fontIt->second.getKerning(leftCp, rightCp, style);  // 4.4 fixed-point
-  return fp4::toPixel(kernFP);                                           // snap 4.4 fixed-point to nearest pixel
+  const int kernFP = fontIt->second.getKerning(leftCp, rightCp, style);      // 4.4 fixed-point
+  return fp4::toPixel(kernFP) + trackingBetween(leftCp, rightCp, tracking);  // snap 4.4 fixed-point to nearest pixel
 }
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFontFamily::Style style,
-                                 const uint32_t followingCp) const {
+                                 const uint32_t followingCp, const int8_t tracking) const {
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
@@ -2910,6 +2932,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
   auto sdIt = sdCardFonts_.find(resolvedFontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
     int32_t widthFP = 0;
+    int trackingPx = 0;
     const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
     const uint8_t styleIdx = resolveSdCardStyle(*sdIt->second, style);
     const auto fontIt = fontMap.find(resolvedFontId);
@@ -2936,6 +2959,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       } else {
         widthFP += advFP;
       }
+      if (!utf8IsCombiningMark(cp)) {
+        trackingPx += trackingBetween(lastCp, cp, tracking);
+      }
       lastCp = cp;
       lastScaledSmallCap = scaledSmallCap;
     }
@@ -2950,8 +2976,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
         kernFP = smallCapsAdvanceFP(kernFP);
       }
       widthFP += kernFP;
+      trackingPx += trackingBetween(lastCp, adjustedFollowingCp, tracking);
     }
-    return fp4::toPixel(widthFP);
+    return fp4::toPixel(widthFP) + trackingPx;
   }
 
   const auto fontIt = fontMap.find(resolvedFontId);
@@ -2990,7 +3017,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       if (prevScaledSmallCap || scaledSmallCap) {
         kernFP = smallCapsAdvanceFP(kernFP);
       }
-      widthPx += fp4::toPixel(prevAdvanceFP + kernFP);  // snap 12.4 fixed-point to nearest pixel
+      widthPx += fp4::toPixel(prevAdvanceFP + kernFP) + trackingBetween(prevCp, cp, tracking);
     }
 
     if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
@@ -3042,7 +3069,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
     if (prevScaledSmallCap || followingScaledSmallCap) {
       kernFP = smallCapsAdvanceFP(kernFP);
     }
-    widthPx += fp4::toPixel(prevAdvanceFP + kernFP);
+    widthPx += fp4::toPixel(prevAdvanceFP + kernFP) + trackingBetween(prevCp, adjustedFollowingCp, tracking);
   } else {
     widthPx += fp4::toPixel(prevAdvanceFP);  // final glyph's advance
   }
