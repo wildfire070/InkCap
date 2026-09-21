@@ -75,22 +75,34 @@ TEST(VectorFontLookupTest, FindGlyphStaysSideEffectFreeForNonVectorFonts) {
 
 TEST(VectorFontSizeSnapTest, KeepsAnOfferedSizeUnchanged) {
   // Regression: the loader used to overwrite its own target while scanning and always landed on 9pt.
-  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
+  const std::vector<uint8_t> steps{8, 9, 10, 11, 12, 13, 14, 15, 16};
   for (const uint8_t size : steps) EXPECT_EQ(closestPointSize(steps, size), size);
 }
 
 TEST(VectorFontSizeSnapTest, SnapsBetweenStepsAndBreaksTiesToTheSmaller) {
-  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
-  EXPECT_EQ(closestPointSize(steps, 11), 10);  // 10 and 12 are equally close
-  EXPECT_EQ(closestPointSize(steps, 13), 12);
+  const std::vector<uint8_t> steps{8, 10, 12, 14, 16};
+  EXPECT_EQ(closestPointSize(steps, 9), 8);  // 8 and 10 are equally close
+  EXPECT_EQ(closestPointSize(steps, 11), 10);
   EXPECT_EQ(closestPointSize(steps, 15), 14);
-  EXPECT_EQ(closestPointSize(steps, 19), 18);
+}
+
+TEST(VectorFontSizeSnapTest, VectorFamiliesOfferEveryWholePointFrom8To16) {
+  const auto sizes = vectorFontPointSizes();
+  ASSERT_EQ(sizes.size(), 9u);
+  for (size_t i = 0; i < sizes.size(); ++i) EXPECT_EQ(sizes[i], 8 + i);
+}
+
+TEST(VectorFontSizeSnapTest, SavedSizesAboveTheRangeLandOnTheLargestStep) {
+  // A size persisted under the old 8-20pt list (18, 20) must still resolve to something offered.
+  const auto sizes = vectorFontPointSizes();
+  EXPECT_EQ(closestPointSize(sizes, 18), 16);
+  EXPECT_EQ(closestPointSize(sizes, 20), 16);
 }
 
 TEST(VectorFontSizeSnapTest, ClampsOutsideTheRangeAndPassesThroughWhenEmpty) {
-  const std::vector<uint8_t> steps{8, 9, 10, 12, 14, 16, 18, 20};
+  const std::vector<uint8_t> steps{8, 9, 10, 11, 12, 13, 14, 15, 16};
   EXPECT_EQ(closestPointSize(steps, 5), 8);
-  EXPECT_EQ(closestPointSize(steps, 40), 20);
+  EXPECT_EQ(closestPointSize(steps, 40), 16);
   EXPECT_EQ(closestPointSize({}, 14), 14);
 }
 

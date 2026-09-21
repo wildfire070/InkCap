@@ -48,8 +48,8 @@ const SdCardFontFileInfo* SdCardFontFamilyInfo::findClosestFile(uint8_t targetSi
 
 std::vector<uint8_t> SdCardFontFamilyInfo::availableSizes() const {
 #if CROSSPOINT_VECTOR_FONTS
-  // Scalable outlines render at any size: offer the same steps SD fonts use.
-  if (vector) return {8, 9, 10, 12, 14, 16, 18, 20};
+  // Scalable outlines render at any size: offer every whole point in range.
+  if (vector) return vectorFontPointSizes();
 #endif
   if (!ensureDetails()) return {};
   std::vector<uint8_t> sizes;

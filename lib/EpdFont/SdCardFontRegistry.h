@@ -41,6 +41,17 @@ struct SdCardFontFamilyInfo {
   std::vector<uint8_t> availableSizes() const;
 };
 
+// Point sizes offered for a scalable (TTF/OTF) family: every whole point from min to max.
+inline constexpr uint8_t kVectorFontMinPointSize = 8;
+inline constexpr uint8_t kVectorFontMaxPointSize = 16;
+
+inline std::vector<uint8_t> vectorFontPointSizes() {
+  std::vector<uint8_t> sizes;
+  sizes.reserve(kVectorFontMaxPointSize - kVectorFontMinPointSize + 1);
+  for (uint8_t s = kVectorFontMinPointSize; s <= kVectorFontMaxPointSize; ++s) sizes.push_back(s);
+  return sizes;
+}
+
 // The offered step nearest to `target` (ties go to the smaller step); `target` itself when `sizes` is empty.
 // `target` stays fixed while scanning -- comparing against the running best instead drifts to the first steps.
 inline uint8_t closestPointSize(const std::vector<uint8_t>& sizes, const uint8_t target) {
