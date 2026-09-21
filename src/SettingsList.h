@@ -677,6 +677,10 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                            "lineHeightPercent", StrId::STR_CAT_READER));
     add(SettingInfo::Value(StrId::STR_WORD_SPACING, &CrossPointSettings::wordSpacing,
                            {0, CrossPointSettings::MAX_WORD_SPACING, 1}, "wordSpacing", StrId::STR_CAT_READER));
+    add(SettingInfo::Enum(StrId::STR_CHARACTER_SPACING, &CrossPointSettings::characterSpacing,
+                          {StrId::STR_SPACING_MINUS_2, StrId::STR_SPACING_MINUS_1, StrId::STR_SPACING_ZERO,
+                           StrId::STR_SPACING_PLUS_1, StrId::STR_SPACING_PLUS_2},
+                          "characterSpacing", StrId::STR_CAT_READER));
     add(SettingInfo::Enum(
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_LANDSCAPE_CCW, StrId::STR_ORIENTATION_INVERTED},
@@ -1186,6 +1190,7 @@ inline std::vector<SettingInfo> buildReaderFontSettingsList(const std::vector<Se
   addSettingByName(settings, allSettings, StrId::STR_DICTIONARY_FONT_SIZE);
   addSettingByName(settings, allSettings, StrId::STR_LINE_SPACING);
   addSettingByName(settings, allSettings, StrId::STR_WORD_SPACING);
+  addSettingByName(settings, allSettings, StrId::STR_CHARACTER_SPACING);
   addSettingByName(settings, allSettings, StrId::STR_TEXT_AA);
   settings.push_back(SettingInfo::Action(StrId::STR_DOWNLOAD_FONTS, SettingAction::DownloadFonts));
   addSettingByName(settings, allSettings, StrId::STR_SD_FONT_SIZE_RANGE);

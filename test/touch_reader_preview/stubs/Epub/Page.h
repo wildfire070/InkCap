@@ -20,6 +20,7 @@ struct BlockStyle {
   int16_t textIndent = 0;
   bool textIndentDefined = false;
   bool isRtl = false;
+  int8_t characterSpacing = 0;
 
   int16_t leftInset() const { return marginLeft + paddingLeft; }
   int16_t rightInset() const { return marginRight + paddingRight; }
