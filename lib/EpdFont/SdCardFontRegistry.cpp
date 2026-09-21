@@ -476,6 +476,7 @@ void SdCardFontRegistry::appendVectorFamilies() {
       sub.close();
       if (files.empty()) continue;
       refineVectorStyles(path, files);
+      if (files.empty()) continue;  // every file was unsupported (e.g. all CFF .otf): do not list the family
       SdCardFontFamilyInfo family;
       family.name = name;
       family.vector = true;
