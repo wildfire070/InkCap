@@ -5,6 +5,7 @@
 - Xteink X3
 - Xteink X4
 - Xteink X4 Pro
+- Xteink X4 Classic
 - Seeed Studio Sticky
 
 ## What's different in this fork

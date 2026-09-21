@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <SdCardFontSystem.h>
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
@@ -29,6 +30,8 @@ void UsbDriveActivity::onEnter() {
   // its block device to the host. The two operations must never overlap.
   requestUpdateAndWait();
 #ifndef SIMULATOR
+  // The host can replace fonts without going through firmware file APIs.
+  sdFontSystem.markRegistryDirty();
   if (!Storage.beginUsbDrive()) {
     LOG_ERR("USB", "Unable to start USB Drive");
     preparing = false;

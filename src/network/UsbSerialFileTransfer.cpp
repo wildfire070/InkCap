@@ -4,6 +4,7 @@
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <SdCardFontSystem.h>
 #include <esp_rom_crc.h>
 
 #include <algorithm>
@@ -397,6 +398,7 @@ void handleMkdir() {
         return;
       }
       ImageFolderIndex::invalidateForPath(path);
+      sdFontSystem.markRegistryDirtyForPath(path);
     }
     writeLine("OK\n");
   } else {
@@ -569,6 +571,7 @@ void handleWrite() {
   // recoverable instead of losing both the old file and the new upload.
   char backupPath[PATH_BUFFER_SIZE + 4];
   bool hasBackup = false;
+  sdFontSystem.markRegistryDirtyForPath(path);
   if (Storage.exists(path)) {
     snprintf(backupPath, sizeof(backupPath), "%s.bak", path);
     Storage.remove(backupPath);
@@ -589,6 +592,7 @@ void handleWrite() {
 
   clearCachesForPath(path);
   ImageFolderIndex::invalidateForPath(path);
+  sdFontSystem.markRegistryDirtyForPath(path);
   writeLine("OK\n");
 }
 
@@ -605,8 +609,10 @@ void handleRemove() {
     return;
   }
 
+  sdFontSystem.markRegistryDirtyForPath(path);
   if (removeRecursive(path)) {
     ImageFolderIndex::invalidateForPath(path);
+    sdFontSystem.markRegistryDirtyForPath(path);
     writeLine("OK\n");
   } else {
     writeLine("ERR:remove_failed\n");
@@ -643,7 +649,9 @@ void handleRename() {
     clearCachesForPath(src);
     clearCachesForPath(dst);
     ImageFolderIndex::invalidateForPath(src);
+    sdFontSystem.markRegistryDirtyForPath(src);
     ImageFolderIndex::invalidateForPath(dst);
+    sdFontSystem.markRegistryDirtyForPath(dst);
     writeLine("OK\n");
   } else {
     writeLine("ERR:rename_failed\n");
