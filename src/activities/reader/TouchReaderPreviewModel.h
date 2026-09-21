@@ -84,9 +84,12 @@ class TouchReaderPreviewModel {
         }
         if (!word.hasSpaceBefore && i > 0) {
           const Word& previous = words[wordCount - 2];
-          const int attachedX = previous.x + wordAdvance(renderer, fontId, previous, previous.focusBoundary != 0) +
-                                renderer.getKerning(fontId, lastCodepoint(wordText(previous)),
-                                                    firstCodepoint(wordText(word)), previous.style);
+          // The source lines were laid out with their own letter-spacing, so measure them with it.
+          const int8_t sourceTracking = block->getBlockStyle().characterSpacing;
+          const int attachedX =
+              previous.x + wordAdvance(renderer, fontId, previous, previous.focusBoundary != 0, 0, sourceTracking) +
+              renderer.getKerning(fontId, lastCodepoint(wordText(previous)), firstCodepoint(wordText(word)),
+                                  previous.style, sourceTracking);
           // Some blocks do not report every visible word gap. Recover one
           // only when the rendered source positions prove it was present.
           word.hasSpaceBefore = word.x > attachedX || block->guideDotXOffset(i - 1) > 0;
@@ -109,7 +112,7 @@ class TouchReaderPreviewModel {
   void renderText(const GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                   const int contentWidth, const uint8_t lineHeightPercent, const uint8_t wordSpacing,
                   const uint8_t paragraphAlignment, const bool focusReadingEnabled, const bool guideReadingEnabled,
-                  const bool foregroundBlack) const {
+                  const bool foregroundBlack, const int8_t characterSpacing = 0) const {
     if (!valid()) return;
     const int currentLineHeight = std::max(1, (renderer.getLineHeight(fontId) * lineHeightPercent + 50) / 100);
     int y = firstLineY + yOffset;
@@ -132,14 +135,14 @@ class TouchReaderPreviewModel {
       uint16_t wordIndex = firstWord;
       bool firstPreviewLine = true;
       prepareMetrics(renderer, fontId, firstWord, paragraphWordEnd, wordSpacing, focusReadingEnabled,
-                     guideReadingEnabled);
+                     guideReadingEnabled, characterSpacing);
       prepareLineBreaks(firstWord, paragraphWordEnd, availableWidth, previewFirstLineIndent(line, alignment));
       while (wordIndex < paragraphWordEnd) {
         const int firstLineIndent = firstPreviewLine ? previewFirstLineIndent(line, alignment) : 0;
         const uint16_t lineEnd = nextBreak[wordIndex];
         renderReflowedLine(renderer, fontId, wordIndex, lineEnd, y, availableLeft, availableWidth, firstLineIndent,
                            alignment, lineEnd == paragraphWordEnd, wordSpacing, focusReadingEnabled,
-                           guideReadingEnabled, foregroundBlack);
+                           guideReadingEnabled, foregroundBlack, characterSpacing);
         wordIndex = lineEnd;
         firstPreviewLine = false;
         y += currentLineHeight;
@@ -244,17 +247,18 @@ class TouchReaderPreviewModel {
 
   void prepareMetrics(const GfxRenderer& renderer, const int fontId, const uint16_t paragraphStart,
                       const uint16_t paragraphEnd, const uint8_t wordSpacing, const bool focusEnabled,
-                      const bool guideReadingEnabled) const {
+                      const bool guideReadingEnabled, const int8_t tracking) const {
     for (uint16_t index = paragraphStart; index < paragraphEnd; ++index) {
-      measuredAdvance[index] = boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled));
+      measuredAdvance[index] = boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled, 0, tracking));
       measuredGap[index] = index == paragraphStart
                                ? 0
                                : boundedMetric(wordGap(renderer, fontId, words[index - 1], words[index], wordSpacing,
-                                                       guideReadingEnabled));
+                                                       guideReadingEnabled, tracking));
       insertedHyphenExtra[index] =
           words[index].insertedHyphenAfter
-              ? boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled, '-') +
-                              renderer.getTextAdvanceX(fontId, "-", words[index].style) - measuredAdvance[index])
+              ? boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled, '-', tracking) +
+                              renderer.getTextAdvanceX(fontId, "-", words[index].style, 0, tracking) -
+                              measuredAdvance[index])
               : 0;
     }
   }
@@ -296,7 +300,7 @@ class TouchReaderPreviewModel {
                           const uint16_t lineEnd, const int y, const int availableLeft, const int availableWidth,
                           const int firstLineIndent, const CssTextAlign alignment, const bool isLastLine,
                           const uint8_t wordSpacing, const bool focusEnabled, const bool guideReadingEnabled,
-                          const bool foregroundBlack) const {
+                          const bool foregroundBlack, const int8_t tracking) const {
     int lineWidth = 0;
     int justifySlots = 0;
     for (uint16_t wordIndex = firstWord; wordIndex < lineEnd; ++wordIndex) {
@@ -337,12 +341,12 @@ class TouchReaderPreviewModel {
         }
         wordX += gap + wordJustifySlots(word, guideReadingEnabled) * justifyExtra;
       }
-      drawWord(renderer, fontId, wordX, y, word, focusEnabled, foregroundBlack);
+      drawWord(renderer, fontId, wordX, y, word, focusEnabled, foregroundBlack, tracking);
       wordX += measuredAdvance[wordIndex];
       if (wordIndex + 1 == lineEnd && !isLastLine && word.insertedHyphenAfter) {
-        renderer.drawText(fontId,
-                          wordX + wordAdvance(renderer, fontId, word, focusEnabled, '-') - measuredAdvance[wordIndex],
-                          y, "-", foregroundBlack, word.style);
+        renderer.drawText(
+            fontId, wordX + wordAdvance(renderer, fontId, word, focusEnabled, '-', tracking) - measuredAdvance[wordIndex],
+            y, "-", foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
         wordX += insertedHyphenExtra[wordIndex];
       }
     }
@@ -396,18 +400,18 @@ class TouchReaderPreviewModel {
   }
 
   int wordAdvance(const GfxRenderer& renderer, const int fontId, const Word& word, const bool focusEnabled,
-                  const uint32_t nextCodepoint = 0) const {
+                  const uint32_t nextCodepoint = 0, const int8_t tracking = 0) const {
     const char* value = wordText(word);
     const uint8_t boundary = resolvedFocusBoundary(word, focusEnabled);
     if (boundary == 0 || boundary >= std::strlen(value))
-      return renderer.getTextAdvanceX(fontId, value, word.style, nextCodepoint);
+      return renderer.getTextAdvanceX(fontId, value, word.style, nextCodepoint, tracking);
     char prefix[40];
     const size_t length = std::min<size_t>({static_cast<size_t>(boundary), sizeof(prefix) - 1, std::strlen(value)});
     std::memcpy(prefix, value, length);
     prefix[length] = '\0';
     const auto boldStyle = static_cast<EpdFontFamily::Style>(word.style | EpdFontFamily::BOLD);
-    return renderer.getTextAdvanceX(fontId, prefix, boldStyle, firstCodepoint(value + length)) +
-           renderer.getTextAdvanceX(fontId, value + length, word.style, nextCodepoint);
+    return renderer.getTextAdvanceX(fontId, prefix, boldStyle, firstCodepoint(value + length), tracking) +
+           renderer.getTextAdvanceX(fontId, value + length, word.style, nextCodepoint, tracking);
   }
 
   static int wordSpacingExtra(const uint8_t wordSpacing) { return std::min<uint8_t>(wordSpacing, 4) * 10; }
@@ -491,10 +495,10 @@ class TouchReaderPreviewModel {
   }
 
   int wordGap(const GfxRenderer& renderer, const int fontId, const Word& left, const Word& right,
-              const uint8_t wordSpacing, const bool guideReadingEnabled) const {
+              const uint8_t wordSpacing, const bool guideReadingEnabled, const int8_t tracking) const {
     const uint32_t leftCodepoint = lastCodepoint(wordText(left));
     const uint32_t rightCodepoint = firstCodepoint(wordText(right));
-    if (!right.hasSpaceBefore) return renderer.getKerning(fontId, leftCodepoint, rightCodepoint, left.style);
+    if (!right.hasSpaceBefore) return renderer.getKerning(fontId, leftCodepoint, rightCodepoint, left.style, tracking);
     const int extra = wordSpacingExtra(wordSpacing);
     if (!guideReadingEnabled) {
       return renderer.getSpaceAdvance(fontId, leftCodepoint, rightCodepoint, left.style) + extra;
@@ -505,11 +509,12 @@ class TouchReaderPreviewModel {
   }
 
   void drawWord(const GfxRenderer& renderer, const int fontId, const int x, const int y, const Word& word,
-                const bool focusEnabled, const bool foregroundBlack) const {
+                const bool focusEnabled, const bool foregroundBlack, const int8_t tracking) const {
     const char* value = wordText(word);
     const uint8_t boundary = resolvedFocusBoundary(word, focusEnabled);
     if (boundary == 0 || boundary >= std::strlen(value)) {
-      renderer.drawText(fontId, x, y, value, foregroundBlack, word.style);
+      renderer.drawText(fontId, x, y, value, foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f,
+                        tracking);
       return;
     }
     char prefix[40];
@@ -517,9 +522,10 @@ class TouchReaderPreviewModel {
     std::memcpy(prefix, value, length);
     prefix[length] = '\0';
     const auto boldStyle = static_cast<EpdFontFamily::Style>(word.style | EpdFontFamily::BOLD);
-    renderer.drawText(fontId, x, y, prefix, foregroundBlack, boldStyle);
-    renderer.drawText(fontId, x + renderer.getTextAdvanceX(fontId, prefix, boldStyle, firstCodepoint(value + length)),
-                      y, value + length, foregroundBlack, word.style);
+    renderer.drawText(fontId, x, y, prefix, foregroundBlack, boldStyle, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
+    renderer.drawText(fontId,
+                      x + renderer.getTextAdvanceX(fontId, prefix, boldStyle, firstCodepoint(value + length), tracking),
+                      y, value + length, foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
   }
 
   void clear() {

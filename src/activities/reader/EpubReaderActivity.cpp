@@ -7741,7 +7741,8 @@ void EpubReaderActivity::buildFootnoteTouchTargets(const Page& page, const int f
       } else if ((style & EpdFontFamily::SUB) != 0) {
         wordY += renderer.getFontAscenderSize(fontId) / 4;
       }
-      int wordWidth = renderer.getTextAdvanceX(fontId, block.wordText(wordIndex), style);
+      int wordWidth = renderer.getTextAdvanceX(fontId, block.wordText(wordIndex), style, 0,
+                                               block.getBlockStyle().characterSpacing);
       if (wordIndex + 1 < block.wordCount() && block.wordXpos(wordIndex + 1) > block.wordXpos(wordIndex)) {
         wordWidth = std::min(wordWidth, static_cast<int>(block.wordXpos(wordIndex + 1) - block.wordXpos(wordIndex)));
       }
@@ -7898,7 +7899,9 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     const bool hasEmSpace = hasEmSpacePrefix(wordText);
     const char* visibleText = wordText + (hasEmSpace ? 3 : 0);
     const auto textStyle = static_cast<EpdFontFamily::Style>(block.wordStyle(wordIndex) & ~EpdFontFamily::UNDERLINE);
-    const int skipX = hasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", textStyle) : 0;
+    const int8_t tracking = block.getBlockStyle().characterSpacing;
+    // The synthetic indent em-space is followed by one tracked glyph gap before the visible text.
+    const int skipX = hasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", textStyle, 0, tracking) + tracking : 0;
     const PageWordGeometry geometry = pageWordGeometry(renderer, fontId, line, block, wordIndex);
     const int wordX = orientedMarginLeft + line.xPos + geometry.xOffset + skipX;
     const int wordY = orientedMarginTop + line.yPos;
@@ -7910,7 +7913,8 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       const bool nextHasEmSpace = hasEmSpacePrefix(nextWordText);
       const auto nextTextStyle =
           static_cast<EpdFontFamily::Style>(block.wordStyle(nextIndex) & ~EpdFontFamily::UNDERLINE);
-      const int nextSkipX = nextHasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", nextTextStyle) : 0;
+      const int nextSkipX =
+          nextHasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", nextTextStyle, 0, tracking) + tracking : 0;
       const PageWordGeometry nextGeometry = pageWordGeometry(renderer, fontId, line, block, nextIndex);
       const int nextWordX = orientedMarginLeft + line.xPos + nextGeometry.xOffset + nextSkipX;
       if (isHighlightedWord(pageWordIndex + 1, line) && nextWordX > wordX + wordW) {
@@ -8087,6 +8091,7 @@ void EpubReaderActivity::refreshChapterGroupEstimate(const uint16_t viewportWidt
   mix(SETTINGS.focusReadingEnabled);
   mix(SETTINGS.guideReadingEnabled);
   mix(SETTINGS.wordSpacing);
+  mix(SETTINGS.characterSpacing);
   mix(SETTINGS.epubRenderMode);
   if (chapterGroupEstimate.valid && chapterGroupEstimate.currentSpineIndex == currentSpineIndex &&
       chapterGroupEstimate.settingsSignature == signature) {
