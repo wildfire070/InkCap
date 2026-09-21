@@ -40,6 +40,9 @@ struct BlockStyle {
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
   bool isRtl = false;              // true if resolved direction is RTL
   bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
+  // Extra pixels between adjacent non-space glyphs (reader setting, not CSS): set by ParsedText when the
+  // paragraph is laid out and read back by TextBlock::render(). Persisted with each cached line.
+  int8_t characterSpacing = 0;
   bool pageBreakBefore = false;
   bool pageBreakAfter = false;
   // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
