@@ -103,6 +103,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   FontSize,
   DictionaryFontFamily,
   DictionaryFontSize,
+  CharacterSpacing,
   TtfHinting,
   TtfRaster,
   TtfInterpreter,
@@ -137,6 +138,7 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   font.add(ReaderDrawerCatalogItem::ReaderFont);
   font.add(ReaderDrawerCatalogItem::DictionaryFont);
   font.add(ReaderDrawerCatalogItem::Spacing);
+  font.add(ReaderDrawerCatalogItem::CharacterSpacing);
   font.add(ReaderDrawerCatalogItem::TextAa);
   font.add(ReaderDrawerCatalogItem::Focus);
   font.add(ReaderDrawerCatalogItem::GuideDots);
@@ -261,6 +263,7 @@ struct ReaderSettingsDraft {
   std::array<char, 64> sdFontFamilyName{};
   uint8_t lineHeightPercent = 0;
   uint8_t wordSpacing = 0;
+  uint8_t characterSpacing = 0;
   uint8_t screenMarginVertical = 0;
   uint8_t screenMarginHorizontal = 0;
   uint8_t orientation = 0;

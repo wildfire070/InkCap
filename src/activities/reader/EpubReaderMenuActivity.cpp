@@ -70,6 +70,7 @@ struct ReaderLayoutSettingsSnapshot {
   uint8_t readerFontPointSize;
   uint8_t lineHeightPercent;
   uint8_t wordSpacing;
+  uint8_t characterSpacing;
   uint8_t orientation;
   uint8_t screenMarginVertical;
   uint8_t screenMarginHorizontal;
@@ -95,6 +96,7 @@ ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
       SETTINGS.readerFontPointSize,
       SETTINGS.lineHeightPercent,
       SETTINGS.wordSpacing,
+      SETTINGS.characterSpacing,
       SETTINGS.orientation,
       SETTINGS.screenMarginVertical,
       SETTINGS.screenMarginHorizontal,
@@ -127,6 +129,7 @@ ReaderSettingsChangeMask classifyReaderSettingsChange(const ReaderLayoutSettings
   }
   if (before.fontFamily != after.fontFamily || before.readerFontPointSize != after.readerFontPointSize ||
       before.lineHeightPercent != after.lineHeightPercent || before.wordSpacing != after.wordSpacing ||
+      before.characterSpacing != after.characterSpacing ||
       before.screenMarginVertical != after.screenMarginVertical ||
       before.screenMarginHorizontal != after.screenMarginHorizontal ||
       before.publisherPageNumbers != after.publisherPageNumbers ||
