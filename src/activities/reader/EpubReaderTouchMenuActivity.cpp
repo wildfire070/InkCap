@@ -365,8 +365,8 @@ void EpubReaderTouchMenuActivity::onEnter() {
   }
 
   paneRows.reserve(4);
-  discoverFonts();
   discoverDictionaries();
+
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &EpubReaderTouchMenuActivity::onRowEvent, this);
   app.on(ACTION_TAB, &EpubReaderTouchMenuActivity::onTabEvent, this);
@@ -395,7 +395,7 @@ void EpubReaderTouchMenuActivity::onExit() {
 }
 
 void EpubReaderTouchMenuActivity::discoverFonts() {
-  sdFontSystem.ensureRegistry();
+  sdFontSystem.refreshIfDirty();
   const auto& families = sdFontSystem.registry().getFamilies();
   fontLabels.clear();
   fontSettingIndexes.clear();
@@ -1269,6 +1269,7 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
       openPane(ReaderDrawerPane::ReaderFont);
       return;
     case RowId::FontFamily:
+      discoverFonts();
       openPane(ReaderDrawerPane::FontFamily);
       return;
     case RowId::FontSize:
@@ -1439,12 +1440,14 @@ void EpubReaderTouchMenuActivity::toggleSetting(const RowId row) {
 }
 
 void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
+  if (row == RowId::DictionaryFontFamily || row == RowId::DictionaryFontSize) sdFontSystem.refreshIfDirty();
   std::vector<std::string> labels;
   std::vector<uint8_t> raw;
   StrId title = StrId::STR_NONE_OPT;
   uint8_t currentRaw = 0;
 
   if (row == RowId::FontSize) {
+    if (draft.sdFontFamilyName[0] != '\0') sdFontSystem.refreshIfDirty();
     if (draft.sdFontFamilyName[0] != '\0') {
       if (const auto* family = sdFontSystem.registry().findFamily(draft.sdFontFamilyName.data())) {
         raw = family->availableSizes();
@@ -1502,7 +1505,7 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
         raw.push_back(static_cast<uint8_t>(i + 1));
       }
       if (hasDictionaryFontOverride && dictionaryFontFamilyName[0] != '\0' &&
-          sdFontSystem.registry().findFamily(dictionaryFontFamilyName) == nullptr) {
+          sdFontSystem.registry().findSummary(dictionaryFontFamilyName) == nullptr) {
         labels.push_back(std::string(dictionaryFontFamilyName) + " (" + tr(STR_UNAVAILABLE) + ")");
         raw.push_back(0);
       }
@@ -1541,7 +1544,7 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
   }
   int current = 0;
   if (row == RowId::DictionaryFontFamily && hasDictionaryFontOverride && dictionaryFontFamilyName[0] != '\0' &&
-      sdFontSystem.registry().findFamily(dictionaryFontFamilyName) == nullptr) {
+      sdFontSystem.registry().findSummary(dictionaryFontFamilyName) == nullptr) {
     current = static_cast<int>(labels.size()) - 1;
   } else {
     const auto rawIt = std::find(raw.begin(), raw.end(), currentRaw);

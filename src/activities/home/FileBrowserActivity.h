@@ -57,6 +57,9 @@ class FileBrowserActivity final : public Activity {
   // Opens Book Info for the file at `row`, wiring Left/Right = Previous/Next Book
   // via findAdjacentBookRow() above.
   void openBookDetails(size_t row);
+  void startRenameFile(const std::string& fullPath, const std::string& entry);
+  void renameFile(const std::string& oldPath, const std::string& oldEntry, const std::string& newStem,
+                  const std::string& extension);
 
   ButtonNavigator buttonNavigator;
 

@@ -34,6 +34,7 @@ enum class FileBrowserAction : int {
   UnmarkForLater = 22,
   ArchiveFic = 23,
   RestoreFic = 24,
+  Rename = 25,
 };
 
 class FileBrowserActionActivity final : public Activity {
