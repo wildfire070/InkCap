@@ -55,6 +55,20 @@ bool Ao3MarkedForLaterStore::removeByPath(const std::string& path) {
   return true;
 }
 
+bool Ao3MarkedForLaterStore::updatePath(const std::string& oldPath, const std::string& newPath) {
+  ensureLoaded();
+
+  if (oldPath == newPath) return false;
+  auto it = std::find_if(entries.begin(), entries.end(),
+                         [&](const Ao3MarkedForLaterEntry& e) { return e.path == oldPath; });
+  if (it == entries.end()) {
+    return false;
+  }
+  it->path = newPath;
+  saveToFile();
+  return true;
+}
+
 bool Ao3MarkedForLaterStore::contains(const std::string& path) const {
   ensureLoaded();
   return std::find_if(entries.begin(), entries.end(), [&](const Ao3MarkedForLaterEntry& e) { return e.path == path; }) !=
