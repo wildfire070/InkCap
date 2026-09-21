@@ -146,21 +146,19 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   s.key = "fontFamily";
   s.category = StrId::STR_CAT_READER;
 
-  // Capture registry families by copy for the lambdas: SdCardFontRegistry is deliberately
-  // ephemeral (SdCardFontSystem discovers it, uses it, then calls releaseRegistry() to avoid
-  // keeping the catalog resident -- see SdCardFontSystem.cpp), so valueGetter/valueSetter can't
-  // hold a reference to it; they need their own copy of whatever they'll need once the user
-  // actually opens this setting, which may be long after this function returns.
+  // Names are copied for the lambdas; a family's point sizes are looked up through the
+  // registry when the user actually selects it (see valueSetter), so only that one family's
+  // file list is hydrated rather than every SD family's. The registry outlives the settings
+  // screen that owns this list: SdCardFontSystem::releaseRegistry() runs from the owning
+  // activity's onExit().
   std::vector<std::string> sdFamilyNames;
-  std::vector<std::vector<uint8_t>> sdFamilySizes;
+
   if (registry) {
     const auto& families = registry->getFamilies();
     // A heap-tight moment (long reading session, prior downloads) plus a large-enough
-    // font library used to abort() outright here: this function used to build the SD-only
-    // label list, then copy it wholesale into a second combined list, on top of the
-    // separate sdFamilyNames/sdFamilySizes copies below -- three uncaught-allocation
-    // passes over the same data with no heap check. Skip SD fonts (built-ins still work)
-    // rather than crash if there's not enough headroom for one pass over them.
+    // font library used to abort() outright here: this build compiles with -fno-exceptions,
+    // so an uncaught allocation failure is a full device abort. Skip SD fonts (built-ins
+    // still work) rather than crash if there's not enough headroom for one pass over them.
     constexpr uint32_t MIN_FREE_HEAP = 24576;
     constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
     const bool hasHeap = ESP.getFreeHeap() >= MIN_FREE_HEAP && ESP.getMaxAllocHeap() >= MIN_MAX_ALLOC_HEAP;
@@ -169,7 +167,6 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
               MIN_FREE_HEAP, ESP.getMaxAllocHeap(), MIN_MAX_ALLOC_HEAP);
     } else if (!families.empty()) {
       sdFamilyNames.reserve(families.size());
-      sdFamilySizes.reserve(families.size());
       // Build the combined display-label list (built-in + SD) in one pass instead of a
       // separate SD-only pass copied wholesale into a second combined one afterward.
       constexpr FontFamilyPointSizeRange builtinRange{10, 16};
@@ -179,7 +176,6 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
       for (const auto& f : families) {
         s.enumStringValues.push_back(fontFamilyLabel(f.name, fontFamilyPointSizeRange(f)));
         sdFamilyNames.push_back(f.name);
-        sdFamilySizes.push_back(f.availableSizes());
       }
     }
   }
@@ -197,7 +193,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     return SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
   };
 
-  s.valueSetter = [sdFamilyNames, sdFamilySizes](uint8_t v) {
+  s.valueSetter = [sdFamilyNames, registry](uint8_t v) {
     const uint8_t targetPointSize = SETTINGS.readerFontPointSize;
 
     if (v < CrossPointSettings::BUILTIN_FONT_COUNT) {
@@ -208,8 +204,10 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     } else {
       int sdIdx = v - CrossPointSettings::BUILTIN_FONT_COUNT;
       if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
-        SETTINGS.readerFontPointSize =
-            sdFamilySizes[sdIdx][closestPointSizeIndex(sdFamilySizes[sdIdx], targetPointSize)];
+        const auto* family = registry ? registry->findFamily(sdFamilyNames[sdIdx]) : nullptr;
+        const auto sizes = family ? family->availableSizes() : std::vector<uint8_t>{};
+        if (sizes.empty()) return;
+        SETTINGS.readerFontPointSize = sizes[closestPointSizeIndex(sizes, targetPointSize)];
         strncpy(SETTINGS.sdFontFamilyName, sdFamilyNames[sdIdx].c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
         SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
       }
@@ -979,8 +977,15 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         v.insert(
             insertPos + 1,
             SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN_DIRECTION, &CrossPointSettings::tiltPageTurnDirection,
+#if CROSSINK_APP_DEVICE_X4CLASSIC || defined(SIMULATOR_DEVICE_X4_CLASSIC)
+                              // X4 Classic's X-axis has the opposite sign from the original X3 calibration.
+                              // Keep the stored direction, but name its physical motion accurately.
+                              {StrId::STR_TILT_DIRECTION_LEFT_RIGHT_INVERTED, StrId::STR_TILT_DIRECTION_LEFT_RIGHT,
+                               StrId::STR_TILT_DIRECTION_FORWARD_BACK, StrId::STR_TILT_DIRECTION_FORWARD_BACK_INVERTED},
+#else
                               {StrId::STR_TILT_DIRECTION_LEFT_RIGHT, StrId::STR_TILT_DIRECTION_LEFT_RIGHT_INVERTED,
                                StrId::STR_TILT_DIRECTION_FORWARD_BACK, StrId::STR_TILT_DIRECTION_FORWARD_BACK_INVERTED},
+#endif
                               "tiltPageTurnDirection", StrId::STR_CAT_CONTROLS));
       }
     } else {
@@ -1221,6 +1226,10 @@ inline bool hasSettingByName(const std::vector<SettingInfo>& allSettings, StrId 
                      [nameId](const auto& setting) { return setting.nameId == nameId; });
 }
 
+inline bool hasSideButtonChordSetting(const std::vector<SettingInfo>& allSettings) {
+  return deviceSupportsSideButtonChord(gpio) && hasSettingByName(allSettings, StrId::STR_SIDE_BUTTON_CHORD);
+}
+
 inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   const bool hasTiltPageTurnSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN);
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
@@ -1315,11 +1324,12 @@ inline std::vector<SettingInfo> buildControlsFrontButtonSettingsList(const std::
 
 inline std::vector<SettingInfo> buildControlsSideButtonSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(3 + (deviceSupportsSideButtonChord(gpio) ? 1u : 0u));
+  const bool hasChord = hasSideButtonChordSetting(allSettings);
+  settings.reserve(3 + (hasChord ? 1u : 0u));
   addSettingByName(settings, allSettings, StrId::STR_SIDE_BTN_LAYOUT);
   addSettingByKey(settings, allSettings, "sideButtonOrientationAware");
   addSettingByKey(settings, allSettings, "sideButtonLongPress");
-  if (deviceSupportsSideButtonChord(gpio)) {
+  if (hasChord) {
     addSettingByName(settings, allSettings, StrId::STR_SIDE_BUTTON_CHORD);
   }
   return settings;
