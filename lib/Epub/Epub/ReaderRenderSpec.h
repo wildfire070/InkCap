@@ -27,6 +27,7 @@ struct ReaderRenderSpec {
   bool focusReadingEnabled = false;
   bool guideReadingEnabled = false;
   uint8_t wordSpacing = 0;
+  int8_t characterSpacing = 0;  // extra px between adjacent non-space glyphs, -2..+2
   EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
   // Deliberately excluded from readerRenderSpecSignature() below: this is a
   // deterministic function of fontId (already part of the signature), so
@@ -53,6 +54,7 @@ inline uint32_t readerRenderSpecSignature(const ReaderRenderSpec& spec) {
   mix(spec.focusReadingEnabled);
   mix(spec.guideReadingEnabled);
   mix(spec.wordSpacing);
+  mix(static_cast<uint8_t>(spec.characterSpacing));
   mix(static_cast<uint8_t>(spec.renderMode));
   return signature == 0 ? 1 : signature;
 }

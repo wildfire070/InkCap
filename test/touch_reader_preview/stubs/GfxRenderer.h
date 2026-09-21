@@ -20,13 +20,13 @@ class GfxRenderer {
   int getLineHeight(int) const { return 10; }
   int getSpaceWidth(int, EpdFontFamily::Style) const { return 1; }
   int getSpaceAdvance(int, uint32_t, uint32_t, EpdFontFamily::Style) const { return 1; }
-  int getKerning(int, uint32_t, uint32_t, EpdFontFamily::Style) const { return 0; }
+  int getKerning(int, uint32_t, uint32_t, EpdFontFamily::Style, int8_t = 0) const { return 0; }
 
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style) const {
     return static_cast<int>(std::string(text).size()) * (fontId == 2 ? 2 : 1);
   }
 
-  int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style, uint32_t) const {
+  int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style, uint32_t, int8_t = 0) const {
     return getTextAdvanceX(fontId, text, style);
   }
 
