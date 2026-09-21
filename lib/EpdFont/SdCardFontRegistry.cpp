@@ -12,6 +12,11 @@
 
 #include "FontCatalogIndex.h"
 
+#if CROSSPOINT_VECTOR_FONTS
+#include <FtFont.h>
+#include <strings.h>
+#endif
+
 namespace {
 std::atomic<uint32_t> indexGeneration{0};
 }
@@ -42,6 +47,10 @@ const SdCardFontFileInfo* SdCardFontFamilyInfo::findClosestFile(uint8_t targetSi
 }
 
 std::vector<uint8_t> SdCardFontFamilyInfo::availableSizes() const {
+#if CROSSPOINT_VECTOR_FONTS
+  // Scalable outlines render at any size: offer the same steps SD fonts use.
+  if (vector) return {8, 9, 10, 12, 14, 16, 18, 20};
+#endif
   if (!ensureDetails()) return {};
   std::vector<uint8_t> sizes;
   for (const auto& f : files) {
@@ -290,6 +299,181 @@ const char* SdCardFontRegistry::defaultWriteRoot() {
   return FONTS_DIR_HIDDEN;
 }
 
+#if CROSSPOINT_VECTOR_FONTS
+namespace {
+constexpr size_t MAX_VECTOR_FAMILIES = 32;
+
+// Match a vector font filename (.ttf/.otf/.ttc, case-insensitive); baseLen = length without extension.
+bool parseVectorFontName(const char* filename, size_t& baseLen) {
+  static constexpr const char* kExts[] = {".ttf", ".otf", ".ttc"};
+  const size_t nameLen = strlen(filename);
+  for (const char* ext : kExts) {
+    const size_t extLen = strlen(ext);
+    if (nameLen <= extLen) continue;
+    if (strcasecmp(filename + nameLen - extLen, ext) == 0) {
+      baseLen = nameLen - extLen;
+      return baseLen > 0 && baseLen <= 127;
+    }
+  }
+  return false;
+}
+
+// Style role (bit0 = bold, bit1 = italic) inferred from case-insensitive filename tokens.
+uint8_t parseVectorStyle(const char* baseName, size_t baseLen) {
+  bool bold = false;
+  bool ital = false;
+  for (size_t i = 0; i < baseLen; ++i) {
+    if ((baseLen - i) >= 4 && strncasecmp(baseName + i, "bold", 4) == 0) bold = true;
+    if ((baseLen - i) >= 6 && strncasecmp(baseName + i, "italic", 6) == 0) ital = true;
+    if ((baseLen - i) >= 7 && strncasecmp(baseName + i, "oblique", 7) == 0) ital = true;
+  }
+  return static_cast<uint8_t>((bold ? 1 : 0) | (ital ? 2 : 0));
+}
+
+unsigned long inspectRead(void* ctx, const unsigned long offset, unsigned char* buffer, const unsigned long count) {
+  auto* f = static_cast<HalFile*>(ctx);
+  if (f == nullptr || !*f) return 0;
+  if (!f->seek(static_cast<size_t>(offset))) return 0;
+  if (count == 0) return 0;
+  const int n = f->read(buffer, count);
+  return n < 0 ? 0 : static_cast<unsigned long>(n);
+}
+
+// Refine each file's style role from the face's own metadata (OS/2 weight, italic flag), guarantee a
+// regular anchor, then dedup by role (first file wins).
+void refineVectorStyles(const char* dirPath, std::vector<SdCardFontFileInfo>& files) {
+  using freeink::font::FtFont;
+  for (auto& info : files) {
+    HalFile f = Storage.open(info.path.c_str());
+    if (!f || f.isDirectory()) continue;
+    FtFont::FaceInfo face;
+    if (FtFont::inspectStream(&inspectRead, &f, static_cast<unsigned long>(f.size()), face) !=
+        FtFont::InspectResult::Ok) {
+      continue;  // unreadable/unsupported: keep the filename-derived role
+    }
+    info.style = static_cast<uint8_t>((face.weight >= 600 ? 1 : 0) | (face.italic ? 2 : 0));
+  }
+  bool haveRegular = false;
+  for (const auto& info : files) haveRegular = haveRegular || info.style == 0;
+  if (!haveRegular && !files.empty()) {
+    SdCardFontFileInfo* pick = &files.front();
+    for (auto& info : files) {
+      if ((info.style & 2) == 0) {
+        pick = &info;
+        break;
+      }
+    }
+    LOG_DBG("SDREG", "No regular face in %s - promoting %s", dirPath, pick->path.c_str());
+    pick->style = 0;
+  }
+  for (size_t i = 0; i < files.size(); ++i) {
+    for (size_t j = i + 1; j < files.size();) {
+      if (files[j].style == files[i].style) {
+        LOG_ERR("SDREG", "Duplicate style role in %s (%s) - skipping", dirPath, files[j].path.c_str());
+        files.erase(files.begin() + j);
+      } else {
+        ++j;
+      }
+    }
+  }
+}
+}  // namespace
+
+void SdCardFontRegistry::appendVectorFamilies() {
+  // -fno-exceptions: a failed vector growth aborts, so check headroom and reserve once, up front.
+  const auto heap = MemoryBudget::snapshot();
+  if (families_.size() >= static_cast<size_t>(MAX_SD_FAMILIES) || heap.freeHeap < 24576 ||
+      heap.maxAllocHeap < 12288) {
+    LOG_ERR("SDREG", "Skipping TTF/OTF discovery (free=%u maxAlloc=%u)", static_cast<unsigned>(heap.freeHeap),
+            static_cast<unsigned>(heap.maxAllocHeap));
+    return;
+  }
+  const size_t room = std::min<size_t>(MAX_VECTOR_FAMILIES, MAX_SD_FAMILIES - families_.size());
+  families_.reserve(families_.size() + room);
+  size_t added = 0;
+
+  for (const char* root : {FONTS_DIR_HIDDEN, FONTS_DIR_VISIBLE}) {
+    char resolved[16];
+    const char* rootPath = FsHelpers::resolveRootDirectoryIgnoreCase(root, resolved, sizeof(resolved)) ? resolved : root;
+    HalFile dir = Storage.open(rootPath);
+    if (!dir || !dir.isDirectory()) {
+      dir.close();
+      continue;
+    }
+    char name[128];
+    char path[160];
+    while (added < room) {
+      HalFile entry = dir.openNextFile();
+      if (!entry) break;
+      const bool isDirectory = entry.isDirectory();
+      entry.getName(name, sizeof(name));
+      entry.close();
+      if (name[0] == '.' || name[0] == '_') continue;
+
+      if (!isDirectory) {
+        // Loose file directly under the root: one family named after the file.
+        size_t baseLen = 0;
+        if (!parseVectorFontName(name, baseLen)) continue;
+        std::string familyName(name, baseLen);
+        if (findSummary(familyName)) continue;  // existing family (cpfont or earlier vector) wins
+        SdCardFontFamilyInfo family;
+        family.name = std::move(familyName);
+        family.vector = true;
+        SdCardFontFileInfo info;
+        info.path = std::string(rootPath) + "/" + name;
+        info.pointSize = 0;
+        info.style = 0;
+        family.files.push_back(std::move(info));
+        families_.push_back(std::move(family));
+        ++added;
+        continue;
+      }
+
+      // Family folder holding .ttf/.otf/.ttc files (a cpfont family of the same name wins).
+      if (findSummary(std::string(name))) continue;
+      const int length = std::snprintf(path, sizeof(path), "%s/%s", rootPath, name);
+      if (length <= 0 || static_cast<size_t>(length) >= sizeof(path)) continue;
+      HalFile sub = Storage.open(path);
+      if (!sub || !sub.isDirectory()) {
+        sub.close();
+        continue;
+      }
+      std::vector<SdCardFontFileInfo> files;
+      char fileName[128];
+      while (files.size() < 8) {
+        HalFile f = sub.openNextFile();
+        if (!f) break;
+        const bool fileIsDir = f.isDirectory();
+        f.getName(fileName, sizeof(fileName));
+        f.close();
+        size_t baseLen = 0;
+        if (fileIsDir || fileName[0] == '.' || fileName[0] == '_' || !parseVectorFontName(fileName, baseLen)) continue;
+        SdCardFontFileInfo info;
+        info.path = std::string(path) + "/" + fileName;
+        info.pointSize = 0;
+        info.style = parseVectorStyle(fileName, baseLen);
+        files.push_back(std::move(info));
+      }
+      sub.close();
+      if (files.empty()) continue;
+      refineVectorStyles(path, files);
+      SdCardFontFamilyInfo family;
+      family.name = name;
+      family.vector = true;
+      family.files = std::move(files);
+      families_.push_back(std::move(family));
+      ++added;
+    }
+    dir.close();
+  }
+  if (added > 0) {
+    std::sort(families_.begin(), families_.end(),
+              [](const SdCardFontFamilyInfo& a, const SdCardFontFamilyInfo& b) { return a.name < b.name; });
+    LOG_DBG("SDREG", "Found %u TTF/OTF families", static_cast<unsigned>(added));
+  }
+}
+#endif  // CROSSPOINT_VECTOR_FONTS
+
 const SdCardFontFamilyInfo* SdCardFontRegistry::findSummary(const std::string& name) const {
   for (const auto& family : families_)
     if (family.name == name) return &family;
@@ -443,6 +627,9 @@ bool SdCardFontRegistry::readIndex(uint64_t fingerprint) {
   }
   discoveryFailed_ = false;
   LOG_DBG("SDREG", "Font index: loaded %u names, no family paths", unsigned(header.count));
+#if CROSSPOINT_VECTOR_FONTS
+  appendVectorFamilies();
+#endif
   return true;
 }
 

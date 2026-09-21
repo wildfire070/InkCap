@@ -120,6 +120,12 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
     // must consume it (draw the glyph) before requesting another bitmap.
     return fd->getBitmap(fontData, glyph, glyphIndex);
   }
+  // Vector (TTF) fonts: the glyph bitmap lives in the font's own cache, keyed by the EpdGlyph its
+  // miss handler returned. Checked before the SD-font cast below (glyphMissCtx is not an SdCardFont
+  // here). nullptr = zero-width glyph (e.g. space).
+  if (fontData->vectorBitmapHandler != nullptr) {
+    return fontData->vectorBitmapHandler(fontData->glyphMissCtx, glyph);
+  }
   // For SD card fonts, check if the glyph was loaded on demand into the overflow
   // buffer.  getOverflowBitmap() returns:
   //   - bitmap pointer for overflow glyphs with bitmap data

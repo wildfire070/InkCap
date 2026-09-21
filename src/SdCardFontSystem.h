@@ -1,13 +1,23 @@
 #pragma once
 
+#include <HalStorage.h>  // HalFile (kept open for streamed TTFs)
 #include <SdCardFontManager.h>
 #include <SdCardFontRegistry.h>
+#include <VectorFontSupport.h>
+
+#if CROSSPOINT_VECTOR_FONTS
+#include <FontPsram.h>  // PsramVector for resident TTF bytes
+#endif
 
 #include <atomic>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "ReaderFontSizeStep.h"
 
 class GfxRenderer;
+class TtfEpdFont;
 
 struct DictionaryFontActivation {
   int fontId = 0;
@@ -20,7 +30,9 @@ class SdCardFontSystem {
  public:
   using SettingsPersistenceCallback = void (*)(void* context);
 
-  SdCardFontSystem() = default;
+  // Out-of-line so std::unique_ptr<TtfEpdFont> members can be built/destroyed where TtfEpdFont is complete.
+  SdCardFontSystem();
+  ~SdCardFontSystem();
   SdCardFontSystem(const SdCardFontSystem&) = delete;
   SdCardFontSystem& operator=(const SdCardFontSystem&) = delete;
   /// Register the font resolver and load a saved SD font selection. When the
@@ -106,6 +118,44 @@ class SdCardFontSystem {
   // loaded are reused).
   void setupUiFallbacks(GfxRenderer& renderer);
   void setupUiFallbacksDirect(GfxRenderer& renderer, const char* familyName);
+
+#if CROSSPOINT_VECTOR_FONTS
+  // --- Vector (.ttf/.otf) font path (FreeInkFont via TtfEpdFont) -------------
+  // Load/refresh the selected TTF family at the current reader size and register it with the
+  // renderer. registryWasDirty forces a reload even if the family/size are unchanged.
+  void loadTtfFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, bool registryWasDirty);
+  // Unregister + free the active TTF font (and its UI-size fallbacks), if any.
+  void unloadTtf(GfxRenderer& renderer);
+  // Register the loaded TTF at each built-in UI size as a script fallback, so UI text in scripts the
+  // built-in fonts lack renders in the chosen TTF (mirrors setupUiFallbacks for .cpfont).
+  void setupTtfUiFallbacks(GfxRenderer& renderer);
+  // FreeType stream io: reads a source's open file at an absolute offset (ctx is a HalFile*).
+  static unsigned long ttfRead(void* ctx, unsigned long offset, unsigned char* buffer, unsigned long count);
+  // Open one style source file (resident if small, streamed if large) into ttfSources_[style].
+  bool openTtfSource(uint8_t style, const std::string& path);
+  // Register every present source with `font` (shared bytes / file handles).
+  void addTtfSources(TtfEpdFont& font);
+  // Close/free all style sources.
+  void freeTtfSources();
+
+  // One style source file. SMALL files are read fully into `bytes` (resident, PSRAM when present);
+  // LARGE files stream from `file` (kept open) so a multi-MB font never sits in RAM. All faces
+  // (reader + UI sizes) share these sources.
+  struct TtfSource {
+    freeink::font::PsramVector<uint8_t> bytes;  // resident form (empty if streamed)
+    HalFile file;                               // open handle (streamed form)
+    bool streamed = false;
+    unsigned long size = 0;
+    bool present = false;
+  };
+  std::unique_ptr<TtfEpdFont> ttf_;  // active reader-size TTF font (at most one family at a time)
+  TtfSource ttfSources_[4];          // 0=regular (required), 1=bold, 2=italic, 3=bold-italic
+  std::string ttfFamily_;            // loaded vector family name ("" = none)
+  int ttfFontId_ = 0;                // renderer font id for ttf_ (0 = none)
+  uint8_t ttfPointSize_ = 0;         // size ttf_ was built at
+  std::vector<std::unique_ptr<TtfEpdFont>> ttfUi_;  // UI-size fallbacks (share ttfSources_)
+  std::vector<int> ttfUiIds_;
+#endif  // CROSSPOINT_VECTOR_FONTS
 
   SdCardFontRegistry registry_;
   SdCardFontManager manager_;

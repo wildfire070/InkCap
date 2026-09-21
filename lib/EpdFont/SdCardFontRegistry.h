@@ -4,13 +4,16 @@
 #include <string>
 #include <vector>
 
+#include "VectorFontSupport.h"
+
 struct SdCardFontFileInfo {
   std::string path;   // v4 on-disk naming: "/<root>/<Family>/<Family>_<size>.cpfont"
                       // where <root> is "/.fonts" (preferred, hidden) or "/fonts" (visible).
                       // e.g. "/.fonts/NotoSansCJK/NotoSansCJK_14.cpfont"
-  uint8_t pointSize;  // parsed from filename: 14
-  uint8_t style;      // always 0 in v4 (all 4 styles bundled in one file);
-                      // kept for potential future formats
+  uint8_t pointSize;  // parsed from filename: 14 (0 for size-free vector fonts)
+  uint8_t style;      // .cpfont: always 0 (all 4 styles bundled in one file).
+                      // Vector family: the style ROLE of this file --
+                      // 0=regular, 1=bold, 2=italic, 3=bold-italic.
 };
 
 struct SdCardFontFamilyInfo {
@@ -25,6 +28,11 @@ struct SdCardFontFamilyInfo {
   // Rebuild-only source marker. It is not serialized and is irrelevant after
   // the index has been loaded.
   bool sourceVisibleRoot = false;
+  // true for a TrueType/OpenType family (loose .ttf/.otf/.ttc, or a folder of
+  // them) rendered at any size via FreeInkFont/TtfEpdFont. Its `files` are
+  // resident (never index-backed) with pointSize 0. Not serialized: vector
+  // families are rediscovered by appendVectorFamilies() after every index load.
+  bool vector = false;
   std::string name;  // directory name, e.g. "NotoSansCJK"
   mutable std::vector<SdCardFontFileInfo> files;
 
@@ -81,6 +89,10 @@ class SdCardFontRegistry {
   uint64_t inventoryFingerprint_ = 0;
   bool inventoryKnown_ = false;
   bool readIndex(uint64_t fingerprint);
+#if CROSSPOINT_VECTOR_FONTS
+  // Append loose/folder .ttf/.otf/.ttc families to families_ (cpfont names win).
+  void appendVectorFamilies();
+#endif
 
   // Rebuild the cache while retaining only family summaries and one directory
   // entry at a time. Full paths are written straight to the cache file.

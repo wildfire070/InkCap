@@ -20,6 +20,7 @@
 #include <MemoryBudget.h>
 #include <RestartHooks.h>
 #include <SPI.h>
+#include <VectorFontSupport.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
 #endif
@@ -125,13 +126,21 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/ScreenshotUtil.h"
 #include "util/SleepWakePolicy.h"
 
+#if CROSSPOINT_VECTOR_FONTS
+// Rendering (incl. FreeType TTF rasterization) runs on the Arduino loop task too. The default 8 KB stack
+// overflows inside FreeType's FT_Open_Face / variable-font parsing. This runtime override applies even with
+// the prebuilt (dio_opi) core, where CONFIG_ARDUINO_LOOP_STACK_SIZE from sdkconfig is baked in and ignored.
+// Vector-font (PSRAM) boards only.
+SET_LOOP_TASK_STACK_SIZE(24 * 1024)
+#endif
+
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 DictionaryRegistry dictionaryRegistry;
-FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
 static unsigned long allowSleepAt = 0;
 static ButtonShortcutController buttonShortcutController;
 static unsigned long lastX4ProHomeKeyTapAt = 0;
