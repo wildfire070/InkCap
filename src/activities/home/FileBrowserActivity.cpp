@@ -1049,6 +1049,10 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
     }
   }
 
+  // The Marked-for-Later queue is keyed by file path, so without this a renamed fic falls out
+  // of the queue (pruneMissing() sees the old path gone) and loses its queue position.
+  AO3_MARKED_FOR_LATER_STORE.updatePath(oldPath, newPath);
+
   bool appStateChanged = false;
   if (APP_STATE.favoriteSleepImagePath == oldPath) {
     APP_STATE.favoriteSleepImagePath = newPath;

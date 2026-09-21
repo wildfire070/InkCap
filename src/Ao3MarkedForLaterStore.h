@@ -41,6 +41,12 @@ class Ao3MarkedForLaterStore : public PersistableStore<Ao3MarkedForLaterStore> {
   // Returns true if an entry was found and removed. Persists on success.
   bool removeByPath(const std::string& path);
 
+  // Re-keys an entry to `newPath` in place after its file was renamed, keeping its
+  // queue position (remove + addBook would send it to the back of the FIFO, and
+  // leaving the old path lets pruneMissing() silently drop it). Returns true if an
+  // entry was updated. Persists on success.
+  bool updatePath(const std::string& oldPath, const std::string& newPath);
+
   bool contains(const std::string& path) const;
 
   // 0-based position in the FIFO order getEntries() returns (index 0 = oldest
