@@ -107,3 +107,62 @@ TEST(VectorFontSizeSnapTest, ClampsOutsideTheRangeAndPassesThroughWhenEmpty) {
 }
 
 }  // namespace
+
+namespace {
+SdCardFontFileInfo vectorFile(const std::string& path, const uint8_t style) {
+  SdCardFontFileInfo info;
+  info.path = path;
+  info.pointSize = 0;
+  info.style = style;
+  return info;
+}
+}  // namespace
+
+TEST(DropExtraWeightVectorVariantsTest, DropsLightAndBlackWhenARegularSiblingExists) {
+  std::vector<SdCardFontFileInfo> files = {
+      vectorFile("/fonts/Merriweather/Merriweather-Thin.ttf", 0),
+      vectorFile("/fonts/Merriweather/Merriweather-Light.ttf", 0),
+      vectorFile("/fonts/Merriweather/Merriweather-Regular.ttf", 0),
+      vectorFile("/fonts/Merriweather/Merriweather-Black.ttf", 1),
+      vectorFile("/fonts/Merriweather/Merriweather-Bold.ttf", 1),
+  };
+  dropExtraWeightVectorVariants(files);
+  ASSERT_EQ(files.size(), 2u);
+  EXPECT_EQ(files[0].path, "/fonts/Merriweather/Merriweather-Regular.ttf");
+  EXPECT_EQ(files[1].path, "/fonts/Merriweather/Merriweather-Bold.ttf");
+}
+
+TEST(DropExtraWeightVectorVariantsTest, TreatsUprightAndItalicAsSeparateBuckets) {
+  std::vector<SdCardFontFileInfo> files = {
+      vectorFile("/fonts/Family/Family-Thin.ttf", 0),
+      vectorFile("/fonts/Family/Family-Regular.ttf", 0),
+      // No plain italic sibling -- ThinItalic is the only italic file, so it must survive.
+      vectorFile("/fonts/Family/Family-ThinItalic.ttf", 2),
+  };
+  dropExtraWeightVectorVariants(files);
+  ASSERT_EQ(files.size(), 2u);
+  EXPECT_EQ(files[0].path, "/fonts/Family/Family-Regular.ttf");
+  EXPECT_EQ(files[1].path, "/fonts/Family/Family-ThinItalic.ttf");
+}
+
+TEST(DropExtraWeightVectorVariantsTest, KeepsEveryFileWhenNoneAreThePlainWeight) {
+  // A family whose only files are all extra weights (e.g. a Trial pack with no Regular yet) is left
+  // intact rather than emptied out -- refineVectorStyles decides what to promote to regular.
+  std::vector<SdCardFontFileInfo> files = {
+      vectorFile("/fonts/Trial/Trial-Thin.ttf", 0),
+      vectorFile("/fonts/Trial/Trial-Black.ttf", 0),
+  };
+  dropExtraWeightVectorVariants(files);
+  EXPECT_EQ(files.size(), 2u);
+}
+
+TEST(DropExtraWeightVectorVariantsTest, IsCaseInsensitiveAndMatchesAnywhereInTheBasename) {
+  std::vector<SdCardFontFileInfo> files = {
+      vectorFile("/fonts/Family/Family-Regular.ttf", 0),
+      vectorFile("/fonts/Family/FAMILY-EXTRABOLD.ttf", 0),
+      vectorFile("/fonts/Family/family-heavy.ttf", 0),
+  };
+  dropExtraWeightVectorVariants(files);
+  ASSERT_EQ(files.size(), 1u);
+  EXPECT_EQ(files[0].path, "/fonts/Family/Family-Regular.ttf");
+}

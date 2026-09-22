@@ -302,6 +302,7 @@ const char* SdCardFontRegistry::defaultWriteRoot() {
 #if CROSSPOINT_VECTOR_FONTS
 namespace {
 constexpr size_t MAX_VECTOR_FAMILIES = 32;
+constexpr size_t MAX_FOLDER_VECTOR_FILES = 32;  // bounds one family folder's transient file scan
 
 // Match a vector font filename (.ttf/.otf/.ttc, case-insensitive); baseLen = length without extension.
 bool parseVectorFontName(const char* filename, size_t& baseLen) {
@@ -459,7 +460,12 @@ void SdCardFontRegistry::appendVectorFamilies() {
       }
       std::vector<SdCardFontFileInfo> files;
       char fileName[128];
-      while (files.size() < 8) {
+      // Collect every candidate before filtering (not just the first few in filesystem order): a
+      // family with several weight variants must have them ALL in view for dropExtraWeightVectorVariants
+      // to tell which are extras, or an unlucky enumeration order could fill a small cap with
+      // Thin/Black files and never reach the plain Regular one. MAX_FOLDER_VECTOR_FILES still bounds
+      // one folder's transient scan memory against a folder full of unrelated junk.
+      while (files.size() < MAX_FOLDER_VECTOR_FILES) {
         HalFile f = sub.openNextFile();
         if (!f) break;
         const bool fileIsDir = f.isDirectory();
@@ -475,6 +481,7 @@ void SdCardFontRegistry::appendVectorFamilies() {
       }
       sub.close();
       if (files.empty()) continue;
+      dropExtraWeightVectorVariants(files);  // skip Light/Black/etc. extras before opening each file
       refineVectorStyles(path, files);
       if (files.empty()) continue;  // every file was unsupported (e.g. all CFF .otf): do not list the family
       SdCardFontFamilyInfo family;
