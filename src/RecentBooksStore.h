@@ -25,10 +25,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
  private:
   std::vector<RecentBook> recentBooks;
 
-  static constexpr int MAX_RECENT_BOOKS = 18;
   // Enforced only at pin-time (setPinned refuses once this many are already
   // pinned) -- addOrUpdateBook()'s eviction never needs to know this number,
   // it only ever needs to know whether a given entry is currently pinned.
+  // InkCap-local (pinning isn't a crossink/Library concept): kept private,
+  // unlike MAX_RECENT_BOOKS below which the new Library code reads publicly.
   static constexpr int MAX_PINNED_BOOKS = 5;
 
   RecentBooksStore() = default;
@@ -38,6 +39,8 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   friend class PersistableStore<RecentBooksStore>;
 
  public:
+  static constexpr int MAX_RECENT_BOOKS = 18;
+
   static const char* getFilePath() { return "/.crosspoint/recent.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);

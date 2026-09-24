@@ -41,8 +41,14 @@ uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayI
   return setting.enumRawValues[displayIndex];
 }
 
-fui::BitmapRef twoFingerSwipeIcon(const StrId nameId) {
+fui::BitmapRef swipeActionIcon(const StrId nameId) {
   switch (nameId) {
+    case StrId::STR_LEFT_EDGE_UP:
+    case StrId::STR_RIGHT_EDGE_UP:
+      return fui::bitmapFromIcon(icon_arrow_up_24);
+    case StrId::STR_LEFT_EDGE_DOWN:
+    case StrId::STR_RIGHT_EDGE_DOWN:
+      return fui::bitmapFromIcon(icon_arrow_down_24);
     case StrId::STR_TWO_FINGER_SWIPE_UP:
       return fui::bitmapFromIcon(icon_arrows_up_24);
     case StrId::STR_TWO_FINGER_SWIPE_DOWN:
@@ -87,6 +93,7 @@ void ControlsOptionsActivity::rebuildSettingsList() {
   sideButtonSettings.clear();
   tapsGesturesSettings.clear();
   twoFingerSwipeSettings.clear();
+  edgeGestureSettings.clear();
 
   const auto allSettings = getSettingsList();
   settings = buildControlsSettingsParentList(allSettings);
@@ -94,6 +101,7 @@ void ControlsOptionsActivity::rebuildSettingsList() {
   homeButtonSettings = buildControlsHomeButtonSettingsList(allSettings);
   tapsGesturesSettings = buildControlsTapsGesturesSettingsList(allSettings);
   twoFingerSwipeSettings = buildControlsTwoFingerSwipeSettingsList(allSettings);
+  edgeGestureSettings = buildControlsEdgeGestureSettingsList(allSettings);
 #if CROSSINK_APP_CAP_TOUCH
   if (!gpio.hasTouch()) {
     frontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
@@ -127,6 +135,9 @@ void ControlsOptionsActivity::setCurrentSettings() {
     case SettingAction::ControlsTwoFingerSwipe:
       currentSettings = &twoFingerSwipeSettings;
       break;
+    case SettingAction::ControlsEdgeGestures:
+      currentSettings = &edgeGestureSettings;
+      break;
     default:
       currentSettings = &settings;
       break;
@@ -148,6 +159,8 @@ StrId ControlsOptionsActivity::activeSubmenuTitleId() const {
       return StrId::STR_TAPS_AND_GESTURES;
     case SettingAction::ControlsTwoFingerSwipe:
       return StrId::STR_TWO_FINGER_SWIPE;
+    case SettingAction::ControlsEdgeGestures:
+      return StrId::STR_EDGE_GESTURES;
     default:
       return StrId::STR_NONE_OPT;
   }
@@ -159,6 +172,7 @@ void ControlsOptionsActivity::openSubmenu(SettingAction action) {
   setCurrentSettings();
   selectedIndex = 0;
   topIndex = 0;
+  if (settingsCount > 0 && (*currentSettings)[selectedIndex].type == SettingType::SECTION_HEADER) moveSelection(true);
 }
 
 void ControlsOptionsActivity::closeSubmenu() {
@@ -397,7 +411,7 @@ void ControlsOptionsActivity::buildOptionsScreen(UiApp::ScreenType& screen) {
 
     const bool isSectionHeader = setting.type == SettingType::SECTION_HEADER;
     fui::ListItem item;
-    const fui::BitmapRef directionIcon = twoFingerSwipeIcon(setting.nameId);
+    const fui::BitmapRef directionIcon = swipeActionIcon(setting.nameId);
     item.label = isSectionHeader ? uiListSectionHeaderLabel(values[i], I18N.get(setting.nameId))
                                  : (directionIcon ? "" : I18N.get(setting.nameId));
     item.icon = directionIcon;

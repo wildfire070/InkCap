@@ -14,7 +14,9 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
@@ -291,6 +293,19 @@ const char* getAttribute(const XML_Char** atts, const char* attrName) {
     if (strcmp(atts[i], attrName) == 0) return atts[i + 1];
   }
   return nullptr;
+}
+
+bool parseListValue(const char* value, int32_t& parsed) {
+  if (!value || value[0] == '\0') return false;
+  errno = 0;
+  char* end = nullptr;
+  const long candidate = std::strtol(value, &end, 10);
+  while (end && isWhitespace(*end)) ++end;
+  if (errno == ERANGE || end == value || (end && *end != '\0') || candidate < INT32_MIN || candidate > INT32_MAX) {
+    return false;
+  }
+  parsed = static_cast<int32_t>(candidate);
+  return true;
 }
 
 bool isNonNavigableInlineElement(const char* name) { return strcmp(name, "span") == 0; }
@@ -677,10 +692,31 @@ void ChapterHtmlSlimParser::attachPendingPublisherPageMarkers(const int yPos) {
   pendingPublisherPageMarkers.erase(pendingPublisherPageMarkers.begin(), markerIt);
 }
 
+void ChapterHtmlSlimParser::queueInlinePadding(const CssStyle& cssStyle) {
+  if (!embeddedStyle || !honorsPublisherDecorations() || !cssStyle.hasPaddingLeft()) {
+    return;
+  }
+
+  const int paddingPixels = cssStyle.paddingLeft.toPixelsInt16(renderer.getFontAscenderSize(fontId), viewportWidth);
+  if (paddingPixels <= 0) {
+    return;
+  }
+
+  if (partWordBufferIndex > 0) {
+    flushPartWordBuffer();
+  }
+  pendingInlinePadding =
+      static_cast<int16_t>(std::min<int>(INT16_MAX, static_cast<int>(pendingInlinePadding) + paddingPixels));
+  // CSS inline padding stays glued to the following text, just like the empty
+  // <span class="spacey"/> elements used by the affected EPUB.
+  nextWordContinues = true;
+}
+
 // flush the contents of partWordBuffer to currentTextBlock
 void ChapterHtmlSlimParser::flushPartWordBuffer() {
   if (lowMemoryAbort) {
     partWordBufferIndex = 0;
+    partWordInlinePadding = 0;
     nextWordContinues = false;
     return;
   }
@@ -729,6 +765,7 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     currentTextRunBytes = static_cast<uint16_t>(
         std::min<size_t>(currentTextRunBytes + static_cast<size_t>(partWordBufferIndex), UINT16_MAX));
     partWordBufferIndex = 0;
+    partWordInlinePadding = 0;
     nextWordContinues = false;
     return;
   }
@@ -738,18 +775,21 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     // table content rather than dereferencing a null paragraph block.
     LOG_ERR("EHP", "Discarding text without a paragraph or compact table cell");
     partWordBufferIndex = 0;
+    partWordInlinePadding = 0;
     nextWordContinues = false;
     return;
   }
 
   // flush the buffer
   partWordBuffer[partWordBufferIndex] = '\0';
-  currentTextBlock->addWord(
-      partWordBuffer, fontStyle, false, nextWordContinues, honorsPublisherDecorations() && effectiveBackgroundBlack,
-      insideFootnoteLink ? currentFootnote.linkId : 0, partWordVisibleOffset, partWordReferenceOffset);
+  currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues,
+                            honorsPublisherDecorations() && effectiveBackgroundBlack,
+                            insideFootnoteLink ? currentFootnote.linkId : 0, partWordVisibleOffset,
+                            partWordReferenceOffset, partWordInlinePadding);
   currentTextRunBytes = static_cast<uint16_t>(
       std::min<size_t>(currentTextRunBytes + static_cast<size_t>(partWordBufferIndex), UINT16_MAX));
   partWordBufferIndex = 0;
+  partWordInlinePadding = 0;
   nextWordContinues = false;
 }
 
@@ -814,6 +854,8 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   }
 
   nextWordContinues = false;  // New block = new paragraph, no continuation
+  pendingInlinePadding = 0;
+  partWordInlinePadding = 0;
   if (currentTextBlock) {
     // already have a text block running and it is empty - just reuse it
     if (currentTextBlock->isEmpty()) {
@@ -3017,8 +3059,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           // Marker-free list item.
         } else if (self->listContextCount_ > 0 && self->listContexts_[self->listContextCount_ - 1].ordered) {
           auto& list = self->listContexts_[self->listContextCount_ - 1];
+          int32_t itemValue = 0;
+          if (parseListValue(getAttribute(atts, "value"), itemValue)) {
+            list.nextValue = itemValue;
+          }
           char marker[16];
-          snprintf(marker, sizeof(marker), "%u.", static_cast<unsigned>(++list.counter));
+          snprintf(marker, sizeof(marker), "%ld.", static_cast<long>(list.nextValue));
+          if (list.nextValue < INT32_MAX) ++list.nextValue;
           self->currentTextBlock->addWord(marker, EpdFontFamily::REGULAR, false, false,
                                           self->honorsPublisherDecorations() && self->effectiveBackgroundBlack, 0,
                                           self->visibleTextOffset, self->referenceTextOffset);
@@ -3035,6 +3082,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           auto& list = self->listContexts_[self->listContextCount_++];
           list = {};
           list.ordered = strcmp(name, "ol") == 0;
+          int32_t startValue = 0;
+          if (list.ordered && parseListValue(getAttribute(atts, "start"), startValue)) {
+            list.nextValue = startValue;
+          }
           list.styleNone = cssStyle.hasListStyleType() && cssStyle.listStyleType == CssListStyleType::None;
           list.depth = self->depth;
         } else {
@@ -3258,6 +3309,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->blockStyleBuf_[0].textAlignDefined = true;
   }
 
+  if (!isHeaderOrBlock(name) && !isTableStructuralTag(name) && !self->currentCompactTable) {
+    self->queueInlinePadding(cssStyle);
+  }
+
   // Unprocessed tag, just increasing depth and continue forward
   self->pushCssAncestor(self->depth, name, classAttr);
   self->depth += 1;
@@ -3381,6 +3436,8 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       self->partWordBuffer[0] = ' ';
       self->partWordBuffer[1] = '\0';
       self->partWordBufferIndex = 1;
+      self->partWordInlinePadding = self->pendingInlinePadding;
+      self->pendingInlinePadding = 0;
       self->partWordVisibleOffset = codepointOffset;
       self->partWordReferenceOffset = codepointReferenceOffset;
       self->nextWordContinues = true;  // Attach space to previous word (no break).
@@ -3403,6 +3460,8 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       self->partWordBuffer[0] = ' ';
       self->partWordBuffer[1] = '\0';
       self->partWordBufferIndex = 1;
+      self->partWordInlinePadding = self->pendingInlinePadding;
+      self->pendingInlinePadding = 0;
       self->partWordVisibleOffset = codepointOffset;
       self->partWordReferenceOffset = codepointReferenceOffset;
       self->nextWordContinues = true;
@@ -3471,6 +3530,8 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     if (self->partWordBufferIndex == 0) {
       self->partWordVisibleOffset = codepointOffset;
       self->partWordReferenceOffset = codepointReferenceOffset;
+      self->partWordInlinePadding = self->pendingInlinePadding;
+      self->pendingInlinePadding = 0;
     }
     self->partWordBuffer[self->partWordBufferIndex++] = s[i];
     if (startsCodepoint && countVisibleOffsets) codepointOffset++;

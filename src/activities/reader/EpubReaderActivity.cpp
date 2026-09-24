@@ -4015,6 +4015,67 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       requestUpdate();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::RESET_BOOK_READER_SETTINGS: {
+      pauseReadingPaceTimer("reset_reader_settings_confirm");
+      auto confirmation = makeUniqueNoThrow<ConfirmationActivity>(
+          renderer, mappedInput, confirmationHeading(StrId::STR_RESET_BOOK_READER_SETTINGS),
+          epub ? epub->getTitle() : std::string{}, false, true);
+      if (!confirmation) {
+        LOG_ERR("ERS", "Could not allocate reader settings reset confirmation");
+        resumeReadingPaceTimer("reset_reader_settings_alloc_failed");
+        if (returnToReaderMenu && mappedInput.hasTouchHardware())
+          openReaderMenu();
+        else
+          requestUpdate();
+        break;
+      }
+      startActivityForResult(std::move(confirmation), [this, returnToReaderMenu](const ActivityResult& result) {
+        if (result.isCancelled) {
+          resumeReadingPaceTimer("reset_reader_settings_cancelled");
+          if (returnToReaderMenu && mappedInput.hasTouchHardware())
+            openReaderMenu();
+          else
+            requestUpdate();
+          return;
+        }
+
+        bool settingsReset = false;
+        if (epub) {
+          {
+            RenderLock lock(*this);
+            settingsReset = resetBookReaderSettings(epub->getPath());
+            if (settingsReset) {
+              if (section) prepareCurrentSectionForRelayout();
+              applyReaderSettings(globalReaderSettingsBeforeBook);
+              initialBookReaderSettings = ActiveBookReaderSettingsData{};
+              loadBookReaderSettings();
+              if (automaticPageTurnActive) {
+                lastPageTurnTime = millis();
+                pageTurnDuration = static_cast<unsigned long>(getAutoPageTurnIntervalSeconds()) * 1000UL;
+              }
+              ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+              section.reset();
+            }
+          }
+
+          if (settingsReset) {
+            ensureReaderSdFontLoaded(renderer);
+            drawToast(renderer, tr(STR_BOOK_READER_SETTINGS_RESET));
+            delay(1000);
+          } else {
+            LOG_ERR("ERS", "Failed to reset reader settings for current book");
+          }
+        } else {
+          LOG_ERR("ERS", "Could not reset reader settings without an open book");
+        }
+        resumeReadingPaceTimer("reset_reader_settings_return");
+        if (!settingsReset && returnToReaderMenu && mappedInput.hasTouchHardware())
+          openReaderMenu();
+        else
+          requestUpdate();
+      });
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
       {
         RenderLock lock(*this);
@@ -5652,19 +5713,14 @@ void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
 
 void EpubReaderActivity::requestManualPageTurn(const bool isForwardTurn, const char* source) {
   finishManualPageTurnBrakeIfReady();
-  if (pendingManualPageTurns.hasDispatched() && pendingManualPageTurns.dispatchedDirectionOpposes(isForwardTurn)) {
-    // A fast opposite input should undo the last dispatched page turn instead of
-    // silently leaving the page one step too far forward. Capture the already-
-    // dispatched direction before clearing the queue so the reversal is based on
-    // the actual prior movement, not the newly arrived input.
-    const bool dispatchedIsForward = pendingManualPageTurns.dispatchedIsForward();
-    pendingManualPageTurns.clear();
+  const ManualPageTurnRequest request{isForwardTurn, source};
+  if (pendingManualPageTurns.dispatchedDirectionOpposes(isForwardTurn)) {
+    // The previous turn has already changed the page but is still rendering.
+    // Queue the reversal so it executes once the render lock is released.
+    pendingManualPageTurns.queueReversalOfDispatched(request);
     queuedTurnRendering.cancelDeferred();
-    pageTurn(!dispatchedIsForward, source);
     return;
   }
-
-  const ManualPageTurnRequest request{isForwardTurn, source};
   const auto enqueueManualTurn = [this, request]() {
     if (pendingManualPageTurns.enqueue(request) == ManualPageTurnQueue::EnqueueResult::Cancelled) {
       // A reversal needs a redraw only if the render task already committed to
@@ -6000,6 +6056,15 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     };
 
     loadedSection = loadSectionWithFont(readerFontId, selectedRenderMode);
+    if (loadedSection && pendingReferenceUnitOffset) {
+      // A finalized cache knows where rendered pages start, but it does not retain
+      // the source-unit mapping needed to resolve an exact stable-page target.
+      // Rebuild this section with the reference target attached instead of treating
+      // the source fraction as a rendered-page fraction.
+      LOG_DBG("ERS", "Rebuilding cached section %d to resolve stable-page target", currentSpineIndex);
+      section.reset();
+      loadedSection = false;
+    }
     if (loadedSection && !pendingRelayoutReposition) {
       cachedChapterTotalPageCount = 0;
     }

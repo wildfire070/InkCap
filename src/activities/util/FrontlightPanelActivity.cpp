@@ -115,6 +115,13 @@ void FrontlightPanelActivity::onExit() {
   Activity::onExit();
 }
 
+void FrontlightPanelActivity::onExternalFrontlightChange() {
+  brightness = Frontlight.brightness();
+  warmth = Frontlight.warmth();
+  lightOn = Frontlight.isOn();
+  requestUpdate();
+}
+
 void FrontlightPanelActivity::onBrightnessEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<FrontlightPanelActivity*>(user);
   if (event.dragPermille < 0) return;
