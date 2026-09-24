@@ -68,6 +68,12 @@ bool isTwoFingerSwipeSetting(const SettingInfo& setting) {
          setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
 }
 
+bool isSwipeActionSetting(const SettingInfo& setting) {
+  return isTwoFingerSwipeSetting(setting) || setting.nameId == StrId::STR_LEFT_EDGE_UP ||
+         setting.nameId == StrId::STR_LEFT_EDGE_DOWN || setting.nameId == StrId::STR_RIGHT_EDGE_UP ||
+         setting.nameId == StrId::STR_RIGHT_EDGE_DOWN;
+}
+
 bool isWebEnumOptionAvailable(const SettingInfo& setting, size_t optionIndex) {
   if (optionIndex >= setting.enumValues.size()) return true;
 
@@ -76,7 +82,7 @@ bool isWebEnumOptionAvailable(const SettingInfo& setting, size_t optionIndex) {
 
   if (!Frontlight.present()) {
     if (option == StrId::STR_TOGGLE_FRONTLIGHT ||
-        (isTwoFingerSwipeSetting(setting) &&
+        (isSwipeActionSetting(setting) &&
          (option == StrId::STR_INCREASE_BRIGHTNESS || option == StrId::STR_DECREASE_BRIGHTNESS ||
           option == StrId::STR_INCREASE_WARMTH || option == StrId::STR_DECREASE_WARMTH))) {
       return false;
@@ -85,7 +91,7 @@ bool isWebEnumOptionAvailable(const SettingInfo& setting, size_t optionIndex) {
            setting.enumRawValues[optionIndex] != CrossPointSettings::REFRESH_NEVER;
   }
 
-  return Frontlight.hasColorTemperature() || !isTwoFingerSwipeSetting(setting) ||
+  return Frontlight.hasColorTemperature() || !isSwipeActionSetting(setting) ||
          (option != StrId::STR_INCREASE_WARMTH && option != StrId::STR_DECREASE_WARMTH);
 }
 
@@ -112,7 +118,9 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
       setting.nameId == StrId::STR_TAP_HIDE_STATUS_BAR || setting.nameId == StrId::STR_PINCH_FONT_RESIZE ||
       setting.nameId == StrId::STR_TWO_FINGER_ROTATION || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
       setting.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
-      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
+      setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT || setting.nameId == StrId::STR_LEFT_EDGE_UP ||
+      setting.nameId == StrId::STR_LEFT_EDGE_DOWN || setting.nameId == StrId::STR_RIGHT_EDGE_UP ||
+      setting.nameId == StrId::STR_RIGHT_EDGE_DOWN;
   if (isTouchSetting && !gpio.hasTouch()) {
     return false;
   }
