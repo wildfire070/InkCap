@@ -91,9 +91,11 @@ class Activity {
   // Let overlays consume the global Home gesture as a dismiss action.
   virtual bool handleHomeGesture() { return false; }
   virtual bool canSnapshotForSleepOverlay() const { return false; }
-  // Activity-specific two-finger actions (chapter and font commands). Global
+  // Activity-specific swipe actions (chapter and font commands). Global
   // frontlight commands are handled by ActivityManager before this callback.
   virtual bool handleTwoFingerSwipeAction(CrossPointSettings::TWO_FINGER_SWIPE_ACTION) { return false; }
+  // An overlay may cache the live frontlight value for its controls.
+  virtual void onExternalFrontlightChange() {}
   // Completed two-finger rotations are routed only to activities that can
   // safely rebuild their content for a new screen orientation.
   virtual bool handleTwoFingerRotation(bool clockwise) { return false; }

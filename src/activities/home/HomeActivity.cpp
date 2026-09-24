@@ -47,7 +47,9 @@ namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
 // Cached frames include all Home visuals, including the menu icons. Bump this
 // whenever their rendering changes so stale snapshots are rebuilt after OTA.
-constexpr uint16_t CAROUSEL_CACHE_VERSION = 7;  // v7: AO3 Library icon fixed to Library (was Book), matching xAO3
+// v7: AO3 Library icon fixed to Library (was Book), matching xAO3.
+// v8 (upstream): Library replaced Recent Books in the icon row.
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 8;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 constexpr uint32_t CAROUSEL_FRAME_MIN_FREE_AFTER_ALLOC = 64U * 1024U;
@@ -58,7 +60,7 @@ constexpr int HOME_BOOK_SWAP_RECENT_COUNT = 2;
 enum class HomeMenuAction {
   BrowseFiles,
   ContinueReading,
-  RecentBooks,
+  Library,
   OpdsBrowser,
   Ao3Library,
   ReadingStats,
@@ -278,10 +280,10 @@ const char* savedItemsLabel(bool hasBookmarks, bool hasClippings) {
 void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats,
                          bool hasBookmarks, bool hasClippings) {
   items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
-  items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
 
   if (hasOpdsServers) {
-    items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
+    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
   }
   if (hasAo3Library) {
     items.push({tr(STR_AO3_LIBRARY), Ao3, HomeMenuAction::Ao3Library});
@@ -307,10 +309,10 @@ HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool
 HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasReadingStats, bool hasBookmarks,
                                       bool hasClippings) {
   HomeMenuEntries items;
-  items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
 
   if (hasOpdsServers) {
-    items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
+    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
   }
   if (hasAo3Library) {
     items.push({tr(STR_AO3_LIBRARY), Ao3, HomeMenuAction::Ao3Library});
@@ -340,8 +342,8 @@ HomeMenuAction homeActionForInitialMenuItem(HomeMenuItem item) {
   switch (item) {
     case HomeMenuItem::FILE_BROWSER:
       return HomeMenuAction::BrowseFiles;
-    case HomeMenuItem::RECENTS:
-      return HomeMenuAction::RecentBooks;
+    case HomeMenuItem::LIBRARY:
+      return HomeMenuAction::Library;
     case HomeMenuItem::OPDS_BROWSER:
       return HomeMenuAction::OpdsBrowser;
     case HomeMenuItem::FILE_TRANSFER:
@@ -631,7 +633,7 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 4;  // File Browser, Library, File transfer, Settings
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     count += getVisibleRecentBookCount();
   } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -1684,8 +1686,8 @@ void HomeActivity::loop() {
           case HomeMenuAction::BrowseFiles:
             onFileBrowserOpen();
             break;
-          case HomeMenuAction::RecentBooks:
-            onRecentsOpen();
+          case HomeMenuAction::Library:
+            onLibraryOpen();
             break;
           case HomeMenuAction::OpdsBrowser:
             onOpdsBrowserOpen();
@@ -1933,8 +1935,8 @@ void HomeActivity::loop() {
       case HomeMenuAction::ContinueReading:
         onContinueReading();
         break;
-      case HomeMenuAction::RecentBooks:
-        onRecentsOpen();
+      case HomeMenuAction::Library:
+        onLibraryOpen();
         break;
       case HomeMenuAction::OpdsBrowser:
         onOpdsBrowserOpen();
@@ -2511,7 +2513,7 @@ void HomeActivity::onContinueReading() {
   }
 }
 
-void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

@@ -33,11 +33,22 @@ class ContentOpfParser final : public Print {
   XML_Parser parser = nullptr;
   ParserState state = START;
   BookMetadataCache* cache;
+  const bool metadataOnly;
+  bool metadataComplete = false;
   HalFile tempItemStore;
   std::string coverItemId;
   Arena itemIndexArena;
   bool parseFailed = false;
   bool lowMemoryFailure = false;
+  // XML character data can arrive in several write() calls for one text node
+  // (notably around entity references). Tracked as element state rather than
+  // inferred per-callback, so a title or author split across callbacks still
+  // collapses whitespace and separators correctly.
+  bool metadataSpacePending = false;
+  bool authorSeparatorPending = false;
+  bool titleTruncated = false;
+  bool authorTruncated = false;
+  bool languageTruncated = false;
   bool hasExplicitStartReference = false;
   bool collectCssFiles = true;
 
@@ -138,11 +149,13 @@ class ContentOpfParser final : public Print {
   bool readStatus = false;       // calibre:user_metadata:#readstatus
 
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
-                            BookMetadataCache* cache, const bool collectCssFiles = true)
+                            BookMetadataCache* cache, const bool collectCssFiles = true,
+                            const bool metadataOnly = false)
       : cachePath(cachePath),
         baseContentPath(baseContentPath),
         remainingSize(xmlSize),
         cache(cache),
+        metadataOnly(metadataOnly),
         collectCssFiles(collectCssFiles) {}
   ~ContentOpfParser() override;
 

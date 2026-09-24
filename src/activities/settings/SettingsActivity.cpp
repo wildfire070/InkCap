@@ -216,8 +216,14 @@ std::string formatSettingValue(const SettingInfo& setting) {
   return std::to_string(SETTINGS.*(setting.valuePtr));
 }
 
-fui::BitmapRef twoFingerSwipeIcon(const StrId nameId) {
+fui::BitmapRef swipeActionIcon(const StrId nameId) {
   switch (nameId) {
+    case StrId::STR_LEFT_EDGE_UP:
+    case StrId::STR_RIGHT_EDGE_UP:
+      return fui::bitmapFromIcon(icon_arrow_up_24);
+    case StrId::STR_LEFT_EDGE_DOWN:
+    case StrId::STR_RIGHT_EDGE_DOWN:
+      return fui::bitmapFromIcon(icon_arrow_down_24);
     case StrId::STR_TWO_FINGER_SWIPE_UP:
       return fui::bitmapFromIcon(icon_arrows_up_24);
     case StrId::STR_TWO_FINGER_SWIPE_DOWN:
@@ -283,6 +289,7 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsSideButtonSettings.clear();
   controlsTapsGesturesSettings.clear();
   controlsTwoFingerSwipeSettings.clear();
+  controlsEdgeGestureSettings.clear();
   systemSettings.clear();
   systemDeviceSettings.clear();
   systemFilesCacheSettings.clear();
@@ -329,6 +336,7 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsHomeButtonSettings = buildControlsHomeButtonSettingsList(allSettings);
   controlsTapsGesturesSettings = buildControlsTapsGesturesSettingsList(allSettings);
   controlsTwoFingerSwipeSettings = buildControlsTwoFingerSwipeSettingsList(allSettings);
+  controlsEdgeGestureSettings = buildControlsEdgeGestureSettingsList(allSettings);
   const size_t expectedSideButtonCount =
       controlsSideButtonBaseCount + (hasSideButtonChordSetting(allSettings) ? 1u : 0u);
 #if CROSSINK_APP_CAP_TOUCH
@@ -423,6 +431,9 @@ void SettingsActivity::setCurrentSettingsForCategory() {
         case SettingAction::ControlsTwoFingerSwipe:
           currentSettings = &controlsTwoFingerSwipeSettings;
           break;
+        case SettingAction::ControlsEdgeGestures:
+          currentSettings = &controlsEdgeGestureSettings;
+          break;
         default:
           currentSettings = &controlsSettings;
           break;
@@ -483,6 +494,8 @@ StrId SettingsActivity::activeSubmenuTitleId() const {
       return StrId::STR_TAPS_AND_GESTURES;
     case SettingAction::ControlsTwoFingerSwipe:
       return StrId::STR_TWO_FINGER_SWIPE;
+    case SettingAction::ControlsEdgeGestures:
+      return StrId::STR_EDGE_GESTURES;
     case SettingAction::SystemDevice:
       return StrId::STR_SYSTEM_DEVICE;
     case SettingAction::SystemFilesCache:
@@ -1155,6 +1168,7 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::ControlsSideButtons:
       case SettingAction::ControlsTapsGestures:
       case SettingAction::ControlsTwoFingerSwipe:
+      case SettingAction::ControlsEdgeGestures:
       case SettingAction::SystemDevice:
       case SettingAction::SystemFilesCache:
       case SettingAction::SystemReadingStats:
@@ -1475,7 +1489,7 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     values[i] = settingValueText(settings[i]);
     const bool isSectionHeader = settings[i].type == SettingType::SECTION_HEADER;
     fui::ListItem item;
-    const fui::BitmapRef directionIcon = twoFingerSwipeIcon(settings[i].nameId);
+    const fui::BitmapRef directionIcon = swipeActionIcon(settings[i].nameId);
     const fui::BitmapRef endpointIcon = frontlightScheduleEndpointIcon(settings[i]);
     const fui::BitmapRef itemIcon = directionIcon ? directionIcon : endpointIcon;
     item.label = isSectionHeader ? uiListSectionHeaderLabel(values[i], I18N.get(settings[i].nameId))

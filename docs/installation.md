@@ -8,7 +8,7 @@ nav_order: 2
 ## Supported Devices
 
 - Xteink X3, X4
-- Xteink X4 Pro
+- Xteink X4 Classic and X4 Pro
 - Seeed Studio Sticky
 
 Don't have a device yet? Get one directly from [Xteink](https://go.sjv.io/X4RGBb) or [Seeed Studio](https://www.seeedstudio.com/reTerminal-Sticky-p-6861.html?sensecap_affiliate=1Nxo3Gw&referring_service=link).

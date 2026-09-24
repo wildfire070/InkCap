@@ -74,7 +74,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     BOOK_PERCENTAGE_TWO_DECIMALS = 2,
     BOOK_PERCENTAGE_FORMAT_COUNT
   };
-  static constexpr const char* bookPercentageFormatLabels[BOOK_PERCENTAGE_FORMAT_COUNT] = {"10%", "10.1%", "10.12%"};
   enum STATUS_BAR_TITLE { BOOK_TITLE = 0, CHAPTER_TITLE = 1, HIDE_TITLE = 2, STATUS_BAR_TITLE_COUNT };
   enum STATUS_BAR_TIME_LEFT {
     TIME_LEFT_HIDE = 0,
@@ -487,6 +486,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t twoFingerSwipeDown = TWO_FINGER_SWIPE_NOT_SET;
   uint8_t twoFingerSwipeLeft = TWO_FINGER_SWIPE_NOT_SET;
   uint8_t twoFingerSwipeRight = TWO_FINGER_SWIPE_NOT_SET;
+  // One-finger slides along the screen edges. These can share action choices.
+  uint8_t leftEdgeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t leftEdgeDown = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t rightEdgeUp = TWO_FINGER_SWIPE_NOT_SET;
+  uint8_t rightEdgeDown = TWO_FINGER_SWIPE_NOT_SET;
   // Short power button action behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Long power button action behaviour
@@ -567,7 +571,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t longPressButtonBehavior = OFF;
   // UI Theme
   uint8_t uiTheme = LYRA;
-  // Recent Books screen layout
+  // Legacy Recent Books layout; retained for binary settings compatibility.
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // UI scale (list fonts + row heights); touch boards default one step larger
   uint8_t uiScale = defaultUiScale();
@@ -593,6 +597,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t dictionaryFontPointSize = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
+  // Prefer embedded EPUB titles/authors in Library; disable for filename-only scans.
+  uint8_t libraryUseMetadata = 1;
+  uint8_t librarySortMethod = 4;
+  uint8_t librarySortDescending = 1;
+  uint8_t libraryListExpanded = 1;
+  uint8_t libraryShowEpub = 1;
+  uint8_t libraryShowXtc = 1;
+  uint8_t libraryShowTxt = 1;
+  uint8_t libraryShowMarkdown = 1;
   // Hide file extensions in the file browser right-side value column (0 = show, 1 = hide)
   uint8_t hideFileExtension = 0;
   // File browser display row style (0 = one-line theme list, 1 = two-line compact display)
