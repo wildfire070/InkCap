@@ -83,6 +83,8 @@ class FrontlightPanelActivity final : public Activity {
                                    FrontlightPanelContext context = {});
   void onEnter() override;
   void onExit() override;
+  // Keep the visible sliders and exit-time save in sync with a global edge action.
+  void onExternalFrontlightChange() override;
   void loop() override;
   void render(RenderLock&&) override;
   // From an active reader, Home returns to the library; elsewhere it dismisses

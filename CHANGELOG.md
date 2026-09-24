@@ -2,6 +2,23 @@
 
 ### Added
 
+- Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
+- Reset a book's reader settings from the in-reader Settings tab.
+- Assign actions to upward and downward slides along either screen edge on touch devices.
+
+### Changed
+
+- Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
+
+### Fixed
+
+- OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
+- Retain the CSS spacing supplied by empty inline spans.
+
+## [v1.6.0] - 2026-09-21
+
+### Added
+
 - EPUBs with stable page numbers can jump directly to a specific stable page from the reader menu.
 - Hidden folders can be created using the web file manager now when prefixed with a dot.
 - Choose whole numbers, one decimal, or two decimals for the book progress percentage in status bar settings.
@@ -25,6 +42,7 @@
 
 ### Fixed
 
+- The web EPUB optimizer now accepts books that use standard Adobe or IDPF font obfuscation, while leaving DRM-protected books unchanged.
 - Frontlight schedule time pickers now use the compact number keypad from Go To screens.
 - X4 Classic's left/right tilt direction labels now match the physical page-turn direction.
 - Touch keyboards no longer show button-only hold and navigation hints.

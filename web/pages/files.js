@@ -3688,8 +3688,47 @@ async function findEpubCoverImagePaths(zip) {
     return !properties.includes("cover-image") &&
       (item.getAttribute("media-type") || "").startsWith("image/") && /cover/i.test(`${id} ${href}`);
     });
+  const coverPaths = new Set();
   const href = coverItem?.getAttribute("href");
-  return href ? new Set([resolvePath(opfPath, decodeHref(href.split("#")[0]))]) : new Set();
+  if (href) coverPaths.add(resolvePath(opfPath, decodeHref(href.split("#")[0])));
+
+  const coverPagePaths = new Set(
+    items
+      .filter((item) => {
+        const itemHref = item.getAttribute("href") || "";
+        const id = item.getAttribute("id") || "";
+        const mediaType = item.getAttribute("media-type") || "";
+        const hasCoverToken = /(?:^|[-_])cover(?:[-_]|$)/i.test(id) ||
+          /(?:^|\/)cover(?:[-_][^/]*)?\.(?:x?html?)$/i.test(itemHref);
+        return /(?:xhtml|html)/i.test(mediaType) && hasCoverToken;
+      })
+      .map((item) => resolvePath(opfPath, decodeHref((item.getAttribute("href") || "").split("#")[0]))),
+  );
+  for (const reference of Array.from(doc.getElementsByTagName("reference"))) {
+    if ((reference.getAttribute("type") || "").toLowerCase() === "cover") {
+      const pageHref = reference.getAttribute("href");
+      if (pageHref) coverPagePaths.add(resolvePath(opfPath, decodeHref(pageHref.split("#")[0])));
+    }
+  }
+  if (coverPaths.size > 0) {
+    const firstSpineId = doc.getElementsByTagName("itemref")[0]?.getAttribute("idref");
+    const firstSpineItem = firstSpineId && items.find((item) => item.getAttribute("id") === firstSpineId);
+    const firstSpineHref = firstSpineItem?.getAttribute("href");
+    if (firstSpineHref) {
+      coverPagePaths.add(resolvePath(opfPath, decodeHref(firstSpineHref.split("#")[0])));
+    }
+  }
+  for (const pagePath of coverPagePaths) {
+    const page = zip.files[pagePath];
+    if (!page) continue;
+    const pageDoc = new DOMParser().parseFromString(await safeReadText(page), "application/xhtml+xml");
+    if (pageDoc.getElementsByTagName("parsererror").length) continue;
+    for (const image of Array.from(pageDoc.querySelectorAll("img, image"))) {
+      const imageHref = image.getAttribute("src") || image.getAttribute("href") || image.getAttribute("xlink:href");
+      if (imageHref) coverPaths.add(resolvePath(pagePath, decodeHref(imageHref.split("#")[0])));
+    }
+  }
+  return coverPaths;
 }
 
 // Process single image - returns array of {data, suffix} objects
@@ -4414,6 +4453,7 @@ async function convertEpubFile(file, progressCallback) {
   );
 
   const zip = await JSZip.loadAsync(file);
+  await assertEpubHasNoContentEncryption(zip);
   const renamed = {};
   zip.forEach((p) => {
     const l = p.toLowerCase();
@@ -4861,6 +4901,35 @@ async function convertEpubFile(file, progressCallback) {
   }
 
   return newBlob;
+}
+
+async function assertEpubHasNoContentEncryption(zip) {
+  const encryptionEntry = Object.entries(zip.files).find(
+    ([path, fileObj]) => !fileObj.dir && path.toLowerCase() === "meta-inf/encryption.xml",
+  );
+  if (!encryptionEntry) return;
+
+  const [, encryptionFile] = encryptionEntry;
+  const encryptionXml = await safeReadText(encryptionFile);
+  const document = new DOMParser().parseFromString(encryptionXml, "application/xml");
+  if (document.querySelector("parsererror")) {
+    throw new Error("This EPUB has invalid encryption metadata and cannot be optimized safely.");
+  }
+
+  const fontObfuscationAlgorithms = new Set([
+    "http://www.idpf.org/2008/embedding",
+    "http://ns.adobe.com/pdf/enc#RC",
+  ]);
+  for (const encryptedData of document.getElementsByTagNameNS("*", "EncryptedData")) {
+    const method = encryptedData.getElementsByTagNameNS("*", "EncryptionMethod")[0];
+    const algorithm = method?.getAttribute("Algorithm");
+
+    // Publishers often store obfuscated fonts as .dat files, so the algorithm
+    // is the reliable signal; their filename is not.
+    if (!fontObfuscationAlgorithms.has(algorithm)) {
+      throw new Error("This EPUB is DRM-protected. Please remove DRM before optimizing it.");
+    }
+  }
 }
 
 // Get WebSocket URL based on current page location
