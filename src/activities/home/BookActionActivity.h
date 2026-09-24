@@ -14,6 +14,9 @@ class BookActionActivity final : public Activity {
   static constexpr int ROW_COUNT = 5;
   BookStatus currentStatus = BookStatus::START;
   BookStatus initialStatus = BookStatus::START;
+  // Last status actually written to disk; lets exits other than Back (Archive,
+  // Index) persist a pending change without a later Back re-saving it.
+  BookStatus savedStatus = BookStatus::START;
   ButtonNavigator buttonNavigator;
   bool hasAo3LibraryInfo = false;
   bool bookIsArchived = false;
@@ -36,4 +39,5 @@ class BookActionActivity final : public Activity {
 
  private:
   void saveStatus();
+  void saveStatusIfModified();
 };
