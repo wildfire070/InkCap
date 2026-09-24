@@ -8,6 +8,7 @@
 #include "../../Ao3MarkedForLaterStore.h"
 #include "../../components/UITheme.h"
 #include "../../util/Ao3ArchiveUtils.h"
+#include "../Ao3PageQrActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "Ao3IndexActivity.h"
 #include "BookActions.h"
@@ -56,6 +57,8 @@ void BookActionActivity::render(RenderLock&&) {
                                                                          : tr(STR_MARK_FOR_LATER));
       case 3:
         return std::string(bookIsArchived ? tr(STR_RESTORE_FIC) : tr(STR_ARCHIVE_FIC));
+      case 4:
+        return std::string(tr(STR_SHOW_AO3_PAGE_QR));
       default:
         return std::string(tr(STR_DELETE));
     }
@@ -183,6 +186,9 @@ void BookActionActivity::loop() {
                                                     tr(STR_ARCHIVE_CONFIRM_BODY)),
             handler);
       }
+    } else if (selectorIndex == 4) {
+      startActivityForResult(std::make_unique<Ao3PageQrActivity>(renderer, mappedInput, filePath),
+                             [this](const ActivityResult&) { requestUpdate(true); });
     } else {
       // Trigger delete confirmation
       auto handler = [this](const ActivityResult& res) {
