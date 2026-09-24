@@ -8476,6 +8476,8 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             freshEpub.saveAo3Info(freshEpub.getAo3WorkId(), ao3Res.scrapedDate, ao3Res.isCompleted);
             Storage.remove((cachePath + "/book.bin").c_str());
             Storage.removeDir((cachePath + "/sections").c_str());
+            // Extracted chapter HTML is reused if present, so stale copies would win over the update.
+            Storage.removeDir((cachePath + "/html").c_str());
             Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
             AO3_NEW_CHAPTERS_STORE.addBook(bookPath, freshEpub.getTitle(), freshEpub.getAuthor());
             int firstNewChapter = eobSpineIndex;
