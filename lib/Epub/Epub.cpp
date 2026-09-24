@@ -594,11 +594,23 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.author = opfParser.author;
   bookMetadata.language = opfParser.language;
   bookMetadata.tags = opfParser.tags;
+  // All of these come from <dc:subject>/<meta name="calibre:..."> elements, which --
+  // like dc:subject above -- close before </metadata>, so they're already fully
+  // parsed here too; only the manifest/guide-dependent fields below actually need
+  // the rest of the OPF.
+  bookMetadata.bookshelf = opfParser.bookshelf;
+  bookMetadata.seriesName = opfParser.seriesName;
+  bookMetadata.seriesIndex = opfParser.seriesIndex;
+  bookMetadata.contentRating = opfParser.contentRating;
+  bookMetadata.chapters = opfParser.chapters;
+  bookMetadata.completionStatus = opfParser.completionStatus;
+  bookMetadata.updatedDate = opfParser.updatedDate;
+  bookMetadata.liked = opfParser.liked;
+  bookMetadata.readStatus = opfParser.readStatus;
 
   if (metadataOnly) {
     // Nothing below is populated: the parser stopped at </metadata>, before
     // the manifest that would carry the cover item and TOC/guide references.
-    // dc:subject (tags) is metadata too, so it's already captured above.
     LOG_DBG("EBP", "Successfully parsed package metadata");
     return true;
   }
@@ -623,15 +635,6 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   }
 
   bookMetadata.textReferenceHref = opfParser.textReferenceHref;
-  bookMetadata.bookshelf = opfParser.bookshelf;
-  bookMetadata.seriesName = opfParser.seriesName;
-  bookMetadata.seriesIndex = opfParser.seriesIndex;
-  bookMetadata.contentRating = opfParser.contentRating;
-  bookMetadata.chapters = opfParser.chapters;
-  bookMetadata.completionStatus = opfParser.completionStatus;
-  bookMetadata.updatedDate = opfParser.updatedDate;
-  bookMetadata.liked = opfParser.liked;
-  bookMetadata.readStatus = opfParser.readStatus;
 
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;

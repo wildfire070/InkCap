@@ -110,3 +110,34 @@ TEST(ContentOpfParserMetadata, NeverEntersManifestWhenMetadataElementIsMissing) 
   EXPECT_EQ(Storage.writeOpens, 0);
   EXPECT_EQ(Storage.readOpens, 0);
 }
+
+TEST(ContentOpfParserMetadata, MetadataOnlyStillCapturesFieldsThatDoNotNeedTheManifest) {
+  // Epub::loadMetadata() copies these out of the parser and returns before the manifest-
+  // dependent fields (cover href, TOC/guide) are even reachable -- everything asserted here
+  // must already be fully parsed by the time </metadata> closes, or that fast path silently
+  // drops it for every book the Library index builder scans.
+  const std::string xml = R"(<package xmlns:dc="urn:dc"><metadata>
+    <dc:title>A Wizard of Earthsea</dc:title>
+    <dc:creator>Ursula K. Le Guin</dc:creator>
+    <dc:subject>Fantasy</dc:subject>
+    <dc:subject>Coming of age</dc:subject>
+    <meta name="calibre:user_metadata:#bookfusionshelf" content="{&quot;#value#&quot;: &quot;Currently Reading&quot;}"/>
+    <meta name="calibre:series" content="Earthsea"/>
+    <meta name="calibre:series_index" content="1"/>
+    <meta name="calibre:user_metadata:#completionstatus" content="{&quot;#value#&quot;: &quot;Complete&quot;}"/>
+    <meta name="calibre:user_metadata:#like" content="{&quot;#value#&quot;: true}"/>
+  </metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  </package>)";
+  Storage = {};
+  ContentOpfParser parser("/missing-cache", "OPS/", xml.size(), nullptr, /*collectCssFiles=*/true,
+                          /*metadataOnly=*/true);
+
+  ASSERT_TRUE(parser.setup());
+  EXPECT_LT(parser.write(reinterpret_cast<const uint8_t*>(xml.data()), xml.size()), xml.size());
+  EXPECT_EQ(parser.tags, "Fantasy, Coming of age");
+  EXPECT_EQ(parser.bookshelf, "Currently Reading");
+  EXPECT_EQ(parser.seriesName, "Earthsea");
+  EXPECT_EQ(parser.seriesIndex, "1");
+  EXPECT_EQ(parser.completionStatus, "Complete");
+  EXPECT_TRUE(parser.liked);
+}
