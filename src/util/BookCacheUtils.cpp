@@ -6,6 +6,9 @@
 #include <Txt.h>
 #include <Xtc.h>
 
+#include "../Ao3Librarian.h"
+#include "../activities/home/Ao3LibraryActivity.h"
+
 #include <algorithm>
 #include <cstring>
 #include <iterator>
@@ -310,9 +313,26 @@ bool isBookCacheDirectoryName(const char* name) {
          strncmp(name, XTC_PREFIX, std::size(XTC_PREFIX) - 1) == 0;
 }
 
+static bool clearBookCachePreservingUserStateImpl(const std::string& path);
+
 void clearBookCache(const std::string& path) { clearBookCachePreservingUserState(path); }
 
 bool clearBookCachePreservingUserState(const std::string& path) {
+  // Clearing deletes the ao3_library_info sidecar, orphaning the fic's index
+  // record. Tombstone it and queue a rescan so it comes back with fresh metadata
+  // instead of lingering as a ghost until the next sanitizeIndex().
+  const std::string cachePathForAo3 = FsHelpers::hasEpubExtension(path) ? getBookCachePath(path) : std::string();
+  const bool hadAo3Info =
+      !cachePathForAo3.empty() && Storage.exists((cachePathForAo3 + "/ao3_library_info").c_str());
+  const bool ok = clearBookCachePreservingUserStateImpl(path);
+  if (ok && hadAo3Info) {
+    Ao3Librarian::tombstoneRecord(path);
+    Ao3LibraryActivity::pendingTransferScan = true;
+  }
+  return ok;
+}
+
+static bool clearBookCachePreservingUserStateImpl(const std::string& path) {
   size_t preservedCount = 0;
   const PreservedCacheFile* preservedFiles = preservedFilesForPath(path, preservedCount);
   if (!preservedFiles || preservedCount == 0) {

@@ -29,6 +29,7 @@ void BookActionActivity::onEnter() {
     RenderLock lock(*this);
     currentStatus = Ao3Librarian::getBookStatus(cachePath);
     initialStatus = currentStatus;
+    savedStatus = currentStatus;
 
     hasAo3LibraryInfo = Storage.exists((cachePath + "/ao3_library_info").c_str());
     bookIsArchived = Ao3ArchiveUtils::isArchived(filePath);
@@ -85,7 +86,7 @@ void BookActionActivity::render(RenderLock&&) {
 void BookActionActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (currentStatus != initialStatus || markedForLaterChanged || wasRestored) {
-      if (currentStatus != initialStatus) saveStatus();
+      saveStatusIfModified();
       BookActionResult res;
       res.modified = true;
       res.newStatus = currentStatus;
@@ -106,11 +107,13 @@ void BookActionActivity::loop() {
       requestUpdate(true);
     } else if (selectorIndex == 1) {
       // Launch Ao3IndexActivity in SINGLE mode
+      saveStatusIfModified();
       auto handler = [this](const ActivityResult& res) {
         if (const auto* indexRes = std::get_if<Ao3IndexResult>(&res.data)) {
           if (indexRes->successfullyIndexed) {
             BookActionResult result;
             result.modified = true;
+            result.newStatus = currentStatus;
             result.indexingCompleted = true;
             setResult(ActivityResult(std::move(result)));
             finish();
@@ -154,6 +157,9 @@ void BookActionActivity::loop() {
         // Delete does below rather than acting immediately.
         auto handler = [this](const ActivityResult& res) {
           if (!res.isCancelled) {
+            // Must land before the move: the status file lives in the cache dir
+            // keyed by the current path, which archiveFic() re-keys.
+            saveStatusIfModified();
             Epub epub(filePath, "/.crosspoint");
             epub.load(false, true, Epub::XLocationLoadMode::Skip);
             const std::string archivedPath =
@@ -164,6 +170,7 @@ void BookActionActivity::loop() {
               BookActionResult result;
               result.modified = true;
               result.archived = true;
+              result.newStatus = currentStatus;
               setResult(ActivityResult(std::move(result)));
               finish();
               return;
@@ -213,9 +220,14 @@ void BookActionActivity::saveStatus() {
   // Sync finished flag to AO3 index (only on boundary crossing)
   if (hasAo3LibraryInfo) {
     bool isNowFinished = (currentStatus == BookStatus::FINISHED);
-    bool wasFinished = (initialStatus == BookStatus::FINISHED);
+    bool wasFinished = (savedStatus == BookStatus::FINISHED);
     if (isNowFinished != wasFinished) {
       Ao3Librarian::setRecordFinished(filePath, isNowFinished);
     }
   }
+  savedStatus = currentStatus;
+}
+
+void BookActionActivity::saveStatusIfModified() {
+  if (currentStatus != savedStatus) saveStatus();
 }
