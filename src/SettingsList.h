@@ -630,8 +630,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_UI_SCALE, &CrossPointSettings::uiScale, {StrId::STR_SMALL, StrId::STR_LARGE},
                           "uiScale", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_SCALE_SMALL, CrossPointSettings::UI_SCALE_LARGE}));
-    add(SettingInfo::Enum(StrId::STR_RECENT_BOOKS_VIEW, &CrossPointSettings::recentBooksView,
-                          {StrId::STR_LIST_VIEW, StrId::STR_GRID_VIEW}, "recentBooksView", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Toggle(StrId::STR_LIBRARY_USE_METADATA, &CrossPointSettings::libraryUseMetadata,
+                            "libraryUseMetadata", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
@@ -760,6 +760,20 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_RIGHT, &CrossPointSettings::twoFingerSwipeRight,
                           twoFingerSwipeActions, "twoFingerSwipeRight", StrId::STR_CAT_CONTROLS)
             .withEnumRawValues(twoFingerSwipeActionValues));
+#if defined(CROSSINK_APP_CAP_TOUCH) && CROSSINK_APP_CAP_TOUCH
+    add(SettingInfo::Enum(StrId::STR_LEFT_EDGE_UP, &CrossPointSettings::leftEdgeUp, twoFingerSwipeActions, "leftEdgeUp",
+                          StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_LEFT_EDGE_DOWN, &CrossPointSettings::leftEdgeDown, twoFingerSwipeActions,
+                          "leftEdgeDown", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_RIGHT_EDGE_UP, &CrossPointSettings::rightEdgeUp, twoFingerSwipeActions,
+                          "rightEdgeUp", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+    add(SettingInfo::Enum(StrId::STR_RIGHT_EDGE_DOWN, &CrossPointSettings::rightEdgeDown, twoFingerSwipeActions,
+                          "rightEdgeDown", StrId::STR_CAT_CONTROLS)
+            .withEnumRawValues(twoFingerSwipeActionValues));
+#endif
     add(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_DISABLED, StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_NEXT_NEXT},
                           "sideButtonLayout", StrId::STR_CAT_CONTROLS)
@@ -921,12 +935,10 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             StrId::STR_CUSTOMISE_STATUS_BAR));
     add(SettingInfo::Toggle(StrId::STR_BOOK_PROGRESS_PERCENTAGE, &CrossPointSettings::statusBarBookProgressPercentage,
                             "statusBarBookProgressPercentage", StrId::STR_CUSTOMISE_STATUS_BAR));
-    SettingInfo percentageFormat =
-        SettingInfo::Enum(StrId::STR_PERCENTAGE_FORMAT, &CrossPointSettings::statusBarBookPercentageFormat, {},
-                          "statusBarBookPercentageFormat", StrId::STR_CUSTOMISE_STATUS_BAR);
-    percentageFormat.enumStringValues.assign(std::begin(CrossPointSettings::bookPercentageFormatLabels),
-                                             std::end(CrossPointSettings::bookPercentageFormatLabels));
-    add(std::move(percentageFormat));
+    add(SettingInfo::Enum(StrId::STR_PERCENTAGE_FORMAT, &CrossPointSettings::statusBarBookPercentageFormat,
+                          {StrId::STR_PERCENTAGE_FORMAT_WHOLE, StrId::STR_PERCENTAGE_FORMAT_ONE_DECIMAL,
+                           StrId::STR_PERCENTAGE_FORMAT_TWO_DECIMALS},
+                          "statusBarBookPercentageFormat", StrId::STR_CUSTOMISE_STATUS_BAR));
     add(SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
                           {StrId::STR_HIDE, StrId::STR_BOOK, StrId::STR_CHAPTER}, "statusBarProgressBar",
                           StrId::STR_CUSTOMISE_STATUS_BAR)
@@ -1031,7 +1043,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_UP ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
                                     s.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT ||
-                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
+                                    s.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT ||
+                                    s.nameId == StrId::STR_LEFT_EDGE_UP || s.nameId == StrId::STR_LEFT_EDGE_DOWN ||
+                                    s.nameId == StrId::STR_RIGHT_EDGE_UP || s.nameId == StrId::STR_RIGHT_EDGE_DOWN;
                            }),
             v.end());
   }
@@ -1048,10 +1062,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             v.end());
   }
   for (auto& setting : v) {
-    const bool isTwoFingerSwipe =
+    const bool isConfigurableSwipe =
         setting.nameId == StrId::STR_TWO_FINGER_SWIPE_UP || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_DOWN ||
-        setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT;
-    if (!isTwoFingerSwipe) continue;
+        setting.nameId == StrId::STR_TWO_FINGER_SWIPE_LEFT || setting.nameId == StrId::STR_TWO_FINGER_SWIPE_RIGHT ||
+        setting.nameId == StrId::STR_LEFT_EDGE_UP || setting.nameId == StrId::STR_LEFT_EDGE_DOWN ||
+        setting.nameId == StrId::STR_RIGHT_EDGE_UP || setting.nameId == StrId::STR_RIGHT_EDGE_DOWN;
+    if (!isConfigurableSwipe) continue;
     if (!Frontlight.present()) {
       removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS);
       removeEnumRawValue(setting, CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS);
@@ -1267,7 +1283,9 @@ inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std:
   const bool hasPinch = hasSettingByName(allSettings, StrId::STR_PINCH_FONT_RESIZE);
   const bool hasRotation = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_ROTATION);
   const bool hasTwoFingerSwipe = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
-  settings.reserve(3 + (hasPinch ? 1u : 0u) + (hasRotation ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u));
+  const bool hasEdgeGestures = hasSettingByName(allSettings, StrId::STR_LEFT_EDGE_UP);
+  settings.reserve(3 + (hasPinch ? 1u : 0u) + (hasRotation ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u) +
+                   (hasEdgeGestures ? 1u : 0u));
   addSettingByName(settings, allSettings, StrId::STR_NEXT_PAGE);
   addSettingByName(settings, allSettings, StrId::STR_PREV_PAGE);
   if (hasPinch) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
@@ -1275,6 +1293,9 @@ inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std:
   addSettingByName(settings, allSettings, StrId::STR_TAP_HIDE_STATUS_BAR);
   if (hasTwoFingerSwipe) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_TWO_FINGER_SWIPE, SettingAction::ControlsTwoFingerSwipe));
+  }
+  if (hasEdgeGestures) {
+    settings.push_back(SettingInfo::Submenu(StrId::STR_EDGE_GESTURES, SettingAction::ControlsEdgeGestures));
   }
   return settings;
 }
@@ -1286,6 +1307,19 @@ inline std::vector<SettingInfo> buildControlsTwoFingerSwipeSettingsList(const st
   addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_DOWN);
   addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_LEFT);
   addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_SWIPE_RIGHT);
+  return settings;
+}
+
+inline std::vector<SettingInfo> buildControlsEdgeGestureSettingsList(const std::vector<SettingInfo>& allSettings) {
+  std::vector<SettingInfo> settings;
+  if (!hasSettingByName(allSettings, StrId::STR_LEFT_EDGE_UP)) return settings;
+  settings.reserve(6);
+  settings.push_back(SettingInfo::SectionHeader(StrId::STR_LEFT_EDGE));
+  addSettingByName(settings, allSettings, StrId::STR_LEFT_EDGE_UP);
+  addSettingByName(settings, allSettings, StrId::STR_LEFT_EDGE_DOWN);
+  settings.push_back(SettingInfo::SectionHeader(StrId::STR_RIGHT_EDGE));
+  addSettingByName(settings, allSettings, StrId::STR_RIGHT_EDGE_UP);
+  addSettingByName(settings, allSettings, StrId::STR_RIGHT_EDGE_DOWN);
   return settings;
 }
 
@@ -1364,7 +1398,7 @@ inline std::vector<SettingInfo> buildGroupedDisplaySettingsList(const std::vecto
   addDisplaySetting(StrId::STR_NIGHT_MODE);
   addDisplaySetting(StrId::STR_UI_THEME);
   addDisplaySetting(StrId::STR_UI_SCALE);
-  addDisplaySetting(StrId::STR_RECENT_BOOKS_VIEW);
+  addDisplaySetting(StrId::STR_LIBRARY_USE_METADATA);
   addDisplaySetting(StrId::STR_SUNLIGHT_FADING_FIX);
   addDisplaySetting(StrId::STR_COMPANION_ENABLED);
   addDisplaySetting(StrId::STR_COMPANION_CHARACTER);

@@ -35,6 +35,7 @@ enum class EpubReaderMenuAction : uint8_t {
   LOOKUP_HISTORY,
   SET_BOOK_DICTIONARY,
   STATUS_BAR_SETTINGS,
+  RESET_BOOK_READER_SETTINGS,
 };
 
 enum class ReaderDrawerTab : uint8_t { Font = 0, Layout = 1, More = 2, Location = 3, Settings = 4, Count };
@@ -102,6 +103,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   DictionaryFontFamily,
   DictionaryFontSize,
   CharacterSpacing,
+  ResetBookReaderSettings,
 };
 
 struct ReaderDrawerAvailability {
@@ -176,6 +178,7 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   if (available.showReadingPaceReset) settings.add(ReaderDrawerCatalogItem::ResetReadingPace);
   settings.add(ReaderDrawerCatalogItem::DeleteCache);
   settings.add(ReaderDrawerCatalogItem::DeleteStats);
+  settings.add(ReaderDrawerCatalogItem::ResetBookReaderSettings);
   return catalog;
 }
 

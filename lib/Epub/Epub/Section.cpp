@@ -34,11 +34,13 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // addLineToPage() uses to draw its flanking lines).
 // v80: Ordered lists, marker suppression, and list-container insets affect page layout.
 // v81: Character spacing joins the header (cache validation); TextBlocks persist it per line.
-constexpr uint8_t SECTION_FILE_VERSION = 81;
+// v82 (upstream, merged in alongside v81 above): Inline CSS padding affects dialogue and
+// other styled text positions.
+constexpr uint8_t SECTION_FILE_VERSION = 82;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF8;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF7;
 constexpr uint32_t HEADER_SIZE =
     sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(bool) +
     sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) +

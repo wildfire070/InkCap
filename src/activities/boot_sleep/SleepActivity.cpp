@@ -11,6 +11,8 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <PNGdec.h>
+// PNGdec's bundled zlib internals leak this macro into later FreeInkUI headers.
+#undef local
 #include <Xtc.h>
 
 #include <algorithm>

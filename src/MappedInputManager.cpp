@@ -597,6 +597,84 @@ bool MappedInputManager::wasSwipeWithPoints(SwipeDir& direction, int& startX, in
   return true;
 }
 
+bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
+  progress = {};
+  if (!touchInputEnabled()) {
+    progress.finished = edgeSlideSide != EdgeSlide::None;
+    edgeSlideSide = EdgeSlide::None;
+    return progress.finished;
+  }
+
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  if (width < 2 || height < 2) {
+    progress.finished = edgeSlideSide != EdgeSlide::None;
+    edgeSlideSide = EdgeSlide::None;
+    return progress.finished;
+  }
+  const int band = ::EdgeSlide::bandWidth(width);
+  int x = 0;
+  int y = 0;
+  if (wasScreenTouchDown(x, y)) {
+    edgeSlideSide = x < band ? EdgeSlide::LeftUp : (x >= width - band ? EdgeSlide::RightUp : EdgeSlide::None);
+    edgeSlideStartX = x;
+    edgeSlideStartY = y;
+    edgeSlideLastX = x;
+    edgeSlideLastY = y;
+    edgeSlideQualified = false;
+  }
+
+  if (edgeSlideSide == EdgeSlide::None) return false;
+  if (gpio.supportsMultiTouch() && gpio.getTouchSnapshot().reportedCount > 1) {
+    edgeSlideSide = EdgeSlide::None;
+    progress.finished = true;
+    return true;
+  }
+  if (isScreenTouchHeld(x, y)) {
+    if ((edgeSlideSide == EdgeSlide::LeftUp && x >= band) ||
+        (edgeSlideSide == EdgeSlide::RightUp && x < width - band)) {
+      edgeSlideSide = EdgeSlide::None;
+      progress.finished = true;
+      return true;
+    } else {
+      edgeSlideLastX = x;
+      edgeSlideLastY = y;
+      progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
+      edgeSlideQualified = progress.direction != EdgeSlide::None;
+      if (edgeSlideQualified) progress.distance = std::abs(y - edgeSlideStartY);
+    }
+    return true;
+  }
+  if (!wasScreenTouchReleased()) {
+    edgeSlideSide = EdgeSlide::None;
+    progress.finished = true;
+    return true;
+  }
+  progress.finished = true;
+  int startX = 0;
+  int startY = 0;
+  if (!decodeSwipe(startX, startY, x, y)) {
+    if (!edgeSlideQualified) {
+      edgeSlideSide = EdgeSlide::None;
+      return true;
+    }
+    // The SDK reserves wasSwipe() for quick flicks. Use the last held point
+    // for a slow drag that already passed the edge-slide threshold.
+    x = edgeSlideLastX;
+    y = edgeSlideLastY;
+  }
+
+  const EdgeSlide side = edgeSlideSide;
+  if ((side == EdgeSlide::LeftUp && x >= band) || (side == EdgeSlide::RightUp && x < width - band)) {
+    edgeSlideSide = EdgeSlide::None;
+    return true;
+  }
+  progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);
+  if (progress.direction != EdgeSlide::None) progress.distance = std::abs(y - edgeSlideStartY);
+  edgeSlideSide = EdgeSlide::None;
+  return true;
+}
+
 MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {
   SwipeDir direction = SwipeDir::None;
   int sx = 0;
