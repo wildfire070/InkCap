@@ -17,6 +17,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "../../Ao3MarkedForLaterStore.h"
+#include "../../Ao3NewChaptersStore.h"
 #include "../../CrossPointState.h"
 #include "../../MappedInputManager.h"
 #include "../../RecentBooksStore.h"
@@ -38,6 +39,26 @@ bool Ao3LibraryActivity::pendingTransferScan = false;
 
 namespace {
 constexpr char PENDING_SCAN_MARKER[] = "/.crosspoint/pending_ao3_scan";
+
+// Sort & Filter overlay geometry, shared by renderFilterOverlay() and the tap-outside-to-close check.
+constexpr int OVERLAY_START_Y = 48;
+constexpr int OVERLAY_HEIGHT = 340;
+constexpr int OVERLAY_ROW_SHOW = 4;
+constexpr int OVERLAY_ROW_CONFIRM = 5;
+constexpr int OVERLAY_ROW_COUNT = 6;
+
+const char* viewLabel(LibraryView v) {
+  switch (v) {
+    case LibraryView::MARKED_FOR_LATER:
+      return "Marked for Later";
+    case LibraryView::NEW_CHAPTERS:
+      return "New Chapters";
+    case LibraryView::WIPS:
+      return "WIPs";
+    default:
+      return "All";
+  }
+}
 }
 
 void Ao3LibraryActivity::requestTransferScan() {
@@ -466,12 +487,14 @@ void Ao3LibraryActivity::loop() {
                   selectorIndex = 0;
                 }
                 cachedPage = -1;  // invalidate so next render reloads page cache
-              } else if (actionRes->indexingCompleted || actionRes->restored) {
+              } else if (actionRes->indexingCompleted || actionRes->restored ||
+                         (actionRes->markedForLaterChanged && activeState.view == LibraryView::MARKED_FOR_LATER)) {
                 // Restore re-scrapes a fresh live index record -- this fic's
                 // cache hash/index slot may not match what's cached here
                 // (it may not even have been a normal live entry a moment
                 // ago), so a full rebuild is the safe choice rather than an
-                // in-place patch.
+                // in-place patch. Marking/unmarking inside the Marked for Later
+                // view changes which fics belong in the list at all.
                 rebuildViewEntries();
               } else {
                 // Status and/or Marked-for-Later change — update in-place
@@ -516,18 +539,16 @@ void Ao3LibraryActivity::loop() {
     // Touch (X4 Pro): tap a registered row / Confirm button; tap outside to close.
     {
       int tappedItem = -1;
-      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 && tappedItem <= 4) {
+      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 && tappedItem < OVERLAY_ROW_COUNT) {
         mappedInput.suppressCurrentTouchContact();
-        overlayRowIndex = tappedItem;  // rows 0..3, Confirm = 4
+        overlayRowIndex = tappedItem;  // rows 0..4, Confirm = 5
         confirmViaTap = true;
         // fall through to the Confirm handler below.
       } else {
         int tapX = 0;
         int tapY = 0;
         if (mappedInput.wasScreenTapped(tapX, tapY)) {
-          const int startY = 48;
-          const int overlayH = 320;
-          if (tapY < startY || tapY >= startY + overlayH) {
+          if (tapY < OVERLAY_START_Y || tapY >= OVERLAY_START_Y + OVERLAY_HEIGHT) {
             mappedInput.suppressCurrentTouchContact();
             screenState = ScreenState::LIBRARY;  // tap outside the overlay closes it
             requestUpdate(true);
@@ -546,10 +567,10 @@ void Ao3LibraryActivity::loop() {
         mappedInput.wasReleased(MappedInputManager::Button::Right)) {
       if (mappedInput.getHeldTime() >= 500) {
         // Skip to confirm
-        overlayRowIndex = 4;
+        overlayRowIndex = OVERLAY_ROW_CONFIRM;
       } else {
-        // Move Next Row (Wrapping around total of 5 rows: 0 to 4)
-        overlayRowIndex = (overlayRowIndex + 1) % 5;
+        // Move Next Row (wrapping around all rows, Confirm last)
+        overlayRowIndex = (overlayRowIndex + 1) % OVERLAY_ROW_COUNT;
 
         // Folder Tree mode only: if Relationship row is disabled, skip it moving downwards
         if (filterMode == FilterMode::FOLDER_TREE && overlayRowIndex == 1 && pendingState.fandom[0] == '\0') {
@@ -563,10 +584,10 @@ void Ao3LibraryActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
         mappedInput.wasReleased(MappedInputManager::Button::Left)) {
       if (mappedInput.getHeldTime() >= 500) {
-        overlayRowIndex = 4;
+        overlayRowIndex = OVERLAY_ROW_CONFIRM;
       } else {
-        // Move Prev Row (Wrapping around backward: 0 becomes 4)
-        overlayRowIndex = (overlayRowIndex + 5 - 1) % 5;
+        // Move Prev Row (wrapping around backward: 0 becomes Confirm)
+        overlayRowIndex = (overlayRowIndex + OVERLAY_ROW_COUNT - 1) % OVERLAY_ROW_COUNT;
 
         // Folder Tree mode only: if Relationship row is disabled, skip it moving upwards
         if (filterMode == FilterMode::FOLDER_TREE && overlayRowIndex == 1 && pendingState.fandom[0] == '\0') {
@@ -700,7 +721,12 @@ void Ao3LibraryActivity::loop() {
       } else if (overlayRowIndex == 3) {
         // Order cycle
         pendingState.ascending = !pendingState.ascending;
-      } else if (overlayRowIndex == 4) {
+      } else if (overlayRowIndex == OVERLAY_ROW_SHOW) {
+        // Show cycle: All -> Marked for Later -> New Chapters -> WIPs -> All
+        pendingState.view = pendingState.view == LibraryView::WIPS
+                                ? LibraryView::ALL
+                                : static_cast<LibraryView>(static_cast<uint8_t>(pendingState.view) + 1);
+      } else if (overlayRowIndex == OVERLAY_ROW_CONFIRM) {
         // Confirm Button pressed
         SortFilterState previous = activeState;
         activeState = pendingState;
@@ -946,12 +972,16 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
 
   // Draw Header Title (Truncate to 25 chars if fandom filter is active)
   char headerTitle[32] = "AO3 Library";
+  if (activeState.view != LibraryView::ALL) strcpy(headerTitle, viewLabel(activeState.view));
   if (activeState.fandom[0] != '\0') {
+    // With a view active the fandom rides along after it ("WIPs - Dramione"), so it gets less room.
     std::string cleanFandom(activeState.fandom);
-    if (cleanFandom.length() > 29) {
-      cleanFandom = cleanFandom.substr(0, utf8SafeTruncateBuffer(cleanFandom.c_str(), 27)) + "..";
+    std::string prefix = activeState.view != LibraryView::ALL ? std::string(viewLabel(activeState.view)) + " - " : "";
+    const size_t room = prefix.size() >= 26 ? 3 : 29 - prefix.size();
+    if (cleanFandom.length() > room) {
+      cleanFandom = cleanFandom.substr(0, utf8SafeTruncateBuffer(cleanFandom.c_str(), room - 2)) + "..";
     }
-    strcpy(headerTitle, cleanFandom.c_str());
+    strcpy(headerTitle, (prefix + cleanFandom).c_str());
   }
   renderer.drawText(UI_12_FONT_ID, 15, 12, headerTitle, true, EpdFontFamily::BOLD);
   renderer.drawLine(0, 48, renderer.getScreenWidth(), 48);
@@ -979,7 +1009,14 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
   }
 
   if (indexState == IndexState::MISSING || (indexState == IndexState::OK && viewEntries.empty())) {
-    if (activeState.fandom[0] != '\0') {
+    if (indexState == IndexState::OK && activeState.view != LibraryView::ALL) {
+      const char* none = activeState.view == LibraryView::MARKED_FOR_LATER ? tr(STR_NO_MARKED_FOR_LATER)
+                         : activeState.view == LibraryView::NEW_CHAPTERS   ? tr(STR_NO_NEW_CHAPTERS)
+                                                                            : tr(STR_NO_WIPS);
+      renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, none);
+      renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() / 2 + 12,
+                                "Open the filter and set Show to All.");
+    } else if (activeState.fandom[0] != '\0') {
       renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, "No matches for current filter.");
     } else {
       renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, "No AO3 books indexed yet.");
@@ -1115,8 +1152,8 @@ void Ao3LibraryActivity::renderManagePanel() {
 
 void Ao3LibraryActivity::renderFilterOverlay() {
   const int screenWidth = renderer.getScreenWidth();
-  const int overlayH = 320;
-  const int startY = 48;
+  const int overlayH = OVERLAY_HEIGHT;
+  const int startY = OVERLAY_START_Y;
 
   // Background white filled rectangle
   renderer.fillRoundedRect(0, startY, screenWidth, overlayH, 0, White);
@@ -1135,8 +1172,9 @@ void Ao3LibraryActivity::renderFilterOverlay() {
 
   // helper to draw pill or label
   auto drawOverlayRow = [&](int rowIndex, const char* label, const char* val, bool disabled = false) {
-    const int rowY =
-        startY + 55 + rowIndex * 40 + ((rowIndex < 4) ? 6 : 0) + ((rowIndex == 2 || rowIndex == 3) ? 20 : 0);
+    // Rows 0-1 are the filters, rows 2-3 the sort group (extra gap above it), row 4 the view selector.
+    static constexpr int ROW_OFFSETS[] = {61, 101, 161, 201, 241};
+    const int rowY = startY + ROW_OFFSETS[rowIndex];
     const bool isSelected = (overlayRowIndex == rowIndex);
 
     if (isSelected && !disabled) {
@@ -1244,11 +1282,14 @@ void Ao3LibraryActivity::renderFilterOverlay() {
   // Row 3: Order
   drawOverlayRow(3, "Order", pendingState.ascending ? "Ascending" : "Descending");
 
-  // Row 4: Confirm Button
-  const int btnY = startY + 250;
+  // Row 4: Show (which slice of the library the list shows)
+  drawOverlayRow(OVERLAY_ROW_SHOW, "Show", viewLabel(pendingState.view));
+
+  // Row 5: Confirm Button
+  const int btnY = startY + 290;
   const int btnW = screenWidth - margin * 2;
   const int btnH = 36;
-  const bool confirmSelected = (overlayRowIndex == 4);
+  const bool confirmSelected = (overlayRowIndex == OVERLAY_ROW_CONFIRM);
 
   if (confirmSelected) {
     renderer.fillRoundedRect(margin, btnY, btnW, btnH, 8, Black);
@@ -1258,8 +1299,8 @@ void Ao3LibraryActivity::renderFilterOverlay() {
     renderer.drawRoundedRect(margin, btnY, btnW, btnH, 1, 8, true);
     renderer.drawCenteredText(UI_12_FONT_ID, btnY + 2, "Confirm", true, EpdFontFamily::BOLD);
   }
-  // Register the Confirm button as tappable item 4 (X4 Pro); no-op on button-only builds.
-  TouchRegistry::getInstance().add(Rect{margin, btnY, btnW, btnH}, 4, TouchRegistry::Item);
+  // Register the Confirm button as tappable item 5 (X4 Pro); no-op on button-only builds.
+  TouchRegistry::getInstance().add(Rect{margin, btnY, btnW, btnH}, OVERLAY_ROW_CONFIRM, TouchRegistry::Item);
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +1587,7 @@ void Ao3LibraryActivity::loadSortFilterState() {
   activeState.completion = -1;
   activeState.sortMode = SortMode::ALPHABETIC;
   activeState.ascending = true;
+  activeState.view = LibraryView::ALL;
 
   const char* path = "/.crosspoint/ao3SortFilterState.json";
   if (!Storage.exists(path)) return;
@@ -1565,6 +1607,10 @@ void Ao3LibraryActivity::loadSortFilterState() {
   activeState.ascending = doc["ascending"] | true;
 
   if (activeState.sortMode > SortMode::AUTHOR) activeState.sortMode = SortMode::ALPHABETIC;
+
+  const uint8_t persistedView = doc["view"] | 0;
+  activeState.view = persistedView <= static_cast<uint8_t>(LibraryView::WIPS) ? static_cast<LibraryView>(persistedView)
+                                                                             : LibraryView::ALL;
 
   if (activeState.fandom[0] == '\0') {
     memset(activeState.relationship, 0, 32);
@@ -1594,6 +1640,7 @@ void Ao3LibraryActivity::saveSortFilterState() const {
   doc["completion"] = static_cast<int>(activeState.completion);
   doc["sortMode"] = static_cast<uint8_t>(activeState.sortMode);
   doc["ascending"] = activeState.ascending;
+  doc["view"] = static_cast<uint8_t>(activeState.view);
   doc["filterMode"] = static_cast<uint8_t>(filterMode);
 
   String json;
@@ -1613,6 +1660,14 @@ void Ao3LibraryActivity::resortViewEntries() {
   // concurrent locked read is UB, not just a stale ordering. RenderLock is
   // recursive, so this is safe to call from a caller that already holds one.
   RenderLock lock(*this);
+  if (isStoreView()) {
+    // Queue / most-recently-updated order is the point of these views (and the queue-position
+    // badge would read as scrambled if re-sorted), so Sort By / Order don't apply.
+    std::sort(viewEntries.begin(), viewEntries.end(), [this](const ViewEntry& a, const ViewEntry& b) {
+      return viewPosition(a.cacheHash) < viewPosition(b.cacheHash);
+    });
+    return;
+  }
   switch (activeState.sortMode) {
     case SortMode::ALPHABETIC:
       std::sort(viewEntries.begin(), viewEntries.end(), [&](const ViewEntry& a, const ViewEntry& b) {
@@ -1666,7 +1721,31 @@ void Ao3LibraryActivity::resortViewEntries() {
 //  Filtering Logic
 // ---------------------------------------------------------------------------
 
+int Ao3LibraryActivity::viewPosition(uint64_t cacheHash) const {
+  for (size_t i = 0; i < viewOrder_.size(); i++) {
+    if (viewOrder_[i] == cacheHash) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+// Resolves the active store view's fics to the same cache hashes the index records carry
+// (fnv of the file path -- the same derivation buildAllowedHashes() relies on).
+void Ao3LibraryActivity::loadViewOrder() {
+  viewOrder_.clear();
+  auto add = [this](const std::string& path) {
+    viewOrder_.push_back(ZipFile::fnvHash64(path.c_str(), path.size()));
+  };
+  if (activeState.view == LibraryView::MARKED_FOR_LATER) {
+    for (const auto& e : AO3_MARKED_FOR_LATER_STORE.getEntries()) add(e.path);
+  } else if (activeState.view == LibraryView::NEW_CHAPTERS) {
+    for (const auto& e : AO3_NEW_CHAPTERS_STORE.getEntries()) add(e.path);
+  }
+}
+
 bool Ao3LibraryActivity::passesFilter(const ViewEntry& v, const FilterHashes& h) const {
+  if (activeState.view == LibraryView::WIPS && v.isCompleted) return false;
+  if (isStoreView() && viewPosition(v.cacheHash) < 0) return false;
+
   if (filterMode == FilterMode::FOLDER_TREE) {
     return std::binary_search(allowedHashes.begin(), allowedHashes.end(), v.cacheHash);
   }
@@ -1738,6 +1817,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
     }
   }
 
+  loadViewOrder();
   const FilterHashes filterHashes = computeFilterHashes(activeState);
   viewEntries.reserve(std::min<size_t>(recordCount, maxLibraryBooks()));
 
@@ -1774,12 +1854,16 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   indexState = IndexState::OK;
   cachedPage = -1;
   buttonsSetup = false;
+
+  // The list may be shorter than when selectorIndex was set (returning to a New Chapters view
+  // after opening the fic drops it from the list, a Marked for Later toggle, ...).
+  if (selectorIndex >= viewEntries.size()) selectorIndex = viewEntries.empty() ? 0 : viewEntries.size() - 1;
 }
 
 void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const SortFilterState& next) {
   bool filterChanged = strcmp(prev.fandom, next.fandom) != 0 || strcmp(prev.relationship, next.relationship) != 0 ||
                        prev.relationshipNoneOnly != next.relationshipNoneOnly || prev.rating != next.rating ||
-                       prev.completion != next.completion;
+                       prev.completion != next.completion || prev.view != next.view;
 
   bool sortChanged = prev.sortMode != next.sortMode || prev.ascending != next.ascending;
 
