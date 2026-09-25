@@ -13,6 +13,7 @@ class Ao3LibrarySettingsActivity final : public Activity {
 
   std::string ao3Folder;
   std::string archiveFolderName;
+  std::string receiveFolder;
   std::vector<std::string> excludedFolders;
   int batchSize = 10;
   bool autoIndexOnOpen = false;
@@ -30,6 +31,7 @@ class Ao3LibrarySettingsActivity final : public Activity {
   std::string formatFolderPill() const;
   std::string formatExclusionsPill() const;
   std::string formatArchiveFolderPill() const;
+  std::string formatReceiveFolderPill() const;
 
  public:
   explicit Ao3LibrarySettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

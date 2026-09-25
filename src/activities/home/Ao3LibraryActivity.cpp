@@ -27,6 +27,8 @@
 #include "Ao3IndexActivity.h"
 #include "Ao3LibrarySettingsActivity.h"
 #include "BookActionActivity.h"
+#include "../../util/Ao3ReceiveUtils.h"
+#include "Ao3ReceivedReviewActivity.h"
 
 // ---------------------------------------------------------------------------
 //  onEnter
@@ -34,7 +36,20 @@
 
 bool Ao3LibraryActivity::pendingTransferScan = false;
 
+namespace {
+constexpr char PENDING_SCAN_MARKER[] = "/.crosspoint/pending_ao3_scan";
+}
+
+void Ao3LibraryActivity::requestTransferScan() {
+  pendingTransferScan = true;
+  Storage.writeFile(PENDING_SCAN_MARKER, "");
+}
+
 void Ao3LibraryActivity::onEnter() {
+  if (Storage.exists(PENDING_SCAN_MARKER)) {
+    Storage.remove(PENDING_SCAN_MARKER);
+    pendingTransferScan = true;
+  }
   buttonNavigator.setMappedInputManager(mappedInput);
   indexState = IndexState::UNKNOWN;
   screenState = ScreenState::LIBRARY;
@@ -44,6 +59,7 @@ void Ao3LibraryActivity::onEnter() {
   // the button is still physically pressed. We must ignore the subsequent release.
   skipNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
   autoIndexLaunched_ = false;
+  receivedReviewLaunched_ = false;
   loadFilterMode();
   loadSortFilterState();
   requestUpdate();
@@ -213,6 +229,13 @@ void Ao3LibraryActivity::loadPageCache(int page) {
 void Ao3LibraryActivity::loop() {
   // Still loading — loadViewEntries() will flip indexState on first call
   if (indexState == IndexState::UNKNOWN) {
+    // Fics sent through AO3 Receive: index them, and offer to replace any copy already here.
+    if (!receivedReviewLaunched_ && Ao3ReceiveUtils::hasPending()) {
+      receivedReviewLaunched_ = true;
+      startActivityForResult(std::make_unique<Ao3ReceivedReviewActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) { requestUpdate(); });
+      return;
+    }
     if (autoIndexOnOpen_ && !autoIndexLaunched_ && !ao3Folder.empty()) {
       bool full = false;
       {

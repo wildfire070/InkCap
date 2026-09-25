@@ -39,6 +39,7 @@
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMetadataUtils.h"
+#include "util/Ao3ReceiveUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/FontFamilyLabel.h"
 #include "util/StringUtils.h"
@@ -255,6 +256,8 @@ size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
+// Non-empty while AO3 Receive mode is active (see enableAo3Receive()).
+std::string ao3ReceiveFolder;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -450,7 +453,10 @@ void CrossPointWebServer::abortWsUpload(const char* tag) {
   wsLastProgressSent = 0;
 }
 
+void CrossPointWebServer::enableAo3Receive(const std::string& folder) { ao3ReceiveFolder = folder; }
+
 void CrossPointWebServer::stop() {
+  ao3ReceiveFolder.clear();
   if (!running || !server) {
     LOG_DBG("WEB", "stop() called but already stopped (running=%d, server=%p)", running, server.get());
     return;
@@ -937,6 +943,16 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.path = "/";
     }
 
+    // AO3 Receive: no destination chosen (the extension's default) means the receive folder.
+    if (!ao3ReceiveFolder.empty() && state.path == "/") {
+      state.path = ao3ReceiveFolder.c_str();
+      if (!Storage.exists(ao3ReceiveFolder.c_str()) && !Storage.mkdir(ao3ReceiveFolder.c_str(), true)) {
+        state.error = "Could not create the AO3 receive folder";
+        LOG_ERR("WEB", "[UPLOAD] Could not create %s", ao3ReceiveFolder.c_str());
+        return;
+      }
+    }
+
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
     LOG_DBG("WEB", "[UPLOAD] Free heap: %d bytes", ESP.getFreeHeap());
 
@@ -969,6 +985,18 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.error = "Access denied to protected path";
       LOG_DBG("WEB", "[UPLOAD] FAILED: Access denied to protected path: %s", filePath.c_str());
       return;
+    }
+
+    // AO3 Receive never fails on, or replaces, an existing name: pick a free one. Whether the
+    // story is already on the device is decided afterwards, by work ID, with the user's say-so.
+    if (!ao3ReceiveFolder.empty() && Storage.exists(filePath.c_str())) {
+      const std::string unique = Ao3ReceiveUtils::uniqueFilePath(state.path.c_str(), state.fileName.c_str());
+      if (unique.empty()) {
+        state.error = "Too many files named " + state.fileName;
+        return;
+      }
+      filePath = unique.c_str();
+      state.fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
     }
 
     // Check if file already exists. Never replace it here: an upload only reaches this
@@ -1051,6 +1079,9 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
         clearBookCachePreservingUserState(filePath.c_str());
+        if (!ao3ReceiveFolder.empty() && FsHelpers::hasEpubExtension(filePath)) {
+          Ao3ReceiveUtils::appendPending(filePath.c_str());
+        }
         ImageFolderIndex::invalidateForPath(filePath.c_str());
         sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
       } else {
