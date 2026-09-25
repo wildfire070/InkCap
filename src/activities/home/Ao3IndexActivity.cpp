@@ -24,7 +24,7 @@ bool isLibraryFull() {
     uint8_t version;
     uint16_t recordCount;
     if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-        memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
+        memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
       // Skip remaining header bytes to reach records
       f.seek(12);
       uint16_t liveCount = 0;
@@ -34,7 +34,7 @@ bool isLibraryFull() {
         if (!(rec.flags & 0x01)) liveCount++;
       }
       f.close();
-      return liveCount >= MAX_LIBRARY_BOOKS;
+      return liveCount >= maxLibraryBooks();
     }
     f.close();
   }
@@ -78,7 +78,7 @@ void Ao3IndexActivity::runHeapCheck() {
 
       if (!isExistingBook) {
         state = State::ERROR;
-        errorMessage = "AO3 library full (1000 books).";
+        errorMessage = ("AO3 library full (" + std::to_string(maxLibraryBooks()) + " books).");
         return;
       }
     }
@@ -87,7 +87,7 @@ void Ao3IndexActivity::runHeapCheck() {
     // Directory mode: Block immediately if full (no need to waste time scanning folders)
     if (isLibraryFull()) {
       state = State::ERROR;
-      errorMessage = "AO3 library full (1000 books).";
+      errorMessage = ("AO3 library full (" + std::to_string(maxLibraryBooks()) + " books).");
       return;
     }
     state = State::DIR_LOAD_SETTINGS;
@@ -128,7 +128,7 @@ void Ao3IndexActivity::buildIndexedHashes() {
   uint8_t version;
   uint16_t recordCount;
   if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-      memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
+      memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
     // Reject the pre-fnvHash64 index format (version < 3): its records are a
     // different size, so reading them here would misalign. Leaving the hash set
     // empty makes every fic look new, so re-indexing rebuilds the library.
@@ -542,7 +542,7 @@ void Ao3IndexActivity::tickDirIndexing() {
 
   if (isLibraryFull()) {
     state = State::DIR_COMPLETE;
-    errorMessage = "AO3 library full (1000 books).";
+    errorMessage = ("AO3 library full (" + std::to_string(maxLibraryBooks()) + " books).");
     requestUpdate(true);
     return;
   }
