@@ -12,6 +12,7 @@
 
 #include <algorithm>
 
+#include "../../Ao3Librarian.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "components/TouchActionButtons.h"
@@ -321,6 +322,9 @@ void CacheAllBooksActivity::cacheAllBooks() {
 
   const int total = countEpubsRecursive("/");
   if (total > 0) {
+    // Caching an AO3 download indexes it; keep the index in RAM for the whole pass instead of
+    // re-reading it for every book.
+    Ao3Librarian::IndexWriteBatch indexBatch;
     int processed = 0;
     bool showingPopup = false;
     Rect popupRect{0, 0, 0, 0};

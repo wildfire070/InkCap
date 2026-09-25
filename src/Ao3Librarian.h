@@ -63,6 +63,29 @@ class Ao3Librarian {
   static bool writeIndexRecord(const CompactIndexRecord& rec);
 
   /**
+   * @brief While one of these is alive (a bulk index or cache pass), writeIndexRecord() and
+   * liveRecordCount() keep an in-RAM map of the index -- hash -> slot, free slots, live count --
+   * instead of re-reading the whole file for every book, which made indexing N books read O(N^2)
+   * records. Costs ~10 bytes per live book (20 KB at 2000) and is freed when the last batch ends;
+   * without a batch, or if that memory isn't available, the plain scan is used. Any other change
+   * to the index (tombstone, cleanup) drops the map, so it is never trusted past a change it
+   * didn't make.
+   */
+  class IndexWriteBatch {
+   public:
+    IndexWriteBatch();
+    ~IndexWriteBatch();
+    IndexWriteBatch(const IndexWriteBatch&) = delete;
+    IndexWriteBatch& operator=(const IndexWriteBatch&) = delete;
+  };
+
+  /**
+   * @brief Number of live (non-tombstoned) records in the index; 0 if there is no valid index.
+   * Cheap inside an IndexWriteBatch once the first write has built the map.
+   */
+  static uint16_t liveRecordCount();
+
+  /**
    * @brief Marks a record as tombstoned (deleted) in the index.
    */
   static bool tombstoneRecord(const std::string& epubPath);
