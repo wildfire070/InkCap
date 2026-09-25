@@ -78,7 +78,7 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
                             tileY + hPaddingInSelection + (Lyra3CoversMetrics::values.homeCoverHeight / 3),
                             tileWidth - 2 * hPaddingInSelection, 2 * Lyra3CoversMetrics::values.homeCoverHeight / 3,
                             true);
-          drawLucideIcon(renderer, icon_book_open_32, tileX + hPaddingInSelection + 24,
+          drawLucideIcon(renderer, blankCoverIconFor(recentBooks[i].path), tileX + hPaddingInSelection + 24,
                          tileY + hPaddingInSelection + 24);
         }
 
