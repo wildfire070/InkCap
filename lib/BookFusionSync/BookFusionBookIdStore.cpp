@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <Epub.h>
+#include <Epub/BookIds.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <PersistableStore.h>
@@ -44,7 +45,9 @@ bool BookFusionBookIdStore::saveBookId(const std::string& epubPath, uint32_t boo
   JsonDocument doc;
   loadSidecarDoc(path, doc);
   doc["bookId"] = bookId;
-  return writeSidecarDoc(epubPath, path, doc);
+  const bool saved = writeSidecarDoc(epubPath, path, doc);
+  if (saved) BookIds::record(epubPath, "", bookId);  // universal ID sidecar, readable on every branch
+  return saved;
 }
 
 void BookFusionBookIdStore::clearBookId(const std::string& epubPath) {
