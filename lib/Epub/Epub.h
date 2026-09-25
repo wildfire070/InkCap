@@ -129,6 +129,8 @@ class Epub {
   // Library index builder, which reads every EPUB on the card and cannot
   // afford a full load() per book.
   bool loadMetadata(std::string& title, std::string& author, bool allowCachedMetadata = true);
+  // Records the AO3 work ID / BookFusion ID (book-ids.json) for a cached book that predates that file.
+  void backfillBookIds();
   // Loads optional stable-page and source-spine metadata after a Skip-mode open.
   // Failure leaves normal size-based progress available.
   bool loadXLocations();

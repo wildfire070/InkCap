@@ -9,8 +9,10 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <strings.h>
 #include <string_view>
 
+#include "Epub/BookIds.h"
 #include "Epub/BookMetadataCache.h"
 
 namespace {
@@ -19,6 +21,21 @@ constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char MEDIA_TYPE_IMAGE_PREFIX[] = "image/";
 constexpr char itemCacheFile[] = "/.items.bin";
 constexpr size_t ITEM_INDEX_ARENA_SLAB_BYTES = 4096;
+
+// Pulls the numeric AO3 work ID out of a work URL, e.g. "https://archiveofourown.org/works/12345678".
+std::string extractAo3WorkId(const std::string& text) {
+  const size_t pos = text.find("archiveofourown.org/works/");
+  if (pos == std::string::npos) return "";
+  std::string id;
+  for (const char c : text.substr(pos + sizeof("archiveofourown.org/works/") - 1)) {
+    if (isdigit(static_cast<unsigned char>(c))) {
+      id += c;
+    } else if (!id.empty()) {
+      break;
+    }
+  }
+  return id;
+}
 
 bool startsWithImageMediaType(const std::string& mediaType) {
   constexpr size_t prefixLen = sizeof(MEDIA_TYPE_IMAGE_PREFIX) - 1;
@@ -364,7 +381,6 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 
 void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ContentOpfParser*>(userData);
-  (void)atts;
 
   if (self->metadataOnly && self->metadataComplete) {
     return;
@@ -422,6 +438,23 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == IN_METADATA && strcmp(name, "dc:subject") == 0) {
     self->state = IN_DC_SUBJECT;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:identifier") == 0) {
+    self->identifierIsBookFusion = false;
+    for (int i = 0; atts && atts[i]; i += 2) {
+      if ((strcmp(atts[i], "opf:scheme") == 0 || strcmp(atts[i], "scheme") == 0) && atts[i + 1] &&
+          strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
+        self->identifierIsBookFusion = true;
+      }
+    }
+    self->state = IN_DC_IDENTIFIER;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:source") == 0) {
+    self->state = IN_DC_SOURCE;
     return;
   }
 
@@ -688,6 +721,11 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     appendBounded(self->subjectBuffer, s, len);
     return;
   }
+
+  if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
+    appendBounded(self->identifierBuffer, s, len);
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -732,6 +770,28 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
       self->tags += self->subjectBuffer;
     }
     self->subjectBuffer.clear();
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_IDENTIFIER && strcmp(name, "dc:identifier") == 0) {
+    if (self->identifierIsBookFusion) {
+      const uint32_t bookFusionId = BookIds::parseBookFusionId(self->identifierBuffer);
+      if (bookFusionId != 0) self->bookFusionId = bookFusionId;
+    } else {
+      const std::string workId = extractAo3WorkId(self->identifierBuffer);
+      if (!workId.empty()) self->ao3WorkId = workId;
+    }
+    self->identifierIsBookFusion = false;
+    self->identifierBuffer.clear();
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_DC_SOURCE && strcmp(name, "dc:source") == 0) {
+    const std::string workId = extractAo3WorkId(self->identifierBuffer);
+    if (!workId.empty()) self->ao3WorkId = workId;
+    self->identifierBuffer.clear();
     self->state = IN_METADATA;
     return;
   }

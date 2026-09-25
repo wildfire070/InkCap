@@ -141,3 +141,45 @@ TEST(ContentOpfParserMetadata, MetadataOnlyStillCapturesFieldsThatDoNotNeedTheMa
   EXPECT_EQ(parser.completionStatus, "Complete");
   EXPECT_TRUE(parser.liked);
 }
+
+TEST(ContentOpfParserMetadata, CapturesBothBookIdsFromACalibreExportedFanFicFareOpf) {
+  // Real shape of a FanFicFare epub exported through Calibre with the BookFusion plugin.
+  const std::string xml = R"(<package xmlns:dc="urn:dc" xmlns:opf="urn:opf"><metadata>
+    <dc:title>Hard Lines</dc:title>
+    <dc:identifier id="fanficfare-uid">fanficfare-uid:archiveofourown.org-ufyrelight-s59081659</dc:identifier>
+    <dc:source>https://archiveofourown.org/works/59081659</dc:source>
+    <dc:identifier opf:scheme="calibre">48b70e73-484f-44da-b803-4e4f5f9448a8</dc:identifier>
+    <dc:identifier opf:scheme="BOOKFUSION">4883231</dc:identifier>
+    <dc:identifier opf:scheme="URL">https://archiveofourown.org/works/59081659</dc:identifier>
+  </metadata></package>)";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_EQ(parser.ao3WorkId, "59081659");
+  EXPECT_EQ(parser.bookFusionId, 4883231u);
+}
+
+TEST(ContentOpfParserMetadata, BookFusionIdIsCaseInsensitiveAndKeepsOtherIdentifiersOut) {
+  const std::string xml = R"(<package xmlns:dc="urn:dc" xmlns:opf="urn:opf"><metadata>
+    <dc:identifier opf:scheme="bookfusion">bookfusion:777</dc:identifier>
+    <dc:identifier opf:scheme="ISBN">9781234567897</dc:identifier>
+  </metadata></package>)";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_EQ(parser.bookFusionId, 777u);
+  EXPECT_TRUE(parser.ao3WorkId.empty());
+}
+
+TEST(ContentOpfParserMetadata, NoBookIdsWhenTheOpfHasNone) {
+  const std::string xml =
+      R"(<package xmlns:dc="urn:dc"><metadata><dc:identifier>urn:uuid:1234</dc:identifier></metadata></package>)";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_TRUE(parser.ao3WorkId.empty());
+  EXPECT_EQ(parser.bookFusionId, 0u);
+}

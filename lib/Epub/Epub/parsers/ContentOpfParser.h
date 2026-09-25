@@ -19,6 +19,8 @@ class ContentOpfParser final : public Print {
     IN_BOOK_AUTHOR,
     IN_BOOK_LANGUAGE,
     IN_DC_SUBJECT,
+    IN_DC_IDENTIFIER,
+    IN_DC_SOURCE,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -108,6 +110,14 @@ class ContentOpfParser final : public Print {
 
   std::string title;
   std::string author;
+
+  // Book IDs, recorded into book-ids.json by Epub::parseContentOpf so any feature can match a book by
+  // identity rather than filename: AO3 work ID from a dc:source/dc:identifier work URL (FanFicFare and
+  // Calibre exports), BookFusion book ID from <dc:identifier opf:scheme="BOOKFUSION"> (Calibre's plugin).
+  std::string ao3WorkId;
+  uint32_t bookFusionId = 0;
+  std::string identifierBuffer;
+  bool identifierIsBookFusion = false;  // the dc:identifier currently being read carries that scheme
   std::string language;
   std::string tocNcxPath;
   std::string tocNavPath;        // EPUB 3 nav document path

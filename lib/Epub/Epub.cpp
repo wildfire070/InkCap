@@ -21,6 +21,7 @@
 #include <string_view>
 #include <utility>
 
+#include "Epub/BookIds.h"
 #include "Epub/ReferencePageNavigation.h"
 #include "Epub/image/OptimizerCachePublish.h"
 #include "Epub/image/OptimizerIndex.h"
@@ -608,6 +609,10 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.liked = opfParser.liked;
   bookMetadata.readStatus = opfParser.readStatus;
 
+  // Universal IDs (AO3 work ID, BookFusion book ID): every metadata read records what it found,
+  // whichever branch/feature ends up wanting it. Skipped when the book has no cache dir yet.
+  BookIds::record(filepath, opfParser.ao3WorkId, opfParser.bookFusionId);
+
   if (metadataOnly) {
     // Nothing below is populated: the parser stopped at </metadata>, before
     // the manifest that would carry the cover item and TOC/guide references.
@@ -1012,6 +1017,8 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
       loadXLocations();
     }
 
+    backfillBookIds();
+
     lastLoadFailure = OpenFailure::None;
     return true;
   }
@@ -1164,6 +1171,13 @@ bool Epub::loadMetadata(std::string& title, std::string& author, const bool allo
   title = std::move(metadata.title);
   author = std::move(metadata.author);
   return true;
+}
+
+void Epub::backfillBookIds() {
+  // Caches built before book-ids.json existed: read the OPF's metadata once (never creating a cache dir).
+  if (BookIds::exists(cachePath) || !Storage.exists(cachePath.c_str())) return;
+  BookMetadataCache::BookMetadata scratch;
+  parseContentOpf(scratch, /*writeSpineEntries=*/false, /*collectCssFiles=*/false, /*metadataOnly=*/true);
 }
 
 bool Epub::clearCache() const {

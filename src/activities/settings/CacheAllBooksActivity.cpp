@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Epub.h>
+#include <Epub/BookIds.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -245,7 +246,14 @@ void CacheAllBooksActivity::buildCachesRecursive(const std::string& dirPath, con
         buildCachesRecursive(childPath, total, processed, showingPopup, popupRect, depth + 1);
       }
     } else if (FsHelpers::hasEpubExtension(childPath)) {
-      if (!BookMetadataCache::exists(Epub::cachePathForFilePath(childPath, "/.crosspoint"))) {
+      const std::string childCachePath = Epub::cachePathForFilePath(childPath, "/.crosspoint");
+      if (BookMetadataCache::exists(childCachePath) && !BookIds::exists(childCachePath) &&
+          ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
+        // Already cached before book-ids.json existed: record its AO3/BookFusion IDs now.
+        Epub epub(childPath, "/.crosspoint");
+        epub.backfillBookIds();
+      }
+      if (!BookMetadataCache::exists(childCachePath)) {
         if (ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
           Epub epub(childPath, "/.crosspoint");
           if (epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip)) {
