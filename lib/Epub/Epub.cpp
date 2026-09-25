@@ -1034,6 +1034,8 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
       const auto& ao3WorkId = bookMetadataCache->coreMetadata.ao3WorkId;
       if (!ao3WorkId.empty() || Ao3Librarian::sniffNativeAo3Preface(*this)) {
         Ao3Librarian::scrape(*this);
+      } else {
+        BookIds::markAo3Checked(filepath);
       }
     }
 
@@ -1158,6 +1160,8 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
     const auto& ao3WorkId = bookMetadataCache->coreMetadata.ao3WorkId;
     if (!ao3WorkId.empty() || Ao3Librarian::sniffNativeAo3Preface(*this)) {
       Ao3Librarian::scrape(*this);
+    } else {
+      BookIds::markAo3Checked(filepath);
     }
   }
 
