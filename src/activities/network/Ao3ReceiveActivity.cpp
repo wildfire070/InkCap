@@ -1,0 +1,273 @@
+#include "Ao3ReceiveActivity.h"
+
+#include <ESPmDNS.h>
+#include <GfxRenderer.h>
+#include <I18n.h>
+#include <WiFi.h>
+#include <esp_task_wdt.h>
+
+#include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
+#include "SilentRestart.h"
+#include "WifiSelectionActivity.h"
+#include "activities/home/Ao3LibraryActivity.h"
+#include "components/CompactHeader.h"
+#include "components/UITheme.h"
+#include "fontIds.h"
+
+namespace {
+constexpr const char* HOSTNAME = "crosspoint";
+}  // namespace
+
+void Ao3ReceiveActivity::onEnter() {
+  Activity::onEnter();
+  sdFontSystem.releaseLoadedFont(renderer);
+
+  requestUpdate();
+  state = Ao3ReceiveState::WIFI_SELECTION;
+  {
+    // connectedIP/connectedSSID/currentUploadName/lastCompleteName/
+    // lastProgressReceived/lastProgressTotal/lastCompleteAt are all read by
+    // render() on the render task with no lock of its own on that side
+    // either -- see the identical guard in loop()'s handleClient() path,
+    // which documents this exact hazard for these same fields.
+    RenderLock lock(*this);
+    connectedIP.clear();
+    connectedSSID.clear();
+    lastProgressReceived = 0;
+    lastProgressTotal = 0;
+    currentUploadName.clear();
+    lastCompleteName.clear();
+    lastCompleteAt = 0;
+  }
+  lastHandleClientTime = 0;
+  lastProcessedCompleteAt = 0;
+  exitRequested = false;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                           [this](const ActivityResult& result) {
+                             if (!result.isCancelled) {
+                               const auto& wifi = std::get<WifiResult>(result.data);
+                               // ActivityManager unlocks its RenderLock before invoking
+                               // result handlers ("Handler may acquire its own lock") --
+                               // same guard as above.
+                               RenderLock lock(*this);
+                               connectedIP = wifi.ip;
+                               connectedSSID = wifi.ssid;
+                             }
+                             onWifiSelectionComplete(!result.isCancelled);
+                           });
+  } else {
+    {
+      RenderLock lock(*this);
+      connectedIP = WiFi.localIP().toString().c_str();
+      connectedSSID = WiFi.SSID().c_str();
+    }
+    startWebServer();
+  }
+}
+
+void Ao3ReceiveActivity::onExit() {
+  Activity::onExit();
+
+  // Received fics are new (or replaced) AO3 books — flag a rescan so the AO3
+  // library re-indexes them next time it opens.
+  Ao3LibraryActivity::pendingTransferScan = true;
+
+  MDNS.end();
+
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(30);
+    if (returnToReader) {
+      silentRestartToReader();
+    } else {
+      silentRestart();
+    }
+  }
+}
+
+void Ao3ReceiveActivity::onWifiSelectionComplete(const bool connected) {
+  if (!connected) {
+    finish();
+    return;
+  }
+
+  startWebServer();
+}
+
+void Ao3ReceiveActivity::startWebServer() {
+  state = Ao3ReceiveState::SERVER_STARTING;
+  requestUpdate();
+
+  MDNS.end();
+  if (MDNS.begin(HOSTNAME)) {
+    // The browser extension resolves the device as crosspoint.local.
+    LOG_DBG("AO3R", "mDNS started: http://%s.local/", HOSTNAME);
+  }
+
+  webServer.reset(new CrossPointWebServer());
+  webServer->begin();
+
+  if (webServer->isRunning()) {
+    state = Ao3ReceiveState::SERVER_RUNNING;
+    requestUpdate();
+  } else {
+    state = Ao3ReceiveState::ERROR;
+    requestUpdate();
+  }
+}
+
+void Ao3ReceiveActivity::stopWebServer() {
+  if (webServer) {
+    webServer->stop();
+    webServer.reset();
+  }
+}
+
+void Ao3ReceiveActivity::loop() {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    exitRequested = true;
+  }
+
+  if (webServer && webServer->isRunning()) {
+    const unsigned long timeSinceLastHandleClient = millis() - lastHandleClientTime;
+    if (lastHandleClientTime > 0 && timeSinceLastHandleClient > 100) {
+      LOG_DBG("AO3R", "WARNING: %lu ms gap since last handleClient", timeSinceLastHandleClient);
+    }
+
+    esp_task_wdt_reset();
+    constexpr int MAX_ITERATIONS = 80;
+    for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
+      webServer->handleClient();
+      if ((i & 0x07) == 0x07) {
+        esp_task_wdt_reset();
+      }
+      if ((i & 0x0F) == 0x0F) {
+        yield();
+        if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+          exitRequested = true;
+          break;
+        }
+      }
+    }
+    lastHandleClientTime = millis();
+
+    const auto status = webServer->getWsUploadStatus();
+    bool changed = false;
+    {
+      // currentUploadName/lastCompleteName/lastProgressReceived/lastProgressTotal/
+      // lastCompleteAt are all read by render() on the render task with no lock of
+      // its own on that side either -- this is the only place they're mutated, so
+      // guard it here. Without this, render() reading currentUploadName mid-assignment
+      // (a std::string reallocation, trivial for any real upload filename) is UB --
+      // a torn pointer/length read or a dereference of already-freed heap memory.
+      RenderLock lock(*this);
+      if (status.inProgress) {
+        if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
+            status.filename != currentUploadName) {
+          lastProgressReceived = status.received;
+          lastProgressTotal = status.total;
+          currentUploadName = status.filename;
+          changed = true;
+        }
+      } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
+        lastProgressReceived = 0;
+        lastProgressTotal = 0;
+        currentUploadName.clear();
+        changed = true;
+      }
+      // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
+      // This prevents restoring an old value after the 6s timeout clears it
+      if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
+        lastCompleteAt = status.lastCompleteAt;
+        lastCompleteName = status.lastCompleteName;
+        lastProcessedCompleteAt = status.lastCompleteAt;  // Mark this value as processed
+        changed = true;
+      }
+      if (lastCompleteAt > 0 && (millis() - lastCompleteAt) >= 6000) {
+        lastCompleteAt = 0;
+        lastCompleteName.clear();
+        // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
+        changed = true;
+      }
+    }
+    if (changed) {
+      requestUpdate();
+    }
+  }
+
+  if (exitRequested) {
+    finish();
+    return;
+  }
+}
+
+void Ao3ReceiveActivity::render(RenderLock&&) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+
+  renderer.clearScreen();
+
+  CompactHeader::drawTitle(renderer, tr(STR_AO3_RECEIVE));
+  const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+  const auto top = (pageHeight - height) / 2;
+
+  if (state == Ao3ReceiveState::SERVER_STARTING) {
+    renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_AO3_RECEIVE_STARTING));
+  } else if (state == Ao3ReceiveState::ERROR) {
+    renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_CONNECTION_FAILED), true, EpdFontFamily::BOLD);
+  } else if (state == Ao3ReceiveState::SERVER_RUNNING) {
+    const int subHeaderTop = CompactHeader::contentTop(metrics);
+    GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
+
+    // Keep the network name and full address independently readable on narrow
+    // screens. Sharing one subheader row forces one of them to be truncated.
+    const std::string ipLabel = std::string(tr(STR_IP_ADDRESS_PREFIX)) + connectedIP;
+    const int ipTop = subHeaderTop + metrics.tabBarHeight + metrics.verticalSpacing;
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, ipTop, ipLabel.c_str());
+
+    int y = ipTop + height + metrics.verticalSpacing * 3;
+    const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
+    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true, EpdFontFamily::BOLD);
+    y += heightText12 + metrics.verticalSpacing * 2;
+
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_AO3_RECEIVE_INSTRUCTION_1));
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_AO3_RECEIVE_INSTRUCTION_2));
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_AO3_RECEIVE_INSTRUCTION_3));
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_AO3_RECEIVE_INSTRUCTION_4));
+
+    y += height * 3 + metrics.verticalSpacing * 4;
+    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_STATUS), true, EpdFontFamily::BOLD);
+    y += heightText12 + metrics.verticalSpacing * 2;
+
+    const bool showUploadProgress = lastProgressTotal > 0 && lastProgressReceived <= lastProgressTotal;
+    if (showUploadProgress) {
+      std::string label = tr(STR_CALIBRE_RECEIVING);
+      if (!currentUploadName.empty()) {
+        label += ": " + currentUploadName;
+        label = renderer.truncatedText(SMALL_FONT_ID, label.c_str(), pageWidth - metrics.contentSidePadding * 2,
+                                       EpdFontFamily::REGULAR);
+      }
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, label.c_str());
+      GUI.drawProgressBar(renderer,
+                          Rect{metrics.contentSidePadding, y + height + metrics.verticalSpacing,
+                               pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
+                          lastProgressReceived, lastProgressTotal);
+      y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
+    }
+
+    if (!showUploadProgress && lastCompleteAt > 0 && (millis() - lastCompleteAt) < 6000) {
+      std::string msg = std::string(tr(STR_CALIBRE_RECEIVED)) + lastCompleteName;
+      msg = renderer.truncatedText(SMALL_FONT_ID, msg.c_str(), pageWidth - metrics.contentSidePadding * 2,
+                                   EpdFontFamily::REGULAR);
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, msg.c_str());
+    }
+
+    const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  }
+  renderer.displayBuffer(screenTransitionRefresh.modeFor(static_cast<uint8_t>(state)));
+}

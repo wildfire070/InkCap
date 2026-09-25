@@ -13,7 +13,10 @@ enum class NetworkMode {
   CREATE_HOTSPOT,
   USB_DRIVE,
   NEARBY_BOOK_RECEIVE,
-  NEARBY_STATS_SYNC
+  NEARBY_STATS_SYNC,
+  // Appended: the value is carried in the silent-restart boot payload, so the
+  // existing modes must keep their numbers.
+  AO3_RECEIVE
 };
 
 /**
@@ -21,6 +24,7 @@ enum class NetworkMode {
  * - "Join a Network" - Connect to an existing WiFi network (STA mode)
  * - "Connect to Calibre" - Use Calibre wireless device transfers
  * - "Create Hotspot" - Create an Access Point that others can connect to (AP mode)
+ * - "AO3 Receive" - Receive fics sent by the Send to AvesO3 browser extension
  * - "Sync Stats" - Sync reading stats directly with a nearby reader
  * - "Receive File" - Receive a file directly from another reader
  *

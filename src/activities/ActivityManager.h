@@ -131,6 +131,7 @@ class ActivityManager {
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer(std::string returnBookPath = {});
   void goToCalibreWireless(const std::string& returnBookPath = {});
+  void goToAo3Receive(const std::string& returnBookPath = {});
   void goToJoinNetworkFileTransfer(const std::string& returnBookPath = {});
   void goToHotspotFileTransfer(const std::string& returnBookPath = {});
   void goToUsbDrive();

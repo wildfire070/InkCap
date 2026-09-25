@@ -7,6 +7,7 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/icons/icon_ao3.h"
 #include "components/icons/listIcons.h"
 #include "components/icons/readingStatsIcons.h"
 #include "fontIds.h"
@@ -17,33 +18,43 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 
 #if CROSSINK_APP_CAP_USB_DRIVE
-constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK,        NetworkMode::CONNECT_CALIBRE,
-                                     NetworkMode::CREATE_HOTSPOT,      NetworkMode::USB_DRIVE,
-                                     NetworkMode::NEARBY_BOOK_RECEIVE, NetworkMode::NEARBY_STATS_SYNC};
-constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS,    StrId::STR_CREATE_HOTSPOT,
-                               StrId::STR_USB_DRIVE,    StrId::STR_RECEIVE_NEARBY_BOOK, StrId::STR_NEARBY_STATS_SYNC};
+constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK,   NetworkMode::CONNECT_CALIBRE,
+                                     NetworkMode::CREATE_HOTSPOT, NetworkMode::AO3_RECEIVE,
+                                     NetworkMode::USB_DRIVE,      NetworkMode::NEARBY_BOOK_RECEIVE,
+                                     NetworkMode::NEARBY_STATS_SYNC};
+constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK,        StrId::STR_CALIBRE_WIRELESS,
+                               StrId::STR_CREATE_HOTSPOT,      StrId::STR_AO3_RECEIVE,
+                               StrId::STR_USB_DRIVE,           StrId::STR_RECEIVE_NEARBY_BOOK,
+                               StrId::STR_NEARBY_STATS_SYNC};
 constexpr StrId menuDescs[] = {StrId::STR_JOIN_DESC,
                                StrId::STR_CALIBRE_DESC,
                                StrId::STR_HOTSPOT_DESC,
+                               StrId::STR_AO3_RECEIVE_DESC,
                                StrId::STR_USB_DRIVE_DESC,
+                               StrId::STR_RECEIVE_NEARBY_BOOK_DESC,
+                               StrId::STR_NEARBY_STATS_SYNC_DESC};
+constexpr UIIcon menuIcons[] = {UIIcon::Wifi,     UIIcon::Library,  UIIcon::Hotspot, UIIcon::Transfer,
+                                UIIcon::Transfer, UIIcon::Transfer, UIIcon::Transfer};
+#else
+constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK,        NetworkMode::CONNECT_CALIBRE,
+                                     NetworkMode::CREATE_HOTSPOT,      NetworkMode::AO3_RECEIVE,
+                                     NetworkMode::NEARBY_BOOK_RECEIVE, NetworkMode::NEARBY_STATS_SYNC};
+constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK,        StrId::STR_CALIBRE_WIRELESS,
+                               StrId::STR_CREATE_HOTSPOT,      StrId::STR_AO3_RECEIVE,
+                               StrId::STR_RECEIVE_NEARBY_BOOK, StrId::STR_NEARBY_STATS_SYNC};
+constexpr StrId menuDescs[] = {StrId::STR_JOIN_DESC,
+                               StrId::STR_CALIBRE_DESC,
+                               StrId::STR_HOTSPOT_DESC,
+                               StrId::STR_AO3_RECEIVE_DESC,
                                StrId::STR_RECEIVE_NEARBY_BOOK_DESC,
                                StrId::STR_NEARBY_STATS_SYNC_DESC};
 constexpr UIIcon menuIcons[] = {UIIcon::Wifi,     UIIcon::Library,  UIIcon::Hotspot,
                                 UIIcon::Transfer, UIIcon::Transfer, UIIcon::Transfer};
-#else
-constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK, NetworkMode::CONNECT_CALIBRE,
-                                     NetworkMode::CREATE_HOTSPOT, NetworkMode::NEARBY_BOOK_RECEIVE,
-                                     NetworkMode::NEARBY_STATS_SYNC};
-constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS, StrId::STR_CREATE_HOTSPOT,
-                               StrId::STR_RECEIVE_NEARBY_BOOK, StrId::STR_NEARBY_STATS_SYNC};
-constexpr StrId menuDescs[] = {StrId::STR_JOIN_DESC, StrId::STR_CALIBRE_DESC, StrId::STR_HOTSPOT_DESC,
-                               StrId::STR_RECEIVE_NEARBY_BOOK_DESC, StrId::STR_NEARBY_STATS_SYNC_DESC};
-constexpr UIIcon menuIcons[] = {UIIcon::Wifi, UIIcon::Library, UIIcon::Hotspot, UIIcon::Transfer, UIIcon::Transfer};
 #endif
 
 constexpr int MENU_ITEM_COUNT = sizeof(menuModes) / sizeof(menuModes[0]);
 constexpr int LIST_ITEM_COUNT = MENU_ITEM_COUNT + 1;
-constexpr int NEARBY_SECTION_INDEX = CROSSINK_APP_CAP_USB_DRIVE ? 4 : 3;
+constexpr int NEARBY_SECTION_INDEX = CROSSINK_APP_CAP_USB_DRIVE ? 5 : 4;
 
 int listIndexForMenuIndex(const int menuIndex) { return menuIndex < NEARBY_SECTION_INDEX ? menuIndex : menuIndex + 1; }
 }  // namespace
@@ -187,6 +198,8 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
     item.subtitle = I18N.get(menuDescs[i]);
     if (menuModes[i] == NetworkMode::USB_DRIVE) {
       item.icon = fui::bitmapFromIcon(icon_usb_32);
+    } else if (menuModes[i] == NetworkMode::AO3_RECEIVE) {
+      item.icon = fui::bitmapFromIcon(icon_ao3_32);
     } else if (menuModes[i] == NetworkMode::NEARBY_BOOK_RECEIVE) {
       item.icon = fui::bitmapFromIcon(icon_chevrons_left_right_ellipsis_32);
     } else if (menuModes[i] == NetworkMode::NEARBY_STATS_SYNC) {

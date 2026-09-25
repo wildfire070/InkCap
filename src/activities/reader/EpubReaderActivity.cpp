@@ -5028,6 +5028,9 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
     case CrossPointSettings::LONG_MENU_CREATE_HOTSPOT:
       activityManager.goToHotspotFileTransfer(epub ? epub->getPath() : "");
       break;
+    case CrossPointSettings::LONG_MENU_AO3_RECEIVE:
+      activityManager.goToAo3Receive(epub ? epub->getPath() : "");
+      break;
     case CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN:
       if (halTiltSensor.isAvailable()) {
         SETTINGS.tiltPageTurn = SETTINGS.tiltPageTurn == CrossPointSettings::TILT_OFF ? CrossPointSettings::TILT_ON
@@ -5130,6 +5133,9 @@ bool EpubReaderActivity::handleShortcutAction(const uint8_t rawAction) {
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CREATE_HOTSPOT);
       return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_AO3_RECEIVE);
+      return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TILT_PAGE_TURN:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
       return true;
@@ -5224,6 +5230,9 @@ bool EpubReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PW
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CREATE_HOTSPOT);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_AO3_RECEIVE);
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_CLIPPING:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CREATE_CLIPPING);
@@ -5352,6 +5361,9 @@ bool EpubReaderActivity::executeShortPowerButtonAction() {
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CREATE_HOTSPOT);
       return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_AO3_RECEIVE);
+      return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TILT_PAGE_TURN:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
       return true;
@@ -5465,6 +5477,9 @@ bool EpubReaderActivity::executeLongPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CREATE_HOTSPOT);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_AO3_RECEIVE);
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TILT_PAGE_TURN:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
