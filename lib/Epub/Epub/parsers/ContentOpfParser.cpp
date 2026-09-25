@@ -9,7 +9,9 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <strings.h>
 
+#include "Epub/BookIds.h"
 #include "Epub/BookMetadataCache.h"
 
 namespace {
@@ -383,7 +385,6 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 
 void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ContentOpfParser*>(userData);
-  (void)atts;
 
   if (self->metadataOnly && self->metadataComplete) {
     return;
@@ -441,6 +442,13 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   // AO3 support
   if (self->state == IN_METADATA && strcmp(name, "dc:identifier") == 0) {
+    self->identifierIsBookFusion = false;
+    for (int i = 0; atts && atts[i]; i += 2) {
+      if ((strcmp(atts[i], "opf:scheme") == 0 || strcmp(atts[i], "scheme") == 0) && atts[i + 1] &&
+          strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
+        self->identifierIsBookFusion = true;
+      }
+    }
     self->state = IN_DC_IDENTIFIER;
     return;
   }
@@ -767,10 +775,18 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
 
   // AO3 support
   if (self->state == IN_DC_IDENTIFIER && strcmp(name, "dc:identifier") == 0) {
-    const std::string workId = extractAo3WorkId(self->identifierBuffer);
-    if (!workId.empty()) {
-      self->ao3WorkId = workId;
+    if (self->identifierIsBookFusion) {
+      const uint32_t bookFusionId = BookIds::parseBookFusionId(self->identifierBuffer);
+      if (bookFusionId != 0) {
+        self->bookFusionId = bookFusionId;
+      }
+    } else {
+      const std::string workId = extractAo3WorkId(self->identifierBuffer);
+      if (!workId.empty()) {
+        self->ao3WorkId = workId;
+      }
     }
+    self->identifierIsBookFusion = false;
     self->identifierBuffer.clear();
     self->state = IN_METADATA;
     return;

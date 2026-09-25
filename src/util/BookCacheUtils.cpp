@@ -26,6 +26,7 @@ constexpr PreservedCacheFile EPUB_USER_STATE_FILES[] = {
     {"progress.bin.bak", "upload_preserve_progress.bin.bak"},
     {"reader_settings.bin", "upload_preserve_reader_settings.bin"},
     {"dictionary_history.txt", "upload_preserve_dictionary_history.txt"},
+    {"book-ids.json", "upload_preserve_book-ids.json"},
 };
 
 constexpr PreservedCacheFile PAGE_PROGRESS_FILES[] = {
@@ -34,6 +35,7 @@ constexpr PreservedCacheFile PAGE_PROGRESS_FILES[] = {
 
 constexpr PreservedCacheFile CACHE_CLEAR_USER_STATE_FILES[] = {
     {"dictionary_history.txt", "clear_preserve_dictionary_history.txt"},
+    {"book-ids.json", "clear_preserve_book-ids.json"},
 };
 
 struct ResolvedPreservedCacheFile {

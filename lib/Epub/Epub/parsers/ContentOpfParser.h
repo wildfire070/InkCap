@@ -126,6 +126,10 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
+  // BookFusion book ID from <dc:identifier opf:scheme="BOOKFUSION"> (Calibre's BookFusion plugin), 0 if absent.
+  uint32_t bookFusionId = 0;
+  bool identifierIsBookFusion = false;  // the dc:identifier currently being read carries that scheme
+
   // Calibre custom-column metadata, parsed straight from the EPUB's own OPF --
   // no network call needed.
   // dc:subject tags (Calibre convention), e.g. genre/keyword tags a Calibre
