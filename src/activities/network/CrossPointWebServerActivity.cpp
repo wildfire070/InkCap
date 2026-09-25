@@ -105,7 +105,7 @@ void CrossPointWebServerActivity::onExit() {
 
   // AO3 library: browser/hotspot uploads may have added new fics — flag a rescan
   // so the AO3 library re-indexes them next time it opens.
-  Ao3LibraryActivity::pendingTransferScan = true;
+  Ao3LibraryActivity::requestTransferScan();
 
   state = WebServerActivityState::SHUTTING_DOWN;
 

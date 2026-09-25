@@ -73,7 +73,7 @@ void CalibreConnectActivity::onExit() {
 
   // AO3 library: books sent over Calibre wireless may be new fics — flag a rescan
   // so the AO3 library re-indexes them next time it opens.
-  Ao3LibraryActivity::pendingTransferScan = true;
+  Ao3LibraryActivity::requestTransferScan();
 
   MDNS.end();
 
