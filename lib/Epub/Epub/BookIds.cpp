@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Serialization.h>
 
 #include <cstring>
 
@@ -58,6 +59,32 @@ void record(const std::string& epubPath, const std::string& ao3WorkId, const uin
   if (!Storage.writeFile(idsFilePath(cachePath).c_str(), json)) {
     LOG_ERR("BIDS", "Could not write %s", idsFilePath(cachePath).c_str());
   }
+}
+
+void importLegacySidecars(const std::string& epubPath) {
+  const std::string cachePath = Epub::cachePathForFilePath(epubPath, CACHE_ROOT);
+  if (!Storage.exists(cachePath.c_str())) return;
+
+  std::string ao3WorkId;
+  {
+    HalFile f;
+    if (Storage.openFileForRead("BIDS", cachePath + "/ao3-info.bin", f)) {
+      bool completed = false;
+      serialization::readPod(f, completed);
+      if (!serialization::tryReadString(f, ao3WorkId)) ao3WorkId.clear();
+      f.close();
+    }
+  }
+
+  uint32_t bookFusionId = 0;
+  const std::string bookFusionFile = cachePath + "/bookfusion.json";
+  if (Storage.exists(bookFusionFile.c_str())) {
+    const String json = Storage.readFile(bookFusionFile.c_str());
+    JsonDocument doc;
+    if (!json.isEmpty() && !deserializeJson(doc, json)) bookFusionId = doc["bookId"] | 0u;
+  }
+
+  record(epubPath, ao3WorkId, bookFusionId);
 }
 
 bool findOtherCopy(const std::string& epubPath, const Ids& wanted, std::string& outPath) {
