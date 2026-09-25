@@ -1,4 +1,5 @@
 #pragma once
+#include <Memory.h>
 #include <stdint.h>
 
 #pragma pack(push, 1)
@@ -22,7 +23,20 @@ struct CompactIndexRecord {
 // Exactly 245 bytes on disk
 static_assert(sizeof(CompactIndexRecord) == 245, "CompactIndexRecord must be exactly 245 bytes");
 
-constexpr uint16_t MAX_LIBRARY_BOOKS = 1000;
+// How many live books the AO3 library will hold depends on the device: each takes ~44 bytes of RAM
+// while the library is open (see ViewEntry), plus hash sets and sort copies. Devices without PSRAM
+// (ESP32-C3: X3/X4) keep 1000; PSRAM devices (ESP32-S3: X4 Pro, Sticky) allow 2000. Adding a book past
+// the cap fails, and an oversize index is shown truncated rather than rejected.
+constexpr uint16_t MAX_LIBRARY_BOOKS_LOW_RAM = 1000;
+constexpr uint16_t MAX_LIBRARY_BOOKS_PSRAM = 2000;
+inline uint16_t maxLibraryBooks() {
+  return psramHeapAvailable() ? MAX_LIBRARY_BOOKS_PSRAM : MAX_LIBRARY_BOOKS_LOW_RAM;
+}
+
+// File-format sanity limit, NOT a device limit: a header claiming more records than this is corrupt.
+// Deliberately above every device's cap so a card moved between an S3 and a C3 device never has its
+// index treated as corrupt (and deleted) just because the other device stored more books.
+constexpr uint16_t MAX_INDEX_RECORDS = 5000;
 constexpr uint32_t INDEX_HEADER_SIZE = 12;
 
 inline uint32_t offsetOf(uint16_t i) { return INDEX_HEADER_SIZE + i * (uint32_t)sizeof(CompactIndexRecord); }

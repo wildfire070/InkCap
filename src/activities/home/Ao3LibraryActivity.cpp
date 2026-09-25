@@ -248,7 +248,7 @@ void Ao3LibraryActivity::loop() {
           // different size, so reading them here would misalign (matches the same
           // guard in Ao3IndexActivity::buildIndexedHashes).
           if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-              memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_LIBRARY_BOOKS) {
+              memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
             f.seek(12);  // skip rest of header
             uint16_t liveCount = 0;
             CompactIndexRecord rec;
@@ -256,7 +256,7 @@ void Ao3LibraryActivity::loop() {
               if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
               if (!(rec.flags & 0x01)) liveCount++;
             }
-            full = (liveCount >= MAX_LIBRARY_BOOKS);
+            full = (liveCount >= maxLibraryBooks());
           }
           f.close();
         }
@@ -1715,7 +1715,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
     return;
   }
 
-  if (recordCount > MAX_LIBRARY_BOOKS) {
+  if (recordCount > MAX_INDEX_RECORDS) {
     f.close();
     indexState = IndexState::CORRUPT;
     return;
@@ -1739,7 +1739,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   }
 
   const FilterHashes filterHashes = computeFilterHashes(activeState);
-  viewEntries.reserve(recordCount);
+  viewEntries.reserve(std::min<size_t>(recordCount, maxLibraryBooks()));
 
   bool hideFinished = false;
   {
@@ -1763,6 +1763,8 @@ void Ao3LibraryActivity::rebuildViewEntries() {
     ViewEntry v = buildViewEntry(rec);
     if (passesFilter(v, filterHashes)) {
       viewEntries.push_back(v);
+      // An index written by a device with more RAM: show what this one can hold.
+      if (viewEntries.size() >= maxLibraryBooks()) break;
     }
     yield();
   }
