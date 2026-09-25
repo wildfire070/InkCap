@@ -55,7 +55,7 @@ void Ao3EndOfBookSeriesActivity::loadViewEntries() {
   const bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
                       f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(&reserved, 1) == 1;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return;
   }

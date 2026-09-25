@@ -1269,7 +1269,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
       bool readOk =
           check.read(magic, 4) == 4 && check.read(&version, 1) == 1 && check.read((uint8_t*)&recordCountCheck, 2) == 2;
       check.close();
-      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCountCheck > MAX_LIBRARY_BOOKS) {
+      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCountCheck > MAX_INDEX_RECORDS) {
         Storage.remove(indexPath);
         needsCreate = true;
       }
@@ -1350,7 +1350,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
     f.seek(offsetOf(freeSlot));
     f.write((uint8_t*)&recToWrite, sizeof(recToWrite));
   } else {
-    if (liveCount >= MAX_LIBRARY_BOOKS) {
+    if (liveCount >= maxLibraryBooks()) {
       f.close();
       return false;
     }
@@ -1454,7 +1454,7 @@ bool Ao3Librarian::findLivePathByWorkId(const std::string& workId, const std::st
   uint8_t version;
   uint16_t recordCount;
   if (f.read(magic, 4) != 4 || f.read(&version, 1) != 1 || f.read((uint8_t*)&recordCount, 2) != 2 ||
-      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
+      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return false;
   }
@@ -1570,7 +1570,7 @@ int Ao3Librarian::sanitizeIndex() {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return -1;
   }
