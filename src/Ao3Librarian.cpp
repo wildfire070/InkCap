@@ -2,6 +2,7 @@
 
 #include "Ao3WipsStore.h"
 
+#include <Arduino.h>
 #include <Epub.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 #include <HalStorage.h>
@@ -1253,6 +1254,117 @@ bool Ao3Librarian::hasAnyAo3Fics() {
   return found;
 }
 
+namespace {
+
+// In-RAM map of ao3_library_index.bin, valid only while an IndexWriteBatch is alive and only for the
+// exact file state it was built from (size + header fields). See Ao3Librarian::IndexWriteBatch.
+#pragma pack(push, 1)
+struct IndexSlot {
+  uint64_t hash;
+  uint16_t slot;
+};
+#pragma pack(pop)
+
+struct IndexCache {
+  bool valid = false;
+  uint32_t fileSize = 0;
+  uint16_t recordCount = 0;
+  uint32_t nextSequence = 0;
+  std::vector<IndexSlot> live;      // every live record, sorted by (hash, slot)
+  std::vector<uint16_t> freeSlots;  // tombstoned slots, ascending
+};
+
+IndexCache gIndexCache;
+int gIndexBatchDepth = 0;
+
+bool slotLess(const IndexSlot& a, const IndexSlot& b) {
+  return a.hash != b.hash ? a.hash < b.hash : a.slot < b.slot;
+}
+
+void dropIndexCache() { gIndexCache = IndexCache{}; }
+
+// Reads every record once. Leaves the cache invalid (and everything freed) if memory runs short.
+bool buildIndexCache(HalFile& f, const uint16_t recordCount, const uint32_t nextSequence, const uint32_t fileSize) {
+  dropIndexCache();
+  // ~10 bytes per record plus headroom; below that, the plain scan is the safer path.
+  const uint32_t needed = static_cast<uint32_t>(recordCount) * (sizeof(IndexSlot) + sizeof(uint16_t)) + 16u * 1024u;
+  if (ESP.getMaxAllocHeap() < needed) return false;
+
+  gIndexCache.live.reserve(recordCount);
+  gIndexCache.freeSlots.reserve(recordCount / 4 + 4);
+  f.seek(offsetOf(0));
+  CompactIndexRecord rec;
+  for (uint16_t i = 0; i < recordCount; i++) {
+    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) {
+      dropIndexCache();
+      return false;
+    }
+    if (rec.flags & 1) {
+      gIndexCache.freeSlots.push_back(i);
+    } else {
+      gIndexCache.live.push_back({rec.cacheHash, i});
+    }
+  }
+  std::sort(gIndexCache.live.begin(), gIndexCache.live.end(), slotLess);
+  gIndexCache.recordCount = recordCount;
+  gIndexCache.nextSequence = nextSequence;
+  gIndexCache.fileSize = fileSize;
+  gIndexCache.valid = true;
+  return true;
+}
+
+bool indexCacheMatches(const uint16_t recordCount, const uint32_t nextSequence, const uint32_t fileSize) {
+  return gIndexCache.valid && gIndexCache.recordCount == recordCount && gIndexCache.nextSequence == nextSequence &&
+         gIndexCache.fileSize == fileSize;
+}
+
+// The last live slot holding `hash` (the plain scan also ends on the last match), or -1.
+int32_t cachedSlotFor(const uint64_t hash) {
+  auto& live = gIndexCache.live;
+  const auto it = std::upper_bound(live.begin(), live.end(), IndexSlot{hash, UINT16_MAX}, slotLess);
+  if (it == live.begin()) return -1;
+  const auto prev = it - 1;
+  return prev->hash == hash ? prev->slot : -1;
+}
+
+}  // namespace
+
+Ao3Librarian::IndexWriteBatch::IndexWriteBatch() { gIndexBatchDepth++; }
+
+Ao3Librarian::IndexWriteBatch::~IndexWriteBatch() {
+  if (--gIndexBatchDepth <= 0) {
+    gIndexBatchDepth = 0;
+    dropIndexCache();
+  }
+}
+
+uint16_t Ao3Librarian::liveRecordCount() {
+  const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  if (gIndexBatchDepth > 0 && gIndexCache.valid) {
+    return static_cast<uint16_t>(gIndexCache.live.size());
+  }
+  if (!Storage.exists(indexPath)) return 0;
+  HalFile f;
+  if (!Storage.openFileForRead("AO3L", indexPath, f)) return 0;
+  char magic[4];
+  uint8_t version;
+  uint16_t recordCount;
+  if (f.read(magic, 4) != 4 || f.read(&version, 1) != 1 || f.read((uint8_t*)&recordCount, 2) != 2 ||
+      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
+    f.close();
+    return 0;
+  }
+  f.seek(INDEX_HEADER_SIZE);
+  uint16_t live = 0;
+  CompactIndexRecord rec;
+  for (uint16_t i = 0; i < recordCount; i++) {
+    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+    if (!(rec.flags & 0x01)) live++;
+  }
+  f.close();
+  return live;
+}
+
 bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
 
@@ -1271,6 +1383,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
       check.close();
       if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCountCheck > MAX_INDEX_RECORDS) {
         Storage.remove(indexPath);
+        dropIndexCache();
         needsCreate = true;
       }
     } else {
@@ -1280,6 +1393,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   // --- Create fresh file with empty header if needed ---
   if (needsCreate) {
+    dropIndexCache();
     HalFile f;
     if (!Storage.openFileForWrite("AO3L", indexPath, f)) return false;
     uint8_t v = 3, r = 0;
@@ -1318,17 +1432,51 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   int32_t freeSlot = -1;
   uint16_t liveCount = 0;
   CompactIndexRecord existing;
-  for (uint16_t i = 0; i < recordCount; i++) {
-    if (f.read((uint8_t*)&existing, sizeof(existing)) != sizeof(existing)) {
-      break;
+
+  // Inside an IndexWriteBatch, plan from the in-RAM map instead of reading every record.
+  bool planned = false;
+  if (gIndexBatchDepth > 0) {
+    const uint32_t fileSize = static_cast<uint32_t>(f.size());
+    if (!indexCacheMatches(recordCount, nextSequence, fileSize)) {
+      buildIndexCache(f, recordCount, nextSequence, fileSize);
     }
-    if (existing.flags & 1) {
-      if (freeSlot < 0) freeSlot = i;
-    } else {
-      liveCount++;
-      if (existing.cacheHash == rec.cacheHash) {
-        updateSlot = i;
-        preservedSeq = existing.addedSequence;
+    if (gIndexCache.valid) {
+      updateSlot = cachedSlotFor(rec.cacheHash);
+      if (updateSlot >= 0) {
+        f.seek(offsetOf(static_cast<uint16_t>(updateSlot)));
+        if (f.read((uint8_t*)&existing, sizeof(existing)) == sizeof(existing)) {
+          preservedSeq = existing.addedSequence;
+        } else {
+          dropIndexCache();  // can't trust it; fall back to the scan below
+          updateSlot = -1;
+        }
+      }
+      if (gIndexCache.valid) {
+        freeSlot = gIndexCache.freeSlots.empty() ? -1 : gIndexCache.freeSlots.front();
+        liveCount = static_cast<uint16_t>(gIndexCache.live.size());
+        planned = true;
+      }
+    }
+  }
+
+  if (!planned) {
+    updateSlot = -1;
+    preservedSeq = 0;
+    freeSlot = -1;
+    liveCount = 0;
+    f.seek(offsetOf(0));
+    for (uint16_t i = 0; i < recordCount; i++) {
+      if (f.read((uint8_t*)&existing, sizeof(existing)) != sizeof(existing)) {
+        break;
+      }
+      if (existing.flags & 1) {
+        if (freeSlot < 0) freeSlot = i;
+      } else {
+        liveCount++;
+        if (existing.cacheHash == rec.cacheHash) {
+          updateSlot = i;
+          preservedSeq = existing.addedSequence;
+        }
       }
     }
   }
@@ -1338,7 +1486,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   if (updateSlot >= 0) {
     recToWrite.addedSequence = preservedSeq;
     f.seek(offsetOf(updateSlot));
-    f.write((uint8_t*)&recToWrite, sizeof(recToWrite));
+    if (f.write((uint8_t*)&recToWrite, sizeof(recToWrite)) != sizeof(recToWrite)) dropIndexCache();
     f.close();
     return true;
   }
@@ -1348,14 +1496,31 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   if (freeSlot >= 0) {
     f.seek(offsetOf(freeSlot));
-    f.write((uint8_t*)&recToWrite, sizeof(recToWrite));
+    const bool wrote = f.write((uint8_t*)&recToWrite, sizeof(recToWrite)) == sizeof(recToWrite);
+    if (planned && wrote) {
+      gIndexCache.freeSlots.erase(gIndexCache.freeSlots.begin());
+      const IndexSlot added{recToWrite.cacheHash, static_cast<uint16_t>(freeSlot)};
+      gIndexCache.live.insert(std::upper_bound(gIndexCache.live.begin(), gIndexCache.live.end(), added, slotLess),
+                              added);
+    } else {
+      dropIndexCache();
+    }
   } else {
     if (liveCount >= maxLibraryBooks()) {
       f.close();
       return false;
     }
     f.seek(f.size());
-    f.write((uint8_t*)&recToWrite, sizeof(recToWrite));
+    const bool wrote = f.write((uint8_t*)&recToWrite, sizeof(recToWrite)) == sizeof(recToWrite);
+    if (planned && wrote) {
+      const IndexSlot added{recToWrite.cacheHash, recordCount};
+      gIndexCache.live.insert(std::upper_bound(gIndexCache.live.begin(), gIndexCache.live.end(), added, slotLess),
+                              added);
+      gIndexCache.fileSize += sizeof(recToWrite);
+      gIndexCache.recordCount = static_cast<uint16_t>(recordCount + 1);
+    } else {
+      dropIndexCache();
+    }
     recordCount++;
     f.seek(5);
     f.write((uint8_t*)&recordCount, 2);
@@ -1363,6 +1528,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   f.seek(7);
   f.write((uint8_t*)&nextSequence, 4);
+  if (gIndexCache.valid) gIndexCache.nextSequence = nextSequence;
 
   f.close();
   return true;
@@ -1370,6 +1536,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
 bool Ao3Librarian::tombstoneRecord(const std::string& epubPath) {
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  dropIndexCache();  // changes which slots are live
   if (!Storage.exists(indexPath)) return false;
 
   HalFile f = Storage.open(indexPath, O_RDWR);
@@ -1499,6 +1666,7 @@ bool Ao3Librarian::findLivePathByWorkId(const std::string& workId, const std::st
 
 bool Ao3Librarian::setRecordFinished(const std::string& epubPath, bool finished) {
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  dropIndexCache();
   if (!Storage.exists(indexPath)) return false;
 
   HalFile f = Storage.open(indexPath, O_RDWR);
@@ -1560,6 +1728,7 @@ void Ao3Librarian::saveBookStatus(const std::string& cachePath, const BookStatus
 
 int Ao3Librarian::sanitizeIndex() {
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  dropIndexCache();
   if (!Storage.exists(indexPath)) return 0;
 
   HalFile f = Storage.open(indexPath, O_RDWR);

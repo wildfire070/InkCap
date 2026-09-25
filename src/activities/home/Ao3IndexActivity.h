@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,8 @@ class Ao3IndexActivity final : public Activity {
   bool initialized = false;
   bool autoFinishIfEmpty_ = false;
   bool headless_{false};
+  // Alive while a directory run is indexing (see Ao3Librarian::IndexWriteBatch).
+  std::unique_ptr<Ao3Librarian::IndexWriteBatch> writeBatch_;
 
   void runHeapCheck();
   void startSingleSniffing();
@@ -95,6 +98,7 @@ class Ao3IndexActivity final : public Activity {
         headless_(headless) {}
 
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&& lock) override;
   bool preventAutoSleep() override { return true; }
