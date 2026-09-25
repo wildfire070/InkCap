@@ -971,24 +971,15 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       return;
     }
 
-    // Check if file already exists. `overwrite=true` (sent by the Send to AvesO3
-    // browser extension so a re-sent, updated fic replaces the old copy) removes it first.
+    // Check if file already exists. Never replace it here: an upload only reaches this
+    // point with a filename, which can't tell "an update of the same story" from "a
+    // different story with the same title". (The Send to AvesO3 extension's
+    // overwrite=true is deliberately ignored until receive mode can match by work ID
+    // and ask before replacing anything.)
     if (Storage.exists(filePath.c_str())) {
-      const bool overwrite = server->hasArg("overwrite") && server->arg("overwrite") == "true";
-      if (!overwrite) {
-        state.error = "File already exists: " + state.fileName;
-        LOG_DBG("WEB", "[UPLOAD] Collision: %s", filePath.c_str());
-        return;
-      }
-      // Cache is cleared again once the new file lands; dropping it here keeps the old
-      // book's sections from being read against the new file if the upload aborts.
-      clearBookCachePreservingUserState(filePath.c_str());
-      if (!Storage.remove(filePath.c_str())) {
-        state.error = "Failed to replace existing file: " + state.fileName;
-        LOG_ERR("WEB", "[UPLOAD] Overwrite: could not remove %s", filePath.c_str());
-        return;
-      }
-      LOG_DBG("WEB", "[UPLOAD] Overwrite: removed %s", filePath.c_str());
+      state.error = "File already exists: " + state.fileName;
+      LOG_DBG("WEB", "[UPLOAD] Collision: %s", filePath.c_str());
+      return;
     }
 
     // Open file for writing - this can be slow due to FAT cluster allocation
