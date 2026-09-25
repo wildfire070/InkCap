@@ -15,31 +15,7 @@
 
 namespace {
 
-bool isLibraryFull() {
-  const char* indexPath = "/.crosspoint/ao3_library_index.bin";
-  if (!Storage.exists(indexPath)) return false;
-  HalFile f;
-  if (Storage.openFileForRead("AO3L", indexPath, f)) {
-    char magic[4];
-    uint8_t version;
-    uint16_t recordCount;
-    if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-        memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
-      // Skip remaining header bytes to reach records
-      f.seek(12);
-      uint16_t liveCount = 0;
-      CompactIndexRecord rec;
-      for (uint16_t i = 0; i < recordCount; i++) {
-        if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-        if (!(rec.flags & 0x01)) liveCount++;
-      }
-      f.close();
-      return liveCount >= maxLibraryBooks();
-    }
-    f.close();
-  }
-  return false;
-}
+bool isLibraryFull() { return Ao3Librarian::liveRecordCount() >= maxLibraryBooks(); }
 }  // namespace
 
 void Ao3IndexActivity::onEnter() {
@@ -418,10 +394,17 @@ void Ao3IndexActivity::tickDirDiscovery() {
   requestUpdate(true);
 }
 
+void Ao3IndexActivity::onExit() {
+  writeBatch_.reset();
+  Activity::onExit();
+}
+
 void Ao3IndexActivity::startDirIndexing() {
   // Guards state/currentBookIndex/batchStartIndex/batchCount writes below,
   // which render() reads on the separate render task.
   RenderLock lock(*this);
+  // Keep an in-RAM map of the index for the whole run, so each book's write doesn't re-read it.
+  if (!writeBatch_) writeBatch_ = std::make_unique<Ao3Librarian::IndexWriteBatch>();
   // Rebuild indexed hashes so books successfully indexed in previous batches are excluded.
   buildIndexedHashes();
   // Merge in any books that failed this session so subsequent batch walks
