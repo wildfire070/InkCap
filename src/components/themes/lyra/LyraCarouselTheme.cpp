@@ -422,7 +422,11 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     constexpr int kFallbackIconGap = 10;
     const int iconX = outRect.x + outRect.width / 2 - 16;
     const int iconY = outRect.y + outRect.height / 3 + 14;
-    renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
+    if (isAo3FicPath(book.path)) {
+      drawLucideIcon(renderer, icon_ao3_32, iconX, iconY);
+    } else {
+      renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
+    }
 
     const int fallbackTitleX = outRect.x + kFallbackTitlePadX;
     const int fallbackTitleY = iconY + 32 + kFallbackIconGap;
