@@ -9,7 +9,6 @@
 #include "../Ao3Librarian.h"
 #include "../Ao3MarkedForLaterStore.h"
 #include "../Ao3NewChaptersStore.h"
-#include "../Ao3WipsStore.h"
 #include "BookMoveUtils.h"
 
 namespace Ao3ArchiveUtils {
@@ -96,7 +95,6 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
 
   AO3_MARKED_FOR_LATER_STORE.removeByPath(srcPath);
   AO3_NEW_CHAPTERS_STORE.removeByPath(srcPath);
-  AO3_WIPS_STORE.removeByPath(srcPath);
 
   return dstPath;
 }
