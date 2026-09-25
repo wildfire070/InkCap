@@ -29,6 +29,12 @@ bool load(const std::string& cachePath, Ids& out);
 // file even when both IDs are empty, so backfill logic can tell "checked, none" from "never checked".
 void record(const std::string& epubPath, const std::string& ao3WorkId, uint32_t bookFusionId);
 
+// Copies IDs already sitting in older per-book sidecars into book-ids.json: the AO3 work ID from
+// ao3-info.bin (the only place a native AO3 download's ID exists) and the BookFusion ID from
+// bookfusion.json. Lets books indexed or downloaded before book-ids.json existed be picked up
+// without re-indexing or re-downloading. No-op if the cache dir doesn't exist.
+void importLegacySidecars(const std::string& epubPath);
+
 // Finds another book that has one of wanted's IDs. Only books with a sidecar are considered, and a
 // match must still exist at the path its sidecar names (whose cache dir must be its own).
 bool findOtherCopy(const std::string& epubPath, const Ids& wanted, std::string& outPath);
