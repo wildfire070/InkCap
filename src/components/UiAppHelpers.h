@@ -1,5 +1,7 @@
 #pragma once
+#include <Epub.h>
 #include <FreeInkApp.h>
+#include <HalStorage.h>
 #include <FreeInkUIGfxRenderer.h>
 #include <FreeInkUIIcon.h>
 
@@ -214,6 +216,19 @@ inline void drawLucideIcon(const GfxRenderer& renderer, const freeink::Icon& ico
                                   static_cast<int16_t>(icon.h)},
                 freeink::ui::bitmapFromIcon(icon), freeink::ui::BitmapMode::Center,
                 freeink::ui::Paint::solid(foregroundBlack ? freeink::ui::Color::Black : freeink::ui::Color::White));
+}
+
+// True for AO3 fics: an indexed ao3_library_info sidecar or ao3-info.bin in the
+// book's cache dir.
+inline bool isAo3FicPath(const std::string& bookPath) {
+  const std::string cachePath = Epub::cachePathForFilePath(bookPath, "/.crosspoint");
+  return Storage.exists((cachePath + "/ao3_library_info").c_str()) ||
+         Storage.exists((cachePath + "/ao3-info.bin").c_str());
+}
+
+// Blank-cover placeholder mark: AO3 fics get the AO3 logo, other books the open book.
+inline const freeink::Icon& blankCoverIconFor(const std::string& bookPath) {
+  return isAo3FicPath(bookPath) ? icon_ao3_32 : icon_book_open_32;
 }
 
 // Scroll semantics shared by every FreeInkUI list screen: swipes move the
