@@ -20,7 +20,6 @@
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
-#include "components/icons/cover.h"
 #include "components/icons/icon_bookfusion.h"
 #include "components/icons/readingStatsIcons.h"
 #include "fontIds.h"
@@ -444,11 +443,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     constexpr int kFallbackIconGap = 10;
     const int iconX = outRect.x + outRect.width / 2 - 16;
     const int iconY = outRect.y + outRect.height / 3 + 14;
-    if (isAo3FicPath(book.path)) {
-      drawLucideIcon(renderer, icon_ao3_32, iconX, iconY);
-    } else {
-      renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
-    }
+    // The placeholder body is filled black, so the mark has to be drawn white to show at all.
+    drawLucideIcon(renderer, blankCoverIconFor(book.path), iconX, iconY, /*foregroundBlack=*/false);
 
     const int fallbackTitleX = outRect.x + kFallbackTitlePadX;
     const int fallbackTitleY = iconY + 32 + kFallbackIconGap;
