@@ -79,6 +79,19 @@ class Ao3Librarian {
   static bool setRecordFinished(const std::string& epubPath, bool finished);
 
   /**
+   * @brief Finds another live library fic with the given AO3 work ID.
+   *
+   * Filenames can't identify a story (AO3 names its own downloads by title
+   * only, Calibre/FanFicFare use whatever template the user set), so this
+   * walks the live index records and compares the work ID cached in each
+   * book's ao3-info.bin. Only books the AO3 library has indexed (or opened)
+   * can match. The record for excludePath is skipped, and a match must still
+   * exist on disk at the path recorded in its sidecar.
+   * @return true and fills outPath when a match is found.
+   */
+  static bool findLivePathByWorkId(const std::string& workId, const std::string& excludePath, std::string& outPath);
+
+  /**
    * @brief Reads/writes the reading-status sidecar (Unread/Reading/Finished/...).
    * Independent of progress.bin, whose layout is unrelated to this feature.
    * @param cachePath The book's `/.crosspoint/epub_<hash>` cache directory.

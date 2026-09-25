@@ -14,6 +14,7 @@
 #include "components/CompactHeader.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/Ao3ReceiveUtils.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -73,7 +74,7 @@ void Ao3ReceiveActivity::onExit() {
 
   // Received fics are new (or replaced) AO3 books — flag a rescan so the AO3
   // library re-indexes them next time it opens.
-  Ao3LibraryActivity::pendingTransferScan = true;
+  Ao3LibraryActivity::requestTransferScan();
 
   MDNS.end();
 
@@ -109,6 +110,7 @@ void Ao3ReceiveActivity::startWebServer() {
 
   webServer.reset(new CrossPointWebServer());
   webServer->begin();
+  webServer->enableAo3Receive(Ao3ReceiveUtils::receiveFolder());
 
   if (webServer->isRunning()) {
     state = Ao3ReceiveState::SERVER_RUNNING;
@@ -229,7 +231,13 @@ void Ao3ReceiveActivity::render(RenderLock&&) {
     const int ipTop = subHeaderTop + metrics.tabBarHeight + metrics.verticalSpacing;
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, ipTop, ipLabel.c_str());
 
-    int y = ipTop + height + metrics.verticalSpacing * 3;
+    // Where sent fics land; they're checked against the library once you leave this screen.
+    const std::string folderLabel = renderer.truncatedText(
+        SMALL_FONT_ID, (std::string(tr(STR_AO3_RECEIVE_SAVING_TO)) + Ao3ReceiveUtils::receiveFolder()).c_str(),
+        pageWidth - metrics.contentSidePadding * 2, EpdFontFamily::REGULAR);
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, ipTop + height, folderLabel.c_str());
+
+    int y = ipTop + height * 2 + metrics.verticalSpacing * 3;
     const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true, EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
@@ -238,8 +246,9 @@ void Ao3ReceiveActivity::render(RenderLock&&) {
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_AO3_RECEIVE_INSTRUCTION_2));
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_AO3_RECEIVE_INSTRUCTION_3));
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_AO3_RECEIVE_INSTRUCTION_4));
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 4, tr(STR_AO3_RECEIVE_INSTRUCTION_5));
 
-    y += height * 3 + metrics.verticalSpacing * 4;
+    y += height * 4 + metrics.verticalSpacing * 4;
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_STATUS), true, EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
 

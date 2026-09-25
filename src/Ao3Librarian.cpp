@@ -5,6 +5,7 @@
 #include <Epub.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 #include <HalStorage.h>
+#include <Serialization.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -1432,6 +1433,64 @@ bool Ao3Librarian::hasLiveIndexRecord(const std::string& epubPath) {
       f.close();
       return true;
     }
+  }
+
+  f.close();
+  return false;
+}
+
+bool Ao3Librarian::findLivePathByWorkId(const std::string& workId, const std::string& excludePath,
+                                        std::string& outPath) {
+  outPath.clear();
+  if (workId.empty()) return false;
+
+  const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  if (!Storage.exists(indexPath)) return false;
+
+  HalFile f;
+  if (!Storage.openFileForRead("AO3L", indexPath, f)) return false;
+
+  char magic[4];
+  uint8_t version;
+  uint16_t recordCount;
+  if (f.read(magic, 4) != 4 || f.read(&version, 1) != 1 || f.read((uint8_t*)&recordCount, 2) != 2 ||
+      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_LIBRARY_BOOKS) {
+    f.close();
+    return false;
+  }
+
+  const uint64_t excludeHash = ZipFile::fnvHash64(excludePath.c_str(), excludePath.size());
+
+  CompactIndexRecord rec;
+  for (uint16_t i = 0; i < recordCount; i++) {
+    f.seek(offsetOf(i));
+    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+    if ((rec.flags & 1) || rec.cacheHash == excludeHash) continue;
+
+    const std::string cacheDir = "/.crosspoint/epub_" + std::to_string(rec.cacheHash);
+
+    std::string recordWorkId;
+    {
+      HalFile info;
+      if (!Storage.openFileForRead("AO3L", cacheDir + "/ao3-info.bin", info)) continue;
+      bool completed = false;
+      serialization::readPod(info, completed);
+      if (!serialization::tryReadString(info, recordWorkId)) recordWorkId.clear();
+      info.close();
+    }
+    if (recordWorkId != workId) continue;
+
+    auto meta = std::unique_ptr<Ao3LibraryMetadata>(new Ao3LibraryMetadata());
+    HalFile sidecar;
+    if (!Storage.openFileForRead("AO3L", cacheDir + "/ao3_library_info", sidecar)) continue;
+    const bool ok = sidecar.read((uint8_t*)meta.get(), sizeof(Ao3LibraryMetadata)) == sizeof(Ao3LibraryMetadata);
+    sidecar.close();
+    if (!ok || !meta->isValid() || meta->filepath[0] == '\0') continue;
+    if (!Storage.exists(meta->filepath)) continue;
+
+    outPath = meta->filepath;
+    f.close();
+    return true;
   }
 
   f.close();

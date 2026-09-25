@@ -327,7 +327,7 @@ bool clearBookCachePreservingUserState(const std::string& path) {
   const bool ok = clearBookCachePreservingUserStateImpl(path);
   if (ok && hadAo3Info) {
     Ao3Librarian::tombstoneRecord(path);
-    Ao3LibraryActivity::pendingTransferScan = true;
+    Ao3LibraryActivity::requestTransferScan();
   }
   return ok;
 }

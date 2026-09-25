@@ -65,6 +65,11 @@ class CrossPointWebServer {
 
   WsUploadStatus getWsUploadStatus() const;
 
+  // AO3 Receive mode: uploads with no destination folder land in `folder` (created if
+  // missing), a name that is already taken gets a numeric suffix instead of failing, and
+  // every completed .epub upload is added to the pending-review list. Cleared by stop().
+  void enableAo3Receive(const std::string& folder);
+
   // Get the port number
   uint16_t getPort() const { return port; }
 
