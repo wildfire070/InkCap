@@ -16,6 +16,7 @@ struct Ids {
   std::string ao3WorkId;      // digits only; empty if unknown
   uint32_t bookFusionId = 0;  // 0 if unknown
   std::string path;           // where the book was when this was written; verify before trusting
+  bool ao3Checked = false;    // an AO3-aware load looked for an AO3 work ID (incl. the preface page) and found none
 
   bool empty() const { return ao3WorkId.empty() && bookFusionId == 0; }
 };
@@ -28,6 +29,10 @@ bool load(const std::string& cachePath, Ids& out);
 // must not litter the SD card with one per book); does nothing if it doesn't exist. Writes the
 // file even when both IDs are empty, so backfill logic can tell "checked, none" from "never checked".
 void record(const std::string& epubPath, const std::string& ao3WorkId, uint32_t bookFusionId);
+
+// Notes that the AO3-aware check ran on this book without finding a work ID, so callers that sweep
+// every book (Cache All Books) know not to look again. No-op if the cache dir doesn't exist.
+void markAo3Checked(const std::string& epubPath);
 
 // Copies IDs already sitting in older per-book sidecars into book-ids.json: the AO3 work ID from
 // ao3-info.bin (the only place a native AO3 download's ID exists) and the BookFusion ID from

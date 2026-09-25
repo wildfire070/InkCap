@@ -31,8 +31,24 @@ bool load(const std::string& cachePath, Ids& out) {
   out.ao3WorkId = doc["ao3"] | "";
   out.bookFusionId = doc["bf"] | 0u;
   out.path = doc["path"] | "";
+  out.ao3Checked = doc["ao3chk"] | false;
   return true;
 }
+
+namespace {
+void write(const std::string& cachePath, const Ids& ids) {
+  JsonDocument doc;
+  doc["ao3"] = ids.ao3WorkId;
+  doc["bf"] = ids.bookFusionId;
+  doc["path"] = ids.path;
+  if (ids.ao3Checked) doc["ao3chk"] = true;
+  String json;
+  serializeJson(doc, json);
+  if (!Storage.writeFile(idsFilePath(cachePath).c_str(), json)) {
+    LOG_ERR("BIDS", "Could not write %s", idsFilePath(cachePath).c_str());
+  }
+}
+}  // namespace
 
 void record(const std::string& epubPath, const std::string& ao3WorkId, const uint32_t bookFusionId) {
   const std::string cachePath = Epub::cachePathForFilePath(epubPath, CACHE_ROOT);
@@ -49,16 +65,18 @@ void record(const std::string& epubPath, const std::string& ao3WorkId, const uin
       ids.path == before.path) {
     return;
   }
+  write(cachePath, ids);
+}
 
-  JsonDocument doc;
-  doc["ao3"] = ids.ao3WorkId;
-  doc["bf"] = ids.bookFusionId;
-  doc["path"] = ids.path;
-  String json;
-  serializeJson(doc, json);
-  if (!Storage.writeFile(idsFilePath(cachePath).c_str(), json)) {
-    LOG_ERR("BIDS", "Could not write %s", idsFilePath(cachePath).c_str());
-  }
+void markAo3Checked(const std::string& epubPath) {
+  const std::string cachePath = Epub::cachePathForFilePath(epubPath, CACHE_ROOT);
+  if (!Storage.exists(cachePath.c_str())) return;
+  Ids ids;
+  load(cachePath, ids);
+  if (ids.ao3Checked) return;
+  ids.ao3Checked = true;
+  ids.path = epubPath;
+  write(cachePath, ids);
 }
 
 void importLegacySidecars(const std::string& epubPath) {
