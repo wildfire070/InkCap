@@ -249,11 +249,16 @@ void CacheAllBooksActivity::buildCachesRecursive(const std::string& dirPath, con
       }
     } else if (FsHelpers::hasEpubExtension(childPath)) {
       const std::string childCachePath = Epub::cachePathForFilePath(childPath, "/.crosspoint");
-      if (BookMetadataCache::exists(childCachePath) && !BookIds::exists(childCachePath) &&
-          ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
-        // Already cached before book-ids.json existed: record its AO3/BookFusion IDs now.
-        Epub epub(childPath, "/.crosspoint");
-        epub.backfillBookIds();
+      if (BookMetadataCache::exists(childCachePath) && ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
+        BookIds::Ids ids;
+        const bool haveIds = BookIds::load(childCachePath, ids);
+        if (!haveIds || (ids.ao3WorkId.empty() && !ids.ao3Checked)) {
+          // Cached before IDs were recorded, or never checked for an AO3 work ID. A normal load
+          // records the IDs and, for an AO3 download, reads its work ID from the preface page and
+          // indexes it -- once: books with no AO3 ID are marked so later runs skip them.
+          Epub epub(childPath, "/.crosspoint");
+          epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip);
+        }
       }
       if (!BookMetadataCache::exists(childCachePath)) {
         if (ESP.getFreeHeap() >= kMinFreeHeapForBuild) {
