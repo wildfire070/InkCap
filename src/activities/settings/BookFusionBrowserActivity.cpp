@@ -25,6 +25,7 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
+#include "util/DownloadReview.h"
 #include "util/StringUtils.h"
 
 namespace fui = freeink::ui;
@@ -183,6 +184,9 @@ void BookFusionBrowserActivity::onExit() {
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
+    // Like every other Wi-Fi exit: restart to clear heap fragmentation. Downloads from this session
+    // are then checked for duplicates from the Home screen (DownloadReviewActivity).
+    if (DownloadReview::hasPending()) silentRestart();
   }
 }
 
@@ -1293,7 +1297,26 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     return;
   }
 
-  const std::string filename = resolveBookFilePath(book);
+  // Never write over (or resume into) an existing file: if the plain name is taken, download under a
+  // free " (2)" name and let DownloadReviewActivity decide, after the restart, whether it replaces the
+  // existing copy (by BookFusion/AO3 ID) or sits beside it.
+  std::string filename = resolveBookFilePath(book);
+  std::string collisionOrigin;
+  if (Storage.exists(filename.c_str())) {
+    const size_t slash = filename.find_last_of('/');
+    const std::string folder = slash == std::string::npos ? std::string() : filename.substr(0, slash);
+    const std::string unique =
+        DownloadReview::uniqueFilePath(folder, slash == std::string::npos ? filename : filename.substr(slash + 1));
+    if (unique.empty()) {
+      RenderLock lock(*this);
+      state = BrowserState::ERROR;
+      errorMessage = tr(STR_DOWNLOAD_FAILED);
+      requestUpdate();
+      return;
+    }
+    collisionOrigin = filename;
+    filename = unique;
+  }
   LOG_DBG("BFBrowser", "Downloading book %lu -> %s", (unsigned long)book.bookId, filename.c_str());
 
   // Clear any stale cache from a previous file at this exact path before
@@ -1411,6 +1434,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   RenderLock lock(*this);
   if (result == HttpDownloader::OK) {
     BookFusionBookIdStore::saveBookId(filename, book.bookId);
+    DownloadReview::appendPending(filename, collisionOrigin);
 
     // Build the metadata cache and add to Recent Books right away, matching
     // InsiderPhD's fork -- otherwise Book Info and Recent Books both stay

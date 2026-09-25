@@ -39,6 +39,7 @@
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "SavedItemsHomeActivity.h"
+#include "activities/util/DownloadReviewActivity.h"
 #include "companion/CompanionRenderer.h"
 #include "companion/CompanionState.h"
 #include "companion/CompanionTracker.h"
@@ -47,6 +48,7 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "util/DownloadReview.h"
 
 namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
@@ -1003,6 +1005,7 @@ void HomeActivity::onEnter() {
   minimalMenuOpen = false;
   minimalSuppressInitialFrontRelease = usesMinimalHomeInteraction();
   backPressSeen = false;
+  downloadReviewChecked_ = false;
   minimalMenuIndex = 0;
   minimalHomeNavIndex = -1;
   carouselFramesReady = false;
@@ -1984,6 +1987,16 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
 }
 
 void HomeActivity::loop() {
+  // Books downloaded from BookFusion last session: check them for existing copies before anything else.
+  if (!downloadReviewChecked_) {
+    downloadReviewChecked_ = true;
+    if (DownloadReview::hasPending()) {
+      startActivityForResult(std::make_unique<DownloadReviewActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) { requestUpdate(); });
+      return;
+    }
+  }
+
   if (quickActionsLongPowerHandled) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Power)) {
       quickActionsLongPowerHandled = false;

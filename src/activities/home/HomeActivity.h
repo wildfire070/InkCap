@@ -62,6 +62,8 @@ class HomeActivity final : public Activity {
   // Home can be entered while Back is still held (e.g. leaving Settings with
   // Back): ignore that stale release until a fresh press is seen here.
   bool backPressSeen = false;
+  // BookFusion downloads awaiting a duplicate check are reviewed once per Home entry.
+  bool downloadReviewChecked_ = false;
   OptionPopup quickActionsPopup;
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer

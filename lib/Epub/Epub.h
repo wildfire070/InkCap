@@ -233,6 +233,8 @@ class Epub {
   std::string getAo3UpdateDate() const;
   bool isAo3Completed() const;
   void saveAo3Info(const std::string& workId, const std::string& date, bool completed) const;
+  // Records the AO3 work ID / BookFusion ID (book-ids.json) for a cached book that predates that file.
+  void backfillBookIds();
   std::string sniffPublisher() const;
   // Story summary, from dc:description in the OPF. FanFicFare (AO3 exports) wraps
   // it as HTML escaped a second level deep -- e.g. "&lt;div class=&quot;userstuff&quot;
