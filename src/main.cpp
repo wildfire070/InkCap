@@ -661,6 +661,12 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       }
       activityManager.goToHotspotFileTransfer();
       return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      if (activityManager.canSnapshotForSleepOverlay()) {
+        return false;
+      }
+      activityManager.goToAo3Receive();
+      return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT: {
       if (!Frontlight.present()) return false;
       const bool lightOn = !Frontlight.isOn();

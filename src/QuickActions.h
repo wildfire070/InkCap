@@ -57,7 +57,7 @@ inline constexpr std::array<StrId, CrossPointSettings::QUICK_ACTION_SLOT_ACTION_
 
 // Shared display order for shortcut pickers. The values remain the persisted
 // SHORT_PWRBTN IDs; only their presentation order is centralized here.
-inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 30> shortcutActionOrder = {
+inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 31> shortcutActionOrder = {
     CrossPointSettings::IGNORE,
     CrossPointSettings::SLEEP,
     CrossPointSettings::PAGE_TURN,
@@ -77,6 +77,7 @@ inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 30> shortcutAction
     CrossPointSettings::CALIBRE_WIRELESS,
     CrossPointSettings::JOIN_NETWORK,
     CrossPointSettings::CREATE_HOTSPOT,
+    CrossPointSettings::AO3_RECEIVE,
     CrossPointSettings::SCREENSHOT,
     CrossPointSettings::TOGGLE_DARK_MODE,
     CrossPointSettings::FOOTNOTES,
@@ -97,6 +98,7 @@ inline bool isActionAvailable(const uint8_t action) {
   if (action == CrossPointSettings::QUICK_ACTIONS || action == CrossPointSettings::QUICK_LOCK) return true;
   if (action == CrossPointSettings::TOGGLE_FRONTLIGHT) return Frontlight.present();
   if (action == CrossPointSettings::TOGGLE_TOUCHSCREEN) return gpio.hasTouch();
+  if (action == CrossPointSettings::AO3_RECEIVE) return true;
   if (action < CrossPointSettings::QUICK_ACTION_SLOT_ACTION_COUNT) {
     return action != CrossPointSettings::TOGGLE_TILT_PAGE_TURN || supportsTiltPageTurn();
   }
@@ -104,10 +106,11 @@ inline bool isActionAvailable(const uint8_t action) {
 }
 
 // Quick Lock needs a single physical shortcut to unlock. Quick Actions opens
-// this same menu, so neither belongs in a menu slot.
+// this same menu, so neither belongs in a menu slot. AO3 Receive restarts into
+// a network boot and is only offered as a direct shortcut.
 inline bool isQuickActionSlotActionAvailable(const uint8_t action) {
   return action != CrossPointSettings::QUICK_LOCK && action != CrossPointSettings::QUICK_ACTIONS &&
-         isActionAvailable(action);
+         action != CrossPointSettings::AO3_RECEIVE && isActionAvailable(action);
 }
 
 inline StrId actionLabel(const uint8_t action) {
@@ -120,6 +123,7 @@ inline StrId actionLabel(const uint8_t action) {
   if (action == CrossPointSettings::QUICK_LOCK) return StrId::STR_QUICK_LOCK;
   if (action == CrossPointSettings::PREVIOUS_PAGE) return StrId::STR_PREV_PAGE;
   if (action == CrossPointSettings::NEARBY_POSITION_SYNC) return StrId::STR_NEARBY_POSITION_SYNC;
+  if (action == CrossPointSettings::AO3_RECEIVE) return StrId::STR_AO3_RECEIVE;
   return StrId::STR_HOME_BUTTON_LOCK;
 }
 

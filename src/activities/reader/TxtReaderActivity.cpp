@@ -497,6 +497,7 @@ bool TxtReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
     case CrossPointSettings::SHORT_PWRBTN::CALIBRE_WIRELESS:
     case CrossPointSettings::SHORT_PWRBTN::JOIN_NETWORK:
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_DARK_MODE:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FONT:
     case CrossPointSettings::SHORT_PWRBTN::FILE_BROWSER:
@@ -530,6 +531,9 @@ bool TxtReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
       activityManager.goToHotspotFileTransfer(txt ? txt->getPath() : "");
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
+      activityManager.goToAo3Receive(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_DARK_MODE:
       toggleDarkMode();
@@ -604,6 +608,9 @@ bool TxtReaderActivity::executeLongPressBackAction() {
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_HOTSPOT:
       activityManager.goToHotspotFileTransfer(txt ? txt->getPath() : "");
+      return true;
+    case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_AO3_RECEIVE:
+      activityManager.goToAo3Receive(txt ? txt->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_TOGGLE_DARK_MODE:
       toggleDarkMode();
