@@ -1178,6 +1178,9 @@ void Epub::backfillBookIds() {
   if (BookIds::exists(cachePath) || !Storage.exists(cachePath.c_str())) return;
   BookMetadataCache::BookMetadata scratch;
   parseContentOpf(scratch, /*writeSpineEntries=*/false, /*collectCssFiles=*/false, /*metadataOnly=*/true);
+  // A native AO3 download's ID (ao3-info.bin) and a downloaded BookFusion book's ID (bookfusion.json)
+  // aren't in the OPF; pick up what earlier indexing/downloading already stored.
+  BookIds::importLegacySidecars(filepath);
 }
 
 bool Epub::clearCache() const {
