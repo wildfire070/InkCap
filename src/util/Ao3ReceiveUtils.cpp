@@ -9,6 +9,8 @@
 
 #include "../Ao3Librarian.h"
 #include "BookCacheUtils.h"
+#include "BookMoveUtils.h"
+#include "StringUtils.h"
 
 namespace {
 constexpr char PENDING_FILE[] = "/.crosspoint/ao3_received.txt";
@@ -102,6 +104,46 @@ void removePending(const std::string& path) {
 }
 
 bool hasPending() { return Storage.exists(PENDING_FILE) && !readPending().empty(); }
+
+std::string titleAuthorFileName(const std::string& title, const std::string& author) {
+  if (title.empty()) return "";
+
+  // AO3's own EPUBs list every author in one dc:creator ("a, b"); FanFicFare uses "a & b".
+  size_t end = author.find(", ");
+  const size_t amp = author.find(" & ");
+  if (amp != std::string::npos && (end == std::string::npos || amp < end)) end = amp;
+  const std::string firstAuthor = author.substr(0, end);
+
+  const std::string name = firstAuthor.empty() ? title : title + " - " + firstAuthor;
+  return StringUtils::sanitizeFilename(name + ".epub");
+}
+
+std::string renameToTitleAuthor(const std::string& path, const std::string& title, const std::string& author) {
+  const std::string fileName = titleAuthorFileName(title, author);
+  if (fileName.empty()) return "";
+
+  const size_t slash = path.find_last_of('/');
+  const std::string folder = slash == std::string::npos ? "/" : path.substr(0, slash);
+  const std::string currentName = slash == std::string::npos ? path : path.substr(slash + 1);
+  if (currentName == fileName) return "";
+
+  const std::string newPath = uniqueFilePath(folder, fileName);
+  if (newPath.empty() || newPath == path) return "";
+
+  const std::string oldCache = Epub::cachePathForFilePath(path, "/.crosspoint");
+  if (!Storage.rename(path.c_str(), newPath.c_str())) {
+    LOG_ERR("AO3R", "Could not rename %s to %s", path.c_str(), newPath.c_str());
+    return "";
+  }
+  if (!BookMoveUtils::migrateMovedEpubState(path, newPath, oldCache, title, author, /*keepInRecents=*/true)) {
+    // Progress and the AO3 sidecar live in the cache dir; don't leave the book split from them.
+    LOG_ERR("AO3R", "State migration failed for %s -> %s, rolling back", path.c_str(), newPath.c_str());
+    Storage.rename(newPath.c_str(), path.c_str());
+    return "";
+  }
+  Ao3Librarian::tombstoneRecord(path);
+  return newPath;
+}
 
 bool replaceExisting(const std::string& oldPath, const std::string& newPath) {
   if (oldPath == newPath || !Storage.exists(oldPath.c_str()) || !Storage.exists(newPath.c_str())) return false;
