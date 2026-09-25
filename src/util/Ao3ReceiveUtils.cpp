@@ -148,10 +148,6 @@ std::string renameToTitleAuthor(const std::string& path, const std::string& titl
 bool replaceExisting(const std::string& oldPath, const std::string& newPath) {
   if (oldPath == newPath || !Storage.exists(oldPath.c_str()) || !Storage.exists(newPath.c_str())) return false;
 
-  // Clearing the old book's cache also drops its reading status file, so carry it over.
-  const std::string oldCache = Epub::cachePathForFilePath(oldPath, "/.crosspoint");
-  const BookStatus status = Ao3Librarian::getBookStatus(oldCache);
-
   const std::string setAside = oldPath + ".replaced";
   Storage.remove(setAside.c_str());
   if (!Storage.rename(oldPath.c_str(), setAside.c_str())) {
@@ -169,11 +165,11 @@ bool replaceExisting(const std::string& oldPath, const std::string& newPath) {
   Ao3Librarian::tombstoneRecord(newPath);
   Epub(newPath, "/.crosspoint").clearCache();
 
-  // Derived data for the old path (sections, sidecar, index record) is stale; user state stays.
+  // Derived data for the old path (sections, sidecar, index record) is stale; user state stays
+  // (progress, bookmarks, reading status and the ID files are all preserved by the cache clear).
   clearBookCachePreservingUserState(oldPath);
   Epub restored(oldPath, "/.crosspoint");
   restored.setupCacheDir();
-  Ao3Librarian::saveBookStatus(oldCache, status);
   return true;
 }
 
