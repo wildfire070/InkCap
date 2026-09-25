@@ -842,6 +842,10 @@ void ActivityManager::goToHotspotFileTransfer(const std::string& returnBookPath)
   restartToFileTransfer(NetworkMode::CREATE_HOTSPOT, returnBookPath);
 }
 
+void ActivityManager::goToAo3Receive(const std::string& returnBookPath) {
+  restartToFileTransfer(NetworkMode::AO3_RECEIVE, returnBookPath);
+}
+
 void ActivityManager::goToUsbDrive() {
 #if CROSSINK_APP_CAP_USB_DRIVE
   auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);
@@ -857,7 +861,9 @@ void ActivityManager::goToUsbDrive() {
 
 bool ActivityManager::resumeFileTransferFromNetworkBoot(const uint32_t payload) {
   const uint32_t rawMode = payload & FILE_TRANSFER_MODE_MASK;
-  if (rawMode > static_cast<uint32_t>(NetworkMode::CREATE_HOTSPOT)) {
+  // AO3_RECEIVE was appended after the nearby/USB modes (which never boot through here).
+  if (rawMode > static_cast<uint32_t>(NetworkMode::CREATE_HOTSPOT) &&
+      rawMode != static_cast<uint32_t>(NetworkMode::AO3_RECEIVE)) {
     LOG_ERR("ACT", "Invalid file transfer network boot mode: %lu", static_cast<unsigned long>(rawMode));
     return false;
   }
