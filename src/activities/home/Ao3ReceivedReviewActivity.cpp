@@ -59,6 +59,21 @@ bool Ao3ReceivedReviewActivity::indexFic(const std::string& path) {
   return Ao3Librarian::scrape(epub, /*force=*/true);
 }
 
+// Renames an indexed received fic to "<title> - <first author>.epub" and re-indexes it there.
+void Ao3ReceivedReviewActivity::nameFromMetadata(const std::string& path) {
+  std::string title;
+  std::string author;
+  {
+    Epub epub(path, "/.crosspoint");
+    auto meta = std::unique_ptr<Ao3LibraryMetadata>(new Ao3LibraryMetadata());
+    if (!Ao3Librarian::getLibraryInfo(epub, *meta)) return;
+    title = meta->title;
+    author = meta->author;
+  }
+  const std::string renamed = Ao3ReceiveUtils::renameToTitleAuthor(path, title, author);
+  if (!renamed.empty()) indexFic(renamed);
+}
+
 void Ao3ReceivedReviewActivity::processFront() {
   const std::string path = queue.front();
   if (!Storage.exists(path.c_str())) {
@@ -90,15 +105,21 @@ void Ao3ReceivedReviewActivity::processFront() {
 
   std::string workId;
   std::string title;
+  std::string author;
   {
     Epub epub(path, "/.crosspoint");
     workId = epub.getAo3WorkId();
     title = fileNameOf(path);
     auto meta = std::unique_ptr<Ao3LibraryMetadata>(new Ao3LibraryMetadata());
-    if (Ao3Librarian::getLibraryInfo(epub, *meta) && meta->title[0] != '\0') title = meta->title;
+    if (Ao3Librarian::getLibraryInfo(epub, *meta) && meta->title[0] != '\0') {
+      title = meta->title;
+      author = meta->author;
+    }
   }
   std::string oldPath;
   if (workId.empty() || !Ao3Librarian::findLivePathByWorkId(workId, path, oldPath)) {
+    // A story we don't have yet: it stays in the receive folder, named like the rest of the library.
+    nameFromMetadata(path);
     dropFront();
     return;
   }
@@ -123,6 +144,9 @@ void Ao3ReceivedReviewActivity::askAboutDuplicate(const std::string& newPath, co
           } else {
             LOG_ERR("AO3R", "Replace failed: %s -> %s", newPath.c_str(), oldPath.c_str());
           }
+        } else {
+          // Keep both: the new copy stays in the receive folder, named like the rest of the library.
+          nameFromMetadata(newPath);
         }
         dropFront();
         RenderLock lock(*this);
