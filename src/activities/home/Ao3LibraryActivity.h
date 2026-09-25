@@ -38,6 +38,10 @@ class Ao3LibraryActivity final : public Activity {
   void onExit() override;
   void render(RenderLock&&) override;
   static bool pendingTransferScan;
+  // Flags a rescan for the next time the library opens. Also persists a marker file:
+  // every Wi-Fi transfer ends in a silent restart, which would otherwise wipe the
+  // in-RAM flag before the library is ever opened.
+  static void requestTransferScan();
 
  private:
   enum class IndexState {
@@ -84,6 +88,7 @@ class Ao3LibraryActivity final : public Activity {
   size_t initialSelectorIndex_ = 0;
   bool skipNextBackRelease = false;
   bool autoIndexOnOpen_ = false;
+  bool receivedReviewLaunched_ = false;
   bool autoIndexLaunched_ = false;
 
   void loadViewEntries();

@@ -7,6 +7,7 @@
 #include <Utf8.h>
 
 #include "../../util/Ao3ArchiveUtils.h"
+#include "../../util/Ao3ReceiveUtils.h"
 #include "../ActivityResult.h"
 #include "FolderPickerActivity.h"
 #include "components/TouchHeaderBackButton.h"
@@ -16,6 +17,7 @@
 void Ao3LibrarySettingsActivity::loadSettings() {
   ao3Folder = "";
   archiveFolderName = "";
+  receiveFolder = "";
   excludedFolders.clear();
 
   const char* path = "/.crosspoint/ao3_settings.json";
@@ -29,6 +31,7 @@ void Ao3LibrarySettingsActivity::loadSettings() {
 
   ao3Folder = doc["ao3Folder"] | "";
   archiveFolderName = doc["archiveFolderName"] | "";
+  receiveFolder = doc["receiveFolder"] | "";
   batchSize = doc["batchSize"] | 10;
   autoIndexOnOpen = doc["autoIndexOnOpen"] | false;
   hideFinished = doc["hideFinished"] | false;
@@ -47,6 +50,7 @@ void Ao3LibrarySettingsActivity::saveSettings() {
   JsonDocument doc;
   doc["ao3Folder"] = ao3Folder;
   doc["archiveFolderName"] = archiveFolderName;
+  doc["receiveFolder"] = receiveFolder;
   doc["batchSize"] = batchSize;
   doc["autoIndexOnOpen"] = autoIndexOnOpen;
   doc["hideFinished"] = hideFinished;
@@ -85,6 +89,16 @@ std::string Ao3LibrarySettingsActivity::formatArchiveFolderPill() const {
   // the feature is unconfigured.
   if (archiveFolderName.empty()) return std::string(Ao3ArchiveUtils::DEFAULT_ARCHIVE_ROOT) + " (default)";
   std::string last = getFolderLastComponent(archiveFolderName);
+  if (last.length() > 24) {
+    return last.substr(0, utf8SafeTruncateBuffer(last.c_str(), 22)) + "..";
+  }
+  return last;
+}
+
+std::string Ao3LibrarySettingsActivity::formatReceiveFolderPill() const {
+  // Like the archive folder, there is always a working default, so say so.
+  if (receiveFolder.empty()) return getFolderLastComponent(Ao3ReceiveUtils::DEFAULT_RECEIVE_FOLDER) + " (default)";
+  std::string last = getFolderLastComponent(receiveFolder);
   if (last.length() > 24) {
     return last.substr(0, utf8SafeTruncateBuffer(last.c_str(), 22)) + "..";
   }
@@ -131,7 +145,7 @@ void Ao3LibrarySettingsActivity::loop() {
       finish();
       return;
     }
-    if (mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < 9) {
+    if (mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < 10) {
       mappedInput.suppressCurrentTouchContact();
       selectorIndex = menuTapped;
     }
@@ -213,6 +227,25 @@ void Ao3LibrarySettingsActivity::loop() {
       auto handler = [this](const ActivityResult& res) {
         if (!res.isCancelled) {
           if (const auto* pickerRes = std::get_if<FolderPickerResult>(&res.data)) {
+            if (!pickerRes->isMulti) {
+              receiveFolder = pickerRes->singlePath;
+              saveSettings();
+            }
+          }
+        }
+        requestUpdate(true);
+      };
+      // The default folder only exists once the first fic has been received.
+      std::string startPath = receiveFolder.empty() ? Ao3ReceiveUtils::DEFAULT_RECEIVE_FOLDER : receiveFolder;
+      if (!Storage.exists(startPath.c_str())) startPath = "/";
+      startActivityForResult(
+          std::make_unique<FolderPickerActivity>(renderer, mappedInput, "Select Received Fics Folder",
+                                                    PickerMode::SINGLE, std::vector<std::string>{}, startPath),
+          handler);
+    } else if (selectorIndex == 3) {
+      auto handler = [this](const ActivityResult& res) {
+        if (!res.isCancelled) {
+          if (const auto* pickerRes = std::get_if<FolderPickerResult>(&res.data)) {
             if (pickerRes->isMulti) {
               excludedFolders = pickerRes->multiPaths;
               saveSettings();
@@ -226,7 +259,7 @@ void Ao3LibrarySettingsActivity::loop() {
           std::make_unique<FolderPickerActivity>(renderer, mappedInput, "Select Folders to Exclude",
                                                     PickerMode::MULTI, excludedFolders, startPath),
           handler);
-    } else if (selectorIndex == 3) {
+    } else if (selectorIndex == 4) {
       const int sizes[] = {10, 25, 50};
       int current = 0;
       for (int i = 0; i < 3; i++) {
@@ -238,23 +271,23 @@ void Ao3LibrarySettingsActivity::loop() {
       batchSize = sizes[(current + 1) % 3];
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 4) {
+    } else if (selectorIndex == 5) {
       autoIndexOnOpen = !autoIndexOnOpen;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 5) {
+    } else if (selectorIndex == 6) {
       hideFinished = !hideFinished;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 6) {
+    } else if (selectorIndex == 7) {
       filterMode = (filterMode == FilterMode::AUTOMATIC) ? FilterMode::FOLDER_TREE : FilterMode::AUTOMATIC;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 7) {
+    } else if (selectorIndex == 8) {
       swapNavButtons = !swapNavButtons;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 8) {
+    } else if (selectorIndex == 9) {
       showingCleanupConfirm = true;
       requestUpdate(true);
       return;
@@ -263,22 +296,22 @@ void Ao3LibrarySettingsActivity::loop() {
   }
 
   buttonNavigator.onNextRelease([this] {
-    selectorIndex = (selectorIndex + 1) % 9;
+    selectorIndex = (selectorIndex + 1) % 10;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
-    selectorIndex = (selectorIndex + 8) % 9;
+    selectorIndex = (selectorIndex + 9) % 10;
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this] {
-    selectorIndex = (selectorIndex + 2) % 9;
+    selectorIndex = (selectorIndex + 2) % 10;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this] {
-    selectorIndex = (selectorIndex + 7) % 9;
+    selectorIndex = (selectorIndex + 8) % 10;
     requestUpdate();
   });
 }
@@ -340,6 +373,7 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
 
   std::vector<std::string> rows = {"Your AO3 Folder",
                                    "Archive Folder",
+                                   "Received Fics Folder",
                                    "Never Index",
                                    "Index Batch Size",
                                    "Auto-Index on Library Open",
@@ -353,19 +387,20 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
   auto rowValue = [this](int index) -> std::string {
     if (index == 0) return formatFolderPill();
     if (index == 1) return formatArchiveFolderPill();
-    if (index == 2) return formatExclusionsPill();
-    if (index == 3) return std::to_string(batchSize);
-    if (index == 4) return autoIndexOnOpen ? "ON" : "OFF";
-    if (index == 5) return hideFinished ? "ON" : "OFF";
-    if (index == 6) return (filterMode == FilterMode::FOLDER_TREE) ? "Folder Tree" : "Automatic";
-    if (index == 7) return swapNavButtons ? "Scroll List" : "Open Panels";
+    if (index == 2) return formatReceiveFolderPill();
+    if (index == 3) return formatExclusionsPill();
+    if (index == 4) return std::to_string(batchSize);
+    if (index == 5) return autoIndexOnOpen ? "ON" : "OFF";
+    if (index == 6) return hideFinished ? "ON" : "OFF";
+    if (index == 7) return (filterMode == FilterMode::FOLDER_TREE) ? "Folder Tree" : "Automatic";
+    if (index == 8) return swapNavButtons ? "Scroll List" : "Open Panels";
     return "";
   };
 
   int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 9, selectorIndex, rowTitle, nullptr, nullptr,
+  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 10, selectorIndex, rowTitle, nullptr, nullptr,
                rowValue, true);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Select", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
