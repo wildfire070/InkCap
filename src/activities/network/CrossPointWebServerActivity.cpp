@@ -16,6 +16,7 @@
 #include "WifiSelectionActivity.h"
 #include "activities/ActivityManager.h"
 #include "activities/home/Ao3LibraryActivity.h"
+#include "activities/network/Ao3ReceiveActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
@@ -154,6 +155,8 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     modeName = "Connect to Calibre";
   } else if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
+  } else if (mode == NetworkMode::AO3_RECEIVE) {
+    modeName = "AO3 Receive";
   } else if (mode == NetworkMode::NEARBY_STATS_SYNC) {
     modeName = "Sync Stats";
   } else if (mode == NetworkMode::NEARBY_BOOK_RECEIVE) {
@@ -189,6 +192,9 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
       case NetworkMode::CREATE_HOTSPOT:
         activityManager.goToHotspotFileTransfer(returnBookPath);
         break;
+      case NetworkMode::AO3_RECEIVE:
+        activityManager.goToAo3Receive(returnBookPath);
+        break;
       case NetworkMode::USB_DRIVE:
         activityManager.goToUsbDrive();
         break;
@@ -210,6 +216,36 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     }
 
     startActivityForResult(std::move(calibreActivity), [this](const ActivityResult& result) {
+      state = WebServerActivityState::MODE_SELECTION;
+
+      if (networkBootReady) {
+        exitToOrigin();
+        return;
+      }
+
+      startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
+                             [this](const ActivityResult& result) {
+                               if (result.isCancelled) {
+                                 exitToOrigin();
+                               } else {
+                                 onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
+                               }
+                             });
+    });
+    return;
+  }
+
+  if (mode == NetworkMode::AO3_RECEIVE) {
+    // The child activity must survive this callback; allocate only its small control object on the heap.
+    auto receiveActivity = makeUniqueNoThrow<Ao3ReceiveActivity>(renderer, mappedInput, !returnBookPath.empty());
+    if (!receiveActivity) {
+      LOG_ERR("WEBACT", "OOM: AO3 receive activity (size=%u free=%u maxAlloc=%u)",
+              static_cast<unsigned>(sizeof(Ao3ReceiveActivity)), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      exitToOrigin();
+      return;
+    }
+
+    startActivityForResult(std::move(receiveActivity), [this](const ActivityResult& result) {
       state = WebServerActivityState::MODE_SELECTION;
 
       if (networkBootReady) {

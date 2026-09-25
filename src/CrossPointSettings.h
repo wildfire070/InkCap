@@ -264,6 +264,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     // raw values or they can silently change an existing binding's behavior.
     PREVIOUS_PAGE = 31,
     NEARBY_POSITION_SYNC = 32,
+    // Starts AO3 Receive (the Send to AvesO3 browser extension's target). Offered for the
+    // short power button and Home key only; not a Quick Actions slot.
+    AO3_RECEIVE = 33,
     SHORT_PWRBTN_COUNT
   };
 
@@ -391,6 +394,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     // Appended: values are persisted in settings.bin.
     LONG_MENU_QUICK_ACTIONS = 22,
     LONG_MENU_QUICK_LOCK = 23,
+    // Reader-side executor for SHORT_PWRBTN::AO3_RECEIVE; not offered in the long-press picker.
+    LONG_MENU_AO3_RECEIVE = 24,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
