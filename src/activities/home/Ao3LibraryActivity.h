@@ -76,7 +76,7 @@ class Ao3LibraryActivity final : public Activity {
   FilterMode filterMode = FilterMode::AUTOMATIC;
   std::string ao3Folder;
   std::vector<uint64_t> allowedHashes;
-  int overlayRowIndex = 0;      // 0=Fandom, 1=Relationship, 2=Sort By, 3=Order, 4=Confirm
+  int overlayRowIndex = 0;      // 0=Fandom/Rating, 1=Relationship/Completion, 2=Sort By, 3=Order, 4=Show, 5=Confirm
   int managePanelRowIndex = 0;  // 0=Index New Books, 1=AO3 Library Settings
 
   // Pickers support
@@ -84,6 +84,10 @@ class Ao3LibraryActivity final : public Activity {
   std::vector<std::string> pickerItems;
   size_t pickerSelectedIndex = 0;
   bool pickerHasNone = false;
+
+  // Cache hashes of the active Marked for Later / New Chapters view, in the store's own order.
+  // Empty for the other views. Both stores are capped at 10, so linear lookups are fine.
+  std::vector<uint64_t> viewOrder_;
 
   size_t initialSelectorIndex_ = 0;
   bool skipNextBackRelease = false;
@@ -115,6 +119,11 @@ class Ao3LibraryActivity final : public Activity {
   void rebuildViewEntries();
   void applyStateChange(const SortFilterState& prev, const SortFilterState& next);
   bool passesFilter(const ViewEntry& v, const FilterHashes& h) const;
+  bool isStoreView() const {
+    return activeState.view == LibraryView::MARKED_FOR_LATER || activeState.view == LibraryView::NEW_CHAPTERS;
+  }
+  void loadViewOrder();
+  int viewPosition(uint64_t cacheHash) const;
 
   void buildFandomList(std::vector<std::string>& out) const;
   void buildRelationshipList(const char* fandom, std::vector<std::string>& out, bool& hasNoneEntries) const;

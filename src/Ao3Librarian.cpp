@@ -1,6 +1,5 @@
 #include "Ao3Librarian.h"
 
-#include "Ao3WipsStore.h"
 
 #include <Arduino.h>
 #include <Epub.h>
@@ -1060,15 +1059,6 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
 
     if (!writeIndexRecord(rec)) {
       return false;
-    }
-
-    // WIPs tab tracks author-side incompleteness, independent of the
-    // reader's own BookStatus::FINISHED -- keep it in sync with every
-    // (re-)scrape, not just the first one.
-    if (meta->isCompleted) {
-      AO3_WIPS_STORE.removeByPath(epub.getPath());
-    } else {
-      AO3_WIPS_STORE.addBook(epub.getPath(), meta->title, meta->author);
     }
 
     return true;
