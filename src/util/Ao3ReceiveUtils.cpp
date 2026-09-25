@@ -173,7 +173,8 @@ bool replaceExisting(const std::string& oldPath, const std::string& newPath) {
   clearBookCachePreservingUserState(oldPath);
   Epub restored(oldPath, "/.crosspoint");
   restored.setupCacheDir();
-  Ao3Librarian::saveBookStatus(oldCache, status);
+  // Only when there was a status to keep: a plain (non-AO3) book gets no ao3-status.bin added.
+  if (status != BookStatus::START) Ao3Librarian::saveBookStatus(oldCache, status);
   return true;
 }
 
