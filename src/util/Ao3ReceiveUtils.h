@@ -31,6 +31,16 @@ std::vector<std::string> readPending();
 void removePending(const std::string& path);
 bool hasPending();
 
+// "<title> - <first author>.epub" for a received fic (the naming Calibre users already have:
+// only the first of several authors), made filename-safe. Empty if there is no title.
+std::string titleAuthorFileName(const std::string& title, const std::string& author);
+
+// Renames path, in place, to titleAuthorFileName(title, author) -- or to " (2)", " (3)", ... if that
+// name is taken -- and moves its reader state and cache along with it. Returns the new path, or
+// an empty string if nothing changed (already named that, no usable name, or the rename failed).
+// Tombstones the old path's AO3 index record; the caller re-indexes the new path.
+std::string renameToTitleAuthor(const std::string& path, const std::string& title, const std::string& author);
+
 // Replaces oldPath with the file at newPath, keeping oldPath's reading progress,
 // bookmarks and status: the old copy is set aside first and only deleted once the new
 // one is in place, the new file's cache/index entry is dropped, and the old path's

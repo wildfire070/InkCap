@@ -27,6 +27,7 @@ class Ao3ReceivedReviewActivity final : public Activity {
   void dropFront();
   void askAboutDuplicate(const std::string& newPath, const std::string& oldPath, const std::string& title);
   static bool indexFic(const std::string& path);
+  static void nameFromMetadata(const std::string& path);
 
  public:
   explicit Ao3ReceivedReviewActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
