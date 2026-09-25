@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "../../src/Ao3Librarian.h"
+#include "Epub/BookIds.h"
 #include "Epub/ReferencePageNavigation.h"
 #include "Epub/image/OptimizerCachePublish.h"
 #include "Epub/image/OptimizerIndex.h"
@@ -613,6 +614,10 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.liked = opfParser.liked;
   bookMetadata.readStatus = opfParser.readStatus;
 
+  // Universal IDs (AO3 work ID, BookFusion book ID): every metadata read records what it found,
+  // whichever branch/feature ends up wanting it. Skipped when the book has no cache dir yet.
+  BookIds::record(filepath, opfParser.ao3WorkId, opfParser.bookFusionId);
+
   if (metadataOnly) {
     // Nothing below is populated: the parser stopped at </metadata>, before
     // the manifest that would carry the cover item and TOC/guide references.
@@ -1016,6 +1021,8 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
     if (xLocationLoadMode == XLocationLoadMode::Immediate) {
       loadXLocations();
     }
+
+    backfillBookIds();
 
     // Generate AO3 sidecar if missing but ID exists in metadata
     if (!hasAo3Info() && !bookMetadataCache->coreMetadata.ao3WorkId.empty()) {
@@ -2548,6 +2555,15 @@ void Epub::saveAo3Info(const std::string& workId, const std::string& date, const
     serialization::writeString(f, date);
     f.close();
   }
+  // Native AO3 downloads only reveal their work ID here (from the preface page), so mirror it.
+  BookIds::record(filepath, workId, 0);
+}
+
+void Epub::backfillBookIds() {
+  // Caches built before book-ids.json existed: read the OPF's metadata once (never creating a cache dir).
+  if (BookIds::exists(cachePath) || !Storage.exists(cachePath.c_str())) return;
+  BookMetadataCache::BookMetadata scratch;
+  parseContentOpf(scratch, /*writeSpineEntries=*/false, /*collectCssFiles=*/false, /*metadataOnly=*/true);
 }
 
 const std::string& Epub::getBookshelf() const {

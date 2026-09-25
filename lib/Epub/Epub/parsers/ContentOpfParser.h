@@ -126,6 +126,10 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;  // Temporary buffer for ID tags
   bool ao3IsCompleted = false;
 
+  // BookFusion book ID from <dc:identifier opf:scheme="BOOKFUSION"> (Calibre's BookFusion plugin), 0 if absent.
+  uint32_t bookFusionId = 0;
+  bool identifierIsBookFusion = false;  // the dc:identifier currently being read carries that scheme
+
   // dc:subject tags (Calibre convention), e.g. genre/keyword tags a Calibre
   // library or BookFusion export attaches -- distinct from AO3's own
   // fandom/relationship tags, which are stored separately. A book can have
