@@ -26,6 +26,37 @@ int main(int argc, char** argv) {
   }
   freeink::font::FtFont::RenderOptions options;
   options.hinting = freeink::font::FtFont::HintingMode::Auto;
+  {
+    // A style the family has no file for is derived from a face it does have (a variable font's
+    // wght/ital axes, or a faux bold/oblique on a static one) over the SAME resident bytes.
+    HalScalableFont bold;
+    HalScalableFont italic;
+    HalScalableFont boldItalic;
+    assert(bold.openStyledFrom(builtin[0], 700, false, options, HalScalableFont::MaxFamilyBytes, 2));
+    assert(italic.openStyledFrom(builtin[0], 400, true, options, HalScalableFont::MaxFamilyBytes, 1));
+    assert(boldItalic.openStyledFrom(builtin[0], 700, true, options, HalScalableFont::MaxFamilyBytes, 0));
+    for (HalScalableFont* face : {&bold, &italic, &boldItalic}) {
+      assert(face->fileBytes() == 0);  // shares the base's bytes instead of copying them
+      assert(face->hasCodepoint('T'));
+      assert(face->probeGlyph('T', 12));
+      assert(face->fingerprint() != builtin[0].fingerprint());  // layout caches must not mix styles
+    }
+    assert(bold.fingerprint() != italic.fingerprint());
+    assert(bold.fingerprint() != boldItalic.fingerprint());
+    // The defaults leave a face's identity exactly as it was before styled opens existed.
+    HalScalableFont plain;
+    assert(plain.openMemory(bytes[0].data(), bytes[0].size(), options));
+    assert(plain.fingerprint() == builtin[0].fingerprint());
+    if (argc > 2) {
+      // A streamed base is streamed again for each derived face.
+      HalScalableFont streamedBase;
+      HalScalableFont streamedBold;
+      assert(streamedBase.openFile(argv[2], HalScalableFont::MaxFamilyBytes, options, FileMode::Stream));
+      assert(streamedBold.openStyledFrom(streamedBase, 700, false, options, HalScalableFont::MaxFamilyBytes, 0));
+      assert(streamedBold.probeGlyph('T', 12));
+      assert(streamedBold.fingerprint() != streamedBase.fingerprint());
+    }
+  }
   uint32_t residentIdentity = 0;
   uint64_t residentPixels = 0;
   uint32_t temporaryIdentity = 0;

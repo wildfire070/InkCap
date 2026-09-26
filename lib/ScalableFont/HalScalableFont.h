@@ -56,7 +56,21 @@ class HalScalableFont {
   bool setRenderOptions(const freeink::font::FtFont::RenderOptions& options);
   static bool fileSize(const char* path, size_t& size);
   static bool prepareFamily(size_t bytes, size_t faces);
-  size_t fileBytes() const { return fileBytes_; }
+  // Bytes this face holds of its own; a face that shares another's resident copy holds none.
+  size_t fileBytes() const { return borrowed_ ? 0 : fileBytes_; }
+  // Weight and italic handed to the SDK when the face opens (call before open*()). A variable
+  // font's wght axis (and ital/slnt axis) is driven to them; a static face gets a faux bold or
+  // oblique shear instead. The defaults leave a face exactly as its file draws it.
+  void setStyleAxes(const int weight, const bool italic) {
+    weight_ = weight;
+    italic_ = italic;
+  }
+  // Opens `base`'s font again with the given axes, for a style the family has no file for. A
+  // resident base is shared (no second copy of the bytes); a streamed base is streamed again.
+  // `base` must outlive this face.
+  bool openStyledFrom(const HalScalableFont& base, int weight, bool italic,
+                      const freeink::font::FtFont::RenderOptions& options, size_t remainingBytes,
+                      size_t pendingFaces);
   // OpenType's whole-file checksum is advisory: some usable fonts ship with
   // stale checksums, so callers must combine this with a real load failure.
   bool integrityMismatch() const { return integrityMismatch_; }
@@ -93,6 +107,11 @@ class HalScalableFont {
   static constexpr uint8_t MaxPointSize = 22;
   static constexpr size_t SizeCount = MaxPointSize - MinPointSize + 1;
   uint32_t cacheId_ = 0;
+  int weight_ = 400;
+  bool italic_ = false;
+  bool borrowed_ = false;  // bytes belong to another face (see openStyledFrom)
+  const uint8_t* sourceBytes_ = nullptr;  // resident font bytes (owned or caller's); null when streamed
+  size_t sourceSize_ = 0;
   bool metricFailureLogged_ = false;
   bool rasterFailureLogged_ = false;
   bool streamFailureLogged_ = false;
