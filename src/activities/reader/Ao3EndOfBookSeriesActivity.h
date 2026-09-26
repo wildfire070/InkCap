@@ -34,6 +34,8 @@ class Ao3EndOfBookSeriesActivity final : public Activity {
 
   Ao3LibraryMetadata pageCache[3];
   BookStatus pageCacheStatus[3] = {BookStatus::START, BookStatus::START, BookStatus::START};
+  // True for a slot whose scraped info (ao3_library_info) could not be loaded; see renderDetailsSymbol().
+  bool pageCacheInfoMissing[3] = {false, false, false};
   std::vector<std::string> wrappedSummary[3];
   int cachedPage = -1;
 
@@ -44,10 +46,10 @@ class Ao3EndOfBookSeriesActivity final : public Activity {
   BookStatus getBookStatus(uint64_t cacheHash);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
-  void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
+  void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, bool detailsMissing, bool completed,
                      BookStatus status);
   void renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
-  void renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderDetailsSymbol(int x, int y, int s, bool missing, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
 };
