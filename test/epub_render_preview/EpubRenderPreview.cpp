@@ -131,7 +131,8 @@ void writeBmp(const std::string& path, const uint8_t* bw, int width, int height,
 int main(int argc, char** argv) {
   if (argc < 4) {
     std::cerr << "Usage: " << argv[0]
-              << " <chapter.xhtml> <stylesheet.css> <output-prefix> [--sd-font] [--width W] [--height H] [--bitter] [--char-spacing PX]\n";
+              << " <chapter.xhtml> <stylesheet.css> <output-prefix> [--sd-font] [--width W] [--height H] [--bitter] "
+                 "[--char-spacing PX]\n";
     return 1;
   }
   const std::string chapterPath = argv[1];

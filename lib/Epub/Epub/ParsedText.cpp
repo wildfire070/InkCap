@@ -353,8 +353,8 @@ int measureFocusRunOffset(const GfxRenderer& renderer, const int fontId, const s
 }
 
 uint16_t measureTokenWidth(const GfxRenderer& renderer, const int fontId, const std::string& word,
-                           const EpdFontFamily::Style style, const uint8_t focusBoundary,
-                           const int8_t characterSpacing, const bool appendHyphen = false) {
+                           const EpdFontFamily::Style style, const uint8_t focusBoundary, const int8_t characterSpacing,
+                           const bool appendHyphen = false) {
   if (focusBoundary == 0 || focusBoundary >= word.size() || appendHyphen || containsSoftHyphen(word)) {
     return measureWordWidth(renderer, fontId, word, style, characterSpacing, appendHyphen);
   }
@@ -406,8 +406,7 @@ int naturalGapBeforeToken(const GfxRenderer& renderer, const int fontId, const s
     return characterSpacing;
   }
   if (continues) {
-    return renderer.getKerning(fontId, lastCodepoint(leftWord), firstCodepoint(rightWord), leftStyle,
-                               characterSpacing);
+    return renderer.getKerning(fontId, lastCodepoint(leftWord), firstCodepoint(rightWord), leftStyle, characterSpacing);
   }
   const int naturalGap =
       renderer.getSpaceAdvance(fontId, lastCodepoint(leftWord), firstCodepoint(rightWord), leftStyle);
@@ -1007,9 +1006,9 @@ bool ParsedText::calculateWordWidths(ArenaVector<uint16_t>& wordWidths, const Gf
   }
 
   for (size_t i = 0; i < words.size(); ++i) {
-    const int width = measureTokenWidth(renderer, fontId, words[i], wordStyles[i], wordFocusBoundary[i],
-                                        characterSpacing) +
-                      inlinePaddingBefore(i);
+    const int width =
+        measureTokenWidth(renderer, fontId, words[i], wordStyles[i], wordFocusBoundary[i], characterSpacing) +
+        inlinePaddingBefore(i);
     if (!wordWidths.push_back(static_cast<uint16_t>(std::min(width, static_cast<int>(UINT16_MAX))))) {
       return false;
     }
@@ -1134,10 +1133,9 @@ bool ParsedText::calculateGapMetrics(ArenaVector<int16_t>& naturalGaps, ArenaVec
     const bool continues = wordContinues[i];
     const bool noSpaceBefore = wordNoSpaceBefore[i];
     const bool guideDotBefore = wordGuideDotBefore[i];
-    naturalGaps[i] =
-        static_cast<int16_t>(naturalGapBeforeToken(renderer, fontId, words[i - 1], words[i], wordStyles[i - 1],
-                                                   continues, noSpaceBefore, guideDotBefore, wordSpacing,
-                                                   characterSpacing));
+    naturalGaps[i] = static_cast<int16_t>(naturalGapBeforeToken(renderer, fontId, words[i - 1], words[i],
+                                                                wordStyles[i - 1], continues, noSpaceBefore,
+                                                                guideDotBefore, wordSpacing, characterSpacing));
     gapSlots[i] = static_cast<uint8_t>(
         std::min<size_t>(UINT8_MAX, gapSlotsBeforeToken(words[i], continues, noSpaceBefore, guideDotBefore)));
   }
@@ -1528,9 +1526,8 @@ bool ParsedText::splitTokenAtCodepointBoundary(const size_t wordIndex, const int
     const size_t candidateOffset = static_cast<size_t>(next - wordStart);
     prefix.assign(word.data(), candidateOffset);
     const FocusTokenMetadata prefixFocus = computeFocusMetadata(prefix, style, focusReadingEnabled);
-    const int prefixWidth =
-        leadingPadding +
-        measureTokenWidth(renderer, fontId, prefix, prefixFocus.style, prefixFocus.boundary, characterSpacing);
+    const int prefixWidth = leadingPadding + measureTokenWidth(renderer, fontId, prefix, prefixFocus.style,
+                                                               prefixFocus.boundary, characterSpacing);
     if (prefixWidth > availableWidth) {
       // Prefix widths grow with the prefix, so every longer candidate is also
       // too wide. Stop here instead of measuring the rest of a huge token.
@@ -1577,11 +1574,10 @@ bool ParsedText::splitTokenAtCodepointBoundary(const size_t wordIndex, const int
   wordNoSpaceBefore.insert(wordNoSpaceBefore.begin() + wordIndex + 1, true);
 
   wordWidths[wordIndex] = static_cast<uint16_t>(chosenWidth);
-  const uint16_t remainderWidth =
-      remainder.size() >= PATHOLOGICAL_TOKEN_MIN_BYTES
-          ? std::numeric_limits<uint16_t>::max()
-          : measureTokenWidth(renderer, fontId, remainder, remainderFocus.style, remainderFocus.boundary,
-                              characterSpacing);
+  const uint16_t remainderWidth = remainder.size() >= PATHOLOGICAL_TOKEN_MIN_BYTES
+                                      ? std::numeric_limits<uint16_t>::max()
+                                      : measureTokenWidth(renderer, fontId, remainder, remainderFocus.style,
+                                                          remainderFocus.boundary, characterSpacing);
   if (!wordWidths.insert(wordIndex + 1, remainderWidth)) {
     LOG_ERR("PTX", "OOM inserting split token width");
     return false;
@@ -1759,11 +1755,11 @@ bool ParsedText::extractLine(Arena& scratchArena, const size_t breakIndex, const
         reorderedGapCount +=
             gapSlotsBeforeToken(reorderedWordsScratch[wordIdx], reorderedContinuesScratch[wordIdx],
                                 reorderedNoSpaceBeforeScratch[wordIdx], reorderedGuideDotBeforeScratch[wordIdx]);
-        reorderedNaturalGaps += naturalGapBeforeToken(
-            renderer, fontId, reorderedWordsScratch[wordIdx - 1], reorderedWordsScratch[wordIdx],
-            reorderedStylesScratch[wordIdx - 1], reorderedContinuesScratch[wordIdx],
-            reorderedNoSpaceBeforeScratch[wordIdx], reorderedGuideDotBeforeScratch[wordIdx], wordSpacing,
-            characterSpacing);
+        reorderedNaturalGaps +=
+            naturalGapBeforeToken(renderer, fontId, reorderedWordsScratch[wordIdx - 1], reorderedWordsScratch[wordIdx],
+                                  reorderedStylesScratch[wordIdx - 1], reorderedContinuesScratch[wordIdx],
+                                  reorderedNoSpaceBeforeScratch[wordIdx], reorderedGuideDotBeforeScratch[wordIdx],
+                                  wordSpacing, characterSpacing);
       }
     }
 
@@ -1924,10 +1920,10 @@ bool ParsedText::extractLine(Arena& scratchArena, const size_t breakIndex, const
     const bool wordIsRtl = BidiUtils::detectParagraphLevel(lineWords[i].c_str(), blockStyle.isRtl ? 1 : 0) ==
                            static_cast<int>(BidiUtils::BidiBaseDir::RTL);
     const uint16_t runOffset =
-        boundary > 0 ? static_cast<uint16_t>(std::max(0, measureFocusRunOffset(renderer, fontId, lineWords[i],
-                                                                               lineWordStyles[i], boundary, wordIsRtl,
-                                                                               characterSpacing)))
-                     : 0;
+        boundary > 0
+            ? static_cast<uint16_t>(std::max(0, measureFocusRunOffset(renderer, fontId, lineWords[i], lineWordStyles[i],
+                                                                      boundary, wordIsRtl, characterSpacing)))
+            : 0;
 
     outWords.push_back(std::move(lineWords[i]));
     outXPos.push_back(lineXPos[i]);
