@@ -3,6 +3,7 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace library {
 
@@ -138,6 +139,14 @@ bool isUnicodeLetter(const uint32_t cp) {
   return inRanges(cp, LETTER_RANGES, sizeof(LETTER_RANGES) / sizeof(LETTER_RANGES[0]));
 }
 
+// Articles stripped from the head of sort and search keys, so "The Hobbit" files under H.
+// Display text never goes through this.
+// English "a" is an article (the File Browser sort drops it too), but "i" and "o" are kept out:
+// a leading "I" or "O" is usually a real word ("I, Robot", "O Pioneers!") and a book named for
+// one would otherwise file under its second word.
+constexpr const char* ARTICLES[] = {"the ", "a ",   "an ",  "le ", "la ",  "les ", "l'",   "un ",  "une ", "de ", "du ",
+                                    "des ", "der ", "die ", "das ", "el ", "los ", "las ", "il ", "lo ",  "gli ", "os "};
+
 // Views into `folded`, not copies: the caller keeps that string alive for as
 // long as the tokens, and a std::string per token costs an allocation each plus
 // 24 bytes of stack apiece -- 288 B for the twelve, over the 256 B this repo
@@ -162,13 +171,13 @@ bool isSingleCodepoint(const std::string_view text) {
 
 }  // namespace
 
-std::string fold(const std::string_view text) {
+std::string fold(const std::string_view text, const bool stripArticle) {
   std::string out;
-  foldInto(text, out);
+  foldInto(text, out, stripArticle);
   return out;
 }
 
-void foldInto(const std::string_view text, std::string& out) {
+void foldInto(const std::string_view text, std::string& out, const bool stripArticle) {
   out.clear();
   out.reserve(text.size());
 
@@ -219,6 +228,16 @@ void foldInto(const std::string_view text, std::string& out) {
     // Everything else — punctuation, symbols, unmapped scripts — separates
     // words. Deferring the space keeps runs collapsed and drops trailing ones.
     if (!out.empty()) pendingSpace = true;
+  }
+
+  if (stripArticle) {
+    for (const char* article : ARTICLES) {
+      const size_t len = strlen(article);
+      if (out.size() > len && out.compare(0, len, article) == 0) {
+        out.erase(0, len);
+        break;
+      }
+    }
   }
 }
 
