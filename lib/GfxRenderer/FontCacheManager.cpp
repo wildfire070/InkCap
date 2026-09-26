@@ -1,13 +1,15 @@
-#include "FontCacheManager.h"
-
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <SdCardFont.h>
-#include <TtfEpdFont.h>
 #include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
+
+#include "FontCacheManager.h"
 
 namespace {
 
@@ -33,9 +35,8 @@ char* appendUtf8Codepoint(char* output, const uint32_t codepoint) {
 }  // namespace
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
-                                   const std::map<int, SdCardFont*>& sdCardFonts,
-                                   const std::map<int, TtfEpdFont*>& ttfFonts)
-    : fontMap_(fontMap), sdCardFonts_(sdCardFonts), ttfFonts_(ttfFonts) {}
+                                   const std::map<int, SdCardFont*>& sdCardFonts)
+    : fontMap_(fontMap), sdCardFonts_(sdCardFonts) {}
 
 void FontCacheManager::setFontDecompressor(FontDecompressor* d) { fontDecompressor_ = d; }
 
@@ -44,11 +45,6 @@ void FontCacheManager::clearCache() {
   for (auto& [id, font] : sdCardFonts_) {
     font->clearCache();
   }
-#if CROSSPOINT_VECTOR_FONTS
-  for (auto& [id, font] : ttfFonts_) {
-    if (font) font->clearCache();
-  }
-#endif
 }
 
 void FontCacheManager::releaseSdFontCaches() {
@@ -56,25 +52,13 @@ void FontCacheManager::releaseSdFontCaches() {
   for (auto& [id, font] : sdCardFonts_) {
     font->releaseForLowMemory(false);
   }
-#if CROSSPOINT_VECTOR_FONTS
-  for (auto& [id, font] : ttfFonts_) {
-    if (font) font->releaseResidentCaches();
-  }
-#endif
 }
 
 bool FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask,
                                     const PreparationPolicy policy) {
-  // TTF (vector) fonts: every draw path funnels through here. A page prewarms one group per
-  // (font, style), so ADD coverage rather than replace it. styleMask is ignored: the regular face
-  // is warmed and bold/italic faces fault glyphs in lazily on first use.
-#if CROSSPOINT_VECTOR_FONTS
-  const auto ttfIt = ttfFonts_.find(fontId);
-  if (ttfIt != ttfFonts_.end() && ttfIt->second) {
-    return ttfIt->second->addCoverage(utf8Text);
-  }
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
 #endif
-
   // SD card font prewarm path: prewarm all requested styles in one call
   auto it = sdCardFonts_.find(fontId);
   if (it != sdCardFonts_.end()) {
@@ -94,6 +78,31 @@ bool FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t st
     if (!(styleMask & (1 << i))) continue;
     auto style = static_cast<EpdFontFamily::Style>(i);
     const EpdFontData* data = fontMap_.at(fontId).getData(style);
+#if CROSSINK_SCALABLE_FONTS
+    if (data && data->bitmapHandler && utf8Text) {
+      const auto& family = fontMap_.at(fontId);
+      const char* text = utf8Text;
+      while (*text) {
+        uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text));
+        if (!cp) break;
+        cp = family.applyLigatures(cp, text, style);
+        const auto gd = family.getGlyphData(cp, style);
+        if (!gd.glyph) {
+          if (family.hasCodepoint(cp, style)) {
+            LOG_ERR("FCM", "TTF metrics preparation failed: U+%04X font=%d style=%d", unsigned(cp), fontId, i);
+            return false;
+          }
+          continue;
+        }
+        if (gd.glyph->width && gd.glyph->height && gd.fontData->bitmapHandler &&
+            !gd.fontData->bitmapHandler(gd.fontData->glyphMissCtx, gd.glyph)) {
+          LOG_ERR("FCM", "TTF glyph preparation failed: U+%04X", unsigned(cp));
+          return false;
+        }
+      }
+      continue;
+    }
+#endif
     if (!data || !data->groups) continue;
     int missed = fontDecompressor_->prewarmCache(data, utf8Text);
     if (missed > 0) {

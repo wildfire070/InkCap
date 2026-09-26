@@ -52,6 +52,7 @@ struct FrontlightPanelResult {
   FrontlightPanelAction action = FrontlightPanelAction::None;
   FrontlightDrawerState state{};
   bool activeEpub = false;
+  bool ttfRenderingChanged = false;
   std::string bookPath;
 };
 

@@ -96,7 +96,7 @@ TEST(EpubTextGrayscaleTest, RealTextRasterMatchesFullAndStripTargets) {
         } else
           renderer.insertFont(1, EpdFontFamily(&fixture.font));
         renderer.setOrientation(GfxRenderer::Orientation(orientation));
-        FontCacheManager cache(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
+        FontCacheManager cache(renderer.getFontMap(), renderer.getSdCardFonts());
         renderer.setFontCacheManager(&cache);
         const std::vector<std::string> words = {"Abc", "e\u0301", "שלום", "سلام", "一", "\U0001F642", " "};
         const std::vector<int16_t> offsets = {0, 65, 120, 190, 260, 290, 330};

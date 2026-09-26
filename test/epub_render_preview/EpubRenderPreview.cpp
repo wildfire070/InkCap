@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
     renderer.insertFont(kSdFontId, family12);
   }
 
-  FontCacheManager cache(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
+  FontCacheManager cache(renderer.getFontMap(), renderer.getSdCardFonts());
   renderer.setFontCacheManager(&cache);
   FontDecompressor decompressor;
   if (!decompressor.init()) {

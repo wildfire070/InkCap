@@ -9,6 +9,7 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 #include <PersistableStore.h>
+#include <ScalableBuiltins.h>
 #include <Serialization.h>
 
 #include <algorithm>
@@ -71,12 +72,6 @@ constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_STORAGE_ORDER[] = {
     CrossPointSettings::MEDIUM,
     CrossPointSettings::LARGE,
 };
-constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_CYCLE_ORDER[] = {
-    CrossPointSettings::TINY,
-    CrossPointSettings::SMALL,
-    CrossPointSettings::MEDIUM,
-    CrossPointSettings::LARGE,
-};
 constexpr uint8_t SD_FONT_RANGE_POINT_SIZES[CrossPointSettings::SD_FONT_SIZE_RANGE_COUNT]
                                            [CrossPointSettings::SD_FONT_MAX_SIZE_STEPS] = {
                                                {8, 9, 10, 12},
@@ -127,6 +122,7 @@ CrossPointSettings::FONT_SIZE firstAvailableReaderFontSize() {
   return (it != std::end(READER_FONT_SIZE_STORAGE_ORDER)) ? *it : CrossPointSettings::TINY;
 }
 
+#if !CROSSINK_SCALABLE_FONTS
 int getFallbackReaderFontIdForFamily(const CrossPointSettings::FONT_FAMILY family) {
   switch (family) {
     case CrossPointSettings::BITTER:
@@ -136,6 +132,8 @@ int getFallbackReaderFontIdForFamily(const CrossPointSettings::FONT_FAMILY famil
       return LEXENDDECA_10_FONT_ID;
   }
 }
+
+#endif
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
 void applyLegacyFrontButtonLayout(CrossPointSettings& settings) {
@@ -464,6 +462,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["librarySortMethod"] = librarySortMethod;
   doc["librarySortDescending"] = librarySortDescending;
   doc["libraryListExpanded"] = libraryListExpanded;
+  doc["libraryShowSeries"] = libraryShowSeries;
+  doc["libraryShowGenre"] = libraryShowGenre;
   doc["libraryShowEpub"] = libraryShowEpub;
   doc["libraryShowXtc"] = libraryShowXtc;
   doc["libraryShowTxt"] = libraryShowTxt;
@@ -618,9 +618,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc, bool importingCrossPoint
     }
     choice = static_cast<uint8_t>(stored);
   };
-  readLibraryChoice("librarySortMethod", librarySortMethod, 5);
+  readLibraryChoice("librarySortMethod", librarySortMethod, 7);
   readLibraryChoice("librarySortDescending", librarySortDescending, 2);
   readLibraryChoice("libraryListExpanded", libraryListExpanded, 2);
+  readLibraryChoice("libraryShowSeries", libraryShowSeries, 2);
+  readLibraryChoice("libraryShowGenre", libraryShowGenre, 2);
   readLibraryChoice("libraryShowEpub", libraryShowEpub, 2);
   readLibraryChoice("libraryShowXtc", libraryShowXtc, 2);
   readLibraryChoice("libraryShowTxt", libraryShowTxt, 2);
@@ -1244,12 +1246,8 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
 uint8_t CrossPointSettings::getSdFontTargetPointSize() const { return readerFontPointSize; }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger, const FontSizeStepMode mode) {
-  uint8_t sizes[FONT_SIZE_COUNT] = {};
-  size_t count = 0;
-  for (const FONT_SIZE size : READER_FONT_SIZE_CYCLE_ORDER) {
-    if (isReaderFontSizeAvailable(size)) sizes[count++] = getReaderFontPointSize(size);
-  }
-  return changeReaderFontSizeStep(sizes, count, readerFontPointSize, larger, mode);
+  return changeReaderFontSizeStep(BUILTIN_READER_FONT_SIZES, std::size(BUILTIN_READER_FONT_SIZES), readerFontPointSize,
+                                  larger, mode);
 }
 
 int CrossPointSettings::getReaderFontId() const {
@@ -1263,12 +1261,23 @@ int CrossPointSettings::getReaderFontId() const {
   return getBuiltInReaderFontId();
 }
 
-int CrossPointSettings::getBuiltInReaderFontId() const { return getBuiltInReaderFontId(getEffectiveReaderFontSize()); }
+int CrossPointSettings::getBuiltInReaderFontId() const {
+#if CROSSINK_SCALABLE_FONTS
+  return scalableBuiltinReaderFontId(fontFamily == BITTER ? 1 : 0, closestBuiltinReaderPointSize(readerFontPointSize));
+#else
+  return getBuiltInReaderFontId(getEffectiveReaderFontSize());
+#endif
+}
 
 // Explicit-size overload used by getBuiltInReaderFontId() above (with the
 // member's own effective size) and by buildReaderFontSizeLadder() (which
 // needs every size of the current family, not just the effective one).
 int CrossPointSettings::getBuiltInReaderFontId(const FONT_SIZE size) const {
+#if CROSSINK_SCALABLE_FONTS
+  // Scalable builds register the outline font under the same four legacy ids plus new ones for
+  // the other sizes, so a size step maps to a point size rather than a bitmap font constant.
+  return scalableBuiltinReaderFontId(fontFamily == BITTER ? 1 : 0, getReaderFontPointSize(size));
+#else
   switch (fontFamily) {
     case LEXENDDECA:
     default:
@@ -1299,4 +1308,5 @@ int CrossPointSettings::getBuiltInReaderFontId(const FONT_SIZE size) const {
       return getFallbackReaderFontIdForFamily(BITTER);
   }
   return getFallbackReaderFontIdForFamily(static_cast<FONT_FAMILY>(fontFamily));
+#endif
 }

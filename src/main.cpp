@@ -20,7 +20,6 @@
 #include <MemoryBudget.h>
 #include <RestartHooks.h>
 #include <SPI.h>
-#include <VectorFontSupport.h>
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
 #endif
@@ -126,21 +125,13 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/ScreenshotUtil.h"
 #include "util/SleepWakePolicy.h"
 
-#if CROSSPOINT_VECTOR_FONTS
-// Rendering (incl. FreeType TTF rasterization) runs on the Arduino loop task too. The default 8 KB stack
-// overflows inside FreeType's FT_Open_Face / variable-font parsing. This runtime override applies even with
-// the prebuilt (dio_opi) core, where CONFIG_ARDUINO_LOOP_STACK_SIZE from sdkconfig is baked in and ignored.
-// Vector-font (PSRAM) boards only.
-SET_LOOP_TASK_STACK_SIZE(24 * 1024)
-#endif
-
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 DictionaryRegistry dictionaryRegistry;
-FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 static unsigned long allowSleepAt = 0;
 static ButtonShortcutController buttonShortcutController;
 static unsigned long lastX4ProHomeKeyTapAt = 0;
@@ -190,6 +181,7 @@ static void logBootHeap(const char* stage) {
 }
 
 // Fonts
+#if !CROSSINK_SCALABLE_FONTS
 EpdFont lexenddeca10RegularFont(&lexenddeca_10_regular);
 EpdFont lexenddeca10BoldFont(&lexenddeca_10_bold);
 EpdFont lexenddeca10ItalicFont(&lexenddeca_10_italic);
@@ -235,6 +227,7 @@ EpdFont bitter16ItalicFont(&bitter_16_italic);
 EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
 EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
 
+#endif
 EpdFont smallFont(&inter_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
@@ -359,7 +352,10 @@ constexpr uint32_t SILENT_REBOOT_READER_CLEAN_IMAGE_BASE = 1U << 0;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_MAGIC = 0xC1EAB017;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_AUTO_TURN = 1U << 0;
 constexpr uint32_t NETWORK_RENDER_TASK_STACK_BYTES = 8192;
-constexpr uint32_t READER_RENDER_TASK_STACK_BYTES = 16384;
+// FreeType's anti-aliased rasterizer reserves a 16 KiB scratch pool on its
+// caller's stack. Scalable fonts are S3-only, so leave C3's constrained reader
+// stack unchanged and give S3 reader renders room for their normal call frames.
+constexpr uint32_t READER_RENDER_TASK_STACK_BYTES = FREEINK_MCU_S3 ? 24576 : 16384;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -1171,6 +1167,7 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
 
+#if !CROSSINK_SCALABLE_FONTS
   renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily);
   renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
   renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
@@ -1179,10 +1176,10 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
   renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+#endif
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
-
   if (loadReaderResources) {
     sdFontSystem.begin(renderer);
   } else {
@@ -1242,17 +1239,10 @@ void setup() {
   const bool cleanImageBaseOnEntry =
       snapshotTarget == SILENT_REBOOT_TARGET_READER && (snapshotPayload & SILENT_REBOOT_READER_CLEAN_IMAGE_BASE) != 0;
   const bool isNetworkResume = snapshotTarget >= static_cast<uint32_t>(NetworkBootTarget::OTA);
-  // KOReader Sync, OPDS, File Transfer, and Manage Fonts can render their
-  // parent screens while a deferred Wi-Fi child is completing. On S3 devices,
-  // keep the reader-sized render stack without loading the rest of the reader
-  // resources. C3 devices retain the smaller network stack to preserve their
-  // tighter internal-RAM budget.
-  const bool useReaderRenderStack =
-      !isNetworkResume ||
-      (FREEINK_MCU_S3 && (snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_SYNC) ||
-                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::OPDS) ||
-                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::FILE_TRANSFER) ||
-                          snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::MANAGE_FONTS)));
+  // Network screens need the reader-sized render stack on S3, including OTA
+  // and KOReader Auth after their Wi-Fi child completes. C3 retains the smaller
+  // network stack to preserve internal RAM.
+  const bool useReaderRenderStack = !isNetworkResume || FREEINK_MCU_S3;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
@@ -1436,7 +1426,7 @@ void setup() {
 
   setupDisplayAndFonts(SleepWakePolicy::shouldInitializeSeamlessly(resume, isUc8279X3, hasValidSleepFrame),
                        resume != BootResume::Network, useReaderRenderStack);
-  logBootHeap("display and selected fonts ready");
+  logBootHeap("display and font resolver ready");
 
   switch (resume) {
     case BootResume::Silent:

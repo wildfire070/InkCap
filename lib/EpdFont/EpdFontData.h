@@ -173,7 +173,7 @@ typedef struct {
 EPD_PACKED_END
 
 /// Data stored for FONT AS A WHOLE
-typedef struct {
+typedef struct EpdFontData {
   const uint8_t* bitmap;                ///< Glyph bitmaps, concatenated
   const EpdGlyph* glyph;                ///< Glyph array
   const EpdUnicodeInterval* intervals;  ///< Valid unicode intervals for this font
@@ -226,21 +226,14 @@ typedef struct {
   /// answer from RAM-resident data without storage I/O.  Shares glyphMissCtx.
   /// nullptr for fonts whose interval table is already complete (built-ins).
   bool (*coverageHandler)(void* ctx, uint32_t codepoint);
-
-  /// Vector-font bitmap accessor (FreeInkFont / TtfEpdFont). When non-null,
-  /// GfxRenderer::getGlyphBitmap() returns vectorBitmapHandler(glyphMissCtx, glyph)
-  /// instead of indexing ->bitmap or going through the SdCardFont overflow path.
-  /// This lets a runtime-rasterized TTF fault + cache glyphs on ANY draw path
-  /// (via glyphMissHandler) without pre-warming. nullptr for every other font,
-  /// so the SD/built-in bitmap paths are unaffected (all fonts zero-init this).
-  const uint8_t* (*vectorBitmapHandler)(void* ctx, const EpdGlyph* glyph);
-
-  /// Dynamic kerning for handler-backed fonts (TTF via FreeInkFont): returns
-  /// the 4.4 fixed-point pixel adjustment for the pair, 0 when none. Checked
-  /// by getKerning() before the static class tables (handler fonts carry
-  /// none). Shares glyphMissCtx. nullptr for built-in and SD fonts, whose
-  /// kerning is baked into the tables above (all fonts zero-init this).
-  int8_t (*kernHandler)(void* ctx, uint32_t leftCp, uint32_t rightCp);
+#if CROSSINK_SCALABLE_FONTS
+  // Optional scalable backend. Metrics never rasterize; bitmap is consumed
+  // before the next bitmap request. These are null for legacy bitmap fonts.
+  const EpdGlyph* (*dynamicGlyphHandler)(void*, uint32_t) = nullptr;
+  const uint8_t* (*bitmapHandler)(void*, const EpdGlyph*) = nullptr;
+  int8_t (*kerningHandler)(void*, uint32_t, uint32_t) = nullptr;
+  uint32_t (*ligatureHandler)(void*, uint32_t, uint32_t) = nullptr;
+#endif
 } EpdFontData;
 
 namespace syntheticGlyph {

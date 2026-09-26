@@ -1007,9 +1007,9 @@ bool ParsedText::calculateWordWidths(ArenaVector<uint16_t>& wordWidths, const Gf
   }
 
   for (size_t i = 0; i < words.size(); ++i) {
-    const int width =
-        measureTokenWidth(renderer, fontId, words[i], wordStyles[i], wordFocusBoundary[i], characterSpacing) +
-        inlinePaddingBefore(i);
+    const int width = measureTokenWidth(renderer, fontId, words[i], wordStyles[i], wordFocusBoundary[i],
+                                        characterSpacing) +
+                      inlinePaddingBefore(i);
     if (!wordWidths.push_back(static_cast<uint16_t>(std::min(width, static_cast<int>(UINT16_MAX))))) {
       return false;
     }
@@ -1398,8 +1398,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     const FocusTokenMetadata prefixFocus = computeFocusMetadata(prefix, style, focusReadingEnabled);
     const int prefixWidth =
         leadingPadding + measureTokenWidth(renderer, fontId, prefix, prefixFocus.style, prefixFocus.boundary,
-                                           characterSpacing,
-                                           /*appendHyphen=*/false);
+                                           characterSpacing, /*appendHyphen=*/false);
     if (prefixWidth > availableWidth || prefixWidth <= chosenWidth) {
       continue;  // Skip if too wide or not an improvement
     }
@@ -1530,8 +1529,8 @@ bool ParsedText::splitTokenAtCodepointBoundary(const size_t wordIndex, const int
     prefix.assign(word.data(), candidateOffset);
     const FocusTokenMetadata prefixFocus = computeFocusMetadata(prefix, style, focusReadingEnabled);
     const int prefixWidth =
-        leadingPadding + measureTokenWidth(renderer, fontId, prefix, prefixFocus.style, prefixFocus.boundary,
-                                           characterSpacing);
+        leadingPadding +
+        measureTokenWidth(renderer, fontId, prefix, prefixFocus.style, prefixFocus.boundary, characterSpacing);
     if (prefixWidth > availableWidth) {
       // Prefix widths grow with the prefix, so every longer candidate is also
       // too wide. Stop here instead of measuring the rest of a huge token.

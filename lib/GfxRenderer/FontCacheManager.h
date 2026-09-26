@@ -7,14 +7,12 @@
 
 class FontDecompressor;
 class SdCardFont;
-class TtfEpdFont;
 
 class FontCacheManager {
  public:
   enum class PreparationPolicy : uint8_t { Normal, DictionaryLean };
 
-  FontCacheManager(const std::map<int, EpdFontFamily>& fontMap, const std::map<int, SdCardFont*>& sdCardFonts,
-                   const std::map<int, TtfEpdFont*>& ttfFonts);
+  FontCacheManager(const std::map<int, EpdFontFamily>& fontMap, const std::map<int, SdCardFont*>& sdCardFonts);
 
   void setFontDecompressor(FontDecompressor* d);
 
@@ -53,8 +51,6 @@ class FontCacheManager {
  private:
   const std::map<int, EpdFontFamily>& fontMap_;
   const std::map<int, SdCardFont*>& sdCardFonts_;
-  // TTF (vector) fonts; only read when CROSSPOINT_VECTOR_FONTS is on (PSRAM boards).
-  [[maybe_unused]] const std::map<int, TtfEpdFont*>& ttfFonts_;
   FontDecompressor* fontDecompressor_ = nullptr;
 
   enum class ScanMode : uint8_t { None, Scanning };

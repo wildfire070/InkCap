@@ -617,6 +617,8 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // Universal IDs (AO3 work ID, BookFusion book ID): every metadata read records what it found,
   // whichever branch/feature ends up wanting it. Skipped when the book has no cache dir yet.
   BookIds::record(filepath, opfParser.ao3WorkId, opfParser.bookFusionId);
+  bookMetadata.series = utf8ComposeNfc(opfParser.series);
+  bookMetadata.subject = utf8ComposeNfc(opfParser.subject);
 
   if (metadataOnly) {
     // Nothing below is populated: the parser stopped at </metadata>, before
@@ -1170,16 +1172,18 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   return true;
 }
 
-bool Epub::loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata) {
+bool Epub::loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata, std::string* series,
+                        std::string* genre) {
   title.clear();
   author.clear();
+  if (series) series->clear();
+  if (genre) genre->clear();
 
-  // A book already opened by the reader (or a prior library scan with
-  // metadata reading on) has a full cache on disk; reuse it rather than
-  // re-parsing the zip. Deliberately a LOCAL reader, not this->bookMetadataCache:
-  // that member is tied to the full load()/spine lifecycle and must not be
-  // partially populated by a metadata-only read.
-  if (allowCachedMetadata) {
+  // The reader cache holds title and author but not the Library's series and
+  // genre fields. Reuse it for callers that need only title/author; the Library
+  // parses OPF metadata once and then keeps the extra fields in its own index.
+  // This LOCAL reader does not alter the full load()/spine cache lifecycle.
+  if (allowCachedMetadata && !series && !genre) {
     auto metadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
     if (metadataCache && metadataCache->load()) {
       title = metadataCache->coreMetadata.title;
@@ -1189,7 +1193,7 @@ bool Epub::loadMetadata(std::string& title, std::string& author, const bool allo
     if (!metadataCache) {
       LOG_ERR("EBP", "Could not allocate metadata cache reader");
     }
-  } else if (!clearCache()) {
+  } else if (!allowCachedMetadata && !clearCache()) {
     LOG_ERR("EBP", "Could not invalidate stale metadata cache");
     return false;
   }
@@ -1201,6 +1205,8 @@ bool Epub::loadMetadata(std::string& title, std::string& author, const bool allo
 
   title = std::move(metadata.title);
   author = std::move(metadata.author);
+  if (series) *series = std::move(metadata.series);
+  if (genre) *genre = std::move(metadata.subject);
   return true;
 }
 

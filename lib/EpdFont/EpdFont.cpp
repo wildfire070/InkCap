@@ -119,9 +119,9 @@ int8_t EpdFont::getKerning(const uint32_t leftCp, const uint32_t rightCp) const 
   if (utf8IsCjkBreakable(leftCp) || utf8IsCjkBreakable(rightCp)) {
     return 0;
   }
-  if (data->kernHandler) {
-    return data->kernHandler(data->glyphMissCtx, leftCp, rightCp);
-  }
+#if CROSSINK_SCALABLE_FONTS
+  if (data->kerningHandler) return data->kerningHandler(data->glyphMissCtx, leftCp, rightCp);
+#endif
   if (!data->kernMatrix && !data->kernRowOffsets) {
     return 0;
   }
@@ -171,6 +171,10 @@ static inline bool isArabicPresentationForm(const uint32_t cp) {
 }
 
 uint32_t EpdFont::getLigature(const uint32_t leftCp, const uint32_t rightCp) const {
+#if CROSSINK_SCALABLE_FONTS
+  if (data->ligatureHandler && !isArabicPresentationForm(leftCp) && !isArabicPresentationForm(rightCp))
+    return data->ligatureHandler(data->glyphMissCtx, leftCp, rightCp);
+#endif
   const auto* pairs = data->ligaturePairs;
   const auto count = data->ligaturePairCount;
   if (!pairs || count == 0 || leftCp > 0xFFFF || rightCp > 0xFFFF) {
@@ -196,7 +200,11 @@ uint32_t EpdFont::getLigature(const uint32_t leftCp, const uint32_t rightCp) con
 }
 
 uint32_t EpdFont::applyLigatures(uint32_t cp, const char*& text) const {
-  if (!data->ligaturePairs || data->ligaturePairCount == 0) {
+  if (
+#if CROSSINK_SCALABLE_FONTS
+      !data->ligatureHandler &&
+#endif
+      (!data->ligaturePairs || data->ligaturePairCount == 0)) {
     return cp;
   }
   while (true) {
@@ -214,6 +222,9 @@ uint32_t EpdFont::applyLigatures(uint32_t cp, const char*& text) const {
 }
 
 const EpdGlyph* EpdFont::findGlyph(const uint32_t cp) const {
+#if CROSSINK_SCALABLE_FONTS
+  if (data->dynamicGlyphHandler) return data->dynamicGlyphHandler(data->glyphMissCtx, cp);
+#endif
   const int count = data->intervalCount;
   if (count == 0 && !data->glyphMissHandler) return nullptr;
 
@@ -235,13 +246,6 @@ const EpdGlyph* EpdFont::findGlyph(const uint32_t cp) const {
     }
   }
 
-  // Vector (TTF) fonts carry no interval table: glyphs are rasterized on demand by the miss handler.
-  // EpdFontFamily's probing lookups (findGlyphData/getFallbackCodepoint) call ONLY findGlyph(), so
-  // without this every codepoint reads as missing and the renderer substitutes tofu.
-  if (data->vectorBitmapHandler != nullptr && data->glyphMissHandler != nullptr) {
-    return data->glyphMissHandler(data->glyphMissCtx, cp);
-  }
-
   return nullptr;
 }
 
@@ -250,9 +254,8 @@ const EpdGlyph* EpdFont::getGlyph(const uint32_t cp) const {
     return glyph;
   }
 
-  // Codepoint not in interval table — try on-demand loading (SD card fonts). Vector fonts already
-  // ran their miss handler inside findGlyph() above.
-  if (data->glyphMissHandler && data->vectorBitmapHandler == nullptr) {
+  // Codepoint not in interval table — try on-demand loading (SD card fonts).
+  if (data->glyphMissHandler) {
     const EpdGlyph* loaded = data->glyphMissHandler(data->glyphMissCtx, cp);
     if (loaded) return loaded;
   }

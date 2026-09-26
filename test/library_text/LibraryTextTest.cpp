@@ -113,6 +113,21 @@ TEST(LibraryFold, ArticleStrippingOnlyWhenAsked) {
   EXPECT_EQ(fold("The", true), "the");
 }
 
+TEST(LibraryFold, SingleLetterWordsOtherThanAStayInTitleSortKeys) {
+  EXPECT_EQ(fold("I Am Number Four", true), "i am number four");
+  EXPECT_EQ(fold("O Brother, Where Art Thou?", true), "o brother where art thou");
+  EXPECT_EQ(library::foldedGroupInitial(fold("I Am Number Four", true)), static_cast<uint32_t>('i'));
+}
+
+TEST(LibraryFold, EnglishArticlesAreStrippedFromTitleSortKeys) {
+  EXPECT_EQ(fold("The Hobbit", true), "hobbit");
+  EXPECT_EQ(fold("A Tale of Two Cities", true), "tale of two cities");
+  EXPECT_EQ(fold("An Ember in the Ashes", true), "ember in the ashes");
+  EXPECT_EQ(library::foldedGroupInitial(fold("The Hobbit", true)), static_cast<uint32_t>('h'));
+  // A title that IS an article must not vanish.
+  EXPECT_EQ(fold("A", true), "a");
+}
+
 TEST(LibraryAuthorKey, OrderAndPunctuationDoNotMatter) {
   const std::string expected = authorKey("Lu Xun");
   EXPECT_FALSE(expected.empty());

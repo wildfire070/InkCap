@@ -15,7 +15,6 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 
 class FontCacheManager;
 class SdCardFont;
-class TtfEpdFont;
 
 #include <cassert>
 #include <cstring>
@@ -109,10 +108,6 @@ class GfxRenderer {
   // allocation inside the SdCardFont objects. Same pragmatic compromise as
   // fontCacheManager_ below.
   mutable std::map<int, SdCardFont*> sdCardFonts_;
-  // TTF (vector) fonts rasterized by TtfEpdFont/FreeInkFont. Registered like an ordinary
-  // EpdFontFamily (insertFont) and tracked here so the cache manager can clear/release them.
-  // Owned by SdCardFontSystem.
-  mutable std::map<int, TtfEpdFont*> ttfFonts_;
 
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
@@ -193,11 +188,6 @@ class GfxRenderer {
   void clearSdCardFonts() { sdCardFonts_.clear(); }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
-  void registerTtfFont(int fontId, TtfEpdFont* font) { ttfFonts_[fontId] = font; }
-  void unregisterTtfFont(int fontId) { ttfFonts_.erase(fontId); }
-  void clearTtfFonts() { ttfFonts_.clear(); }
-  bool isTtfFont(int fontId) const { return ttfFonts_.count(fontId) > 0; }
-  const std::map<int, TtfEpdFont*>& getTtfFonts() const { return ttfFonts_; }
   // Register/clear size-matched CJK UI fallbacks (see fallbackFontMap_).
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
@@ -399,6 +389,8 @@ class GfxRenderer {
   void lockFrameBufferMutex() const { xSemaphoreTakeRecursive(frameBufferMutex_, portMAX_DELAY); }
   void unlockFrameBufferMutex() const { xSemaphoreGiveRecursive(frameBufferMutex_); }
   TaskHandle_t frameBufferMutexHolder() const { return xSemaphoreGetMutexHolder(frameBufferMutex_); }
+  // The recursive mutex itself, for code that must borrow the render lock (see ScalableFontAccess).
+  SemaphoreHandle_t frameBufferMutexHandle() const { return frameBufferMutex_; }
 
   // Plain RAII form of the pair above, for callers with no buffer to loan --
   // e.g. mutating fontMap/sdCardFonts_/fallbackFontMap_ (SdCardFontManager's

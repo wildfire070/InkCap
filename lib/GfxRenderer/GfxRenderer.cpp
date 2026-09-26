@@ -1,4 +1,7 @@
 #include "GfxRenderer.h"
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
 
 #include <BidiUtils.h>
 #include <BuildScratch.h>
@@ -127,6 +130,9 @@ void appendShapedRtlTokens(const char* text, std::string& shapedOut) {
 }  // namespace
 
 const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const {
+#if CROSSINK_SCALABLE_FONTS
+  if (fontData->bitmapHandler) return fontData->bitmapHandler(fontData->glyphMissCtx, glyph);
+#endif
   if (fontData->groups != nullptr) {
     auto* fd = fontCacheManager_ ? fontCacheManager_->getDecompressor() : nullptr;
     if (!fd) {
@@ -138,12 +144,6 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
     // For hot-group hits it is valid only until the next getBitmap() call — callers
     // must consume it (draw the glyph) before requesting another bitmap.
     return fd->getBitmap(fontData, glyph, glyphIndex);
-  }
-  // Vector (TTF) fonts: the glyph bitmap lives in the font's own cache, keyed by the EpdGlyph its
-  // miss handler returned. Checked before the SD-font cast below (glyphMissCtx is not an SdCardFont
-  // here). nullptr = zero-width glyph (e.g. space).
-  if (fontData->vectorBitmapHandler != nullptr) {
-    return fontData->vectorBitmapHandler(fontData->glyphMissCtx, glyph);
   }
   // For SD card fonts, check if the glyph was loaded on demand into the overflow
   // buffer.  getOverflowBitmap() returns:
@@ -1197,6 +1197,9 @@ const char* resolveVisualText(const char* text, std::string& visualBuffer, const
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
                               const BidiUtils::BidiBaseDir baseDir, const int8_t tracking) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   if (text == nullptr || *text == '\0') {
     return 0;
   }
@@ -2842,6 +2845,9 @@ bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8
 }
 
 int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style style) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Advance table fast-path for SD card fonts during layout
   auto sdIt = sdCardFonts_.find(fontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
@@ -2865,6 +2871,9 @@ int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style styl
 
 int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
                                  const EpdFontFamily::Style style) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Advance table fast-path for SD card fonts during layout.
   // Kern data is not loaded during layout (consistent with previous metadataOnly behavior),
   // so we return just the space advance without kerning.
@@ -2892,6 +2901,9 @@ int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const 
 
 int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
                             const EpdFontFamily::Style style, const int8_t tracking) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) return 0;
   const int kernFP = fontIt->second.getKerning(leftCp, rightCp, style);      // 4.4 fixed-point
@@ -2900,6 +2912,9 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFontFamily::Style style,
                                  const uint32_t followingCp, const int8_t tracking) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   // Match the font drawText would use for CJK-bearing strings (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
   // Measure the exact codepoint stream drawText renders: bidi-reordered and
@@ -3062,6 +3077,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
 }
 
 int GfxRenderer::getFontAscenderSize(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -3072,6 +3090,9 @@ int GfxRenderer::getFontAscenderSize(const int fontId) const {
 }
 
 int GfxRenderer::getLineHeight(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -3082,6 +3103,9 @@ int GfxRenderer::getLineHeight(const int fontId) const {
 }
 
 int GfxRenderer::getTextHeight(const int fontId) const {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess access;
+#endif
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);

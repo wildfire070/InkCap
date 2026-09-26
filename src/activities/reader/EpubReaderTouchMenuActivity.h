@@ -19,8 +19,10 @@
 #include "ReaderOptionsActivity.h"
 #include "TouchReaderPreviewModel.h"
 #include "activities/Activity.h"
-#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
+#if CROSSINK_SCALABLE_FONTS
+#include "TtfRenderProfileStore.h"
+#endif
 
 class EpubReaderTouchMenuActivity final : public Activity {
  public:
@@ -46,7 +48,12 @@ class EpubReaderTouchMenuActivity final : public Activity {
   void render(RenderLock&&) override;
   bool isReaderActivity() const override { return true; }
   bool allowFrontlightPanelGesture() const override { return false; }
-  bool requiresFreshBackdrop() const override { return true; }
+  // A dirty preview can rebuild the page area itself; after a TTF ID change,
+  // an unavailable text snapshot is replaced with a safe blank background.
+  bool requiresFreshBackdrop() const override {
+    return readerDrawerNeedsExternalBackdrop(previewDirty, previewModel && previewModel->valid(),
+                                             previewFontMetricsChanged);
+  }
   bool allowPowerAsConfirmInReaderMode() const override { return true; }
   bool allowGlobalHomeGesture() const override { return true; }
   // Route the touch-screen edge swipe through loop() so it can go Home while
@@ -97,6 +104,8 @@ class EpubReaderTouchMenuActivity final : public Activity {
   bool settingsChanged = false;
   bool didChangeSettings = false;
   bool previewDirty = false;
+  bool previewFontMetricsChanged = false;
+  bool fontPreviewLoading = false;
   int16_t previousDrawerTop = -1;
   bool draggingSlider = false;
   bool sliderTapPending = false;
@@ -142,7 +151,6 @@ class EpubReaderTouchMenuActivity final : public Activity {
   ReaderOptionsActivity::DictionaryFontChangedCallback dictionaryFontChangedCallback = nullptr;
   void* dictionaryFontChangedContext = nullptr;
   ButtonNavigator buttonNavigator;
-  OptionPopup optionPopup;
   freeink::ui::GfxRendererTarget uiTarget;
   UiApp app;
   std::atomic<bool> uiReady{false};
@@ -179,6 +187,7 @@ class EpubReaderTouchMenuActivity final : public Activity {
   void buildDictionaryPane(UiApp::ScreenType& screen);
   void buildFontFamilyPane(UiApp::ScreenType& screen);
   void buildEnumOptionsPane(UiApp::ScreenType& screen);
+  void buildTtfRenderingPane(UiApp::ScreenType& screen);
 
   const std::vector<RowId>& activeRows() const;
   int activeTopIndex() const;
@@ -215,11 +224,22 @@ class EpubReaderTouchMenuActivity final : public Activity {
   // latest typed value.
   void syncKeypadValue();
   int16_t drawerHeight() const;
-  bool renderPreview();
-  void renderPreviewWithAntiAliasing();
+  bool renderPreview(int& previewFontId);
+  void renderPreviewWithAntiAliasing(int previewFontId);
   void renderPreviewContents(const ReaderSettingsDraft& previewSettings, int previewFontId);
   void renderPreviewText(const ReaderSettingsDraft& previewSettings, int previewFontId);
   void discoverFonts();
+  void refreshTtfRenderingRow();
+#if CROSSINK_SCALABLE_FONTS
+  TtfRenderProfile ttfRenderProfile{};
+  TtfRenderProfile initialTtfRenderProfile{};
+  bool ttfRenderingChanged = false;
+
+  void rebuildTtfRenderingRows();
+  void showTtfRenderingOptions(RowId row);
+  void saveTtfRenderingProfile();
+  void finishTtfRenderingEdit();
+#endif
   void discoverDictionaries();
   bool saveBookDictionary(const std::string& path);
   const char* rowLabel(RowId row) const;
