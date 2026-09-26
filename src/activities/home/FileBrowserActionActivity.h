@@ -35,6 +35,7 @@ enum class FileBrowserAction : int {
   ArchiveFic = 23,
   RestoreFic = 24,
   Rename = 25,
+  ReadingStats = 26,
 };
 
 class FileBrowserActionActivity final : public Activity {

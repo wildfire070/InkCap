@@ -27,12 +27,6 @@
 
 inline std::string fontSizePointLabel(const uint8_t pointSize) { return std::to_string(pointSize) + " pt"; }
 
-inline void appendBuiltinFontSizeOption(SettingInfo& setting, const CrossPointSettings::FONT_SIZE size) {
-  const uint8_t pointSize = CrossPointSettings::getReaderFontPointSize(size);
-  setting.enumStringValues.push_back(fontSizePointLabel(pointSize));
-  setting.enumRawValues.push_back(pointSize);
-}
-
 inline SettingInfo buildBuiltinFontSizeSetting() {
   SettingInfo s;
   s.nameId = StrId::STR_FONT_SIZE;
@@ -40,13 +34,12 @@ inline SettingInfo buildBuiltinFontSizeSetting() {
   s.valuePtr = &CrossPointSettings::readerFontPointSize;
   s.key = "fontSize";
   s.category = StrId::STR_CAT_READER;
-  s.enumStringValues.reserve(CrossPointSettings::FONT_SIZE_COUNT);
-  s.enumRawValues.reserve(CrossPointSettings::FONT_SIZE_COUNT);
-
-  appendBuiltinFontSizeOption(s, CrossPointSettings::TINY);
-  appendBuiltinFontSizeOption(s, CrossPointSettings::SMALL);
-  appendBuiltinFontSizeOption(s, CrossPointSettings::MEDIUM);
-  appendBuiltinFontSizeOption(s, CrossPointSettings::LARGE);
+  s.enumStringValues.reserve(std::size(BUILTIN_READER_FONT_SIZES));
+  s.enumRawValues.reserve(std::size(BUILTIN_READER_FONT_SIZES));
+  for (uint8_t size : BUILTIN_READER_FONT_SIZES) {
+    s.enumStringValues.push_back(fontSizePointLabel(size));
+    s.enumRawValues.push_back(size);
+  }
 
   return s;
 }
@@ -112,27 +105,6 @@ inline uint8_t closestPointSizeIndex(const std::vector<uint8_t>& sizes, const ui
   return bestIndex;
 }
 
-inline uint8_t closestBuiltinFontSizeIndex(const uint8_t targetPointSize) {
-  uint8_t bestStored = 0;
-  uint8_t bestPointSize = 0;
-  uint8_t bestDiff = UINT8_MAX;
-
-  for (uint8_t i = 0; i < CrossPointSettings::FONT_SIZE_COUNT; i++) {
-    const auto size = static_cast<CrossPointSettings::FONT_SIZE>(i);
-    const uint8_t stored = CrossPointSettings::getStoredReaderFontSize(size);
-    if (stored == UINT8_MAX) continue;
-
-    const uint8_t pointSize = CrossPointSettings::getReaderFontPointSize(size);
-    const uint8_t diff = pointSize > targetPointSize ? pointSize - targetPointSize : targetPointSize - pointSize;
-    if (diff < bestDiff || (diff == bestDiff && pointSize < bestPointSize)) {
-      bestStored = stored;
-      bestPointSize = pointSize;
-      bestDiff = diff;
-    }
-  }
-  return bestStored;
-}
-
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
 // are appended after the built-in fonts. Otherwise only built-in fonts are listed.
 inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
@@ -168,7 +140,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
       sdFamilyNames.reserve(families.size());
       // Build the combined display-label list (built-in + SD) in one pass instead of a
       // separate SD-only pass copied wholesale into a second combined one afterward.
-      constexpr FontFamilyPointSizeRange builtinRange{10, 16};
+      constexpr auto builtinRange = BUILTIN_FONT_POINT_SIZE_RANGE;
       s.enumStringValues.reserve(families.size() + CrossPointSettings::BUILTIN_FONT_COUNT);
       s.enumStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange));
       s.enumStringValues.push_back(fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange));
@@ -198,8 +170,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     if (v < CrossPointSettings::BUILTIN_FONT_COUNT) {
       SETTINGS.fontFamily = v;
       SETTINGS.sdFontFamilyName[0] = '\0';
-      SETTINGS.readerFontPointSize = CrossPointSettings::getReaderFontPointSize(
-          static_cast<CrossPointSettings::FONT_SIZE>(closestBuiltinFontSizeIndex(targetPointSize)));
+      SETTINGS.readerFontPointSize = closestBuiltinReaderPointSize(targetPointSize);
     } else {
       int sdIdx = v - CrossPointSettings::BUILTIN_FONT_COUNT;
       if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
@@ -552,7 +523,8 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 // #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
 // can use it directly; mutable device UI lists use getSettingsList(), which
 // returns an owned copy and can add SD-card font and dictionary options.
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 102;  // 100 regular entries plus two optional tilt entries.
+// Four edge gesture entries are compiled only for touch devices.
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 102 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
 
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
@@ -1354,7 +1326,6 @@ inline std::vector<SettingInfo> buildGroupedDisplaySettingsList(const std::vecto
   addDisplaySetting(StrId::STR_NIGHT_MODE);
   addDisplaySetting(StrId::STR_UI_THEME);
   addDisplaySetting(StrId::STR_UI_SCALE);
-  addDisplaySetting(StrId::STR_LIBRARY_USE_METADATA);
   addDisplaySetting(StrId::STR_SUNLIGHT_FADING_FIX);
 
   return displaySettings;

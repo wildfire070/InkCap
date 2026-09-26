@@ -30,8 +30,8 @@ TEST(LibraryFormat, StructSizesAreFrozen) {
   EXPECT_EQ(sizeof(ClixHeader), 64u);
   EXPECT_EQ(sizeof(ClixRecord), 128u);
   EXPECT_EQ(sizeof(ClixFolderHeader), 1u);
-  // Version 2 adds the first-name author permutation.
-  EXPECT_EQ(CLIX_FORMAT_VERSION, 2u);
+  // Version 5 adds the creation-time array after the permutations.
+  EXPECT_EQ(CLIX_FORMAT_VERSION, 5u);
 }
 
 TEST(LibraryFormat, RecordsTileSectorsExactly) {
@@ -58,7 +58,7 @@ TEST(LibraryFormat, SectionsDoNotOverlap) {
   EXPECT_GE(h.folderStart, sizeof(ClixHeader));
   EXPECT_GE(h.recordStart, h.folderStart + h.folderLen);
   EXPECT_GE(h.permStart, h.recordStart + 200u * sizeof(ClixRecord));
-  EXPECT_GE(h.nameStart, h.permStart + 200u * 3u * sizeof(uint16_t));
+  EXPECT_GE(h.nameStart, creationTimeOffset(h, h.bookCount));
   EXPECT_EQ(h.selfSize, h.nameStart + h.nameLen);
 }
 
@@ -77,13 +77,17 @@ TEST(LibraryFormat, PermutationArraysDoNotOverlapEachOther) {
   EXPECT_EQ(authorOrderOffset(h, 99), h.permStart + 198u);
   EXPECT_EQ(firstNameOrderOffset(h, 0), h.permStart + 200u);
   EXPECT_EQ(arrivalOrderOffset(h, 0), h.permStart + 400u);
+  EXPECT_EQ(seriesOrderOffset(h, 0), h.permStart + 600u);
+  EXPECT_EQ(genreOrderOffset(h, 0), h.permStart + 800u);
+  EXPECT_EQ(creationTimeOffset(h, 0), h.permStart + 1000u);
+  EXPECT_EQ(creationTimeOffset(h, h.bookCount), h.permStart + 1400u);
   EXPECT_GT(firstNameOrderOffset(h, 0), authorOrderOffset(h, h.bookCount - 1));
   EXPECT_GT(arrivalOrderOffset(h, 0), firstNameOrderOffset(h, h.bookCount - 1));
 }
 
 TEST(LibraryFormat, SizeArithmeticMatchesTheSpecTable) {
-  // 200-book row: 512 header + 1536 folders + 25600 records + 1536
-  // permutations + 16000 names.
+  // 200-book row: 512 header + 1536 folders + 25600 records + 3072
+  // permutations/timestamps + 16000 names.
   ClixHeader h{};
   memcpy(h.magic, CLIX_MAGIC, sizeof(CLIX_MAGIC));
   h.formatVersion = CLIX_FORMAT_VERSION;
@@ -93,12 +97,27 @@ TEST(LibraryFormat, SizeArithmeticMatchesTheSpecTable) {
   EXPECT_EQ(h.folderStart, 512u);
   EXPECT_EQ(h.recordStart, 2048u);
   EXPECT_EQ(h.permStart, 2048u + 25600u);
-  EXPECT_EQ(h.selfSize, 45184u);
+  EXPECT_EQ(h.selfSize, 46720u);
 }
 
 TEST(LibraryFormatValidation, AcceptsAWellFormedHeader) {
   const ClixHeader h = makeHeader(60, 116);
   EXPECT_EQ(validateHeader(h, h.selfSize), ClixValidity::Ok);
+}
+
+TEST(LibraryFormatValidation, PreviousLayoutIsOnlyAcceptedForReconciliation) {
+  ClixHeader h = makeHeader(200, 116);
+  const uint32_t currentNameStart = h.nameStart;
+  h.formatVersion = 3;
+  layoutSections(h, h.folderLen, h.nameLen);
+  EXPECT_LT(h.nameStart, currentNameStart);
+  EXPECT_EQ(validateHeaderStructure(h, h.selfSize), ClixValidity::UnknownFormatVersion);
+  EXPECT_EQ(validateHeaderStructure(h, h.selfSize, true), ClixValidity::Ok);
+
+  h.formatVersion = 4;
+  layoutSections(h, h.folderLen, h.nameLen);
+  EXPECT_EQ(validateHeaderStructure(h, h.selfSize), ClixValidity::UnknownFormatVersion);
+  EXPECT_EQ(validateHeaderStructure(h, h.selfSize, true), ClixValidity::Ok);
 }
 
 TEST(LibraryFormatValidation, RejectsBadMagic) {

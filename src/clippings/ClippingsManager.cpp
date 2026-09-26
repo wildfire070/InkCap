@@ -3,6 +3,7 @@
 #include <HalClock.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Utf8.h>
 #include <common/FsApiConstants.h>
 
 #include <algorithm>
@@ -131,21 +132,8 @@ bool ClippingsManager::saveClipping(const std::string& bookTitle, const std::str
   location += "\n";
 
   static constexpr size_t MAX_TEXT_BYTES = 2000;
-  size_t textLen = std::min(selectedText.size(), MAX_TEXT_BYTES);
-  // If the cut lands mid-UTF-8-sequence (the first excluded byte is a
-  // continuation byte), back up over the continuation bytes already
-  // included plus the lead byte that started the now-incomplete sequence --
-  // otherwise the truncated text ends in an invalid trailing byte sequence
-  // (accented letters, curly quotes, etc. are all multi-byte and common in
-  // fiction text).
-  if (textLen < selectedText.size() && (static_cast<unsigned char>(selectedText[textLen]) & 0xC0) == 0x80) {
-    while (textLen > 0 && (static_cast<unsigned char>(selectedText[textLen - 1]) & 0xC0) == 0x80) {
-      textLen--;
-    }
-    if (textLen > 0) {
-      textLen--;
-    }
-  }
+  const size_t textLen = static_cast<size_t>(
+      utf8SafeTruncateBuffer(selectedText.data(), static_cast<int>(std::min(selectedText.size(), MAX_TEXT_BYTES))));
   static constexpr char separator[] = "\n==========\n";
 
   std::string buffer;

@@ -2,9 +2,11 @@
 
 ### Added
 
+- View a selected book's reading stats from its Library or File Browser action menu.
 - Library replaces Recent Books with a searchable book list, title and author metadata, and sorting by date added, title, author last name, author first name, or recently opened.
 - Reset a book's reader settings from the in-reader Settings tab.
 - Assign actions to upward and downward slides along either screen edge on touch devices.
+- TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
 
 ### Changed
 
@@ -12,8 +14,17 @@
 
 ### Fixed
 
+- Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
+- EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
+- The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
 - OPDS downloads now use the first listed author for filename templates when a catalog also lists translators or other contributors.
 - Retain the CSS spacing supplied by empty inline spans.
+- Improve stability when connecting to Wi-Fi for update checks and KOReader authentication on X4 Pro.
+- Crash reports now identify the primary CPU core, show task names when available, preserve both cores' backtraces, and include the firmware ELF hash needed to decode them.
+- Release clipping index memory after closing a book or clearing its clippings.
+- Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
+- Keep clipping-selection button hints from covering book text.
+- Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
 
 ## [v1.6.0] - 2026-09-21
 

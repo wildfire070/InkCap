@@ -202,7 +202,15 @@ void FrontlightPanelActivity::toggleReaderTouchscreen() {
   requestUpdate();
 }
 
-void FrontlightPanelActivity::close() { finish(); }
+void FrontlightPanelActivity::close() {
+  FrontlightPanelResult result;
+  result.state = drawerState;
+  result.activeEpub = context.activeEpub;
+  result.ttfRenderingChanged = ttfRenderingChanged;
+  result.bookPath = context.bookPath;
+  setResult(ActivityResult(std::move(result)));
+  finish();
+}
 
 void FrontlightPanelActivity::openReadingStats() {
   if (!context.readingStatsActivity && context.sourceActivity) {
@@ -221,7 +229,10 @@ void FrontlightPanelActivity::openGlobalSettings() {
     if (startedGlobalEdit) activityManager.endGlobalSettingsEdit();
     return;
   }
-  startActivityForResult(std::move(settings), [this, startedGlobalEdit](const ActivityResult&) {
+  startActivityForResult(std::move(settings), [this, startedGlobalEdit](const ActivityResult& result) {
+    if (const auto* options = std::get_if<TtfRenderOptionsResult>(&result.data)) {
+      ttfRenderingChanged = ttfRenderingChanged || options->activeFamilyChanged;
+    }
     if (startedGlobalEdit) activityManager.endGlobalSettingsEdit();
     close();
   });
