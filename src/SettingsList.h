@@ -523,8 +523,9 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 // #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
 // can use it directly; mutable device UI lists use getSettingsList(), which
 // returns an owned copy and can add SD-card font and dictionary options.
+// 103 = 102 plus the Character Spacing entry.
 // Four edge gesture entries are compiled only for touch devices.
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 102 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 103 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
 
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
