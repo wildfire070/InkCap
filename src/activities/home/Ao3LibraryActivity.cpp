@@ -1693,15 +1693,19 @@ void Ao3LibraryActivity::resortViewEntries() {
       break;
 
     case SortMode::SERIES:
+      // Alphabetical by series name (first 7 chars, like Author), a series' books kept together
+      // by the full-name hash and ordered by part. Fics with no series always go last.
       std::sort(viewEntries.begin(), viewEntries.end(), [&](const ViewEntry& a, const ViewEntry& b) {
         bool aHas = a.seriesHash != 0;
         bool bHas = b.seriesHash != 0;
         if (aHas != bHas) return aHas > bHas;  // no-series goes last
 
-        if (a.seriesHash != b.seriesHash)
-          return activeState.ascending ? a.seriesHash < b.seriesHash : a.seriesHash > b.seriesHash;
-
-        if (a.seriesPart != b.seriesPart) return a.seriesPart < b.seriesPart;  // always ascending seriesPart
+        if (aHas) {
+          const int keyCmp = strncmp(a.seriesKey, b.seriesKey, 8);
+          if (keyCmp != 0) return activeState.ascending ? keyCmp < 0 : keyCmp > 0;
+          if (a.seriesHash != b.seriesHash) return a.seriesHash < b.seriesHash;
+          if (a.seriesPart != b.seriesPart) return a.seriesPart < b.seriesPart;  // always ascending seriesPart
+        }
 
         return strncmp(a.title, b.title, 12) < 0;
       });
