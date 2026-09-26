@@ -212,15 +212,28 @@ void Ao3LibraryActivity::loadPageCache(int page) {
     new (&pageCache[i]) Ao3LibraryMetadata();
     pageCacheStatus[i] = BookStatus::START;
     pageCacheMarkedPosition[i] = -1;
+    pageCacheUnindexed[i] = false;
   }
 
   for (int i = startIdx; i < endIdx; i++) {
     const int slot = i - startIdx;
     std::string infoPath = "/.crosspoint/epub_" + std::to_string(viewEntries[i].cacheHash) + "/ao3_library_info";
     HalFile f;
+    bool infoLoaded = false;
     if (Storage.openFileForRead("AO3L", infoPath, f)) {
-      f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata));
+      infoLoaded = f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata)) == sizeof(Ao3LibraryMetadata);
       f.close();
+    }
+    if (const UnindexedMarked* u = findUnindexedMarked(viewEntries[i].cacheHash)) {
+      // The fic's own scraped info wins if it exists; otherwise show what the marked-for-later store knows.
+      infoLoaded = infoLoaded && pageCache[slot].isValid();
+      pageCacheUnindexed[slot] = !infoLoaded;
+      if (!infoLoaded) new (&pageCache[slot]) Ao3LibraryMetadata();
+      strncpy(pageCache[slot].filepath, u->path.c_str(), sizeof(pageCache[slot].filepath) - 1);
+      if (pageCacheUnindexed[slot]) {
+        strncpy(pageCache[slot].title, u->title.c_str(), sizeof(pageCache[slot].title) - 1);
+        strncpy(pageCache[slot].author, u->author.c_str(), sizeof(pageCache[slot].author) - 1);
+      }
     }
     pageCacheStatus[slot] = getBookStatus(viewEntries[i].cacheHash);
     pageCacheMarkedPosition[slot] = getMarkedPosition(viewEntries[i].cacheHash);
@@ -1352,7 +1365,7 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
   const bool completed = metaLoaded ? (bool)meta.isCompleted : false;
 
   drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot],
-               pageCacheMarkedPosition[cacheSlot]);
+                pageCacheMarkedPosition[cacheSlot], pageCacheUnindexed[cacheSlot]);
 
   std::string title = metaLoaded && meta.title[0] ? std::string(meta.title) : std::string(ve.title);
   std::string authorText = metaLoaded && meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
@@ -1391,7 +1404,9 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
   renderer.drawText(UI_12_FONT_ID, textX, y + 6, title.c_str(), true, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, textX, y + 32, authorText.c_str());
 
-  if (metaLoaded) {
+  if (pageCacheUnindexed[cacheSlot]) {
+    renderer.drawText(SMALL_FONT_ID, margin, y + selectionHeight + 12, tr(STR_NOT_INDEXED));
+  } else if (metaLoaded) {
     int blockY = y + selectionHeight + 12;
 
     // Tags
@@ -1441,13 +1456,17 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
 // ---------------------------------------------------------------------------
 
 void Ao3LibraryActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
-                                       BookStatus status, int markedPosition) {
+                                       BookStatus status, int markedPosition, bool completionUnknown) {
   const int h = s / 2;
 
   renderSymbol(x + 1, y + 1, h - 1, rating, true, false, false, false, -1);
   renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1, markedPosition);
   renderWarningSymbol(x + 1, y + h + 1, h - 1, warning, false, false, true, false, -2);
-  renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
+  if (completionUnknown) {
+    renderSymbol(x + h + 1, y + h + 1, h - 1, '-', false, false, false, true, -2);  // not indexed: completion unknown
+  } else {
+    renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
+  }
 
   renderer.drawRoundedRect(x, y, s, s, 1, 6, true);
   renderer.drawLine(x + 1, y + h, x + s - 1, y + h);
@@ -1725,6 +1744,13 @@ void Ao3LibraryActivity::resortViewEntries() {
 //  Filtering Logic
 // ---------------------------------------------------------------------------
 
+const Ao3LibraryActivity::UnindexedMarked* Ao3LibraryActivity::findUnindexedMarked(uint64_t cacheHash) const {
+  for (const auto& u : unindexedMarked_) {
+    if (u.cacheHash == cacheHash) return &u;
+  }
+  return nullptr;
+}
+
 int Ao3LibraryActivity::viewPosition(uint64_t cacheHash) const {
   for (size_t i = 0; i < viewOrder_.size(); i++) {
     if (viewOrder_[i] == cacheHash) return static_cast<int>(i);
@@ -1770,6 +1796,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   // holds one.
   RenderLock lock(*this);
   viewEntries.clear();
+  unindexedMarked_.clear();
   const char* indexPath = "/.crosspoint/ao3_library_index.bin";
 
   if (!Storage.exists(indexPath)) {
@@ -1839,10 +1866,18 @@ void Ao3LibraryActivity::rebuildViewEntries() {
     }
   }
 
+  // Which of the Marked for Later fics have a live index record (whatever the filters then say about them).
+  const bool markedView = activeState.view == LibraryView::MARKED_FOR_LATER;
+  std::vector<uint8_t> markedInIndex(markedView ? viewOrder_.size() : 0, 0);
+
   CompactIndexRecord rec;
   for (uint16_t i = 0; i < recordCount; i++) {
     if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-    if (rec.flags & 0x01) continue;                    // Skip tombstone
+    if (rec.flags & 0x01) continue;  // Skip tombstone
+    if (markedView) {
+      const int pos = viewPosition(rec.cacheHash);
+      if (pos >= 0) markedInIndex[pos] = 1;
+    }
     if (hideFinished && (rec.flags & 0x02)) continue;  // Skip finished
     ViewEntry v = buildViewEntry(rec);
     if (passesFilter(v, filterHashes)) {
@@ -1854,6 +1889,8 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   }
   f.close();
 
+  if (markedView) addUnindexedMarked(markedInIndex, filterHashes, hideFinished);
+
   resortViewEntries();
   indexState = IndexState::OK;
   cachedPage = -1;
@@ -1862,6 +1899,39 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   // The list may be shorter than when selectorIndex was set (returning to a New Chapters view
   // after opening the fic drops it from the list, a Marked for Later toggle, ...).
   if (selectorIndex >= viewEntries.size()) selectorIndex = viewEntries.empty() ? 0 : viewEntries.size() - 1;
+}
+
+// Adds the Marked for Later fics that have no live index record, so the view lists every marked fic. They carry no
+// rating/completion, so an active rating or completion filter (which they cannot satisfy) hides them; the folder
+// filter and Hide Finished apply as for indexed fics. Called with the render lock held (from rebuildViewEntries).
+void Ao3LibraryActivity::addUnindexedMarked(const std::vector<uint8_t>& markedInIndex, const FilterHashes& filters,
+                                            const bool hideFinished) {
+  if (filters.ratingActive || filters.completionActive) return;
+  const auto& entries = AO3_MARKED_FOR_LATER_STORE.getEntries();
+  for (size_t i = 0; i < entries.size() && i < markedInIndex.size(); i++) {
+    if (markedInIndex[i]) continue;
+    const auto& e = entries[i];
+    const uint64_t hash = viewOrder_[i];
+    if (filterMode == FilterMode::FOLDER_TREE &&
+        !std::binary_search(allowedHashes.begin(), allowedHashes.end(), hash)) {
+      continue;
+    }
+    if (!Storage.exists(e.path.c_str())) continue;
+    if (hideFinished &&
+        Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(e.path, "/.crosspoint")) == BookStatus::FINISHED) {
+      continue;
+    }
+    ViewEntry v{};
+    strncpy(v.title, e.title.c_str(), sizeof(v.title) - 1);
+    strncpy(v.authorKey, e.author.c_str(), sizeof(v.authorKey) - 1);
+    for (char* p = v.authorKey; *p; p++) {
+      if (*p >= 'A' && *p <= 'Z') *p += 32;
+    }
+    v.cacheHash = hash;
+    v.rating = '-';
+    viewEntries.push_back(v);
+    unindexedMarked_.push_back({hash, e.path, e.title, e.author});
+  }
 }
 
 void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const SortFilterState& next) {
