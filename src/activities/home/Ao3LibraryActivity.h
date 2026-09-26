@@ -66,6 +66,9 @@ class Ao3LibraryActivity final : public Activity {
   // 0-based Marked for Later queue position for the slot's fic, or -1 if not
   // marked. See getMarkedPosition().
   int pageCacheMarkedPosition[3] = {-1, -1, -1};
+  // True for a slot whose fic is marked for later but has no AO3 index record (see UnindexedMarked): only its
+  // title/author/path are known, so the row shows those and skips the scraped metadata block.
+  bool pageCacheUnindexed[3] = {false, false, false};
   std::vector<std::string> wrappedSummary[3];
   int cachedPage = -1;
   bool buttonsSetup = false;
@@ -89,6 +92,18 @@ class Ao3LibraryActivity final : public Activity {
   // Empty for the other views. Both stores are capped at 10, so linear lookups are fine.
   std::vector<uint64_t> viewOrder_;
 
+  // A Marked for Later fic that is not in the AO3 index (marked from the File Browser, never indexed, or its
+  // index record was dropped). The Marked view is built from the index, so these are added on top from the
+  // store's own title/author/path so no marked fic is ever missing from the view. At most 10 (the store cap).
+  struct UnindexedMarked {
+    uint64_t cacheHash;
+    std::string path;
+    std::string title;
+    std::string author;
+  };
+  std::vector<UnindexedMarked> unindexedMarked_;
+  const UnindexedMarked* findUnindexedMarked(uint64_t cacheHash) const;
+
   size_t initialSelectorIndex_ = 0;
   bool skipNextBackRelease = false;
   bool autoIndexOnOpen_ = false;
@@ -102,7 +117,7 @@ class Ao3LibraryActivity final : public Activity {
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
   void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
-                     BookStatus status, int markedPosition = -1);
+                     BookStatus status, int markedPosition = -1, bool completionUnknown = false);
 
   void renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br,
@@ -117,6 +132,7 @@ class Ao3LibraryActivity final : public Activity {
   void saveSortFilterState() const;
   void resortViewEntries();
   void rebuildViewEntries();
+  void addUnindexedMarked(const std::vector<uint8_t>& markedInIndex, const FilterHashes& filters, bool hideFinished);
   void applyStateChange(const SortFilterState& prev, const SortFilterState& next);
   bool passesFilter(const ViewEntry& v, const FilterHashes& h) const;
   bool isStoreView() const {
