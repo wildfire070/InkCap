@@ -267,7 +267,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
         static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(word, blockStyle.isRtl ? 1 : 0));
 
     if ((wordFlags(i) & WORD_FLAG_BACKGROUND_BLACK) != 0 && isWhitespaceOnlyBackgroundToken(word)) {
-      const uint16_t backgroundWidth = static_cast<uint16_t>(scaled(measureBackgroundWidth(renderer, fontId, word, currentStyle, tracking)));
+      const uint16_t backgroundWidth =
+          static_cast<uint16_t>(scaled(measureBackgroundWidth(renderer, fontId, word, currentStyle, tracking)));
       if (backgroundWidth > 0) {
         renderer.fillRect(wordX, y, backgroundWidth, ascender, true);
       }
@@ -293,11 +294,14 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
       boldBuf[boldLen] = '\0';
       const int secondRunX = wordX + scaled(focusRunOffset(i));
       if (baseDir == BidiUtils::BidiBaseDir::RTL) {
-        renderer.drawTextScaled(fontId, wordX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir, tracking);
-        renderer.drawTextScaled(fontId, secondRunX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir, tracking);
+        renderer.drawTextScaled(fontId, wordX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir,
+                                tracking);
+        renderer.drawTextScaled(fontId, secondRunX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir,
+                                tracking);
       } else {
         renderer.drawTextScaled(fontId, wordX, wordY, boldBuf, foregroundBlack, boldStyle, scale, baseDir, tracking);
-        renderer.drawTextScaled(fontId, secondRunX, wordY, word + boldLen, foregroundBlack, currentStyle, scale, baseDir, tracking);
+        renderer.drawTextScaled(fontId, secondRunX, wordY, word + boldLen, foregroundBlack, currentStyle, scale,
+                                baseDir, tracking);
       }
     } else {
       renderer.drawTextScaled(fontId, wordX, wordY, word, foregroundBlack, currentStyle, scale, baseDir, tracking);
@@ -313,7 +317,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
         groupWidth += renderer.getTextAdvanceX(fontId, wordText(i + j), wordStyle(i + j), 0, tracking);
       }
       groupWidth = scaled(groupWidth);
-      const int rubyWidth = scaled(renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP, 0, tracking));
+      const int rubyWidth =
+          scaled(renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP, 0, tracking));
       // ParsedText reserves any edge overhang in the line layout, so the ruby
       // can remain centered over its base text without screen-edge clamping.
       const int rubyX = wordX + (groupWidth - rubyWidth) / 2;
@@ -334,7 +339,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
 
       if (hasSyntheticIndentPrefix(word, wordLen)) {
         const char* visiblePtr = word + 3;
-        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
+        const int prefixWidth =
+            scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
         startX = wordX + prefixWidth;
         underlineWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir, tracking));
       }
@@ -365,7 +371,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
 
       if (hasSyntheticIndentPrefix(word, wordLen)) {
         const char* visiblePtr = word + 3;
-        const int prefixWidth = scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
+        const int prefixWidth =
+            scaled(renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle, 0, tracking) + tracking);
         startX = wordX + prefixWidth;
         strikeWidth = scaled(renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir, tracking));
       }

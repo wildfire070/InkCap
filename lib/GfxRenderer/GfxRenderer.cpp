@@ -38,7 +38,6 @@ int countTrackingGaps(const char* text) {
   return gaps;
 }
 
-
 /**
  * Resolves the requested style to the best available style in the given SD card font.
  * Falls back gracefully when the font lacks the requested variant.
@@ -1269,8 +1268,8 @@ void GfxRenderer::drawTextScaled(const int fontId, const int x, const int y, con
 }
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
-                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir,
-                           const float scale, const int8_t tracking) const {
+                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir, const float scale,
+                           const int8_t tracking) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;

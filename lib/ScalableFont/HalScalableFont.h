@@ -69,8 +69,7 @@ class HalScalableFont {
   // resident base is shared (no second copy of the bytes); a streamed base is streamed again.
   // `base` must outlive this face.
   bool openStyledFrom(const HalScalableFont& base, int weight, bool italic,
-                      const freeink::font::FtFont::RenderOptions& options, size_t remainingBytes,
-                      size_t pendingFaces);
+                      const freeink::font::FtFont::RenderOptions& options, size_t remainingBytes, size_t pendingFaces);
   // OpenType's whole-file checksum is advisory: some usable fonts ship with
   // stale checksums, so callers must combine this with a real load failure.
   bool integrityMismatch() const { return integrityMismatch_; }
@@ -109,7 +108,7 @@ class HalScalableFont {
   uint32_t cacheId_ = 0;
   int weight_ = 400;
   bool italic_ = false;
-  bool borrowed_ = false;  // bytes belong to another face (see openStyledFrom)
+  bool borrowed_ = false;                 // bytes belong to another face (see openStyledFrom)
   const uint8_t* sourceBytes_ = nullptr;  // resident font bytes (owned or caller's); null when streamed
   size_t sourceSize_ = 0;
   bool metricFailureLogged_ = false;
