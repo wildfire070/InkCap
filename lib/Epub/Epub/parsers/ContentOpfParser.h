@@ -21,6 +21,8 @@ class ContentOpfParser final : public Print {
     IN_DC_SUBJECT,
     IN_DC_IDENTIFIER,
     IN_DC_SOURCE,
+    IN_BOOK_COLLECTION,
+    IN_BOOK_COLLECTION_TYPE,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -48,6 +50,11 @@ class ContentOpfParser final : public Print {
   bool titleTruncated = false;
   bool authorTruncated = false;
   bool languageTruncated = false;
+  bool seriesTruncated = false;
+  bool collectionTypeTruncated = false;
+  std::string collectionName;
+  std::string collectionId;
+  std::string collectionType;
   bool hasExplicitStartReference = false;
   bool collectCssFiles = true;
 
@@ -119,6 +126,8 @@ class ContentOpfParser final : public Print {
   std::string identifierBuffer;
   bool identifierIsBookFusion = false;  // the dc:identifier currently being read carries that scheme
   std::string language;
+  std::string subject;
+  std::string series;
   std::string tocNcxPath;
   std::string tocNavPath;        // EPUB 3 nav document path
   std::string guideTocPageHref;  // EPUB 2 guide TOC page, if declared

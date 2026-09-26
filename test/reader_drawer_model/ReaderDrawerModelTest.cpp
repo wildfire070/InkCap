@@ -201,6 +201,13 @@ TEST(ReaderDrawerModel, TallLandscapeSheetCoversDualSlidersAndTheKeypadPanes) {
   EXPECT_FALSE(readerDrawerNeedsTallLandscapeSheet(ReaderDrawerPane::AutoPageTurn));
 }
 
+TEST(ReaderDrawerModel, DirtyPreviewCanReplaceAStaleExternalBackdrop) {
+  EXPECT_FALSE(readerDrawerNeedsExternalBackdrop(true, true, false));
+  EXPECT_FALSE(readerDrawerNeedsExternalBackdrop(true, false, true));
+  EXPECT_TRUE(readerDrawerNeedsExternalBackdrop(false, true, true));
+  EXPECT_TRUE(readerDrawerNeedsExternalBackdrop(true, false, false));
+}
+
 TEST(PendingOverlayResume, ConsumptionIsOneShot) {
   PendingOverlayResume stored;
   stored.origin = PendingOverlayOrigin::Reader;

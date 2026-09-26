@@ -10,15 +10,26 @@
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+
+#include <filesystem>
+#include <fstream>
+
+#include "FontInstaller.h"
+#include "TtfRenderProfileStore.h"
+#endif
 #include <memory>
 #include <vector>
 
 #include "CrossPointSettings.h"
 #include "DeviceCapabilities.h"
 #include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "activities/ActivityManager.h"
 #include "activities/reader/EpubReaderMenuActivity.h"
+#include "activities/reader/ReaderFontLoading.h"
 #include "activities/reader/ReaderOptionsActivity.h"
 #include "activities/reader/ReaderUtils.h"
 #include "activities/settings/QuickActionsActivity.h"
@@ -73,6 +84,7 @@ class SimulatorSmokeTest {
     AssertHomeButtonEnabled,
     AssertTouchscreenDisabled,
     AssertTouchscreenEnabled,
+    AssertTtfProfileNative,
     OpenSmokeBook,
     DisableReaderTouch,
     EnableReaderTouch,
@@ -450,6 +462,29 @@ class SimulatorSmokeTest {
     step = nextStep;
   }
 
+  void verifyLoadingPopupBackdrop() {
+    RenderLock lock;
+    const auto originalOrientation = renderer.getOrientation();
+    for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise,
+                                   GfxRenderer::PortraitInverted, GfxRenderer::LandscapeCounterClockwise}) {
+      renderer.setOrientation(orientation);
+      const int width = renderer.getScreenWidth();
+      const int height = renderer.getScreenHeight();
+      renderer.clearScreen();
+      for (int y = 0; y < height; y += 7) renderer.drawLine(0, y, width - 1, y);
+      const size_t bytes = renderer.getRegionByteSize(0, 0, width, height);
+      std::vector<uint8_t> before(bytes), after(bytes);
+      if (!renderer.copyRegionToBuffer(0, 0, width, height, before.data(), bytes))
+        fail("Could not snapshot loading popup backdrop");
+      GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+      if (!renderer.copyRegionToBuffer(0, 0, width, height, after.data(), bytes) || before != after)
+        fail("Loading popup changed the underlying framebuffer");
+    }
+    renderer.setOrientation(originalOrientation);
+    renderer.clearScreen();
+    LOG_INF("SMOKE", "Loading popup preserves backdrop in all orientations");
+  }
+
   void tickImpl() {
     mappedInputManager.simulatorClearInputFrame();
 
@@ -465,6 +500,7 @@ class SimulatorSmokeTest {
     switch (step) {
       case SmokeStep::Start:
         LOG_INF("SMOKE", "Starting simulator smoke test");
+        verifyLoadingPopupBackdrop();
         if (!CrossPointSettings::verifySleepTimeoutMigrationContract()) {
           fail("Sleep timeout migration contract failed");
         }
@@ -477,6 +513,201 @@ class SimulatorSmokeTest {
         verifyUpDownShortcutAvailability();
         verifyReaderControlsSettings();
         verifyMixedPageGestures();
+#if CROSSINK_SCALABLE_FONTS
+        if (const char* family = std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_FAMILY")) {
+          // Exercise the production registry, adapter, size cache, and dictionary
+          // handoff before the normal reader navigation smoke sequence.
+          sdFontSystem.ensureRegistry();
+          sdFontSystem.releaseRegistry();
+          sdFontSystem.ensureRegistry();
+          for (const auto& summary : sdFontSystem.registry().getFamilies()) {
+            if (!summary.files.empty()) fail("Font names eagerly loaded detail paths");
+          }
+          const auto* info = sdFontSystem.registry().findFamily(family);
+          if (!info || !info->isScalable()) fail("TTF family not discovered: %s", family);
+          const auto picker = buildFontFamilySetting(&sdFontSystem.registry());
+          const std::string expectedLabel = std::string(family) + " (8-22pt)";
+          const auto item = std::find(picker.enumStringValues.begin(), picker.enumStringValues.end(), expectedLabel);
+          if (item == picker.enumStringValues.end()) fail("TTF family missing from picker: %s", family);
+          picker.valueSetter(static_cast<uint8_t>(item - picker.enumStringValues.begin()));
+          if (std::strcmp(SETTINGS.sdFontFamilyName, family) != 0) fail("TTF picker selected the wrong family");
+          SETTINGS.readerFontPointSize = 12;
+          sdFontSystem.ensureLoaded(renderer);
+          const int original = SETTINGS.getReaderFontId();
+          const TtfRenderProfile initialProfile = TTF_RENDER_PROFILES.profileFor(family);
+          TtfRenderProfile nativeProfile = initialProfile;
+          nativeProfile.hinting = 1;  // TtfRenderProfile: Native
+          nativeProfile.interpreter = 0;
+          if (!TTF_RENDER_PROFILES.setProfile(family, nativeProfile)) fail("TTF native profile was not persisted");
+          if (!sdFontSystem.reloadActiveScalableFamily(renderer, family)) fail("TTF native profile reload failed");
+          const int nativeId = SETTINGS.getReaderFontId();
+          if (nativeId == original || nativeId == SETTINGS.getBuiltInReaderFontId())
+            fail("TTF native profile did not replace the resident font identity");
+          if (!TTF_RENDER_PROFILES.setProfile(family, initialProfile)) fail("TTF initial profile was not restored");
+          if (!sdFontSystem.reloadActiveScalableFamily(renderer, family)) fail("TTF initial profile reload failed");
+          if (SETTINGS.getReaderFontId() != original) fail("TTF profile round trip changed font identity");
+          if (ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Resident TTF family incorrectly requests loading feedback");
+          }
+          sdFontSystem.releaseLoadedFont(renderer);
+          if (!ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Released TTF family suppressed loading feedback");
+          }
+          sdFontSystem.ensureLoaded(renderer);
+          if (ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Reloaded TTF family incorrectly requests loading feedback");
+          }
+          sdFontSystem.releaseRegistry();
+          if (!ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Released TTF catalog suppressed loading feedback");
+          }
+          sdFontSystem.ensureRegistry();
+          if (ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Reloaded TTF catalog incorrectly requests loading feedback");
+          }
+          sdFontSystem.markRegistryDirty();
+          if (!ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Dirty TTF family suppressed loading feedback");
+          }
+          sdFontSystem.ensureLoaded(renderer);
+          if (ReaderUtils::shouldShowFontPreviewLoading(family)) {
+            fail("Reloaded dirty TTF family incorrectly requests loading feedback");
+          }
+          SETTINGS.readerFontPointSize = 22;
+          sdFontSystem.releaseRegistry();
+          if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, true, FontSizeStepMode::Clamp) ||
+              SETTINGS.readerFontPointSize != 22)
+            fail("Cold resize at maximum size did not remain clamped");
+          SETTINGS.readerFontPointSize = 12;
+          sdFontSystem.releaseRegistry();
+          if (!ReaderUtils::changeReaderFontSizeWithFeedback(renderer, true, FontSizeStepMode::Clamp) ||
+              SETTINGS.readerFontPointSize != 13)
+            fail("Resize did not lazily reload indexed SD sizes");
+          sdFontSystem.ensureLoaded(renderer);
+          if (!ReaderUtils::changeReaderFontSizeWithFeedback(renderer, false, FontSizeStepMode::Clamp) ||
+              SETTINGS.readerFontPointSize != 12)
+            fail("Reverse resize did not use indexed sizes");
+          sdFontSystem.ensureLoaded(renderer);
+          if (original == SETTINGS.getBuiltInReaderFontId()) fail("TTF activation fell back");
+          for (uint8_t points : {uint8_t(14), uint8_t(12)}) {
+            SETTINGS.readerFontPointSize = points;
+            sdFontSystem.ensureLoaded(renderer);
+            if (SETTINGS.getReaderFontId() == SETTINGS.getBuiltInReaderFontId()) fail("TTF size activation failed");
+          }
+          if (SETTINGS.getReaderFontId() != original) fail("TTF size identity changed on reuse");
+          if (std::getenv("CROSSINK_SIMULATOR_SMOKE_ISOLATED_FONTS")) {
+            // A clean resize must use resident metadata, even with the cache temporarily unavailable.
+            namespace fs = std::filesystem;
+            fs::rename("fs_/.crosspoint/font-catalog.bin", "fs_/.crosspoint/font-catalog.saved");
+            if (!ReaderUtils::changeReaderFontSizeWithFeedback(renderer, true, FontSizeStepMode::Clamp))
+              fail("Clean resize failed");
+            sdFontSystem.ensureLoaded(renderer);
+            if (fs::exists("fs_/.crosspoint/font-catalog.bin")) fail("Clean resize reread/rebuilt the index");
+            fs::rename("fs_/.crosspoint/font-catalog.saved", "fs_/.crosspoint/font-catalog.bin");
+            if (!ReaderUtils::changeReaderFontSizeWithFeedback(renderer, false, FontSizeStepMode::Clamp))
+              fail("Clean reverse resize failed");
+            sdFontSystem.ensureLoaded(renderer);
+          }
+          const auto dictionary = sdFontSystem.activateDictionaryFont(renderer, family, 16);
+          if (!dictionary.usingDictionaryFont) fail("TTF dictionary activation failed");
+          if (sdFontSystem.restoreReaderFont(renderer) != original) fail("TTF reader restoration changed identity");
+          // Cold dictionary activation has no persistent book-layout identity.
+          // Restoring that same family must rebuild its normal reader identity.
+          sdFontSystem.releaseLoadedFont(renderer);
+          const auto temporaryDictionary = sdFontSystem.activateDictionaryFont(renderer, family, 12);
+          if (!temporaryDictionary.usingDictionaryFont || temporaryDictionary.fontId == original)
+            fail("Cold TTF dictionary did not use a temporary identity");
+          const auto reusedDictionary = sdFontSystem.activateDictionaryFont(renderer, family, 12);
+          if (reusedDictionary.fontId != temporaryDictionary.fontId)
+            fail("Active TTF dictionary family was not reused");
+          if (sdFontSystem.restoreReaderFont(renderer) != original)
+            fail("Temporary dictionary identity escaped into reader restoration");
+          sdFontSystem.releaseLoadedFont(renderer);
+          if (!sdFontSystem.activateDictionaryFont(renderer, family, 12).usingDictionaryFont)
+            fail("Cold TTF dictionary reload failed");
+          sdFontSystem.ensureLoaded(renderer);
+          if (SETTINGS.getReaderFontId() != original)
+            fail("Reader ensureLoaded reused a temporary dictionary identity");
+          sdFontSystem.releaseLoadedFont(renderer);
+          sdFontSystem.ensureLoaded(renderer);
+          if (SETTINGS.getReaderFontId() != original) fail("TTF reload changed identity");
+          if (std::getenv("CROSSINK_SIMULATOR_SMOKE_ISOLATED_FONTS")) {
+            namespace fs = std::filesystem;
+            // The runner provides disposable copies; never mutate a user's SD tree.
+            const auto* current = sdFontSystem.registry().findFamily(family);
+            const std::string firstPath = "fs_" + current->files.front().path;
+            fs::copy("fs_/fonts", "fs_/font-smoke-backup", fs::copy_options::recursive);
+            sdFontSystem.releaseLoadedFont(renderer);
+            // Budget failures must preserve selection, release partial faces,
+            // and permit a subsequent valid load without stale renderer IDs.
+            const auto originalBytes = fs::file_size(firstPath);
+            fs::resize_file(firstPath, HalScalableFont::MaxFileBytes + 1);
+            sdFontSystem.ensureLoaded(renderer);
+            if (SETTINGS.getReaderFontId() != SETTINGS.getBuiltInReaderFontId() ||
+                std::strcmp(SETTINGS.sdFontFamilyName, family) != 0)
+              fail("Oversized TTF file did not preserve selection and fall back");
+            fs::resize_file(firstPath, originalBytes);
+            if (current->files.size() == 4) {
+              for (const auto& face : current->files) fs::resize_file("fs_" + face.path, HalScalableFont::MaxFileBytes);
+              sdFontSystem.ensureLoaded(renderer);
+              if (SETTINGS.getReaderFontId() != SETTINGS.getBuiltInReaderFontId() ||
+                  std::strcmp(SETTINGS.sdFontFamilyName, family) != 0)
+                fail("Oversized TTF family did not preserve selection and fall back");
+              for (const auto& face : current->files) {
+                const fs::path target = "fs_" + face.path;
+                const auto backup = fs::path("fs_/font-smoke-backup") / fs::relative(target, "fs_/fonts");
+                fs::copy_file(backup, target, fs::copy_options::overwrite_existing);
+              }
+            }
+            sdFontSystem.ensureLoaded(renderer);
+            if (SETTINGS.getReaderFontId() != original) fail("TTF budget failure did not recover");
+            sdFontSystem.releaseLoadedFont(renderer);
+            {
+              std::ofstream changed(firstPath, std::ios::binary | std::ios::app);
+              changed.put('X');
+            }
+            sdFontSystem.markRegistryDirty();
+            sdFontSystem.refreshIfDirty();  // A picker must not consume the active-font reload signal.
+            sdFontSystem.ensureLoaded(renderer);
+            if (SETTINGS.getReaderFontId() == original ||
+                SETTINGS.getReaderFontId() == SETTINGS.getBuiltInReaderFontId())
+              fail("TTF replacement did not change content identity");
+            sdFontSystem.releaseLoadedFont(renderer);
+            // Reproduce the source location without interpreting font metadata as a path.
+            const fs::path sourceFolder = fs::path(firstPath).parent_path();
+            const fs::path duplicateFolder = sourceFolder == fs::path("fs_/fonts")
+                                                 ? fs::path("fs_/.fonts")
+                                                 : fs::path("fs_/.fonts") / sourceFolder.filename();
+            fs::create_directories(duplicateFolder);
+            fs::copy_file(firstPath, duplicateFolder / "duplicate.ttf", fs::copy_options::overwrite_existing);
+            constexpr const char* separateFamily = "TTF Smoke Separate Family";
+            const fs::path separateFolder = fs::path("fs_/fonts") / separateFamily;
+            fs::create_directories(separateFolder);
+            fs::copy_file(firstPath, separateFolder / "same-metadata.ttf");
+            sdFontSystem.markRegistryDirty();
+            sdFontSystem.refreshIfDirty();
+            if (!sdFontSystem.registry().findFamily(separateFamily)) fail("TTF folder name was ignored");
+            FontInstaller installer(sdFontSystem.registry());
+            if (installer.deleteFamily(family) != FontInstaller::Error::OK) fail("TTF family deletion failed");
+            sdFontSystem.markRegistryDirty();
+            sdFontSystem.ensureLoaded(renderer);
+            sdFontSystem.refreshIfDirty();
+            if (sdFontSystem.registry().findFamily(family) || SETTINGS.sdFontFamilyName[0])
+              fail("Deleted TTF family reappeared from duplicate files");
+            if (!sdFontSystem.registry().findFamily(separateFamily) ||
+                !fs::exists(separateFolder / "same-metadata.ttf"))
+              fail("Deleting TTF family removed a different folder with the same metadata");
+            fs::remove_all("fs_/fonts");
+            fs::rename("fs_/font-smoke-backup", "fs_/fonts");
+            sdFontSystem.markRegistryDirty();
+            std::snprintf(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), "%s", family);
+            sdFontSystem.ensureLoaded(renderer);
+            if (SETTINGS.getReaderFontId() != original) fail("Restored TTF content changed identity");
+            LOG_INF("SMOKE", "TTF replacement, duplicate deletion and restoration passed");
+          }
+          LOG_INF("SMOKE", "TTF discovery, size reuse, dictionary and reload passed");
+        }
+#endif
         applyRequestedTheme();
         activityManager.goHome();
         queueStep("Home", SmokeStep::Home);
@@ -613,6 +844,10 @@ class SimulatorSmokeTest {
     return {ScriptActionType::AssertTouchscreenEnabled, MappedInputManager::Button::Back, nullptr, 0, 0, 0};
   }
 
+  static ScriptAction assertTtfProfileNative() {
+    return {ScriptActionType::AssertTtfProfileNative, MappedInputManager::Button::Back, nullptr, 0, 0, 0};
+  }
+
   static ScriptAction openSmokeBook() {
     return {ScriptActionType::OpenSmokeBook, MappedInputManager::Button::Back, nullptr, 0, 0, 0};
   }
@@ -661,11 +896,48 @@ class SimulatorSmokeTest {
       const int height = renderer.getScreenHeight();
       if (width <= 0 || height <= 0) fail("Touch smoke test has invalid screen dimensions");
       LOG_INF("SMOKE", "Running touch reader input script with %d page turn(s)", turns);
+      const int tabY = height - 28;
       for (int i = 0; i < turns; ++i) {
         inputScript.push_back(touchDown(width * 5 / 6, height / 2));
         inputScript.push_back(touchRelease(width * 5 / 6, height / 2));
         inputScript.push_back(render("Reader after touch page forward", 4));
       }
+
+      // Exercise the TTF edit path that replaces the active scalable font IDs:
+      // Auto -> Native, switch tabs, then return to the current page.
+#if CROSSINK_SCALABLE_FONTS
+      if (SETTINGS.sdFontFamilyName[0] != '\0' && sdFontSystem.isScalableFamily(SETTINGS.sdFontFamilyName)) {
+        inputScript.push_back(touchDown(width / 2, height - 8));
+        inputScript.push_back(touchMove(width / 2, height * 3 / 4));
+        inputScript.push_back(touchRelease(width / 2, height * 3 / 4));
+        inputScript.push_back(render("Reader Menu opened for TTF Native transition", 4));
+        inputScript.push_back(assertActivity("EpubReaderTouchMenu"));
+        inputScript.push_back(touchDown(width / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2), tabY));
+        inputScript.push_back(touchRelease(width / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2), tabY));
+        addTap(MappedInputManager::Button::Confirm);
+        addTap(MappedInputManager::Button::Down);
+        addTap(MappedInputManager::Button::Down);
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("TTF Rendering opened in reader drawer", 4));
+        inputScript.push_back(assertActivity("EpubReaderTouchMenu"));
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("TTF Hinting choices opened in reader drawer", 3));
+        addTap(MappedInputManager::Button::Down);
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("TTF Native hinting selected", 4));
+        inputScript.push_back(assertTtfProfileNative());
+        inputScript.push_back(touchDown(width / 2, tabY));
+        inputScript.push_back(touchRelease(width / 2, tabY));
+        inputScript.push_back(render("Reader Menu tab changed after TTF Native selection", 5));
+        inputScript.push_back(assertActivity("EpubReaderTouchMenu"));
+        addTap(MappedInputManager::Button::Back);
+        inputScript.push_back(render("Reader restored after TTF Native selection", 10));
+        inputScript.push_back(assertActivity("EpubReader"));
+        addTap(MappedInputManager::Button::PageForward);
+        inputScript.push_back(render("Reader page turn after TTF Native selection", 5));
+      }
+#endif
+
       if (mappedInputManager.hasHomeKey()) {
         // Reader long-Power actions fire at the hold threshold. Their release
         // must not reach main.cpp's global shortcut route and run the same
@@ -818,7 +1090,6 @@ class SimulatorSmokeTest {
       inputScript.push_back(assertActivity("EpubReaderTouchMenu"));
 
       // Touch every bottom-drawer tab slot, then dismiss from its handle.
-      const int tabY = height - 28;
       for (int tab = 0; tab < static_cast<int>(READER_DRAWER_TAB_COUNT); ++tab) {
         const int tabX = width * (tab * 2 + 1) / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2);
         inputScript.push_back(touchDown(tabX, tabY));
@@ -1001,6 +1272,13 @@ class SimulatorSmokeTest {
         break;
       case ScriptActionType::AssertTouchscreenEnabled:
         if (SETTINGS.disableReaderTouchscreen) fail("Expected reader touchscreen to be enabled");
+        break;
+      case ScriptActionType::AssertTtfProfileNative:
+#if CROSSINK_SCALABLE_FONTS
+        if (TTF_RENDER_PROFILES.profileFor(SETTINGS.sdFontFamilyName).hinting != 1) {
+          fail("Expected active TTF profile to use native hinting");
+        }
+#endif
         break;
       case ScriptActionType::OpenSmokeBook: {
         const char* bookPath = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");

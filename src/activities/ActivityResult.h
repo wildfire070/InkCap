@@ -103,6 +103,11 @@ struct ReadingStatsResult {
   bool changed = false;
 };
 
+struct TtfRenderOptionsResult {
+  bool changed = false;
+  bool activeFamilyChanged = false;
+};
+
 struct ClippingResult {
   std::string text;
   uint16_t sectionPage = 0;
@@ -157,9 +162,9 @@ struct BookDetailsNavResult {
 
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult, NetworkModeResult, FootnoteResult,
+                 OptionSelectionResult, PageResult, NetworkModeResult, FootnoteResult,
                  BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
-                 ClippingResult, DictionaryClippingRequest, ClippingJumpResult, FolderPickerResult,
+                 ClippingResult, TtfRenderOptionsResult, DictionaryClippingRequest, ClippingJumpResult, FolderPickerResult,
                  FrontlightPanelResult, BookDetailsNavResult>;
 
 struct ActivityResult {

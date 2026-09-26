@@ -493,6 +493,10 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     std::string coverItemId;
     const char* nameAttr = nullptr;
     const char* contentAttr = nullptr;
+    bool isCollection = false;
+    bool isCollectionType = false;
+    const char* id = nullptr;
+    const char* refines = nullptr;
 
     for (int i = 0; atts[i]; i += 2) {
       if (strcmp(atts[i], "name") == 0) {
@@ -503,6 +507,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       } else if (strcmp(atts[i], "content") == 0) {
         coverItemId = atts[i + 1];
         contentAttr = atts[i + 1];
+      } else if (strcmp(atts[i], "property") == 0 && strcmp(atts[i + 1], "belongs-to-collection") == 0) {
+        isCollection = true;
+      } else if (strcmp(atts[i], "property") == 0 && strcmp(atts[i + 1], "collection-type") == 0) {
+        isCollectionType = true;
+      } else if (strcmp(atts[i], "id") == 0) {
+        id = atts[i + 1];
+      } else if (strcmp(atts[i], "refines") == 0) {
+        refines = atts[i + 1];
       }
     }
 
@@ -515,9 +527,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       // describing the column; pull only the "#value#" out (string or list).
       self->bookshelf = extractCalibreCustomValue(contentAttr);
     } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:series") == 0) {
-      // Calibre's custom series metadata. EPUB3-only belongs-to-collection is not
-      // handled here; Calibre always writes the calibre:* pair for back-compat.
+      // Calibre's custom series metadata (Calibre always writes the calibre:* pair for
+      // back-compat); EPUB3 belongs-to-collection is handled after this chain.
       self->seriesName = contentAttr;
+      if (self->series.empty()) {
+        const size_t bytes = std::min(strlen(contentAttr), MAX_METADATA_TEXT);
+        self->series.assign(contentAttr,
+                            static_cast<size_t>(utf8SafeTruncateBuffer(contentAttr, static_cast<int>(bytes))));
+      }
     } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:series_index") == 0) {
       self->seriesIndex = contentAttr;
     } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:user_metadata:#rating") == 0) {
@@ -539,6 +556,22 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       self->liked = extractCalibreBoolValue(contentAttr);
     } else if (nameAttr && contentAttr && strcmp(nameAttr, "calibre:user_metadata:#readstatus") == 0) {
       self->readStatus = extractCalibreBoolValue(contentAttr);
+    }
+    // EPUB3 series: <meta property="belongs-to-collection" id="x">Name</meta> refined by a
+    // collection-type of "series". Text arrives through characterData().
+    if (isCollection && self->series.empty() && id) {
+      if (self->collectionType == "series") self->series = std::move(self->collectionName);
+      self->collectionName.clear();
+      self->collectionType.clear();
+      self->collectionId.assign(id, std::min(strlen(id), MAX_METADATA_TEXT));
+      self->seriesTruncated = false;
+      self->collectionTypeTruncated = false;
+      self->state = IN_BOOK_COLLECTION;
+      self->metadataSpacePending = false;
+    }
+    if (isCollectionType && refines && refines[0] == '#' && self->collectionId == refines + 1) {
+      self->state = IN_BOOK_COLLECTION_TYPE;
+      self->metadataSpacePending = false;
     }
     return;
   }
@@ -722,6 +755,15 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
+  if (self->state == IN_BOOK_COLLECTION) {
+    appendMetadataText(self->collectionName, s, len, self->metadataSpacePending, self->seriesTruncated);
+    return;
+  }
+  if (self->state == IN_BOOK_COLLECTION_TYPE) {
+    appendMetadataText(self->collectionType, s, len, self->metadataSpacePending, self->collectionTypeTruncated);
+    return;
+  }
+
   if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
     appendBounded(self->identifierBuffer, s, len);
     return;
@@ -768,6 +810,20 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     if (!self->subjectBuffer.empty()) {
       if (!self->tags.empty()) self->tags += ", ";
       self->tags += self->subjectBuffer;
+      // The Library's "genre" is the first subject, with XML whitespace collapsed like the
+      // other single-value metadata fields (title, author, ...).
+      if (self->subject.empty()) {
+        bool pendingSpace = false;
+        for (const char c : self->subjectBuffer) {
+          if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            pendingSpace = !self->subject.empty();
+            continue;
+          }
+          if (pendingSpace) self->subject += ' ';
+          pendingSpace = false;
+          self->subject += c;
+        }
+      }
     }
     self->subjectBuffer.clear();
     self->state = IN_METADATA;
@@ -800,8 +856,14 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     self->state = IN_METADATA;
     return;
   }
+  if ((self->state == IN_BOOK_COLLECTION || self->state == IN_BOOK_COLLECTION_TYPE) &&
+      (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
+    self->state = IN_METADATA;
+    return;
+  }
 
   if (self->state == IN_METADATA && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
+    if (self->series.empty() && self->collectionType == "series") self->series = std::move(self->collectionName);
     self->state = IN_PACKAGE;
     if (self->metadataOnly) {
       self->metadataComplete = true;

@@ -16,6 +16,9 @@ class BookMetadataCache {
     std::string author;
     std::string language;
     std::string tags;  // dc:subject, ", "-joined (Calibre convention)
+    // Used by the Library metadata-only scan; the reader cache format remains unchanged.
+    std::string series;
+    std::string subject;
     std::string coverItemHref;
     std::string textReferenceHref;
     // BookFusion "bookshelf" Calibre custom column value (calibre:user_metadata:#bookfusionshelf),

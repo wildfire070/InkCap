@@ -1562,7 +1562,7 @@ void CrossPointWebServer::handleGetSettings() const {
         }
         JsonArray options = doc["options"].to<JsonArray>();
         if (s.nameId == StrId::STR_FONT_FAMILY && !fontFamilies.empty()) {
-          constexpr FontFamilyPointSizeRange builtinRange{10, 16};
+          constexpr auto builtinRange = BUILTIN_FONT_POINT_SIZE_RANGE;
           options.add(fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange));
           options.add(fontFamilyLabel(I18N.get(StrId::STR_BITTER), builtinRange));
           for (const auto& family : fontFamilies) {
@@ -2243,6 +2243,7 @@ void CrossPointWebServer::handleFontList() const {
     json.append("],\"files\":[");
 
     bool firstFile = true;
+    family.ensureDetails();
     for (const auto& file : family.files) {
       if (!firstFile) json.append(",");
       firstFile = false;
@@ -2272,7 +2273,11 @@ void CrossPointWebServer::handleFontList() const {
     yield();
   }
 
-  json.append("],\"maxFamilies\":");
+#if CROSSINK_SCALABLE_FONTS
+  json.append("],\"ttfSupported\":true,\"maxFamilies\":");
+#else
+  json.append("],\"ttfSupported\":false,\"maxFamilies\":");
+#endif
   json.appendUnsigned(SdCardFontRegistry::MAX_SD_FAMILIES);
   json.append("}");
   json.flush();
@@ -2289,7 +2294,6 @@ void CrossPointWebServer::handleFontUploadData() {
       fontUpload.familyName.clear();
       fontUpload.filePath.clear();
       fontUpload.valid = false;
-      fontUpload.magicChecked = false;
       fontUpload.bytesWritten = 0;
       fontUpload.bufferPos = 0;
 
@@ -2336,15 +2340,17 @@ void CrossPointWebServer::handleFontUploadData() {
     case UPLOAD_FILE_WRITE: {
       if (!fontUpload.valid) break;
 
-      // Validate magic bytes on first chunk only
-      if (!fontUpload.magicChecked && upload.currentSize >= 8) {
-        if (memcmp(upload.buf, "CPFONT\0\0", 8) != 0) {
-          LOG_ERR("WEB", "Invalid .cpfont magic bytes");
-          fontUpload.valid = false;
-          break;
-        }
-        fontUpload.magicChecked = true;
+      // Validate the complete file after closing it; multipart chunks may
+      // split the signature at any byte boundary.
+#if CROSSINK_SCALABLE_FONTS
+      const auto& path = fontUpload.filePath;
+      if (path.size() > 4 && strcasecmp(path.c_str() + path.size() - 4, ".ttf") == 0 &&
+          fontUpload.bytesWritten + fontUpload.bufferPos + upload.currentSize > 2 * 1024 * 1024) {
+        fontUpload.valid = false;
+        LOG_ERR("WEB", "TTF exceeds 2 MiB limit");
+        break;
       }
+#endif
 
       // Buffer writes for efficiency
       size_t remaining = upload.currentSize;
@@ -2387,6 +2393,7 @@ void CrossPointWebServer::handleFontUploadData() {
         fontUpload.file.close();
       }
 
+      if (fontUpload.valid) fontUpload.valid = FontInstaller::validateCpfontFile(fontUpload.filePath.c_str());
       if (!fontUpload.valid && !fontUpload.filePath.empty()) {
         Storage.remove(fontUpload.filePath.c_str());
       }
@@ -2415,7 +2422,7 @@ void CrossPointWebServer::handleFontUpload() {
     server->send(200, "application/json", "{\"ok\":true}");
     LOG_DBG("WEB", "Font upload complete: %s", fontUpload.filePath.c_str());
   } else {
-    server->send(400, "application/json", "{\"error\":\"Invalid .cpfont file\"}");
+    server->send(400, "application/json", "{\"error\":\"Unsupported or damaged font file\"}");
   }
 }
 
@@ -2430,6 +2437,7 @@ void CrossPointWebServer::handleFontDelete() {
   }
 
   const char* familyName = doc["family"];
+  sdFontSystem.refreshIfDirty();
   FontInstaller installer(sdFontSystem.registry());
   auto result = installer.deleteFamily(familyName);
 
