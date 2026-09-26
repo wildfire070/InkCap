@@ -547,13 +547,13 @@ inline SettingInfo buildCompanionCharacterSetting() {
   }
   return s;
 }
-// 106: crossink/development's own base list (100 regular + 2 optional tilt
+// 107: crossink/development's own base list (100 regular + 2 optional tilt
 // entries) plus this branch's own unconditional additions (Companion, AO3
 // Library, BookFusion) it doesn't have -- counted directly against the
 // add()/optional-add() calls below rather than reused verbatim, since
-// upstream's own count excludes all three.
+// upstream's own count excludes all three -- and the Character Spacing entry.
 // Plus four edge gesture entries, compiled only for touch devices (upstream's own count).
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 106 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 107 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
 
 inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
