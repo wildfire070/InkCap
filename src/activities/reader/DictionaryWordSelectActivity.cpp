@@ -106,27 +106,28 @@ const char* withoutSoftHyphens(const char* word, const size_t length, char* scra
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, char* scratch, const size_t scratchCapacity) {
+                            const EpdFontFamily::Style style, const int8_t tracking, char* scratch,
+                            const size_t scratchCapacity) {
   const char* measured = withoutSoftHyphens(word, length, scratch, scratchCapacity);
-  return static_cast<int16_t>(renderer.getTextAdvanceX(fontId, measured, style));
+  return static_cast<int16_t>(renderer.getTextAdvanceX(fontId, measured, style, 0, tracking));
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, const uint8_t focusBoundary, const uint16_t focusSuffixX,
-                            char* scratch, const size_t scratchCapacity) {
+                            const EpdFontFamily::Style style, const int8_t tracking, const uint8_t focusBoundary,
+                            const uint16_t focusSuffixX, char* scratch, const size_t scratchCapacity) {
   if (focusBoundary == 0 || focusSuffixX == 0) {
-    return measureWordAdvanceX(renderer, fontId, word, length, style, scratch, scratchCapacity);
+    return measureWordAdvanceX(renderer, fontId, word, length, style, tracking, scratch, scratchCapacity);
   }
   const size_t suffixStart = std::min<size_t>(focusBoundary, length);
-  return static_cast<int16_t>(focusSuffixX + renderer.getTextAdvanceX(fontId, word + suffixStart, style));
+  return static_cast<int16_t>(focusSuffixX + renderer.getTextAdvanceX(fontId, word + suffixStart, style, 0, tracking));
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, const uint8_t focusBoundary,
+                            const EpdFontFamily::Style style, const int8_t tracking, const uint8_t focusBoundary,
                             const uint16_t focusRunOffset, const bool wordIsRtl, char* scratch,
                             const size_t scratchCapacity) {
   if (!wordIsRtl || focusBoundary == 0 || focusRunOffset == 0) {
-    return measureWordAdvanceX(renderer, fontId, word, length, style, focusBoundary, focusRunOffset, scratch,
+    return measureWordAdvanceX(renderer, fontId, word, length, style, tracking, focusBoundary, focusRunOffset, scratch,
                                scratchCapacity);
   }
 
@@ -139,7 +140,7 @@ int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const
   boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(word, static_cast<int>(boldLen)));
   memcpy(boldBuf, word, boldLen);
   boldBuf[boldLen] = '\0';
-  return static_cast<int16_t>(focusRunOffset + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle));
+  return static_cast<int16_t>(focusRunOffset + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle, 0, tracking));
 }
 
 bool isRtlWord(const char* word, const bool fallbackRtl) {
@@ -599,6 +600,9 @@ bool DictionaryWordSelectActivity::extractWords() {
     if (!block) return true;
 
     const uint16_t sourceWordCount = block->wordCount();
+    // Reader letter-spacing the block was laid out with; every width measured here must include it or the
+    // selection boxes drift from the drawn words.
+    const int8_t tracking = block->getBlockStyle().characterSpacing;
     const int rubyShift = block->getRubyShift(renderer.getFontAscenderSize(SETTINGS.getReaderFontId()));
     int16_t lineGapWidth = naturalSpaceWidth;
     if (sourceWordCount >= 2 && block->wordTextLen(0) > 0) {
@@ -609,7 +613,7 @@ bool DictionaryWordSelectActivity::extractWords() {
       const uint16_t firstFocusSuffixX = block->focusRunOffset(0);
       const bool firstWordIsRtl = isRtlWord(firstWord, block->getBlockStyle().isRtl);
       const int16_t firstWidth =
-          measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), firstWord, firstLength, firstStyle,
+          measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), firstWord, firstLength, firstStyle, tracking,
                               firstFocusBoundary, firstFocusSuffixX, firstWordIsRtl, sanitizeScratch, scratchHalf);
       const int16_t derivedGap = static_cast<int16_t>(block->wordXpos(1) - block->wordXpos(0) - firstWidth);
       if (derivedGap > naturalSpaceWidth / 2) lineGapWidth = derivedGap;
@@ -646,14 +650,15 @@ bool DictionaryWordSelectActivity::extractWords() {
       if (!containsDictionaryWordPartSeparator(wordText, wordLength)) {
         int16_t wordWidth;
         if (focusBoundary > 0 && focusSuffixX > 0) {
-          wordWidth = measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), wordText, wordLength, wordStyle,
-                                          focusBoundary, focusSuffixX, wordIsRtl, sanitizeScratch, scratchHalf);
+          wordWidth =
+              measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), wordText, wordLength, wordStyle, tracking,
+                                  focusBoundary, focusSuffixX, wordIsRtl, sanitizeScratch, scratchHalf);
         } else if (wordIndex + 1 < sourceWordCount) {
           const int16_t raw = static_cast<int16_t>(block->wordXpos(wordIndex + 1) - block->wordXpos(wordIndex));
           wordWidth = std::max(static_cast<int16_t>(1), static_cast<int16_t>(raw - lineGapWidth));
         } else {
           wordWidth = measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), wordText, wordLength, wordStyle,
-                                          focusBoundary, focusSuffixX, sanitizeScratch, scratchHalf);
+                                          tracking, focusBoundary, focusSuffixX, sanitizeScratch, scratchHalf);
         }
         wordWidth = static_cast<int16_t>(std::min<int>(wordWidth, sourceGeometry.width));
         if (wordWidth <= 0) {
@@ -665,11 +670,11 @@ bool DictionaryWordSelectActivity::extractWords() {
         if (lastSelectableWordIndex == static_cast<int>(wordIndex) - 1 && workingSet_.wordCount > 0) {
           const uint16_t previousIndex = wordIndex - 1;
           const auto previousStyle = block->wordStyle(previousIndex);
-          const int16_t previousMeasuredWidth = static_cast<int16_t>(
-              renderer.getTextAdvanceX(SETTINGS.getReaderFontId(), block->wordText(previousIndex), previousStyle));
+          const int16_t previousMeasuredWidth = static_cast<int16_t>(renderer.getTextAdvanceX(
+              SETTINGS.getReaderFontId(), block->wordText(previousIndex), previousStyle, 0, tracking));
           const int16_t currentMeasuredWidth =
-              measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), wordText, wordLength, wordStyle, focusBoundary,
-                                  focusSuffixX, wordIsRtl, sanitizeScratch, scratchHalf);
+              measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), wordText, wordLength, wordStyle, tracking,
+                                  focusBoundary, focusSuffixX, wordIsRtl, sanitizeScratch, scratchHalf);
           const int currentLeft = screenX;
           const int currentRight = screenX + currentMeasuredWidth;
           auto& previousWord = workingSet_.words[workingSet_.wordCount - 1];
@@ -708,7 +713,7 @@ bool DictionaryWordSelectActivity::extractWords() {
       }
 
       bool partSucceeded = true;
-      int fullWordWidth = renderer.getTextAdvanceX(SETTINGS.getReaderFontId(), wordText, wordStyle);
+      int fullWordWidth = renderer.getTextAdvanceX(SETTINGS.getReaderFontId(), wordText, wordStyle, 0, tracking);
       if (wordIndex + 1 < sourceWordCount && block->wordXpos(wordIndex + 1) > block->wordXpos(wordIndex)) {
         fullWordWidth =
             std::min(fullWordWidth, static_cast<int>(block->wordXpos(wordIndex + 1) - block->wordXpos(wordIndex)));
@@ -723,8 +728,11 @@ bool DictionaryWordSelectActivity::extractWords() {
           }
           memcpy(prefixScratch, wordText, part.sourceOffset);
           prefixScratch[part.sourceOffset] = '\0';
-          offsetX = measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), prefixScratch, part.sourceOffset,
-                                        wordStyle, sanitizeScratch, scratchHalf);
+          // The prefix ends one glyph gap before this part starts, so that gap's tracking belongs to the offset.
+          offsetX = static_cast<int16_t>(measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), prefixScratch,
+                                                             part.sourceOffset, wordStyle, tracking, sanitizeScratch,
+                                                             scratchHalf) +
+                                         tracking);
         }
 
         uint16_t offset = 0;
@@ -733,8 +741,9 @@ bool DictionaryWordSelectActivity::extractWords() {
           return;
         }
         const char* storedPart = textPool + offset;
-        const int16_t measuredPartWidth = measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), storedPart,
-                                                              part.length, wordStyle, sanitizeScratch, scratchHalf);
+        const int16_t measuredPartWidth =
+            measureWordAdvanceX(renderer, SETTINGS.getReaderFontId(), storedPart, part.length, wordStyle, tracking,
+                                sanitizeScratch, scratchHalf);
         const int partOffsetX = dictionaryWordPartVisualOffset(fullWordWidth, offsetX, measuredPartWidth, wordIsRtl);
         const PageWordGeometry partGeometry =
             clipPageTextRange(line, block->wordXpos(wordIndex) + partOffsetX, measuredPartWidth);

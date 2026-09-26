@@ -1402,6 +1402,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
     // the reader actually changed, so unrelated global defaults still apply.
     data.readerSettingsOverrideMask =
         version < PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION ? ALL_READER_SETTING_OVERRIDES : overrideMask;
+    // Files older than v11 never stored a spacing, so they must not pin one: the book follows the global value.
+    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~CHARACTER_SPACING_OVERRIDE;
     data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
     applyReaderSettingsOverrides(data.readerSettings, snapshot, data.readerSettingsOverrideMask);
   }
@@ -7829,9 +7831,10 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
               wordText, wordLength, focusBoundary, fullWordX, block.focusRunOffset(wordIndex), textStyle,
               baseDir == BidiUtils::BidiBaseDir::RTL,
               [&](const int runX, const char* runText, const EpdFontFamily::Style runStyle) {
-                renderer.drawText(fontId, runX, wordY, runText, true, runStyle, baseDir);
+                renderer.drawText(fontId, runX, wordY, runText, true, runStyle, baseDir, 1.0f, tracking);
               })) {
-        renderer.drawText(fontId, wordX, wordY, visibleText, true, textStyle);
+        renderer.drawText(fontId, wordX, wordY, visibleText, true, textStyle, BidiUtils::BidiBaseDir::AUTO, 1.0f,
+                          tracking);
       }
       if (line.clipWidth > 0 && line.clipHeight > 0) {
         renderer.endTextClip();
