@@ -7,6 +7,7 @@
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cctype>
@@ -820,7 +821,7 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
-Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
+Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message, const bool preserveBackdrop) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;
   const int marginY = metrics.popupMarginY;
@@ -833,6 +834,22 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const int w = textWidth + marginX * 2;
   const int h = textHeight + marginY * 2;
   const int x = (renderer.getScreenWidth() - w) / 2;
+
+  const int backupX = x - frameThickness;
+  const int backupY = y - frameThickness;
+  const int backupW = w + frameThickness * 2;
+  const int backupH = h + frameThickness * 2;
+  // Only the small popup rectangle is retained, briefly, rather than another
+  // framebuffer. Allocation failure skips feedback without damaging the page.
+  std::unique_ptr<uint8_t[]> backdrop;
+  if (preserveBackdrop) {
+    const size_t bytes = renderer.getRegionByteSize(backupX, backupY, backupW, backupH);
+    if (bytes != 0) backdrop = makeUniqueNoThrow<uint8_t[]>(bytes);
+    if (!backdrop || !renderer.copyRegionToBuffer(backupX, backupY, backupW, backupH, backdrop.get(), bytes)) {
+      LOG_ERR("GUI", "Unable to preserve loading popup backdrop");
+      return Rect{x, y, w, h};
+    }
+  }
 
   const bool useRoundedPopup = metrics.popupCornerRadius > 0;
   if (useRoundedPopup) {
@@ -848,6 +865,10 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
   renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
   renderer.displayBuffer();
+  if (backdrop) {
+    renderer.copyBufferToRegion(backupX, backupY, backupW, backupH, backdrop.get(),
+                                renderer.getRegionByteSize(backupX, backupY, backupW, backupH));
+  }
   return Rect{x, y, w, h};
 }
 

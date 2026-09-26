@@ -23,6 +23,9 @@
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "FontSelectionActivity.h"
+#if CROSSINK_SCALABLE_FONTS
+#include "TtfRenderOptionsActivity.h"
+#endif
 #include "FrontlightTimePickerActivity.h"
 #include "KOReaderSettingsActivity.h"
 #include "KeyboardLayoutsActivity.h"
@@ -324,6 +327,15 @@ void SettingsActivity::rebuildSettingsLists() {
   displayFrontlightSettings = buildDisplayFrontlightSettingsList(allSettings);
   readerSettings = buildReaderSettingsParentList(allSettings);
   readerFontSettings = buildReaderFontSettingsList(allSettings);
+#if CROSSINK_SCALABLE_FONTS
+  if (needsFonts && sdFontSystem.isScalableFamily(SETTINGS.sdFontFamilyName)) {
+    const auto fontSize =
+        std::find_if(readerFontSettings.begin(), readerFontSettings.end(),
+                     [](const SettingInfo& setting) { return setting.nameId == StrId::STR_FONT_SIZE; });
+    const auto insertAt = fontSize == readerFontSettings.end() ? readerFontSettings.end() : std::next(fontSize);
+    readerFontSettings.insert(insertAt, SettingInfo::Action(StrId::STR_TTF_RENDERING, SettingAction::TtfRendering));
+  }
+#endif
   readerPageLayoutSettings = buildReaderPageLayoutSettingsList(allSettings);
   readerScreenMarginSettings = buildReaderScreenMarginSettingsList(allSettings);
   systemSettings = buildSystemSettingsParentList(allSettings);
@@ -512,7 +524,11 @@ StrId SettingsActivity::activeSubmenuTitleId() const {
 void SettingsActivity::openSubmenu(SettingAction action) {
   parentSubmenu = activeSubmenu;
   activeSubmenu = action;
-  if (action == SettingAction::ReaderFontOptions) rebuildSettingsLists();
+  if (action == SettingAction::ReaderFontOptions) {
+    RenderLock lock;
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+    rebuildSettingsLists();
+  }
   setCurrentSettingsForCategory();
   selectedSettingIndex = 1;
   showSettingSelection = true;
@@ -790,10 +806,15 @@ void SettingsActivity::onExit() {
 void SettingsActivity::closeRootSettings() {
   SETTINGS.saveToFile();
   if (returnToParentOnClose) {
-    finish();
+    finishToParent();
   } else {
     onGoHome();
   }
+}
+
+void SettingsActivity::finishToParent() {
+  setResult(TtfRenderOptionsResult{ttfRenderingChanged});
+  finish();
 }
 
 void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr) {
@@ -900,7 +921,7 @@ void SettingsActivity::loop() {
   if (dismissOnUpSwipe && swipe == MappedInputManager::SwipeDir::Up) {
 #endif
     SETTINGS.saveToFile();
-    finish();
+    finishToParent();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
@@ -969,6 +990,22 @@ void SettingsActivity::loop() {
       selectedSettingIndex = nextIndex;
     }
   }
+}
+
+bool SettingsActivity::handleHomeGesture() {
+  if (optionPopup.isActive()) {
+    optionPopup.dismiss(mappedInput, [this] { requestUpdate(); });
+  } else if (!isFileBrowserView() && activeSubmenu != SettingAction::None) {
+    closeSubmenu();
+    requestUpdate();
+  } else if (!isFileBrowserView() && selectedSettingIndex > 0) {
+    selectedSettingIndex = 0;
+    showSettingSelection = true;
+    requestUpdate();
+  } else {
+    closeRootSettings();
+  }
+  return true;
 }
 
 void SettingsActivity::toggleCurrentSetting() {
@@ -1149,6 +1186,18 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::DownloadFonts:
         silentRestartToManageFonts();
         break;
+      case SettingAction::TtfRendering:
+#if CROSSINK_SCALABLE_FONTS
+        startActivityForResult(
+            std::make_unique<TtfRenderOptionsActivity>(renderer, mappedInput, SETTINGS.sdFontFamilyName, false),
+            [this](const ActivityResult& result) {
+              if (const auto* options = std::get_if<TtfRenderOptionsResult>(&result.data)) {
+                ttfRenderingChanged = ttfRenderingChanged || options->activeFamilyChanged;
+              }
+              rebuildSettingsLists();
+            });
+#endif
+        break;
       case SettingAction::Language:
         openLanguagePicker();
         break;
@@ -1163,7 +1212,9 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::ReaderFontOptions:
       case SettingAction::ReaderPageLayout:
+      case SettingAction::ScreenMargin:
       case SettingAction::ControlsPowerButton:
+      case SettingAction::ControlsHomeButton:
       case SettingAction::ControlsFrontButtons:
       case SettingAction::ControlsSideButtons:
       case SettingAction::ControlsTapsGestures:

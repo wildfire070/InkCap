@@ -123,11 +123,21 @@ void DictionaryLookupController::onExit() {
   DictionaryLookupWorker::instance().waitForOwner(*this);
 }
 
+void DictionaryLookupController::requestBack() {
+  if (state == LookupState::LookingUp) {
+    lookupCancelRequested = true;
+  } else if (state != LookupState::Idle) {
+    state = LookupState::Idle;
+    nextIsSuggestion = false;
+  }
+  owner.requestUpdate();
+}
+
 DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput() {
   if (state == LookupState::LookingUp) {
     if (lookupDone) {
       setState(LookupState::Idle);
-      if (lookupCancelled) {
+      if (lookupCancelRequested || lookupCancelled) {
         nextIsSuggestion = false;
         return LookupEvent::Cancelled;
       }

@@ -22,11 +22,15 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "ReaderFontLoading.h"
 #include "ReaderUtils.h"
 #include "SettingsList.h"
 #include "StablePageSelectionModel.h"
 #include "activities/reader/ControlsOptionsActivity.h"
 #include "activities/settings/StatusBarSettingsActivity.h"
+#if CROSSINK_SCALABLE_FONTS
+#include "activities/settings/TtfRenderOptionsActivity.h"
+#endif
 #include "components/DrawerHandle.h"
 #include "components/SliderValue.h"
 #include "components/UITheme.h"
@@ -363,8 +367,7 @@ void EpubReaderTouchMenuActivity::onEnter() {
     rootRows[tab].reserve(catalog[tab].count);
     rootRows[tab].assign(catalog[tab].items.begin(), catalog[tab].items.begin() + catalog[tab].count);
   }
-
-  paneRows.reserve(4);
+  paneRows.reserve(7);
   discoverDictionaries();
 
   applySharedUiTheme(app, uiTarget);
@@ -389,19 +392,26 @@ void EpubReaderTouchMenuActivity::onEnter() {
 void EpubReaderTouchMenuActivity::onExit() {
   commitSettings();
   dictionaryRegistry.clear();
-  sdFontSystem.releaseRegistry();
+  // The reader remains active beneath this drawer. Keep the small catalog for
+  // its resident scalable family so reopening Font Size avoids an SD rescan.
+#if CROSSINK_SCALABLE_FONTS
+  if (!sdFontSystem.hasResidentScalableFamily(SETTINGS.sdFontFamilyName))
+#endif
+    sdFontSystem.releaseRegistry();
   mappedInput.setReaderTouchscreenOverride(false);
   Activity::onExit();
 }
 
 void EpubReaderTouchMenuActivity::discoverFonts() {
+  RenderLock lock;
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
   sdFontSystem.refreshIfDirty();
   const auto& families = sdFontSystem.registry().getFamilies();
   fontLabels.clear();
   fontSettingIndexes.clear();
   fontLabels.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + families.size());
   fontSettingIndexes.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + families.size());
-  constexpr FontFamilyPointSizeRange builtinRange{10, 16};
+  constexpr auto builtinRange = BUILTIN_FONT_POINT_SIZE_RANGE;
   fontLabels.push_back(fontFamilyLabel(tr(STR_LEXEND_DECA), builtinRange));
   fontLabels.push_back(fontFamilyLabel(tr(STR_BITTER), builtinRange));
   fontSettingIndexes.push_back(0);
@@ -411,6 +421,79 @@ void EpubReaderTouchMenuActivity::discoverFonts() {
     fontSettingIndexes.push_back(static_cast<uint8_t>(CrossPointSettings::BUILTIN_FONT_COUNT + i));
   }
 }
+
+void EpubReaderTouchMenuActivity::refreshTtfRenderingRow() {
+  paneRows.erase(std::remove(paneRows.begin(), paneRows.end(), RowId::TtfRendering), paneRows.end());
+#if CROSSINK_SCALABLE_FONTS
+  if (state.pane == ReaderDrawerPane::ReaderFont && sdFontSystem.isScalableFamily(draft.sdFontFamilyName.data())) {
+    const auto fontSize = std::find(paneRows.begin(), paneRows.end(), RowId::FontSize);
+    if (fontSize != paneRows.end()) paneRows.insert(std::next(fontSize), RowId::TtfRendering);
+  }
+#endif
+}
+
+#if CROSSINK_SCALABLE_FONTS
+void EpubReaderTouchMenuActivity::rebuildTtfRenderingRows() {
+  paneRows = {RowId::TtfHinting, RowId::TtfRaster};
+  if (ttfRenderProfile.hinting == 1) paneRows.push_back(RowId::TtfInterpreter);
+  paneRows.push_back(RowId::TtfWeight);
+  paneRows.push_back(RowId::TtfSlant);
+  paneRows.push_back(RowId::TtfStemDarkening);
+  paneRows.push_back(RowId::TtfReset);
+  state.selectedIndex = std::min<int16_t>(state.selectedIndex, static_cast<int16_t>(paneRows.size() - 1));
+  state.paneTopIndex = std::min<int16_t>(state.paneTopIndex, static_cast<int16_t>(paneRows.size() - 1));
+}
+
+void EpubReaderTouchMenuActivity::saveTtfRenderingProfile() {
+  const char* const family = draft.sdFontFamilyName.data();
+  if (ttfRenderProfile == TTF_RENDER_PROFILES.profileFor(family)) return;
+  if (!TTF_RENDER_PROFILES.setProfile(family, ttfRenderProfile)) {
+    LOG_ERR("ERDM", "Failed to save TTF rendering profile for %s", family);
+    return;
+  }
+  ttfRenderingChanged = ttfRenderProfile != initialTtfRenderProfile;
+}
+
+void EpubReaderTouchMenuActivity::finishTtfRenderingEdit() {
+  if (!ttfRenderingChanged) return;
+  if (sdFontSystem.reloadActiveScalableFamily(renderer, draft.sdFontFamilyName.data())) {
+    previewFontMetricsChanged = true;
+    markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
+  }
+  ttfRenderingChanged = false;
+}
+
+void EpubReaderTouchMenuActivity::showTtfRenderingOptions(const RowId row) {
+  using TtfRow = TtfRenderOptionsActivity::Row;
+  TtfRow optionRow;
+  switch (row) {
+    case RowId::TtfHinting:
+      optionRow = TtfRow::Hinting;
+      break;
+    case RowId::TtfRaster:
+      optionRow = TtfRow::Raster;
+      break;
+    case RowId::TtfInterpreter:
+      optionRow = TtfRow::Interpreter;
+      break;
+    case RowId::TtfWeight:
+      optionRow = TtfRow::Weight;
+      break;
+    case RowId::TtfSlant:
+      optionRow = TtfRow::Slant;
+      break;
+    default:
+      return;
+  }
+  const auto* options = TtfRenderOptionsActivity::optionLabels(optionRow);
+  if (options == nullptr) return;
+  std::vector<uint8_t> values;
+  values.reserve(options->size());
+  for (size_t i = 0; i < options->size(); ++i) values.push_back(static_cast<uint8_t>(i));
+  openEnumOptions(row, TtfRenderOptionsActivity::titleId(optionRow), *options, std::move(values),
+                  TtfRenderOptionsActivity::selectedOption(ttfRenderProfile, optionRow));
+}
+#endif
 
 void EpubReaderTouchMenuActivity::discoverDictionaries() {
   dictionaryRegistry.discover();
@@ -501,6 +584,11 @@ void EpubReaderTouchMenuActivity::markSettingChanged(const ReaderSettingsChangeM
 
 void EpubReaderTouchMenuActivity::closeAndReturn(const bool cancelled, const EpubReaderMenuAction action,
                                                  const bool reopenDrawer) {
+#if CROSSINK_SCALABLE_FONTS
+  // ActivityManager copies the result before onExit(). Resolve a pending TTF
+  // edit here so the reader knows its old font ID and section need replacing.
+  finishTtfRenderingEdit();
+#endif
   const bool changed = didChangeSettings;
   commitSettings();
   if (!cancelled && epub &&
@@ -708,6 +796,11 @@ void EpubReaderTouchMenuActivity::buildDrawer(UiApp::ScreenType& screen) {
     case ReaderDrawerPane::EnumOptions:
       buildEnumOptionsPane(screen);
       break;
+#if CROSSINK_SCALABLE_FONTS
+    case ReaderDrawerPane::TtfRendering:
+      buildTtfRenderingPane(screen);
+      break;
+#endif
     default:
       buildSimplePane(screen);
       break;
@@ -1149,6 +1242,43 @@ void EpubReaderTouchMenuActivity::buildEnumOptionsPane(UiApp::ScreenType& screen
                                screen.theme().listScrollInset);
 }
 
+#if CROSSINK_SCALABLE_FONTS
+void EpubReaderTouchMenuActivity::buildTtfRenderingPane(UiApp::ScreenType& screen) {
+  buildPaneHeader(screen);
+  const auto& rows = activeRows();
+  const int total = static_cast<int>(rows.size());
+  const fui::Rect listBounds = screen.body();
+  fui::ListProps props;
+  visibleRows = configureDrawerList(props, screen.theme(), listBounds);
+  const int top = std::clamp<int>(state.paneTopIndex, 0, std::max(0, total - visibleRows));
+  state.paneTopIndex = static_cast<int16_t>(top);
+  const int drawCount = std::min<int>({visibleRows, WINDOW_SIZE, total - top});
+  for (int i = 0; i < drawCount; ++i) {
+    const RowId row = rows[static_cast<size_t>(top + i)];
+    itemWindow[static_cast<size_t>(i)] = fui::ListItem{};
+    itemWindow[static_cast<size_t>(i)].label = rowLabel(row);
+    itemWindow[static_cast<size_t>(i)].value =
+        rowValue(row, labelWindow[static_cast<size_t>(i)].data(), labelWindow[static_cast<size_t>(i)].size());
+    itemWindow[static_cast<size_t>(i)].actionValue = static_cast<int16_t>(top + i);
+    itemWindow[static_cast<size_t>(i)].toggle = rowIsToggle(row);
+    itemWindow[static_cast<size_t>(i)].toggleChecked = rowToggleValue(row);
+    if (itemWindow[static_cast<size_t>(i)].toggle) itemWindow[static_cast<size_t>(i)].value = nullptr;
+  }
+  props.items = itemWindow.data();
+  props.count = static_cast<uint16_t>(std::max(0, drawCount));
+  props.action = ACTION_ROW;
+  props.selectedIndex = readerDrawerFocusedWindowIndex(buttonFocusActive, state.selectedIndex, top);
+  props.inputMask = fui::InputTouch;
+  props.valueInset = 8;
+  props.labelText = screen.theme().bodyText;
+  props.labelText.maxLines = 2;
+  screen.list(props);
+  fui::drawListScrollIndicator(screen.target(), drawerScrollbarBounds(listBounds), total, visibleRows, top,
+                               screen.theme().listScrollWidth, screen.theme().listScrollSide,
+                               screen.theme().listScrollInset);
+}
+#endif
+
 void EpubReaderTouchMenuActivity::openPane(const ReaderDrawerPane pane) {
   state.pane = pane;
   state.paneTopIndex = 0;
@@ -1161,11 +1291,22 @@ void EpubReaderTouchMenuActivity::openPane(const ReaderDrawerPane pane) {
     // Same reasoning as previewDirty elsewhere in this file.
     RenderLock lock(*this);
     paneRows.clear();
-    if (pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
+    if (pane == ReaderDrawerPane::ReaderFont) {
+      paneRows = {RowId::FontFamily, RowId::FontSize};
+      refreshTtfRenderingRow();
+    }
     if (pane == ReaderDrawerPane::DictionaryFont) {
       paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
     }
   }
+#if CROSSINK_SCALABLE_FONTS
+  if (pane == ReaderDrawerPane::TtfRendering) {
+    ttfRenderProfile = TTF_RENDER_PROFILES.profileFor(draft.sdFontFamilyName.data());
+    initialTtfRenderProfile = ttfRenderProfile;
+    ttfRenderingChanged = false;
+    rebuildTtfRenderingRows();
+  }
+#endif
   requestUpdate();
 }
 
@@ -1178,6 +1319,11 @@ void EpubReaderTouchMenuActivity::closePane() {
     state.pane = enumOptionReturnPane;
   } else if (state.pane == ReaderDrawerPane::FontFamily) {
     state.pane = ReaderDrawerPane::ReaderFont;
+#if CROSSINK_SCALABLE_FONTS
+  } else if (state.pane == ReaderDrawerPane::TtfRendering) {
+    finishTtfRenderingEdit();
+    state.pane = ReaderDrawerPane::ReaderFont;
+#endif
   } else {
     state.pane = ReaderDrawerPane::Root;
   }
@@ -1185,17 +1331,26 @@ void EpubReaderTouchMenuActivity::closePane() {
     // See openPane()'s identical guard for why.
     RenderLock lock(*this);
     paneRows.clear();
-    if (state.pane == ReaderDrawerPane::ReaderFont) paneRows = {RowId::FontFamily, RowId::FontSize};
+    if (state.pane == ReaderDrawerPane::ReaderFont) {
+      paneRows = {RowId::FontFamily, RowId::FontSize};
+      refreshTtfRenderingRow();
+    }
     if (state.pane == ReaderDrawerPane::DictionaryFont) {
       paneRows = {RowId::DictionaryFontFamily, RowId::DictionaryFontSize};
     }
   }
+#if CROSSINK_SCALABLE_FONTS
+  if (state.pane == ReaderDrawerPane::TtfRendering) rebuildTtfRenderingRows();
+#endif
   state.paneTopIndex = 0;
   state.selectedIndex = 0;
   requestUpdate();
 }
 
 void EpubReaderTouchMenuActivity::changeTab(const ReaderDrawerTab tab) {
+#if CROSSINK_SCALABLE_FONTS
+  finishTtfRenderingEdit();
+#endif
   state.tab = tab;
   state.pane = ReaderDrawerPane::Root;
   state.selectedIndex = 0;
@@ -1232,12 +1387,14 @@ void EpubReaderTouchMenuActivity::activateListIndex(const int index) {
         // See openPane()'s identical guard for why.
         RenderLock lock(*this);
         paneRows = {RowId::FontFamily, RowId::FontSize};
+        refreshTtfRenderingRow();
       }
       state.pendingFontIndex = -1;
       state.selectedIndex = 0;
       requestUpdate();
       return;
     }
+    fontPreviewLoading = true;
     state.pendingFontIndex = static_cast<int16_t>(index);
     const uint8_t settingIndex = fontSettingIndexes[static_cast<size_t>(index)];
     if (settingIndex < CrossPointSettings::BUILTIN_FONT_COUNT) {
@@ -1250,7 +1407,7 @@ void EpubReaderTouchMenuActivity::activateListIndex(const int index) {
         std::strncpy(draft.sdFontFamilyName.data(), families[static_cast<size_t>(familyIndex)].name.c_str(),
                      draft.sdFontFamilyName.size() - 1);
         draft.sdFontFamilyName.back() = '\0';
-        sdFontSystem.ensureLoaded(renderer);
+        // The render task loads the draft font when rebuilding its preview.
       }
     }
     markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
@@ -1268,6 +1425,31 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
     case RowId::ReaderFont:
       openPane(ReaderDrawerPane::ReaderFont);
       return;
+    case RowId::TtfRendering:
+#if CROSSINK_SCALABLE_FONTS
+      openPane(ReaderDrawerPane::TtfRendering);
+#endif
+      return;
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfHinting:
+    case RowId::TtfRaster:
+    case RowId::TtfInterpreter:
+    case RowId::TtfWeight:
+    case RowId::TtfSlant:
+      showTtfRenderingOptions(row);
+      return;
+    case RowId::TtfStemDarkening:
+      ttfRenderProfile.stemDarkening = !ttfRenderProfile.stemDarkening;
+      saveTtfRenderingProfile();
+      requestUpdate();
+      return;
+    case RowId::TtfReset:
+      ttfRenderProfile = {};
+      rebuildTtfRenderingRows();
+      saveTtfRenderingProfile();
+      requestUpdate();
+      return;
+#endif
     case RowId::FontFamily:
       discoverFonts();
       openPane(ReaderDrawerPane::FontFamily);
@@ -1443,6 +1625,12 @@ void EpubReaderTouchMenuActivity::toggleSetting(const RowId row) {
 }
 
 void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
+  RenderLock lock;
+  const bool fontSizeNeedsLoading = row == RowId::FontSize && draft.sdFontFamilyName[0] != '\0' &&
+                                    ReaderUtils::shouldShowFontPreviewLoading(draft.sdFontFamilyName.data());
+  if (row == RowId::DictionaryFontFamily || row == RowId::DictionaryFontSize || fontSizeNeedsLoading) {
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+  }
   if (row == RowId::DictionaryFontFamily || row == RowId::DictionaryFontSize) sdFontSystem.refreshIfDirty();
   std::vector<std::string> labels;
   std::vector<uint8_t> raw;
@@ -1458,11 +1646,7 @@ void EpubReaderTouchMenuActivity::showEnumOptions(const RowId row) {
       }
     }
     if (raw.empty()) {
-      static constexpr std::array<CrossPointSettings::FONT_SIZE, CrossPointSettings::FONT_SIZE_COUNT> BUILTIN_SIZES = {
-          CrossPointSettings::TINY, CrossPointSettings::SMALL, CrossPointSettings::MEDIUM, CrossPointSettings::LARGE};
-      raw.reserve(BUILTIN_SIZES.size());
-      std::transform(BUILTIN_SIZES.begin(), BUILTIN_SIZES.end(), std::back_inserter(raw),
-                     [](const auto size) { return CrossPointSettings::getReaderFontPointSize(size); });
+      raw.assign(std::begin(BUILTIN_READER_FONT_SIZES), std::end(BUILTIN_READER_FONT_SIZES));
     }
     labels.reserve(raw.size());
     std::transform(raw.begin(), raw.end(), std::back_inserter(labels),
@@ -1596,6 +1780,7 @@ void EpubReaderTouchMenuActivity::selectEnumOption(const int index) {
   if (previewsBeforeSelecting && previewedEnumOptionIndex != index) {
     previewedEnumOptionIndex = static_cast<int16_t>(index);
     if (enumOptionRow == RowId::FontSize) {
+      fontPreviewLoading = ReaderUtils::shouldShowFontPreviewLoading(draft.sdFontFamilyName.data());
       draft.readerFontPointSize = value;
     } else {
       draft.paragraphAlignment = value;
@@ -1662,6 +1847,24 @@ void EpubReaderTouchMenuActivity::selectEnumOption(const int index) {
       }
       notifyDictionaryFontChanged();
       break;
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfHinting:
+    case RowId::TtfRaster:
+    case RowId::TtfInterpreter:
+    case RowId::TtfWeight:
+    case RowId::TtfSlant: {
+      using TtfRow = TtfRenderOptionsActivity::Row;
+      const TtfRow optionRow = enumOptionRow == RowId::TtfHinting       ? TtfRow::Hinting
+                               : enumOptionRow == RowId::TtfRaster      ? TtfRow::Raster
+                               : enumOptionRow == RowId::TtfInterpreter ? TtfRow::Interpreter
+                               : enumOptionRow == RowId::TtfWeight      ? TtfRow::Weight
+                                                                        : TtfRow::Slant;
+      TtfRenderOptionsActivity::setOption(ttfRenderProfile, optionRow, value);
+      if (enumOptionRow == RowId::TtfHinting) rebuildTtfRenderingRows();
+      saveTtfRenderingProfile();
+      break;
+    }
+#endif
     default:
       return;
   }
@@ -1892,7 +2095,7 @@ void EpubReaderTouchMenuActivity::renderPreviewContents(const ReaderSettingsDraf
 
 void EpubReaderTouchMenuActivity::renderPreviewText(const ReaderSettingsDraft& previewSettings,
                                                     const int previewFontId) {
-  const bool sourceLayout = previewSettings.fontFamily == sourceSettings.fontFamily &&
+  const bool sourceLayout = !previewFontMetricsChanged && previewSettings.fontFamily == sourceSettings.fontFamily &&
                             previewSettings.readerFontPointSize == sourceSettings.readerFontPointSize &&
                             previewSettings.sdFontFamilyName == sourceSettings.sdFontFamilyName &&
                             previewSettings.lineHeightPercent == sourceSettings.lineHeightPercent &&
@@ -1927,14 +2130,26 @@ void EpubReaderTouchMenuActivity::renderPreviewText(const ReaderSettingsDraft& p
   renderer.endTextClip();
 }
 
-bool EpubReaderTouchMenuActivity::renderPreview() {
-  if (!previewDirty || !previewModel || !previewModel->valid()) return false;
+bool EpubReaderTouchMenuActivity::renderPreview(int& previewFontId) {
+  previewFontId = -1;
+  if (!previewDirty) return false;
   previewDirty = false;
+  if (!previewModel || !previewModel->valid()) {
+    if (!previewFontMetricsChanged) return false;
+    const int previewBottom = renderer.getScreenHeight() - drawerHeight();
+    renderer.fillRect(0, 0, renderer.getScreenWidth(), std::max(0, previewBottom),
+                      ReaderUtils::readerDarkModeEnabled());
+    return true;
+  }
+  if (fontPreviewLoading) {
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+    fontPreviewLoading = false;
+  }
   const ReaderSettingsDraft previewSettings = draft;
   const ReaderSettingsDraft liveSettings = captureSettings();
   applySettings(previewSettings);
   sdFontSystem.ensureLoaded(renderer);
-  const int previewFontId = SETTINGS.getReaderFontId();
+  previewFontId = SETTINGS.getReaderFontId();
   applySettings(liveSettings);
   if (auto* fontCacheManager = renderer.getFontCacheManager()) {
     auto scope = fontCacheManager->createPrewarmScope();
@@ -1946,15 +2161,10 @@ bool EpubReaderTouchMenuActivity::renderPreview() {
   return true;
 }
 
-void EpubReaderTouchMenuActivity::renderPreviewWithAntiAliasing() {
+void EpubReaderTouchMenuActivity::renderPreviewWithAntiAliasing(const int previewFontId) {
   if (!previewModel || !previewModel->valid()) return;
 
   const ReaderSettingsDraft previewSettings = draft;
-  const ReaderSettingsDraft liveSettings = captureSettings();
-  applySettings(previewSettings);
-  const int previewFontId = SETTINGS.getReaderFontId();
-  applySettings(liveSettings);
-
   // The BW refresh has already drawn the reader preview and drawer. Re-render
   // only preview text into the grayscale planes so the drawer stays crisp.
   ReaderUtils::renderAntiAliased(
@@ -1966,7 +2176,6 @@ void EpubReaderTouchMenuActivity::loop() {
     closeAndReturn(false, EpubReaderMenuAction::GO_HOME, false);
     return;
   }
-  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (DrawerHandle::wasDismissSwipe(mappedInput, drawerHandleRect, fui::SheetEdge::Bottom)) {
     closeAndReturn(true);
     return;
@@ -2069,16 +2278,17 @@ void EpubReaderTouchMenuActivity::render(RenderLock&&) {
     previewDirty = true;
   }
   previousDrawerTop = drawerTop;
-  const bool previewRendered = renderPreview();
+  int previewFontId = -1;
+  const bool previewRendered = renderPreview(previewFontId);
   uiReady = false;
   app.setDevice(uiTarget.deviceContext());
   app.render();
   uiReady = true;
-  if (optionPopup.isActive()) optionPopup.render(renderer);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   if (shouldRenderReaderDrawerAntiAliasing(previewRendered, draft.textAntiAliasing,
-                                           ReaderUtils::readerForegroundBlack())) {
-    renderPreviewWithAntiAliasing();
+                                           ReaderUtils::readerForegroundBlack()) &&
+      !sdFontSystem.fontUsesMonochromeRaster(renderer, previewFontId, draft.sdFontFamilyName.data())) {
+    renderPreviewWithAntiAliasing(previewFontId);
   }
 }
 
@@ -2104,6 +2314,10 @@ const char* EpubReaderTouchMenuActivity::paneTitle() const {
       return tr(STR_BOOK_DICTIONARY);
     case ReaderDrawerPane::EnumOptions:
       return I18N.get(enumOptionTitle);
+#if CROSSINK_SCALABLE_FONTS
+    case ReaderDrawerPane::TtfRendering:
+      return tr(STR_TTF_RENDERING);
+#endif
     case ReaderDrawerPane::Chapters:
       return tr(STR_SELECT_CHAPTER);
     case ReaderDrawerPane::Root:
@@ -2116,6 +2330,8 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
   switch (row) {
     case RowId::ReaderFont:
       return tr(STR_READER_FONT);
+    case RowId::TtfRendering:
+      return tr(STR_TTF_RENDERING);
     case RowId::DictionaryFont:
       return tr(STR_DICTIONARY_FONT);
     case RowId::Spacing:
@@ -2200,6 +2416,22 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
       return tr(STR_FONT_FAMILY);
     case RowId::DictionaryFontSize:
       return tr(STR_FONT_SIZE);
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfHinting:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Hinting);
+    case RowId::TtfRaster:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Raster);
+    case RowId::TtfInterpreter:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Interpreter);
+    case RowId::TtfWeight:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Weight);
+    case RowId::TtfSlant:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Slant);
+    case RowId::TtfStemDarkening:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::StemDarkening);
+    case RowId::TtfReset:
+      return TtfRenderOptionsActivity::rowLabel(TtfRenderOptionsActivity::Row::Reset);
+#endif
   }
   return "";
 }
@@ -2216,6 +2448,22 @@ const char* EpubReaderTouchMenuActivity::rowValue(const RowId row, char* buffer,
     case RowId::FontSize:
       std::snprintf(buffer, bufferSize, "%upt", draft.readerFontPointSize);
       return buffer;
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfHinting:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Hinting, ttfRenderProfile);
+    case RowId::TtfRaster:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Raster, ttfRenderProfile);
+    case RowId::TtfInterpreter:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Interpreter, ttfRenderProfile);
+    case RowId::TtfWeight:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Weight, ttfRenderProfile);
+    case RowId::TtfSlant:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Slant, ttfRenderProfile);
+    case RowId::TtfStemDarkening:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::StemDarkening, ttfRenderProfile);
+    case RowId::TtfReset:
+      return TtfRenderOptionsActivity::rowValue(TtfRenderOptionsActivity::Row::Reset, ttfRenderProfile);
+#endif
     case RowId::Orientation: {
       return I18N.get(readerOrientationLabel(draft.orientation));
     }
@@ -2266,6 +2514,9 @@ bool EpubReaderTouchMenuActivity::rowIsToggle(const RowId row) const {
     case RowId::ExtraSpacing:
     case RowId::ForceIndents:
     case RowId::EmbeddedStyle:
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfStemDarkening:
+#endif
       return true;
     default:
       return false;
@@ -2310,6 +2561,10 @@ bool EpubReaderTouchMenuActivity::rowToggleValue(const RowId row) const {
       return draft.extraParagraphSpacing;
     case RowId::ForceIndents:
       return draft.forceParagraphIndents;
+#if CROSSINK_SCALABLE_FONTS
+    case RowId::TtfStemDarkening:
+      return ttfRenderProfile.stemDarkening;
+#endif
     case RowId::EmbeddedStyle:
       return draft.embeddedStyle;
     default:

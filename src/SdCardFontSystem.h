@@ -23,15 +23,17 @@ class SdCardFontSystem {
   SdCardFontSystem() = default;
   SdCardFontSystem(const SdCardFontSystem&) = delete;
   SdCardFontSystem& operator=(const SdCardFontSystem&) = delete;
-  /// Register the font resolver and load a saved SD font selection. When the
-  /// built-in font is selected, discovery stays deferred until font metadata
-  /// is explicitly requested.
+  /// Register the font resolver. On scalable-font devices, defer all reader
+  /// font loading until the reader or a font preview requests it.
   void begin(GfxRenderer& renderer);
 
   /// Ensure the correct SD font family is loaded for the current settings.
   /// Call before entering the reader or after settings change.
   /// Also re-discovers if the registry has been marked dirty (e.g. by web upload).
   void ensureLoaded(GfxRenderer& renderer);
+
+  /// Prepare the selected built-in family before using it as a reader fallback.
+  int ensureBuiltInReaderFont(GfxRenderer& renderer);
 
   // An EPUB can own a temporary per-book settings snapshot while this system
   // repairs a missing font selection. Let that reader persist its own state.
@@ -57,6 +59,31 @@ class SdCardFontSystem {
   /// Resolve an SD card font ID from family name + selected point size.
   /// Returns 0 if not found. Used by CrossPointSettings::getReaderFontId().
   int resolveFontId(const char* familyName, uint8_t pointSize) const;
+
+  /// Whether changing point size can reuse the active scalable faces. A font
+  /// catalog update invalidates those faces even while they are still present
+  /// in PSRAM, because a replaced file must be loaded before the next preview.
+  bool canResizeResidentScalableFamilyWithoutReload(const char* familyName) const {
+    return registryLoaded_ && !registryDirty_.load(std::memory_order_acquire) && !fontReloadPending_ &&
+           !registry_.needsRefresh() && loadedRegistryRevision_ == registry_.revision() &&
+           manager_.hasResidentScalableFamily(familyName);
+  }
+
+  /// True when the selected scalable family is already resident. Reader code
+  /// uses this to keep the lightweight catalog while that family is active.
+  bool hasResidentScalableFamily(const char* familyName) const {
+    return manager_.hasResidentScalableFamily(familyName);
+  }
+  /// True when the active reader font is a TTF using black-and-white glyphs.
+  bool fontUsesMonochromeRaster(const GfxRenderer& renderer, int fontId, const char* familyName) const;
+  bool lastLoadHadIntegrityWarning() const { return manager_.lastLoadHadIntegrityWarning(); }
+
+  /// True when the named installed family is backed by TTF outlines.
+  bool isScalableFamily(const char* familyName);
+
+  /// Drop and reopen the active TTF family after its rendering profile changes.
+  /// Returns true when the named reader family was resident and invalidated.
+  bool reloadActiveScalableFamily(GfxRenderer& renderer, const char* familyName);
 
   /// Change the reader font size using the active SD family when one is selected.
   bool changeReaderFontSize(bool larger, FontSizeStepMode mode = FontSizeStepMode::Wrap);

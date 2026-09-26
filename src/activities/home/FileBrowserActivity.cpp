@@ -573,6 +573,7 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                                clearPreferredSleepFolder();
                                return;
                              case FileBrowserAction::DeleteCache:
+                             case FileBrowserAction::ReadingStats:
                              case FileBrowserAction::DeleteStats:
                              case FileBrowserAction::ToggleCompleted:
                              case FileBrowserAction::RemoveFromRecents:
@@ -745,6 +746,14 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
         switch (action) {
           case FileBrowserAction::BookInfo:
             openBookDetails(bookRow);
+            return;
+          case FileBrowserAction::ReadingStats:
+            if (auto statsActivity =
+                    BookActions::createReadingStatsActivity(renderer, mappedInput, fullPath, getFileName(entry))) {
+              startActivityForResult(std::move(statsActivity), [this](const ActivityResult&) { requestUpdate(); });
+            } else {
+              LOG_ERR("FileBrowser", "Failed to open reading stats for: %s", fullPath.c_str());
+            }
             return;
           case FileBrowserAction::Rename:
             startRenameFile(fullPath, entry);

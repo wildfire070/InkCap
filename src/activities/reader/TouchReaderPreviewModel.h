@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 class TouchReaderPreviewModel {
  public:
@@ -23,9 +24,12 @@ class TouchReaderPreviewModel {
     sourceLineHeightPixels =
         static_cast<int16_t>(std::max(1, (renderer.getLineHeight(fontId) * lineHeightPercent + 50) / 100));
     bool previousElementWasLine = false;
+    bool previousLineEndedWithInsertedHyphen = false;
+    uint16_t previousLineLastWord = 0;
     for (const auto& element : page.elements) {
       if (!element || element->getTag() != TAG_PageLine) {
         previousElementWasLine = false;
+        previousLineEndedWithInsertedHyphen = false;
         continue;
       }
       if (lineCount >= lines.size()) break;
@@ -47,8 +51,9 @@ class TouchReaderPreviewModel {
       line.firstWord = wordCount;
       line.wordCount = block->wordCount();
       line.style = block->getBlockStyle();
+      line.sourceIndentVisible = block->wordCount() > 0 && block->wordXpos(0) != 0;
       line.startsParagraph =
-          !previousElementWasLine || lineCount == 1 || startsNewParagraph(lines[lineCount - 2], line);
+          !previousElementWasLine || lineCount == 1 || startsNewParagraph(lines[lineCount - 2], line, *block);
       if (!hasBaseline) {
         firstLineY = line.y;
         hasBaseline = true;
@@ -62,9 +67,21 @@ class TouchReaderPreviewModel {
         word.style = block->wordStyle(i);
         word.focusBoundary = block->focusBoundary(i);
         word.hasSpaceBefore = block->wordHasSpaceBefore(i);
+        word.mayBreakBefore = word.hasSpaceBefore;
+        word.insertedHyphenAfter = block->wordEndsWithInsertedHyphen(i);
         std::memcpy(text.data() + textSize, block->wordText(i), textLength);
         textSize += textLength;
         text[textSize++] = '\0';
+        if (i == 0 && !line.startsParagraph && previousLineEndedWithInsertedHyphen) {
+          // The source layout split one logical word across two captured
+          // lines. Hide its layout-only hyphen when the fragments fit
+          // together, but retain this boundary as a legal preview break.
+          char* previousText = text.data() + words[previousLineLastWord].textOffset;
+          const size_t previousLength = std::strlen(previousText);
+          if (previousLength > 0 && previousText[previousLength - 1] == '-') previousText[previousLength - 1] = '\0';
+          word.hasSpaceBefore = false;
+          word.mayBreakBefore = true;
+        }
         if (!word.hasSpaceBefore && i > 0) {
           const Word& previous = words[wordCount - 2];
           const int attachedX = previous.x + wordAdvance(renderer, fontId, previous, previous.focusBoundary != 0) +
@@ -73,8 +90,17 @@ class TouchReaderPreviewModel {
           // Some blocks do not report every visible word gap. Recover one
           // only when the rendered source positions prove it was present.
           word.hasSpaceBefore = word.x > attachedX || block->guideDotXOffset(i - 1) > 0;
+          word.mayBreakBefore = word.hasSpaceBefore;
+        }
+        if (!word.hasSpaceBefore && wordCount > 1 && !word.mayBreakBefore) {
+          const Word& previous = words[wordCount - 2];
+          word.mayBreakBefore =
+              hasCjkBreakOpportunity(lastCodepoint(wordText(previous)), firstCodepoint(wordText(word)));
         }
       }
+      previousLineEndedWithInsertedHyphen =
+          block->wordCount() > 0 && block->wordEndsWithInsertedHyphen(block->wordCount() - 1);
+      if (previousLineEndedWithInsertedHyphen) previousLineLastWord = static_cast<uint16_t>(wordCount - 1);
       previousElementWasLine = true;
     }
     return hasBaseline && wordCount > 0;
@@ -105,11 +131,12 @@ class TouchReaderPreviewModel {
 
       uint16_t wordIndex = firstWord;
       bool firstPreviewLine = true;
+      prepareMetrics(renderer, fontId, firstWord, paragraphWordEnd, wordSpacing, focusReadingEnabled,
+                     guideReadingEnabled);
+      prepareLineBreaks(firstWord, paragraphWordEnd, availableWidth, previewFirstLineIndent(line, alignment));
       while (wordIndex < paragraphWordEnd) {
-        const int firstLineIndent = firstPreviewLine ? previewFirstLineIndent(renderer, fontId, line, alignment) : 0;
-        const int lineWidthLimit = std::max(1, availableWidth - firstLineIndent);
-        const uint16_t lineEnd = reflowLineEnd(renderer, fontId, wordIndex, paragraphWordEnd, lineWidthLimit,
-                                               wordSpacing, focusReadingEnabled, guideReadingEnabled);
+        const int firstLineIndent = firstPreviewLine ? previewFirstLineIndent(line, alignment) : 0;
+        const uint16_t lineEnd = nextBreak[wordIndex];
         renderReflowedLine(renderer, fontId, wordIndex, lineEnd, y, availableLeft, availableWidth, firstLineIndent,
                            alignment, lineEnd == paragraphWordEnd, wordSpacing, focusReadingEnabled,
                            guideReadingEnabled, foregroundBlack);
@@ -148,6 +175,8 @@ class TouchReaderPreviewModel {
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
     uint8_t focusBoundary = 0;
     bool hasSpaceBefore = false;
+    bool mayBreakBefore = false;
+    bool insertedHyphenAfter = false;
   };
 
   struct Line {
@@ -158,11 +187,17 @@ class TouchReaderPreviewModel {
     uint16_t wordCount = 0;
     BlockStyle style{};
     bool startsParagraph = true;
+    bool sourceIndentVisible = false;
   };
 
   std::array<char, TEXT_CAPACITY> text{};
   std::array<Word, WORD_CAPACITY> words{};
   std::array<Line, LINE_CAPACITY> lines{};
+  mutable std::array<int32_t, WORD_CAPACITY> breakCost{};
+  mutable std::array<uint16_t, WORD_CAPACITY> nextBreak{};
+  mutable std::array<int16_t, WORD_CAPACITY> measuredAdvance{};
+  mutable std::array<int16_t, WORD_CAPACITY> measuredGap{};
+  mutable std::array<int16_t, WORD_CAPACITY> insertedHyphenExtra{};
   uint16_t textSize = 0;
   uint16_t wordCount = 0;
   uint16_t lineCount = 0;
@@ -177,9 +212,15 @@ class TouchReaderPreviewModel {
 
   const char* wordText(const Word& word) const { return text.data() + word.textOffset; }
 
-  bool startsNewParagraph(const Line& previous, const Line& current) const {
-    if (current.y <= previous.y ||
-        current.y - previous.y > sourceLineHeightPixels + std::max<int>(2, sourceLineHeightPixels / 3)) {
+  bool startsNewParagraph(const Line& previous, const Line& current, const TextBlock& currentBlock) const {
+    if (current.y <= previous.y || current.y - previous.y > sourceLineHeightPixels + 1) {
+      return true;
+    }
+    const bool naturallyAligned = current.style.alignment == CssTextAlign::None ||
+                                  current.style.alignment == CssTextAlign::Left ||
+                                  current.style.alignment == CssTextAlign::Justify;
+    if (naturallyAligned && current.style.textIndentDefined && currentBlock.wordCount() > 0 &&
+        currentBlock.wordXpos(0) != 0) {
       return true;
     }
     return previous.style.leftInset() != current.style.leftInset() ||
@@ -190,30 +231,65 @@ class TouchReaderPreviewModel {
            previous.style.isRtl != current.style.isRtl;
   }
 
-  int previewFirstLineIndent(const GfxRenderer& renderer, const int fontId, const Line& line,
-                             const CssTextAlign alignment) const {
+  int previewFirstLineIndent(const Line& line, const CssTextAlign alignment) const {
     const bool naturalAlignment = alignment == CssTextAlign::Justify || alignment == CssTextAlign::Left;
-    if (!naturalAlignment || line.wordCount == 0 || words[line.firstWord].x <= 0) return 0;
-    if (line.style.textIndentDefined) return std::max(0, static_cast<int>(line.style.textIndent));
-    return renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR) * 3;
+    if (!naturalAlignment || !line.startsParagraph || !line.sourceIndentVisible || !line.style.textIndentDefined)
+      return 0;
+    return std::max(0, static_cast<int>(line.style.textIndent));
   }
 
-  uint16_t reflowLineEnd(const GfxRenderer& renderer, const int fontId, const uint16_t firstWord,
-                         const uint16_t paragraphWordEnd, const int availableWidth, const uint8_t wordSpacing,
-                         const bool focusEnabled, const bool guideReadingEnabled) const {
-    int lineWidth = 0;
-    uint16_t wordIndex = firstWord;
-    while (wordIndex < paragraphWordEnd) {
-      const Word& word = words[wordIndex];
-      int width = wordAdvance(renderer, fontId, word, focusEnabled);
-      if (wordIndex > firstWord) {
-        width += wordGap(renderer, fontId, words[wordIndex - 1], word, wordSpacing, guideReadingEnabled);
-      }
-      if (wordIndex > firstWord && lineWidth + width > availableWidth) break;
-      lineWidth += width;
-      ++wordIndex;
+  static int16_t boundedMetric(const int value) {
+    return static_cast<int16_t>(std::clamp(value, static_cast<int>(INT16_MIN), static_cast<int>(INT16_MAX)));
+  }
+
+  void prepareMetrics(const GfxRenderer& renderer, const int fontId, const uint16_t paragraphStart,
+                      const uint16_t paragraphEnd, const uint8_t wordSpacing, const bool focusEnabled,
+                      const bool guideReadingEnabled) const {
+    for (uint16_t index = paragraphStart; index < paragraphEnd; ++index) {
+      measuredAdvance[index] = boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled));
+      measuredGap[index] = index == paragraphStart
+                               ? 0
+                               : boundedMetric(wordGap(renderer, fontId, words[index - 1], words[index], wordSpacing,
+                                                       guideReadingEnabled));
+      insertedHyphenExtra[index] =
+          words[index].insertedHyphenAfter
+              ? boundedMetric(wordAdvance(renderer, fontId, words[index], focusEnabled, '-') +
+                              renderer.getTextAdvanceX(fontId, "-", words[index].style) - measuredAdvance[index])
+              : 0;
     }
-    return wordIndex;
+  }
+
+  void prepareLineBreaks(const uint16_t paragraphStart, const uint16_t paragraphEnd, const int availableWidth,
+                         const int firstLineIndent) const {
+    constexpr int32_t MAX_COST = std::numeric_limits<int32_t>::max();
+    for (int start = static_cast<int>(paragraphEnd) - 1; start >= static_cast<int>(paragraphStart); --start) {
+      int lineWidth = 0;
+      breakCost[static_cast<size_t>(start)] = MAX_COST;
+      nextBreak[static_cast<size_t>(start)] = static_cast<uint16_t>(start + 1);
+      const int widthLimit = std::max(1, availableWidth - (start == paragraphStart ? firstLineIndent : 0));
+      for (uint16_t end = static_cast<uint16_t>(start); end < paragraphEnd; ++end) {
+        if (end > start) {
+          lineWidth += measuredGap[end];
+        }
+        lineWidth += measuredAdvance[end];
+        if (lineWidth > widthLimit && end > start) break;
+        if (end + 1 < paragraphEnd && !words[end + 1].mayBreakBefore) continue;
+
+        const int candidateWidth = lineWidth + (end + 1 < paragraphEnd ? insertedHyphenExtra[end] : 0);
+        if (candidateWidth > widthLimit && end > start) continue;
+
+        int32_t cost = 0;
+        if (end + 1 < paragraphEnd) {
+          const int remaining = std::max(0, widthLimit - candidateWidth);
+          const int64_t candidate = static_cast<int64_t>(remaining) * remaining + breakCost[end + 1];
+          cost = candidate > MAX_COST ? MAX_COST : static_cast<int32_t>(candidate);
+        }
+        if (cost <= breakCost[static_cast<size_t>(start)]) {
+          breakCost[static_cast<size_t>(start)] = cost;
+          nextBreak[static_cast<size_t>(start)] = static_cast<uint16_t>(end + 1);
+        }
+      }
+    }
   }
 
   void renderReflowedLine(const GfxRenderer& renderer, const int fontId, const uint16_t firstWord,
@@ -222,15 +298,16 @@ class TouchReaderPreviewModel {
                           const uint8_t wordSpacing, const bool focusEnabled, const bool guideReadingEnabled,
                           const bool foregroundBlack) const {
     int lineWidth = 0;
-    int spaceCount = 0;
+    int justifySlots = 0;
     for (uint16_t wordIndex = firstWord; wordIndex < lineEnd; ++wordIndex) {
       const Word& word = words[wordIndex];
       if (wordIndex > firstWord) {
-        lineWidth += wordGap(renderer, fontId, words[wordIndex - 1], word, wordSpacing, guideReadingEnabled);
-        spaceCount += word.hasSpaceBefore;
+        lineWidth += measuredGap[wordIndex];
+        justifySlots += wordJustifySlots(word, guideReadingEnabled);
       }
-      lineWidth += wordAdvance(renderer, fontId, word, focusEnabled);
+      lineWidth += measuredAdvance[wordIndex];
     }
+    if (!isLastLine && words[lineEnd - 1].insertedHyphenAfter) lineWidth += insertedHyphenExtra[lineEnd - 1];
 
     int targetLeft = availableLeft;
     if (alignment == CssTextAlign::Center) {
@@ -243,14 +320,14 @@ class TouchReaderPreviewModel {
     const bool justifyLine =
         alignment == CssTextAlign::Justify && !isLastLine && lineEnd > firstWord + 1 && lineWidth < availableWidth;
     const int justifyExtra =
-        justifyLine && spaceCount > 0 ? (availableWidth - firstLineIndent - lineWidth) / spaceCount : 0;
+        justifyLine && justifySlots > 0 ? (availableWidth - firstLineIndent - lineWidth) / justifySlots : 0;
 
     int wordX = targetLeft;
     for (uint16_t wordIndex = firstWord; wordIndex < lineEnd; ++wordIndex) {
       const Word& word = words[wordIndex];
       if (wordIndex > firstWord) {
         const Word& previous = words[wordIndex - 1];
-        const int gap = wordGap(renderer, fontId, previous, word, wordSpacing, guideReadingEnabled);
+        const int gap = measuredGap[wordIndex];
         if (guideReadingEnabled && word.hasSpaceBefore) {
           const int extra = wordSpacingExtra(wordSpacing);
           const int firstGap =
@@ -258,10 +335,16 @@ class TouchReaderPreviewModel {
           renderer.drawText(fontId, wordX + firstGap + extra / 2, y, GUIDE_DOT_UTF8, foregroundBlack,
                             EpdFontFamily::REGULAR);
         }
-        wordX += gap + (word.hasSpaceBefore ? justifyExtra : 0);
+        wordX += gap + wordJustifySlots(word, guideReadingEnabled) * justifyExtra;
       }
       drawWord(renderer, fontId, wordX, y, word, focusEnabled, foregroundBlack);
-      wordX += wordAdvance(renderer, fontId, word, focusEnabled);
+      wordX += measuredAdvance[wordIndex];
+      if (wordIndex + 1 == lineEnd && !isLastLine && word.insertedHyphenAfter) {
+        renderer.drawText(fontId,
+                          wordX + wordAdvance(renderer, fontId, word, focusEnabled, '-') - measuredAdvance[wordIndex],
+                          y, "-", foregroundBlack, word.style);
+        wordX += insertedHyphenExtra[wordIndex];
+      }
     }
   }
 
@@ -312,20 +395,100 @@ class TouchReaderPreviewModel {
     return static_cast<uint8_t>(std::min<size_t>(cursor - reinterpret_cast<const unsigned char*>(value), UINT8_MAX));
   }
 
-  int wordAdvance(const GfxRenderer& renderer, const int fontId, const Word& word, const bool focusEnabled) const {
+  int wordAdvance(const GfxRenderer& renderer, const int fontId, const Word& word, const bool focusEnabled,
+                  const uint32_t nextCodepoint = 0) const {
     const char* value = wordText(word);
     const uint8_t boundary = resolvedFocusBoundary(word, focusEnabled);
-    if (boundary == 0 || boundary >= std::strlen(value)) return renderer.getTextAdvanceX(fontId, value, word.style);
+    if (boundary == 0 || boundary >= std::strlen(value))
+      return renderer.getTextAdvanceX(fontId, value, word.style, nextCodepoint);
     char prefix[40];
     const size_t length = std::min<size_t>({static_cast<size_t>(boundary), sizeof(prefix) - 1, std::strlen(value)});
     std::memcpy(prefix, value, length);
     prefix[length] = '\0';
     const auto boldStyle = static_cast<EpdFontFamily::Style>(word.style | EpdFontFamily::BOLD);
     return renderer.getTextAdvanceX(fontId, prefix, boldStyle, firstCodepoint(value + length)) +
-           renderer.getTextAdvanceX(fontId, value + length, word.style);
+           renderer.getTextAdvanceX(fontId, value + length, word.style, nextCodepoint);
   }
 
   static int wordSpacingExtra(const uint8_t wordSpacing) { return std::min<uint8_t>(wordSpacing, 4) * 10; }
+
+  static bool isClosingPunctuation(const uint32_t codepoint) {
+    switch (codepoint) {
+      case '.':
+      case ',':
+      case ':':
+      case ';':
+      case '!':
+      case '?':
+      case ')':
+      case ']':
+      case '}':
+      case 0x00BB:
+      case 0x2019:
+      case 0x201D:
+      case 0x3001:
+      case 0x3002:
+      case 0x3009:
+      case 0x300B:
+      case 0x300D:
+      case 0x300F:
+      case 0x3011:
+      case 0x3015:
+      case 0x3017:
+      case 0x3019:
+      case 0x301B:
+      case 0xFF01:
+      case 0xFF09:
+      case 0xFF0C:
+      case 0xFF0E:
+      case 0xFF1A:
+      case 0xFF1B:
+      case 0xFF1F:
+      case 0xFF3D:
+      case 0xFF5D:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  static bool isOpeningPunctuation(const uint32_t codepoint) {
+    switch (codepoint) {
+      case '(':
+      case '[':
+      case '{':
+      case 0x00AB:
+      case 0x2018:
+      case 0x201C:
+      case 0x3008:
+      case 0x300A:
+      case 0x300C:
+      case 0x300E:
+      case 0x3010:
+      case 0x3014:
+      case 0x3016:
+      case 0x3018:
+      case 0x301A:
+      case 0xFF08:
+      case 0xFF3B:
+      case 0xFF5B:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  static bool hasCjkBreakOpportunity(const uint32_t leftCodepoint, const uint32_t rightCodepoint) {
+    if (!utf8IsCjkBreakable(leftCodepoint) && !utf8IsCjkBreakable(rightCodepoint)) return false;
+    return !isOpeningPunctuation(leftCodepoint) && !isClosingPunctuation(rightCodepoint) &&
+           !utf8IsCombiningMark(rightCodepoint);
+  }
+
+  int wordJustifySlots(const Word& word, const bool guideReadingEnabled) const {
+    if (!word.mayBreakBefore) return 0;
+    const int slots = guideReadingEnabled && word.hasSpaceBefore ? 2 : 1;
+    return isClosingPunctuation(firstCodepoint(wordText(word))) ? slots - 1 : slots;
+  }
 
   int wordGap(const GfxRenderer& renderer, const int fontId, const Word& left, const Word& right,
               const uint8_t wordSpacing, const bool guideReadingEnabled) const {

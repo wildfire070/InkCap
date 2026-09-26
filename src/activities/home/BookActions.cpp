@@ -7,6 +7,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -18,8 +19,10 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
+#include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/UITheme.h"
@@ -72,6 +75,7 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({FileBrowserAction::ResetReaderSettings, StrId::STR_RESET_BOOK_READER_SETTINGS});
   }
   if (hasReadingStats(fullPath)) {
+    items.push_back({FileBrowserAction::ReadingStats, StrId::STR_READING_STATS});
     items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
     items.push_back({FileBrowserAction::ToggleCompleted,
                      isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
@@ -132,6 +136,31 @@ bool deleteBookStats(const std::string& fullPath) {
   return BookReadingStats::remove(cachePath);
 }
 
+std::unique_ptr<Activity> createReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                     const std::string& fullPath, const std::string& title) {
+  const std::string cachePath = bookStatsCachePath(fullPath);
+  if (cachePath.empty()) {
+    LOG_ERR("BookActions", "No reading stats for: %s", fullPath.c_str());
+    return {};
+  }
+  if (!Storage.exists(cachePath.c_str()) && !Storage.mkdir(cachePath.c_str())) {
+    LOG_ERR("BookActions", "Could not create stats cache for: %s", fullPath.c_str());
+    return {};
+  }
+
+  const RecentBook book{fullPath, title, {}, {}};
+  const float progress = FsHelpers::hasEpubExtension(fullPath) ? RecentBookProgress::loadCachedEpubPercent(book)
+                                                               : RecentBookProgress::loadPercent(book);
+  const BookReadingStats stats = BookReadingStats::load(cachePath);
+  const GlobalReadingStats global = GlobalReadingStats::load();
+  if (GlobalReadingStats::hasSyncedStats()) {
+    return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                                global, GlobalReadingStats::loadAggregated(global));
+  }
+  return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                              global);
+}
+
 bool resetBookReaderSettings(const std::string& fullPath) {
   if (!FsHelpers::hasEpubExtension(fullPath)) {
     return false;
@@ -189,13 +218,11 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   std::string cachePath;
   std::string title;
   std::string author;
-  std::string thumbPath;
   if (isEpub) {
     epub.setupCacheDir();
     cachePath = epub.getCachePath();
     title = epub.getTitle();
     author = epub.getAuthor();
-    thumbPath = epub.getThumbBmpPath();
   } else {
     if (!xtc.load()) {
       return false;
@@ -204,7 +231,6 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
     cachePath = xtc.getCachePath();
     title = xtc.getTitle();
     author = xtc.getAuthor();
-    thumbPath = xtc.getThumbBmpPath();
   }
 
   BookReadingStats stats = BookReadingStats::load(cachePath);
@@ -224,16 +250,15 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
     globalStats.completedBooks--;
   }
 
-  stats.save(cachePath);
+  if (!stats.save(cachePath)) {
+    LOG_ERR("BookActions", "Could not save completion for: %s", fullPath.c_str());
+    return false;
+  }
   globalStats.save();
 
-  if (SETTINGS.removeReadBooksFromRecents) {
-    if (completed) {
-      RECENT_BOOKS.removeByPath(fullPath);
-    } else {
-      RECENT_BOOKS.addOrUpdateBook(fullPath, title, author, thumbPath);
-    }
-  }
+  // Changing completion status does not open a book. The reader adds it to
+  // recents if it is opened again after being marked unfinished.
+  if (SETTINGS.removeReadBooksFromRecents && completed) RECENT_BOOKS.removeByPath(fullPath);
 
   if (isEpub && completed && SETTINGS.moveFinishedToReadFolder && fullPath.rfind("/Read/", 0) != 0) {
     const std::string oldCachePath = epub.getCachePath();

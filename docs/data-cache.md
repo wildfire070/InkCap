@@ -64,7 +64,7 @@ To clear EPUB/XTC render caches from the device UI without deleting settings or 
 
 Cache folders are path-based. Moving a book file can create a new cache directory, so the moved copy may start with fresh reading progress unless the firmware migrates the cache for that move. CrossInk migrates cache and bookmark data for the built-in move-to-Read flow and related file-browser move actions.
 
-EPUB reader font, page layout, styling, and reading-aid settings normally come from the global Reader settings. If those settings are changed from inside an EPUB, CrossInk stores a per-book override in that book's `reader_settings.bin`; books without that override continue to follow the global defaults. EPUB render mode is also stored per book so a problematic title can be switched to Balanced or Light rendering from the File Browser or Recent Books long-press menus before opening it.
+EPUB reader font, page layout, styling, and reading-aid settings normally come from the global Reader settings. Changes made inside an EPUB override only the fields whose values differ from the global defaults; the other fields continue to inherit later global changes. EPUB render mode is stored separately per book so a problematic title can be switched to Balanced or Light rendering from the File Browser or Recent Books long-press menus before opening it. Older full-snapshot book overrides retain their original behavior until reset or edited again.
 
 EPUB clippings and highlights live outside the EPUB render-cache folder in
 `/.crosspoint/clippings/`. Each book gets a binary clipping file named from the
@@ -94,10 +94,15 @@ authors; disabling it uses filenames. TXT, Markdown and XTC files use filename
 fallbacks. CLX1 version 2 adds a first-name author permutation; older Library
 indexes rebuild automatically when Library opens.
 
-**Date Added** uses the file modification time captured by the index, with its
-first-seen sequence breaking ties. **Recently Read** places the saved reading
-history first (up to 18 books), followed by books without history in date order.
-Reversing that sort reverses each section; it keeps books with history together.
+**Date Added** uses the file creation time captured by the index. Its
+first-seen sequence breaks ties and orders books without a creation time among
+themselves; those books appear before dated books in ascending order.
+The creation time is the filesystem's best available estimate of when a file
+arrived on the card; some copy tools may preserve the original timestamp.
+**Recently Opened** shows only books in the
+saved reading history (up to 18 books), newest first. Reversing that sort shows
+the same books oldest first. Marking a book unfinished does not add it to
+reading history; opening it does.
 Search matches words in the title and author and retains the selected sort.
 The sort method and direction are saved when changed. The Library Settings icon
 opens a compact/expanded list toggle and independent visibility switches for

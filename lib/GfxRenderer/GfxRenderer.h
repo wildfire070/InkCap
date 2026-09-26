@@ -385,6 +385,8 @@ class GfxRenderer {
   void lockFrameBufferMutex() const { xSemaphoreTakeRecursive(frameBufferMutex_, portMAX_DELAY); }
   void unlockFrameBufferMutex() const { xSemaphoreGiveRecursive(frameBufferMutex_); }
   TaskHandle_t frameBufferMutexHolder() const { return xSemaphoreGetMutexHolder(frameBufferMutex_); }
+  // The recursive mutex itself, for code that must borrow the render lock (see ScalableFontAccess).
+  SemaphoreHandle_t frameBufferMutexHandle() const { return frameBufferMutex_; }
 
   // Plain RAII form of the pair above, for callers with no buffer to loan --
   // e.g. mutating fontMap/sdCardFonts_/fallbackFontMap_ (SdCardFontManager's
