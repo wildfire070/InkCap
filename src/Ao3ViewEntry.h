@@ -22,8 +22,8 @@ inline uint32_t fnv1a(const char* str) {
  * @brief In-RAM sort/filter key struct — one per live book, loaded sequentially
  *        from ao3_library_index.bin at library startup.
  *
- * 44 bytes packed (pragma pack 1).
- * 44 × 1000 books = 44 KB peak RAM (44 × 2000 = 88 KB on PSRAM devices; see maxLibraryBooks()).
+ * 52 bytes packed (pragma pack 1).
+ * 52 × 1000 books = 52 KB peak RAM (52 × 2000 = 104 KB on PSRAM devices; see maxLibraryBooks()).
  */
 #pragma pack(push, 1)
 struct ViewEntry {
@@ -37,6 +37,7 @@ struct ViewEntry {
   uint16_t seriesPart;     // position within series, 0 if not in a series
   char title[12];          // first 11 chars of title, null-terminated (alphabetic sort)
   char authorKey[8];       // first 7 chars of author lowercased (author sort)
+  char seriesKey[8];       // first 7 chars of series lowercased, empty if none (series sort)
   char rating;             // same as CompactIndexRecord.rating (G, T, M, E, -)
   uint8_t isCompleted;     // same as CompactIndexRecord.isCompleted
 };
@@ -55,6 +56,14 @@ inline ViewEntry buildViewEntry(const CompactIndexRecord& rec) {
   strncpy(v.authorKey, rec.author, 7);
   v.authorKey[7] = '\0';
   for (char* p = v.authorKey; *p; p++) {
+    if (*p >= 'A' && *p <= 'Z') *p += 32;
+  }
+
+  // seriesKey: same shape as authorKey, so the Series sort can be alphabetical (seriesHash alone
+  // only keeps a series' books together, in an arbitrary order)
+  strncpy(v.seriesKey, rec.seriesName, 7);
+  v.seriesKey[7] = '\0';
+  for (char* p = v.seriesKey; *p; p++) {
     if (*p >= 'A' && *p <= 'Z') *p += 32;
   }
 
