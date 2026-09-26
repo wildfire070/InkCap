@@ -392,9 +392,8 @@ bool HalScalableFont::openSource(const uint8_t* bytes, size_t size, const bool s
     return false;
   }
   runtime().allocator.clearFailure();
-  const bool opened =
-      streamed ? font_.initStream(streamRead, this, size, 1, weight_, italic_)
-               : font_.init(bytes, static_cast<uint32_t>(size), 1, weight_, italic_);
+  const bool opened = streamed ? font_.initStream(streamRead, this, size, 1, weight_, italic_)
+                               : font_.init(bytes, static_cast<uint32_t>(size), 1, weight_, italic_);
   const bool optionsAccepted = opened && font_.setRenderOptions(options);
   if (!optionsAccepted) {
     const auto initFailure = font_.lastInitFailure();
