@@ -165,7 +165,8 @@ void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
   }
   loaded_.clear();
 #if CROSSINK_SCALABLE_FONTS
-  for (auto& font : scalable_) font.reset();
+  // Reverse order: styled faces may share the bytes of an earlier one and must release first.
+  for (int style = 3; style >= 0; --style) scalable_[style].reset();
   activeScalableId_ = 0;
   scalableHash_ = 0;
   temporaryScalable_ = false;
@@ -259,6 +260,10 @@ bool SdCardFontManager::loadScalable(const SdCardFontFamilyInfo& family, GfxRend
       totalBytes += bytes;
       ++faceCount;
     }
+    // A style with no file of its own is derived from the faces the family does have (see below), so
+    // its descriptors count toward the memory check even though it adds no file bytes.
+    const size_t missingStyles = faceCount ? 4 - faceCount : 0;
+    faceCount += missingStyles;
     if (!HalScalableFont::prepareFamily(totalBytes, faceCount)) return false;
     size_t remaining = HalScalableFont::MaxFamilyBytes;
     // Load regular first, independent of SD directory order, so the most-used
@@ -288,6 +293,32 @@ bool SdCardFontManager::loadScalable(const SdCardFontFamilyInfo& family, GfxRend
           scalable_[0] = std::move(scalable_[i]);
           break;
         }
+    // Bold and italic the family has no file for come from the faces it does: a variable font's wght
+    // (and ital/slnt) axis gives a real weight or slant, a static face gets a faux bold or oblique
+    // from the SDK. Bold-italic prefers a real italic file as its base, since that already has the
+    // slant. A derived face that cannot open is skipped, leaving the style to fall back to regular.
+    const bool realItalic = scalable_[2] != nullptr;
+    const auto derive = [&](unsigned style, const HalScalableFont& base, int weight, bool italic) {
+      if (scalable_[style]) return;
+      --faceCount;
+      auto font = makeUniqueNoThrow<HalScalableFont>();
+      if (!font || !font->openStyledFrom(base, weight, italic, renderOptions, remaining, faceCount)) {
+        LOG_ERR("SDMGR", "Cannot derive TTF style %u from %s", style, family.name.c_str());
+        return;
+      }
+      remaining = remaining > font->fileBytes() ? remaining - font->fileBytes() : 0;
+      LOG_DBG("SDMGR", "Derived TTF style=%u weight=%d italic=%u", style, weight, italic ? 1u : 0u);
+      scalable_[style] = std::move(font);
+    };
+    if (scalable_[0]) {
+      derive(1, *scalable_[0], 700, false);
+      derive(2, *scalable_[0], 400, true);
+      if (realItalic) {
+        derive(3, *scalable_[2], 700, false);
+      } else {
+        derive(3, *scalable_[0], 700, true);
+      }
+    }
     refreshScalableHash();
     loadedFamilyName_ = family.name;
     temporaryScalable_ = temporary;
