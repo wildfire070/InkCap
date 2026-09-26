@@ -129,8 +129,7 @@ ReaderSettingsChangeMask classifyReaderSettingsChange(const ReaderLayoutSettings
   }
   if (before.fontFamily != after.fontFamily || before.readerFontPointSize != after.readerFontPointSize ||
       before.lineHeightPercent != after.lineHeightPercent || before.wordSpacing != after.wordSpacing ||
-      before.characterSpacing != after.characterSpacing ||
-      before.screenMarginVertical != after.screenMarginVertical ||
+      before.characterSpacing != after.characterSpacing || before.screenMarginVertical != after.screenMarginVertical ||
       before.screenMarginHorizontal != after.screenMarginHorizontal ||
       before.publisherPageNumbers != after.publisherPageNumbers ||
       before.paragraphAlignment != after.paragraphAlignment || before.embeddedStyle != after.embeddedStyle ||

@@ -7609,8 +7609,8 @@ void EpubReaderActivity::buildFootnoteTouchTargets(const Page& page, const int f
       } else if ((style & EpdFontFamily::SUB) != 0) {
         wordY += renderer.getFontAscenderSize(fontId) / 4;
       }
-      int wordWidth = renderer.getTextAdvanceX(fontId, block.wordText(wordIndex), style, 0,
-                                               block.getBlockStyle().characterSpacing);
+      int wordWidth =
+          renderer.getTextAdvanceX(fontId, block.wordText(wordIndex), style, 0, block.getBlockStyle().characterSpacing);
       if (wordIndex + 1 < block.wordCount() && block.wordXpos(wordIndex + 1) > block.wordXpos(wordIndex)) {
         wordWidth = std::min(wordWidth, static_cast<int>(block.wordXpos(wordIndex + 1) - block.wordXpos(wordIndex)));
       }
@@ -7769,7 +7769,8 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     const auto textStyle = static_cast<EpdFontFamily::Style>(block.wordStyle(wordIndex) & ~EpdFontFamily::UNDERLINE);
     const int8_t tracking = block.getBlockStyle().characterSpacing;
     // The synthetic indent em-space is followed by one tracked glyph gap before the visible text.
-    const int skipX = hasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", textStyle, 0, tracking) + tracking : 0;
+    const int skipX =
+        hasEmSpace ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", textStyle, 0, tracking) + tracking : 0;
     const PageWordGeometry geometry = pageWordGeometry(renderer, fontId, line, block, wordIndex);
     const int wordX = orientedMarginLeft + line.xPos + geometry.xOffset + skipX;
     const int wordY = orientedMarginTop + line.yPos;
