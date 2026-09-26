@@ -393,7 +393,8 @@ bool HalScalableFont::openSource(const uint8_t* bytes, size_t size, const bool s
   }
   runtime().allocator.clearFailure();
   const bool opened =
-      streamed ? font_.initStream(streamRead, this, size, 1) : font_.init(bytes, static_cast<uint32_t>(size), 1);
+      streamed ? font_.initStream(streamRead, this, size, 1, weight_, italic_)
+               : font_.init(bytes, static_cast<uint32_t>(size), 1, weight_, italic_);
   const bool optionsAccepted = opened && font_.setRenderOptions(options);
   if (!optionsAccepted) {
     const auto initFailure = font_.lastInitFailure();
@@ -414,6 +415,8 @@ bool HalScalableFont::openSource(const uint8_t* bytes, size_t size, const bool s
   }
   renderOptions_ = options;
   streamed_ = streamed;
+  sourceBytes_ = streamed ? nullptr : bytes;
+  sourceSize_ = streamed ? 0 : size;
   // Large streamed fonts can carry multi-hundred-KiB GPOS tables. CrossPoint
   // skips these in streamed mode, keeping the shared FreeType arena for glyphs.
   if (streamed) font_.setGposByteBudget(0);
@@ -442,7 +445,31 @@ bool HalScalableFont::openSource(const uint8_t* bytes, size_t size, const bool s
   hashOption(options.stemDarkening ? 1u : 0u);
   // Streamed faces skip GPOS: their layout identity must reflect that.
   hashOption(streamed_ ? 1u : 0u);
+  // A styled face (bold/italic derived from another file) differs from its base only by these.
+  if (weight_ != 400 || italic_) {
+    hashOption(static_cast<uint32_t>(weight_));
+    hashOption(italic_ ? 2u : 1u);
+  }
   return true;
+}
+bool HalScalableFont::openStyledFrom(const HalScalableFont& base, const int weight, const bool italic,
+                                     const freeink::font::FtFont::RenderOptions& options, const size_t remainingBytes,
+                                     const size_t pendingFaces) {
+  setStyleAxes(weight, italic);
+  if (!base.streamed_ && base.sourceBytes_) {
+    // Styled faces over one resident font share its bytes (see FtFont's memory-backed faces).
+    ScalableFontAccess access;
+    fontDataFailure_ = false;
+    integrityMismatch_ = base.integrityMismatch_;
+    integrityChecksum_ = base.integrityChecksum_;
+    if (!openSource(base.sourceBytes_, base.sourceSize_, false, options, base.contentHash_)) return false;
+    borrowed_ = true;
+    LOG_DBG("TTF", "Shared resident font as weight=%d italic=%u (%u bytes not duplicated)", weight, italic ? 1u : 0u,
+            unsigned(base.sourceSize_));
+    return true;
+  }
+  if (base.streamPath_[0] == '\0') return false;
+  return openFile(base.streamPath_, remainingBytes, options, FileMode::Stream, pendingFaces);
 }
 bool HalScalableFont::setRenderOptions(const freeink::font::FtFont::RenderOptions& options) {
   ScalableFontAccess access;
@@ -467,6 +494,11 @@ bool HalScalableFont::setRenderOptions(const freeink::font::FtFont::RenderOption
   hashOption(options.stemDarkening ? 1u : 0u);
   // Streamed faces skip GPOS: their layout identity must reflect that.
   hashOption(streamed_ ? 1u : 0u);
+  // A styled face (bold/italic derived from another file) differs from its base only by these.
+  if (weight_ != 400 || italic_) {
+    hashOption(static_cast<uint32_t>(weight_));
+    hashOption(italic_ ? 2u : 1u);
+  }
   return true;
 }
 bool HalScalableFont::fileSize(const char* path, size_t& size) {
