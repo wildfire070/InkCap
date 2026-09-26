@@ -332,7 +332,9 @@ class BaseTheme {
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<const char*(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
-  virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
+  // With preserveBackdrop, leave the popup on the display but restore the backing
+  // pixels for the next redraw. Caller must own RenderLock.
+  virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, bool preserveBackdrop = false) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
                                int selectedIndex, bool showConfirmationFooter = false,
                                const char* cancelLabel = nullptr, const char* saveLabel = nullptr,

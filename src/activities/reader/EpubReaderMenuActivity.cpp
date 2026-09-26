@@ -396,7 +396,11 @@ bool EpubReaderMenuActivity::activateSelectedItem() {
             endGlobalSettingsEditCallback, endGlobalSettingsEditContext, stablePageCount > 0, dictionaryFontFamilyName,
             dictionaryFontPointSize, hasDictionaryFontOverride, dictionaryFontChangedForMenu, this),
         [this, before](const ActivityResult& result) {
-          const ReaderSettingsChangeMask changed = classifyReaderSettingsChange(before, captureReaderLayoutSettings());
+          ReaderSettingsChangeMask changed = classifyReaderSettingsChange(before, captureReaderLayoutSettings());
+          if (const auto* options = std::get_if<TtfRenderOptionsResult>(&result.data);
+              options && options->activeFamilyChanged) {
+            changed = changed | ReaderSettingsChangeMask::Relayout;
+          }
           if (changed != ReaderSettingsChangeMask::None) {
             settingsChanged = true;
             changeMask = changeMask | changed;

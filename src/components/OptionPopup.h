@@ -285,6 +285,10 @@ class OptionPopup {
 
   bool isActive() const { return active; }
 
+  void dismiss(MappedInputManager& input, const std::function<void()>& requestUpdate) {
+    if (active) cancel(input, requestUpdate, false);
+  }
+
  private:
   struct Layout {
     Rect dialog{0, 0, 0, 0};

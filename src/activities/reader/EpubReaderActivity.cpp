@@ -46,6 +46,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderClippingListActivity.h"
 #include "EpubReaderFootnotesActivity.h"
+#include "ReaderFontLoading.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "EpubReaderTouchMenuActivity.h"
 #endif
@@ -103,11 +104,13 @@ constexpr uint8_t PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION = 5;
 constexpr uint8_t PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION = 6;
 constexpr uint8_t PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION = 7;
 constexpr uint8_t PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION = 8;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 9;
+constexpr uint8_t PRE_FIELD_OVERRIDES_READER_SETTINGS_FILE_VERSION = 9;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 10;
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
 constexpr uint8_t READER_SETTINGS_FLAG_RENDER_MODE = 1 << 2;
 constexpr uint8_t READER_SETTINGS_FLAG_DICTIONARY_FONT = 1 << 3;
+constexpr uint8_t READER_SETTINGS_FLAG_SAFE_MODE = 1 << 4;
 constexpr char READER_SETTINGS_FILE_NAME[] = "/reader_settings.bin";
 constexpr char BALANCED_SECTION_CACHE_SUFFIX[] = "_balanced";
 constexpr char LIGHT_SECTION_CACHE_SUFFIX[] = "_light";
@@ -388,8 +391,12 @@ ReaderRenderSpec readerRenderSpecForProfile(const int fontId, const uint16_t vie
 
 void ensureReaderSdFontLoaded(GfxRenderer& renderer) {
   sdFontSystem.ensureLoaded(renderer);
-  // Layout only needs the active font. Release the settings-only family metadata
-  // before building a section so it does not consume reader heap headroom.
+  // S3 scalable faces are already kept in PSRAM. Keep their small catalog while
+  // reading too, so opening Font Size does not rescan the SD card. Bitmap/C3
+  // paths retain the previous heap-headroom behavior.
+#if CROSSINK_SCALABLE_FONTS
+  if (sdFontSystem.hasResidentScalableFamily(SETTINGS.sdFontFamilyName)) return;
+#endif
   sdFontSystem.releaseRegistry();
 }
 
@@ -1115,6 +1122,20 @@ bool writeU16(FsFile& file, const uint16_t value) {
   return writeExact(file, data, sizeof(data));
 }
 
+bool readU32(FsFile& file, uint32_t& value) {
+  uint8_t data[4] = {};
+  if (!readExact(file, data, sizeof(data))) return false;
+  value = static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+          (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
+  return true;
+}
+
+bool writeU32(FsFile& file, const uint32_t value) {
+  const uint8_t data[4] = {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
+                           static_cast<uint8_t>(value >> 16), static_cast<uint8_t>(value >> 24)};
+  return writeExact(file, data, sizeof(data));
+}
+
 void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.fontFamily = SETTINGS.fontFamily;
   out.readerFontPointSize = SETTINGS.readerFontPointSize;
@@ -1177,6 +1198,55 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   SETTINGS.indexingMethod = in.indexingMethod < CrossPointSettings::INDEXING_METHOD_COUNT
                                 ? in.indexingMethod
                                 : CrossPointSettings::INDEXING_FULL_SECTION;
+}
+
+using ReaderSettingsSnapshot = EpubReaderActivity::ReaderSettingsSnapshot;
+constexpr std::array<uint8_t ReaderSettingsSnapshot::*, 18> READER_SETTING_FIELDS = {
+    &ReaderSettingsSnapshot::fontFamily,
+    &ReaderSettingsSnapshot::readerFontPointSize,
+    &ReaderSettingsSnapshot::lineHeightPercent,
+    &ReaderSettingsSnapshot::wordSpacing,
+    &ReaderSettingsSnapshot::orientation,
+    &ReaderSettingsSnapshot::screenMarginVertical,
+    &ReaderSettingsSnapshot::screenMarginHorizontal,
+    &ReaderSettingsSnapshot::publisherPageNumbers,
+    &ReaderSettingsSnapshot::paragraphAlignment,
+    &ReaderSettingsSnapshot::embeddedStyle,
+    &ReaderSettingsSnapshot::hyphenationEnabled,
+    &ReaderSettingsSnapshot::textAntiAliasing,
+    &ReaderSettingsSnapshot::imageRendering,
+    &ReaderSettingsSnapshot::extraParagraphSpacing,
+    &ReaderSettingsSnapshot::forceParagraphIndents,
+    &ReaderSettingsSnapshot::focusReadingEnabled,
+    &ReaderSettingsSnapshot::guideReadingEnabled,
+    &ReaderSettingsSnapshot::indexingMethod,
+};
+constexpr uint32_t SD_FONT_FAMILY_OVERRIDE = 1U << READER_SETTING_FIELDS.size();
+constexpr uint32_t ALL_READER_SETTING_OVERRIDES = (SD_FONT_FAMILY_OVERRIDE << 1) - 1;
+constexpr uint32_t READER_FONT_OVERRIDES = (1U << 0) | (1U << 1) | SD_FONT_FAMILY_OVERRIDE;
+constexpr uint32_t SAFE_MODE_SETTING_OVERRIDES = (1U << 9) | (1U << 15) | (1U << 16);
+
+uint32_t changedReaderSettingsMask(const ReaderSettingsSnapshot& current, const ReaderSettingsSnapshot& global) {
+  uint32_t mask = 0;
+  for (size_t i = 0; i < READER_SETTING_FIELDS.size(); ++i) {
+    const auto field = READER_SETTING_FIELDS[i];
+    if (current.*field != global.*field) mask |= 1U << i;
+  }
+  if (std::strcmp(current.sdFontFamilyName, global.sdFontFamilyName) != 0) mask |= SD_FONT_FAMILY_OVERRIDE;
+  return mask;
+}
+
+void applyReaderSettingsOverrides(ReaderSettingsSnapshot& target, const ReaderSettingsSnapshot& book,
+                                  const uint32_t mask) {
+  for (size_t i = 0; i < READER_SETTING_FIELDS.size(); ++i) {
+    if (mask & (1U << i)) {
+      const auto field = READER_SETTING_FIELDS[i];
+      target.*field = book.*field;
+    }
+  }
+  if (mask & SD_FONT_FAMILY_OVERRIDE) {
+    std::memcpy(target.sdFontFamilyName, book.sdFontFamilyName, sizeof(target.sdFontFamilyName));
+  }
 }
 
 using BookReaderSettingsData = EpubReaderActivity::BookReaderSettingsData;
@@ -1271,7 +1341,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
       version != PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_FIELD_OVERRIDES_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -1300,6 +1371,10 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
   if (ok && version >= PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, data.dictionaryFontPointSize);
   }
+  uint32_t overrideMask = 0;
+  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+    ok = readU32(file, overrideMask) && (overrideMask & ~ALL_READER_SETTING_OVERRIDES) == 0;
+  }
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Reader settings file is truncated, using defaults");
@@ -1311,9 +1386,14 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
     data.autoPageTurnSeconds = clampAutoPageTurnIntervalSeconds(seconds);
   }
   if (flags & READER_SETTINGS_FLAG_CUSTOM) {
-    data.hasCustomReaderSettings = true;
-    data.readerSettings = snapshot;
+    // Older records owned the entire snapshot. New records only own the fields
+    // the reader actually changed, so unrelated global defaults still apply.
+    data.readerSettingsOverrideMask =
+        version < READER_SETTINGS_FILE_VERSION ? ALL_READER_SETTING_OVERRIDES : overrideMask;
+    data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
+    applyReaderSettingsOverrides(data.readerSettings, snapshot, data.readerSettingsOverrideMask);
   }
+  data.hasSafeModeOverride = (flags & READER_SETTINGS_FLAG_SAFE_MODE) != 0;
   if (flags & READER_SETTINGS_FLAG_RENDER_MODE) {
     data.hasRenderModeOverride = true;
     data.renderMode = normalizeRenderModeRaw(renderMode);
@@ -1339,7 +1419,8 @@ bool saveBookReaderSettingsFile(const std::string& cachePath, const BookReaderSe
   }
 
   uint8_t flags = 0;
-  if (data.hasCustomReaderSettings) flags |= READER_SETTINGS_FLAG_CUSTOM;
+  if (data.readerSettingsOverrideMask != 0) flags |= READER_SETTINGS_FLAG_CUSTOM;
+  if (data.hasSafeModeOverride) flags |= READER_SETTINGS_FLAG_SAFE_MODE;
   if (data.hasAutoPageTurnInterval) flags |= READER_SETTINGS_FLAG_AUTO_PAGE_TURN;
   if (data.hasRenderModeOverride) flags |= READER_SETTINGS_FLAG_RENDER_MODE;
   if (data.hasDictionaryFontOverride && data.dictionarySdFontFamilyName[0] != '\0') {
@@ -1352,7 +1433,8 @@ bool saveBookReaderSettingsFile(const std::string& cachePath, const BookReaderSe
                   writeU16(file, clampedSeconds) && writeU8(file, normalizeRenderModeRaw(data.renderMode)) &&
                   writeReaderSettingsSnapshot(file, normalizedReaderSettings) &&
                   writeExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName)) &&
-                  writeU8(file, data.dictionaryFontPointSize);
+                  writeU8(file, data.dictionaryFontPointSize) &&
+                  writeU32(file, data.readerSettingsOverrideMask & ALL_READER_SETTING_OVERRIDES);
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Short write saving reader settings");
@@ -1368,14 +1450,13 @@ bool saveBookRenderModeForCache(const std::string& cachePath, const uint8_t rend
   return saveBookReaderSettingsFile(cachePath, data);
 }
 
-bool saveRuntimeReaderSettingsForCache(const std::string& cachePath) {
+bool saveSafeModeReaderSettingsForCache(const std::string& cachePath) {
   BookReaderSettingsData data = loadBookReaderSettingsFile(cachePath);
-  EpubReaderActivity::ReaderSettingsSnapshot snapshot;
-  captureReaderSettings(snapshot);
-  data.hasCustomReaderSettings = true;
+  // Safe Mode only owns its reduced layout features. Keep every other field's
+  // existing override mask so inherited fonts and margins can still change.
+  data.hasSafeModeOverride = true;
   data.hasRenderModeOverride = true;
   data.renderMode = normalizeRenderModeRaw(SETTINGS.epubRenderMode);
-  data.readerSettings = snapshot;
   return saveBookReaderSettingsFile(cachePath, data);
 }
 
@@ -2005,12 +2086,25 @@ void EpubReaderActivity::loadBookReaderSettings() {
   if (data.hasCustomReaderSettings) {
     applyReaderSettings(data.readerSettings);
   }
+  if (data.hasSafeModeOverride) {
+    applySafeModeReaderSettings();
+  }
   SETTINGS.epubRenderMode = data.hasRenderModeOverride ? normalizeRenderModeRaw(data.renderMode)
                                                        : static_cast<uint8_t>(EpubRenderMode::CrossInkDefault);
+  captureReaderSettings(initialBookReaderSettings.readerSettings);
 }
 
 void EpubReaderActivity::saveCurrentBookReaderSettings() {
   if (!epub) {
+    return;
+  }
+
+  ReaderSettingsSnapshot currentSettings;
+  captureReaderSettings(currentSettings);
+  const uint32_t editedMask = changedReaderSettingsMask(currentSettings, initialBookReaderSettings.readerSettings);
+  const bool renderModeEdited =
+      currentSettings.epubRenderMode != initialBookReaderSettings.readerSettings.epubRenderMode;
+  if (editedMask == 0 && !renderModeEdited) {
     return;
   }
 
@@ -2022,20 +2116,50 @@ void EpubReaderActivity::saveCurrentBookReaderSettings() {
   }
 
   BookReaderSettingsData data = loadBookReaderSettingsFile(epub->getCachePath());
-  captureReaderSettings(data.readerSettings);
-  bookHasCustomReaderSettings = true;
-  bookHasRenderModeOverride = true;
-  initialBookReaderSettings.hasCustomReaderSettings = true;
-  initialBookReaderSettings.hasAutoPageTurnInterval = bookHasAutoPageTurnInterval;
-  initialBookReaderSettings.autoPageTurnSeconds = lastAutoPageTurnIntervalSeconds;
-  initialBookReaderSettings.hasRenderModeOverride = true;
-  initialBookReaderSettings.renderMode = SETTINGS.epubRenderMode;
-  data.hasCustomReaderSettings = true;
+  const bool keepSafeMode = initialBookReaderSettings.hasSafeModeOverride &&
+                            (editedMask & SAFE_MODE_SETTING_OVERRIDES) == 0 && !renderModeEdited;
+  const uint32_t priorMask = data.readerSettingsOverrideMask;
+  const ReaderSettingsSnapshot priorSettings = data.readerSettings;
+  if (initialBookReaderSettings.hasSafeModeOverride && !keepSafeMode) {
+    // Leaving Safe Mode restores its other temporary values from this book's
+    // saved choices, or from global settings when the book does not own them.
+    for (size_t i = 0; i < READER_SETTING_FIELDS.size(); ++i) {
+      const uint32_t bit = 1U << i;
+      if ((SAFE_MODE_SETTING_OVERRIDES & bit) && !(editedMask & bit)) {
+        const auto field = READER_SETTING_FIELDS[i];
+        currentSettings.*field = (priorMask & bit) ? priorSettings.*field : globalReaderSettingsBeforeBook.*field;
+      }
+    }
+    SETTINGS.embeddedStyle = currentSettings.embeddedStyle;
+    SETTINGS.focusReadingEnabled = currentSettings.focusReadingEnabled;
+    SETTINGS.guideReadingEnabled = currentSettings.guideReadingEnabled;
+  }
+  data.readerSettings = currentSettings;
+  data.readerSettingsOverrideMask =
+      (priorMask & ~editedMask) |
+      (changedReaderSettingsMask(currentSettings, globalReaderSettingsBeforeBook) & editedMask);
+  if (keepSafeMode) {
+    // Save the underlying choices, not Safe Mode's temporary values.
+    applyReaderSettingsOverrides(data.readerSettings, priorSettings, priorMask & SAFE_MODE_SETTING_OVERRIDES);
+  }
+  data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
+  data.hasSafeModeOverride = keepSafeMode;
   data.hasAutoPageTurnInterval = bookHasAutoPageTurnInterval;
   data.autoPageTurnSeconds = lastAutoPageTurnIntervalSeconds;
-  data.hasRenderModeOverride = true;
-  data.renderMode = SETTINGS.epubRenderMode;
-  saveBookReaderSettingsFile(epub->getCachePath(), data);
+  data.hasRenderModeOverride = currentSettings.epubRenderMode != static_cast<uint8_t>(EpubRenderMode::CrossInkDefault);
+  data.renderMode = currentSettings.epubRenderMode;
+  if (!saveBookReaderSettingsFile(epub->getCachePath(), data)) return;
+
+  bookHasCustomReaderSettings = data.hasCustomReaderSettings;
+  bookHasRenderModeOverride = data.hasRenderModeOverride;
+  initialBookReaderSettings.hasAutoPageTurnInterval = bookHasAutoPageTurnInterval;
+  initialBookReaderSettings.autoPageTurnSeconds = lastAutoPageTurnIntervalSeconds;
+  initialBookReaderSettings.hasCustomReaderSettings = data.hasCustomReaderSettings;
+  initialBookReaderSettings.readerSettingsOverrideMask = data.readerSettingsOverrideMask;
+  initialBookReaderSettings.hasSafeModeOverride = data.hasSafeModeOverride;
+  initialBookReaderSettings.hasRenderModeOverride = data.hasRenderModeOverride;
+  initialBookReaderSettings.renderMode = data.renderMode;
+  initialBookReaderSettings.readerSettings = currentSettings;
 }
 
 void EpubReaderActivity::saveDictionaryFontForBook(const char* familyName, const uint8_t pointSize) {
@@ -2060,17 +2184,24 @@ void EpubReaderActivity::saveDictionaryFontForBook(const char* familyName, const
 }
 
 void EpubReaderActivity::persistReaderSdFontSettings() {
-  if (bookHasCustomReaderSettings) {
-    saveCurrentBookReaderSettings();
-  } else {
-    // This book inherits the global font. Keep a repaired missing-font or
-    // legacy-size value in the global snapshot, while saveGlobalSettings...
-    // still keeps a separate per-book render-mode override out of the write.
+  const uint32_t mask = initialBookReaderSettings.readerSettingsOverrideMask;
+  bool globalChanged = false;
+  if (!(mask & (1U << 1)) && globalReaderSettingsBeforeBook.readerFontPointSize != SETTINGS.readerFontPointSize) {
     globalReaderSettingsBeforeBook.readerFontPointSize = SETTINGS.readerFontPointSize;
+    globalChanged = true;
+  }
+  if (!(mask & SD_FONT_FAMILY_OVERRIDE) &&
+      std::strcmp(globalReaderSettingsBeforeBook.sdFontFamilyName, SETTINGS.sdFontFamilyName) != 0) {
     std::strncpy(globalReaderSettingsBeforeBook.sdFontFamilyName, SETTINGS.sdFontFamilyName,
                  sizeof(globalReaderSettingsBeforeBook.sdFontFamilyName) - 1);
     globalReaderSettingsBeforeBook.sdFontFamilyName[sizeof(globalReaderSettingsBeforeBook.sdFontFamilyName) - 1] = '\0';
-    saveGlobalSettingsPreservingBookOverrides();
+    globalChanged = true;
+  }
+  if (globalChanged && !saveGlobalSettingsPreservingBookOverrides()) return;
+  if (mask & READER_FONT_OVERRIDES) {
+    saveCurrentBookReaderSettings();
+  } else if (globalChanged) {
+    captureReaderSettings(initialBookReaderSettings.readerSettings);
   }
 }
 
@@ -2119,11 +2250,17 @@ void EpubReaderActivity::endGlobalSettingsEdit() {
   // for the rest of this reading session. Render mode is tracked separately
   // (a build fallback can set it without hasCustomReaderSettings), so it is
   // restored on its own whenever this book owns it.
-  if (bookHasCustomReaderSettings) {
-    applyReaderSettings(suspendedBookReaderSettings);
-  } else if (bookHasRenderModeOverride) {
+  ReaderSettingsSnapshot effectiveSettings = globalReaderSettingsBeforeBook;
+  applyReaderSettingsOverrides(effectiveSettings, suspendedBookReaderSettings,
+                               initialBookReaderSettings.readerSettingsOverrideMask);
+  applyReaderSettings(effectiveSettings);
+  if (initialBookReaderSettings.hasSafeModeOverride) {
+    applySafeModeReaderSettings();
+  }
+  if (bookHasRenderModeOverride) {
     SETTINGS.epubRenderMode = normalizeRenderModeRaw(suspendedBookReaderSettings.epubRenderMode);
   }
+  captureReaderSettings(initialBookReaderSettings.readerSettings);
   bookReaderSettingsSuspendedForGlobalEdit = false;
 }
 
@@ -2348,6 +2485,9 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   sdFontSystem.setSettingsPersistenceCallback(nullptr, nullptr);
+  // Drop the scalable-family catalog retained during reading. The active font
+  // and its PSRAM face lifetime remain managed by SdCardFontSystem.
+  sdFontSystem.releaseRegistry();
   clearPendingManualPageTurns(/*requestRecoveryRedraw=*/false);
   mappedInput.setReaderTouchscreenOverride(false);
 
@@ -3247,7 +3387,7 @@ void EpubReaderActivity::loop() {
       const bool isTop = topLongPressed;
       sideButtonLongPressHandled = !(isTop ? topReleased : bottomReleased);
       if (sideLongPressChangesFont) {
-        if (sdFontSystem.changeReaderFontSize(/*larger=*/isTop)) {
+        if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/isTop)) {
           reindexCurrentSection();
         }
       } else {
@@ -3313,7 +3453,7 @@ void EpubReaderActivity::loop() {
       }
 
       if (frontLongPressChangesFont) {
-        if (sdFontSystem.changeReaderFontSize(/*larger=*/nextLongPressed)) {
+        if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/nextLongPressed)) {
           reindexCurrentSection();
         }
         return;
@@ -3459,10 +3599,12 @@ bool EpubReaderActivity::handleTwoFingerSwipeAction(const CrossPointSettings::TW
 
   switch (action) {
     case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
-      if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/true, FontSizeStepMode::Clamp))
+        reindexCurrentSection();
       return true;
     case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
-      if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+      if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/false, FontSizeStepMode::Clamp))
+        reindexCurrentSection();
       return true;
     case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
     case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER: {
@@ -3645,10 +3787,12 @@ bool EpubReaderActivity::handlePinchFontResize() {
 
   if (action == ReaderPinchGesture::Action::Increase) {
     mappedInput.suppressCurrentTouchContact();
-    if (sdFontSystem.changeReaderFontSize(/*larger=*/true, FontSizeStepMode::Clamp)) reindexCurrentSection();
+    if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/true, FontSizeStepMode::Clamp))
+      reindexCurrentSection();
   } else if (action == ReaderPinchGesture::Action::Decrease) {
     mappedInput.suppressCurrentTouchContact();
-    if (sdFontSystem.changeReaderFontSize(/*larger=*/false, FontSizeStepMode::Clamp)) reindexCurrentSection();
+    if (ReaderUtils::changeReaderFontSizeWithFeedback(renderer, /*larger=*/false, FontSizeStepMode::Clamp))
+      reindexCurrentSection();
   }
   return true;
 }
@@ -4483,7 +4627,17 @@ void EpubReaderActivity::onFrontlightPanelClosed() {
 }
 
 bool EpubReaderActivity::handleFrontlightPanelResult(const FrontlightPanelResult& result) {
-  if (!epub || result.action == FrontlightPanelAction::None) return false;
+  if (!epub) return false;
+  bool handled = false;
+  if (result.ttfRenderingChanged) {
+    clearPendingManualPageTurns();
+    ensureReaderSdFontLoaded(renderer);
+    RenderLock lock(*this);
+    prepareCurrentSectionForRelayout();
+    section.reset();
+    handled = true;
+  }
+  if (result.action == FrontlightPanelAction::None) return handled;
   if (result.action != FrontlightPanelAction::SyncProgress &&
       result.action != FrontlightPanelAction::NearbyPositionSync &&
       result.action != FrontlightPanelAction::SendNearbyBook) {
@@ -4975,10 +5129,10 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       enterDeepSleep();
       break;
     case CrossPointSettings::LONG_MENU_CHANGE_FONT: {
-      const CrossPointSettings::FONT_SIZE effectiveSize = SETTINGS.getEffectiveReaderFontSize();
+      const uint8_t pointSize = closestBuiltinReaderPointSize(SETTINGS.readerFontPointSize);
       SETTINGS.fontFamily = (SETTINGS.fontFamily + 1) % CrossPointSettings::FONT_FAMILY_COUNT;
       SETTINGS.sdFontFamilyName[0] = '\0';
-      SETTINGS.readerFontPointSize = CrossPointSettings::getReaderFontPointSize(effectiveSize);
+      SETTINGS.readerFontPointSize = pointSize;
       reindexCurrentSection();
       break;
     }
@@ -5709,18 +5863,12 @@ void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
   bookHasAutoPageTurnInterval = true;
   if (epub) {
     BookReaderSettingsData data = loadBookReaderSettingsFile(epub->getCachePath());
-    captureReaderSettings(data.readerSettings);
-    initialBookReaderSettings.hasAutoPageTurnInterval = true;
-    initialBookReaderSettings.autoPageTurnSeconds = seconds;
-    initialBookReaderSettings.hasCustomReaderSettings = bookHasCustomReaderSettings;
-    initialBookReaderSettings.hasRenderModeOverride = bookHasRenderModeOverride;
-    initialBookReaderSettings.renderMode = SETTINGS.epubRenderMode;
     data.hasAutoPageTurnInterval = true;
     data.autoPageTurnSeconds = seconds;
-    data.hasCustomReaderSettings = bookHasCustomReaderSettings;
-    data.hasRenderModeOverride = bookHasRenderModeOverride;
-    data.renderMode = SETTINGS.epubRenderMode;
-    saveBookReaderSettingsFile(epub->getCachePath(), data);
+    if (saveBookReaderSettingsFile(epub->getCachePath(), data)) {
+      initialBookReaderSettings.hasAutoPageTurnInterval = true;
+      initialBookReaderSettings.autoPageTurnSeconds = seconds;
+    }
   }
   lastPageTurnTime = millis();
   pageTurnDuration = static_cast<unsigned long>(seconds) * 1000UL;
@@ -6228,8 +6376,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                 }
               }
               if (!buildFailed && pendingRelayoutReposition && section->isBuilding() && isRelayoutCatchUpComplete()) {
-                LOG_DBG("ERS", "Incremental relayout reached prior watermark: pages=%u target=%d", section->pageCount,
-                        cachedChapterPageWatermark);
+                LOG_DBG("ERS", "Incremental relayout reached reading position: pages=%u target=%d", section->pageCount,
+                        cachedChapterPageNumber);
               }
               attemptLayoutAbortedForLowMemory =
                   attemptLayoutAbortedForLowMemory || section->lastBuildLayoutAbortedForLowMemory();
@@ -6422,11 +6570,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       if (!buildingFootnotePreview && safeModeBuildSucceeded) {
         applySafeModeReaderSettings();
-        bookHasCustomReaderSettings = true;
+        initialBookReaderSettings.hasSafeModeOverride = true;
         bookHasRenderModeOverride = true;
-        if (!saveRuntimeReaderSettingsForCache(epub->getCachePath())) {
+        if (!saveSafeModeReaderSettingsForCache(epub->getCachePath())) {
           LOG_ERR("ERS", "Failed to save Safe Mode reader settings");
         }
+        captureReaderSettings(initialBookReaderSettings.readerSettings);
       }
 
     } else {
@@ -6930,11 +7079,12 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
 
   if (safeModeBuildSucceeded) {
     applySafeModeReaderSettings();
-    bookHasCustomReaderSettings = true;
+    initialBookReaderSettings.hasSafeModeOverride = true;
     bookHasRenderModeOverride = true;
-    if (!saveRuntimeReaderSettingsForCache(epub->getCachePath())) {
+    if (!saveSafeModeReaderSettingsForCache(epub->getCachePath())) {
       LOG_ERR("ERS", "Failed to save Safe Mode reader settings after silent indexing");
     }
+    captureReaderSettings(initialBookReaderSettings.readerSettings);
   } else if (usedRenderMode != selectedRenderMode) {
     SETTINGS.epubRenderMode = static_cast<uint8_t>(usedRenderMode);
     bookHasRenderModeOverride = true;
@@ -6979,7 +7129,6 @@ bool EpubReaderActivity::isRelayoutCatchUpComplete() const {
     return !pendingRelayoutReposition;
   }
 
-  const bool watermarkReached = static_cast<int>(section->pageCount) >= std::max(1, cachedChapterPageWatermark);
   bool positionResolved = static_cast<int>(section->pageCount) > cachedChapterPageNumber;
   if (cachedVisibleTextOffset) {
     positionResolved = section->getPageForVisibleTextOffset(*cachedVisibleTextOffset).has_value();
@@ -6987,7 +7136,10 @@ bool EpubReaderActivity::isRelayoutCatchUpComplete() const {
     positionResolved = section->isBuilding() ? section->findParagraphDuringBuild(cachedPageParagraphIndex).has_value()
                                              : section->getPageForParagraphIndex(cachedPageParagraphIndex).has_value();
   }
-  return watermarkReached && positionResolved;
+  // A previous finalized cache may cover the entire chapter. Wait only until
+  // the current reading position is available; incremental indexing then keeps
+  // its usual small look-ahead window instead of rebuilding the old page count.
+  return positionResolved;
 }
 
 bool EpubReaderActivity::applyDeferredReposition() {
@@ -7067,7 +7219,6 @@ bool EpubReaderActivity::applyDeferredReposition() {
 
   cachedChapterPageNumber = 0;
   cachedChapterTotalPageCount = 0;
-  cachedChapterPageWatermark = 0;
   cachedVisibleTextOffset.reset();
   pendingRelayoutReposition = false;
   cachedPageParagraphIndex = UINT16_MAX;
@@ -7243,7 +7394,6 @@ void EpubReaderActivity::cacheCurrentSectionPosition() {
   cachedSpineIndex = currentSpineIndex;
   cachedChapterPageNumber = section->currentPage;
   cachedChapterTotalPageCount = section->estimatedTotalPages();
-  cachedChapterPageWatermark = section->pageCount;
   cachedVisibleTextOffset.reset();
   pendingRelayoutReposition = true;
   cachedPageParagraphIndex = UINT16_MAX;
@@ -7344,7 +7494,8 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const bool pageHasImages = page->hasImages();
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
   bool needsImageGrayscale = pageHasImages;
-  bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack;
+  bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack &&
+                            !sdFontSystem.fontUsesMonochromeRaster(renderer, fontId, SETTINGS.sdFontFamilyName);
   const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
 
   // The pending count excludes the page currently being rendered. Decide
@@ -8185,6 +8336,9 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
   if (readerSettings.hasCustomReaderSettings) {
     applyReaderSettings(readerSettings.readerSettings);
   }
+  if (readerSettings.hasSafeModeOverride) {
+    applySafeModeReaderSettings();
+  }
   SETTINGS.epubRenderMode = readerSettings.hasRenderModeOverride
                                 ? normalizeRenderModeRaw(readerSettings.renderMode)
                                 : static_cast<uint8_t>(EpubRenderMode::CrossInkDefault);
@@ -8301,7 +8455,7 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
   if (sectionRebuilt) {
     if (safeModeBuildSucceeded) {
       applySafeModeReaderSettings();
-      if (!saveRuntimeReaderSettingsForCache(epub->getCachePath())) {
+      if (!saveSafeModeReaderSettingsForCache(epub->getCachePath())) {
         LOG_ERR("SLP", "EPUB: failed to save Safe Mode reader settings");
       }
     } else if (usedRenderMode != selectedRenderMode) {

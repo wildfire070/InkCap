@@ -1,5 +1,9 @@
 #include "ActivityManager.h"
 
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
+
 #include <CrossInkHalFrontlight.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
@@ -425,6 +429,9 @@ bool applyTwoFingerRotation(Activity& activity, MappedInputManager& mappedInput)
 }  // namespace
 
 void ActivityManager::begin(const uint32_t renderTaskStackBytes) {
+#if CROSSINK_SCALABLE_FONTS
+  ScalableFontAccess::configure(renderer.frameBufferMutexHandle(), /*recursive=*/true);
+#endif
 #if defined(configNUM_CORES) && configNUM_CORES > 1
   constexpr BaseType_t renderTaskCore = 1;
 #else
@@ -746,6 +753,13 @@ bool ActivityManager::handleGlobalHomeGesture() {
     return false;
   }
 
+  // Touch-only devices use an edge swipe as a Home shortcut. Keep that
+  // shortcut separate from the X4 Pro's physical Back/Home key.
+  if (!mappedInput.hasHomeKey()) {
+    if (!currentActivity->handleHomeGesture()) goHome();
+    return true;
+  }
+
   return handleHomeButtonBackOrHome();
 }
 
@@ -755,6 +769,14 @@ bool ActivityManager::handleHomeButtonBackOrHome() {
   }
 
   if (currentActivity->handleHomeGesture()) {
+    return true;
+  }
+
+  if (!stackActivities.empty()) {
+    ActivityResult result;
+    result.isCancelled = true;
+    currentActivity->setResult(std::move(result));
+    popActivity();
     return true;
   }
 
