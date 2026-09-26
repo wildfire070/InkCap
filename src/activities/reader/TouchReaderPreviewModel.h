@@ -345,8 +345,9 @@ class TouchReaderPreviewModel {
       wordX += measuredAdvance[wordIndex];
       if (wordIndex + 1 == lineEnd && !isLastLine && word.insertedHyphenAfter) {
         renderer.drawText(
-            fontId, wordX + wordAdvance(renderer, fontId, word, focusEnabled, '-', tracking) - measuredAdvance[wordIndex],
-            y, "-", foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
+            fontId,
+            wordX + wordAdvance(renderer, fontId, word, focusEnabled, '-', tracking) - measuredAdvance[wordIndex], y,
+            "-", foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
         wordX += insertedHyphenExtra[wordIndex];
       }
     }
@@ -513,8 +514,7 @@ class TouchReaderPreviewModel {
     const char* value = wordText(word);
     const uint8_t boundary = resolvedFocusBoundary(word, focusEnabled);
     if (boundary == 0 || boundary >= std::strlen(value)) {
-      renderer.drawText(fontId, x, y, value, foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f,
-                        tracking);
+      renderer.drawText(fontId, x, y, value, foregroundBlack, word.style, BidiUtils::BidiBaseDir::AUTO, 1.0f, tracking);
       return;
     }
     char prefix[40];
