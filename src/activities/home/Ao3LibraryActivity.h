@@ -66,8 +66,11 @@ class Ao3LibraryActivity final : public Activity {
   // 0-based Marked for Later queue position for the slot's fic, or -1 if not
   // marked. See getMarkedPosition().
   int pageCacheMarkedPosition[3] = {-1, -1, -1};
-  // True for a slot whose fic is marked for later but has no AO3 index record (see UnindexedMarked): only its
-  // title/author/path are known, so the row shows those and skips the scraped metadata block.
+  // True for a slot whose scraped info (ao3_library_info) could not be loaded: the row falls back to what the index
+  // and the marked-for-later store know and shows '?' in the details square.
+  bool pageCacheInfoMissing[3] = {false, false, false};
+  // True for a slot whose fic is marked for later but has no AO3 index record at all (see UnindexedMarked): only its
+  // title/author/path are known, and its rating and completion are unknown.
   bool pageCacheUnindexed[3] = {false, false, false};
   std::vector<std::string> wrappedSummary[3];
   int cachedPage = -1;
@@ -116,13 +119,13 @@ class Ao3LibraryActivity final : public Activity {
   int getMarkedPosition(uint64_t cacheHash);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
-  void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
+  void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, bool detailsMissing, bool completed,
                      BookStatus status, int markedPosition = -1, bool completionUnknown = false);
 
   void renderSymbol(int x, int y, int s, char c, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderStatusSymbol(int x, int y, int s, BookStatus status, bool tl, bool tr, bool bl, bool br,
                           int yOffset = 0, int markedPosition = -1);
-  void renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
+  void renderDetailsSymbol(int x, int y, int s, bool missing, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
   void renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
 
   // Sorting & Filtering helpers
