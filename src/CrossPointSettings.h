@@ -620,7 +620,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t librarySortDescending = 1;
   uint8_t libraryListExpanded = 1;
   uint8_t libraryShowSeries = 1;
-  uint8_t libraryShowGenre = 1;
+  // Off by default: on books whose first subject is a catch-all tag (every AO3 download is "Fanworks")
+  // the genre line is noise, and the Genre sort is still available either way.
+  uint8_t libraryShowGenre = 0;
   uint8_t libraryShowEpub = 1;
   uint8_t libraryShowXtc = 1;
   uint8_t libraryShowTxt = 1;
