@@ -212,6 +212,7 @@ void Ao3LibraryActivity::loadPageCache(int page) {
     new (&pageCache[i]) Ao3LibraryMetadata();
     pageCacheStatus[i] = BookStatus::START;
     pageCacheMarkedPosition[i] = -1;
+    pageCacheInfoMissing[i] = false;
     pageCacheUnindexed[i] = false;
   }
 
@@ -224,13 +225,14 @@ void Ao3LibraryActivity::loadPageCache(int page) {
       infoLoaded = f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata)) == sizeof(Ao3LibraryMetadata);
       f.close();
     }
+    infoLoaded = infoLoaded && pageCache[slot].isValid();
+    if (!infoLoaded) new (&pageCache[slot]) Ao3LibraryMetadata();  // drop a short or stale read
+    pageCacheInfoMissing[slot] = !infoLoaded;
     if (const UnindexedMarked* u = findUnindexedMarked(viewEntries[i].cacheHash)) {
       // The fic's own scraped info wins if it exists; otherwise show what the marked-for-later store knows.
-      infoLoaded = infoLoaded && pageCache[slot].isValid();
       pageCacheUnindexed[slot] = !infoLoaded;
-      if (!infoLoaded) new (&pageCache[slot]) Ao3LibraryMetadata();
       strncpy(pageCache[slot].filepath, u->path.c_str(), sizeof(pageCache[slot].filepath) - 1);
-      if (pageCacheUnindexed[slot]) {
+      if (!infoLoaded) {
         strncpy(pageCache[slot].title, u->title.c_str(), sizeof(pageCache[slot].title) - 1);
         strncpy(pageCache[slot].author, u->author.c_str(), sizeof(pageCache[slot].author) - 1);
       }
@@ -1358,19 +1360,21 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
   }
 
   const Ao3LibraryMetadata& meta = pageCache[cacheSlot];
-  const bool metaLoaded = meta.isValid();
+  const bool infoMissing = pageCacheInfoMissing[cacheSlot];
+  const bool unindexed = pageCacheUnindexed[cacheSlot];
 
-  const char rating = metaLoaded ? meta.rating : '-';
-  const char warning = metaLoaded ? meta.warning : 0;
-  const bool completed = metaLoaded ? (bool)meta.isCompleted : false;
+  // Without scraped info the index record still knows the rating and completion; a fic with no record at all
+  // (unindexed) has neither, so its rating stays '-' and its completion is drawn as unknown.
+  const char rating = infoMissing ? ve.rating : meta.rating;
+  const bool completed = infoMissing ? static_cast<bool>(ve.isCompleted) : static_cast<bool>(meta.isCompleted);
 
-  drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot],
-                pageCacheMarkedPosition[cacheSlot], pageCacheUnindexed[cacheSlot]);
+  drawAo3Square(lock, margin, y, squareSize, rating, infoMissing, completed, pageCacheStatus[cacheSlot],
+                pageCacheMarkedPosition[cacheSlot], unindexed);
 
-  std::string title = metaLoaded && meta.title[0] ? std::string(meta.title) : std::string(ve.title);
-  std::string authorText = metaLoaded && meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
+  std::string title = meta.title[0] ? std::string(meta.title) : std::string(ve.title);
+  std::string authorText = meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
 
-  if (metaLoaded && meta.seriesName[0] != 0) {
+  if (meta.seriesName[0] != 0) {
     if (authorText.length() > 11) {
       authorText = authorText.substr(0, utf8SafeTruncateBuffer(authorText.c_str(), 11)) + ".";
     }
@@ -1404,9 +1408,10 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
   renderer.drawText(UI_12_FONT_ID, textX, y + 6, title.c_str(), true, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, textX, y + 32, authorText.c_str());
 
-  if (pageCacheUnindexed[cacheSlot]) {
-    renderer.drawText(SMALL_FONT_ID, margin, y + selectionHeight + 12, tr(STR_NOT_INDEXED));
-  } else if (metaLoaded) {
+  if (infoMissing) {
+    renderer.drawText(SMALL_FONT_ID, margin, y + selectionHeight + 12,
+                      unindexed ? tr(STR_NOT_INDEXED) : tr(STR_DETAILS_UNAVAILABLE));
+  } else {
     int blockY = y + selectionHeight + 12;
 
     // Tags
@@ -1455,19 +1460,18 @@ void Ao3LibraryActivity::renderEntry(RenderLock& lock, int y, const ViewEntry& v
 //  drawAo3Square
 // ---------------------------------------------------------------------------
 
-void Ao3LibraryActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning, bool completed,
-                                       BookStatus status, int markedPosition, bool completionUnknown) {
+void Ao3LibraryActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, bool detailsMissing,
+                                       bool completed, BookStatus status, int markedPosition, bool completionUnknown) {
   const int h = s / 2;
 
   renderSymbol(x + 1, y + 1, h - 1, rating, true, false, false, false, -1);
   renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1, markedPosition);
-  renderWarningSymbol(x + 1, y + h + 1, h - 1, warning, false, false, true, false, -2);
+  renderDetailsSymbol(x + 1, y + h + 1, h - 1, detailsMissing, false, false, true, false, -2);
   if (completionUnknown) {
     renderSymbol(x + h + 1, y + h + 1, h - 1, '-', false, false, false, true, -2);  // not indexed: completion unknown
   } else {
     renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
   }
-
   renderer.drawRoundedRect(x, y, s, s, 1, 6, true);
   renderer.drawLine(x + 1, y + h, x + s - 1, y + h);
   renderer.drawLine(x + h, y + 1, x + h, y + s - 1);
@@ -1550,23 +1554,16 @@ void Ao3LibraryActivity::renderStatusSymbol(int x, int y, int s, BookStatus stat
   renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, (bg == Black) ? false : true);
 }
 
-void Ao3LibraryActivity::renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl, bool br,
+// Bottom-left square: '?' when the fic's details are missing (unindexed, or its scraped info could not be read),
+// otherwise '-'. (It used to show the AO3 archive warning.)
+void Ao3LibraryActivity::renderDetailsSymbol(int x, int y, int s, bool missing, bool tl, bool tr, bool bl, bool br,
                                              int yOffset) {
-  Color bg = White;
-  const char* txt = "-";
-  if (warning == 'B') {
-    bg = DarkGray;
-    txt = "!?";
-  }
-  if (warning == '!') {
-    bg = Black;
-    txt = "!";
-  }
-  if (bg != White) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
+  const Color bg = missing ? DarkGray : White;
+  const char* txt = missing ? "?" : "-";
+  if (missing) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
   const int tw = renderer.getTextWidth(UI_10_FONT_ID, txt);
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt,
-                    (bg == DarkGray || bg == Black) ? false : true);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, !missing);
 }
 
 void Ao3LibraryActivity::renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br,

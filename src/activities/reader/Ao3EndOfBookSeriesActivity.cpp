@@ -102,16 +102,21 @@ void Ao3EndOfBookSeriesActivity::loadPageCache(int page) {
   for (int i = 0; i < 3; i++) {
     new (&pageCache[i]) Ao3LibraryMetadata();
     pageCacheStatus[i] = BookStatus::START;
+    pageCacheInfoMissing[i] = false;
   }
 
   for (int i = startIdx; i < endIdx; i++) {
     const int slot = i - startIdx;
     std::string infoPath = "/.crosspoint/epub_" + std::to_string(viewEntries[i].cacheHash) + "/ao3_library_info";
     HalFile f;
+    bool infoLoaded = false;
     if (Storage.openFileForRead("AO3S", infoPath, f)) {
-      f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata));
+      infoLoaded = f.read((uint8_t*)&pageCache[slot], sizeof(Ao3LibraryMetadata)) == sizeof(Ao3LibraryMetadata);
       f.close();
     }
+    infoLoaded = infoLoaded && pageCache[slot].isValid();
+    if (!infoLoaded) new (&pageCache[slot]) Ao3LibraryMetadata();  // drop a short or stale read
+    pageCacheInfoMissing[slot] = !infoLoaded;
     pageCacheStatus[slot] = getBookStatus(viewEntries[i].cacheHash);
   }
 
@@ -307,13 +312,14 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
   }
 
   const Ao3LibraryMetadata& meta = pageCache[cacheSlot];
-  const bool metaLoaded = meta.isValid();
+  const bool infoMissing = pageCacheInfoMissing[cacheSlot];
+  const bool metaLoaded = !infoMissing;
 
-  const char rating = metaLoaded ? meta.rating : '-';
-  const char warning = metaLoaded ? meta.warning : 0;
-  const bool completed = metaLoaded ? (bool)meta.isCompleted : false;
+  // Without scraped info the index record still knows the rating and completion.
+  const char rating = infoMissing ? ve.rating : meta.rating;
+  const bool completed = infoMissing ? static_cast<bool>(ve.isCompleted) : static_cast<bool>(meta.isCompleted);
 
-  drawAo3Square(lock, margin, y, squareSize, rating, warning, completed, pageCacheStatus[cacheSlot]);
+  drawAo3Square(lock, margin, y, squareSize, rating, infoMissing, completed, pageCacheStatus[cacheSlot]);
 
   std::string title = metaLoaded && meta.title[0] ? std::string(meta.title) : std::string(ve.title);
   std::string authorText = metaLoaded && meta.author[0] ? std::string(meta.author) : std::string(ve.authorKey);
@@ -383,12 +389,12 @@ void Ao3EndOfBookSeriesActivity::renderEntry(RenderLock& lock, int y, const View
   }
 }
 
-void Ao3EndOfBookSeriesActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, char warning,
+void Ao3EndOfBookSeriesActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, bool detailsMissing,
                                                bool completed, BookStatus status) {
   const int h = s / 2;
   renderSymbol(x + 1, y + 1, h - 1, rating, true, false, false, false, -1);
   renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1);
-  renderWarningSymbol(x + 1, y + h + 1, h - 1, warning, false, false, true, false, -2);
+  renderDetailsSymbol(x + 1, y + h + 1, h - 1, detailsMissing, false, false, true, false, -2);
   renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
   renderer.drawRoundedRect(x, y, s, s, 1, 6, true);
   renderer.drawLine(x + 1, y + h, x + s - 1, y + h);
@@ -441,23 +447,15 @@ void Ao3EndOfBookSeriesActivity::renderStatusSymbol(int x, int y, int s, BookSta
   renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, (bg == Black) ? false : true);
 }
 
-void Ao3EndOfBookSeriesActivity::renderWarningSymbol(int x, int y, int s, char warning, bool tl, bool tr, bool bl,
+// Bottom-left square: '?' when the fic's scraped details could not be read, otherwise '-'. (It used to show the AO3
+// archive warning.)
+void Ao3EndOfBookSeriesActivity::renderDetailsSymbol(int x, int y, int s, bool missing, bool tl, bool tr, bool bl,
                                                      bool br, int yOffset) {
-  Color bg = White;
-  const char* txt = "-";
-  if (warning == 'B') {
-    bg = DarkGray;
-    txt = "!?";
-  }
-  if (warning == '!') {
-    bg = Black;
-    txt = "!";
-  }
-  if (bg != White) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
+  const char* txt = missing ? "?" : "-";
+  if (missing) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, DarkGray);
   const int tw = renderer.getTextWidth(UI_10_FONT_ID, txt);
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt,
-                    (bg == DarkGray || bg == Black) ? false : true);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, !missing);
 }
 
 void Ao3EndOfBookSeriesActivity::renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl,
