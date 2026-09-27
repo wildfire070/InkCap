@@ -123,6 +123,13 @@ class Ao3Librarian {
   static void saveBookStatus(const std::string& cachePath, BookStatus status);
 
   /**
+   * @brief Translated label for a reading status ("Unread"/"Reading"/"Finished"/...).
+   * Kept out of BookStatus.h (a lightweight header pulled in by non-UI code) so that header
+   * doesn't need I18n.h; this lives here since both current callers already include it.
+   */
+  static const char* statusLabel(BookStatus status);
+
+  /**
    * @brief Tombstones any index record whose epub file or ao3_library_info
    *        sidecar no longer exists on disk (e.g. book was moved/renamed).
    * @return Number of records tombstoned, or -1 on index open failure.

@@ -263,14 +263,14 @@ class EpubReaderActivity final : public Activity {
   // Tracks whether this book is currently removed from Recent Books by the
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
-  // Set once the user accepts the "Move to Read Folder?" prompt (see requestReadFolderMove()).
-  // Consumed in onExit() to relocate the finished book into /Read/.
-  bool pendingReadFolderMove = false;
+  // Set once the user accepts the "Move to Archive Folder?" prompt (see requestArchiveMove()).
+  // Consumed in onExit() to relocate the finished book into /Archive/.
+  bool pendingArchiveMove = false;
   // The prompt is asked once per finish: queued when a finish would move the book, shown from loop(),
   // and re-armed when the book is paged back into or marked unfinished.
-  bool readFolderPromptQueued = false;
-  bool readFolderPromptShown = false;
-  void requestReadFolderMove();
+  bool archivePromptQueued = false;
+  bool archivePromptShown = false;
+  void requestArchiveMove();
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
 

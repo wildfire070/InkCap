@@ -49,14 +49,14 @@ void BookActionActivity::render(RenderLock&&) {
   auto rowTitle = [this](int index) {
     switch (index) {
       case 0:
-        return std::string("Book Status: ") + getStatusLabel(currentStatus);
+        return std::string(tr(STR_BOOK_STATUS)) + ": " + Ao3Librarian::statusLabel(currentStatus);
       case 1:
         return hasAo3LibraryInfo ? std::string("Reindex Book") : std::string("Index Book");
       case 2:
         return std::string(AO3_MARKED_FOR_LATER_STORE.contains(filePath) ? tr(STR_UNMARK_FOR_LATER)
                                                                          : tr(STR_MARK_FOR_LATER));
       case 3:
-        return std::string(bookIsArchived ? tr(STR_RESTORE_FIC) : tr(STR_ARCHIVE_FIC));
+        return std::string(bookIsArchived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_FILE));
       case 4:
         return std::string(tr(STR_SHOW_AO3_PAGE_QR));
       default:
@@ -144,16 +144,23 @@ void BookActionActivity::loop() {
       requestUpdate(true);
     } else if (selectorIndex == 3) {
       if (bookIsArchived) {
-        const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath);
-        if (!restoredPath.empty()) {
-          // filePath is read by render()'s rowTitle lambda on the render task
-          // with no lock of its own on that side either -- guard the mutation.
-          RenderLock lock(*this);
-          filePath = restoredPath;
-          bookIsArchived = false;
-          wasRestored = true;
-        }
-        requestUpdate(true);
+        auto handler = [this](const ActivityResult& res) {
+          if (!res.isCancelled) {
+            const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath);
+            if (!restoredPath.empty()) {
+              // filePath is read by render()'s rowTitle lambda on the render task
+              // with no lock of its own on that side either -- guard the mutation.
+              RenderLock lock(*this);
+              filePath = restoredPath;
+              bookIsArchived = false;
+              wasRestored = true;
+            }
+          }
+          requestUpdate(true);
+        };
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE), tr(STR_RESTORE_BODY)),
+            handler);
       } else {
         // Archiving moves the file out of the tracked AO3 folder -- less
         // casually reversible than Restore, so confirm it the same way
@@ -181,10 +188,9 @@ void BookActionActivity::loop() {
           }
           requestUpdate(true);
         };
-        startActivityForResult(
-            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_CONFIRM_HEADING),
-                                                    tr(STR_ARCHIVE_CONFIRM_BODY)),
-            handler);
+        startActivityForResult(std::make_unique<ConfirmationActivity>(
+                                   renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE), tr(STR_ARCHIVE_PROMPT_BODY)),
+                               handler);
       }
     } else if (selectorIndex == 4) {
       startActivityForResult(std::make_unique<Ao3PageQrActivity>(renderer, mappedInput, filePath),
