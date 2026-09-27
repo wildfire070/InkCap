@@ -35,8 +35,6 @@ void Ao3LibrarySettingsActivity::loadSettings() {
   batchSize = doc["batchSize"] | 10;
   autoIndexOnOpen = doc["autoIndexOnOpen"] | false;
   hideFinished = doc["hideFinished"] | false;
-  filterMode = static_cast<FilterMode>(doc["filterMode"] | 0);
-  if (filterMode > FilterMode::FOLDER_TREE) filterMode = FilterMode::AUTOMATIC;
   swapNavButtons = doc["swapNavButtons"] | false;
   JsonArray arr = doc["excludedFolders"];
   if (!arr.isNull()) {
@@ -54,7 +52,6 @@ void Ao3LibrarySettingsActivity::saveSettings() {
   doc["batchSize"] = batchSize;
   doc["autoIndexOnOpen"] = autoIndexOnOpen;
   doc["hideFinished"] = hideFinished;
-  doc["filterMode"] = static_cast<uint8_t>(filterMode);
   doc["swapNavButtons"] = swapNavButtons;
   JsonArray arr = doc["excludedFolders"].to<JsonArray>();
   for (const auto& folder : excludedFolders) {
@@ -145,7 +142,7 @@ void Ao3LibrarySettingsActivity::loop() {
       finish();
       return;
     }
-    if (mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < 10) {
+    if (mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < 9) {
       mappedInput.suppressCurrentTouchContact();
       selectorIndex = menuTapped;
     }
@@ -280,14 +277,10 @@ void Ao3LibrarySettingsActivity::loop() {
       saveSettings();
       requestUpdate();
     } else if (selectorIndex == 7) {
-      filterMode = (filterMode == FilterMode::AUTOMATIC) ? FilterMode::FOLDER_TREE : FilterMode::AUTOMATIC;
-      saveSettings();
-      requestUpdate();
-    } else if (selectorIndex == 8) {
       swapNavButtons = !swapNavButtons;
       saveSettings();
       requestUpdate();
-    } else if (selectorIndex == 9) {
+    } else if (selectorIndex == 8) {
       showingCleanupConfirm = true;
       requestUpdate(true);
       return;
@@ -296,22 +289,22 @@ void Ao3LibrarySettingsActivity::loop() {
   }
 
   buttonNavigator.onNextRelease([this] {
-    selectorIndex = (selectorIndex + 1) % 10;
+    selectorIndex = (selectorIndex + 1) % 9;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
-    selectorIndex = (selectorIndex + 9) % 10;
+    selectorIndex = (selectorIndex + 8) % 9;
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this] {
-    selectorIndex = (selectorIndex + 2) % 10;
+    selectorIndex = (selectorIndex + 2) % 9;
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this] {
-    selectorIndex = (selectorIndex + 8) % 10;
+    selectorIndex = (selectorIndex + 7) % 9;
     requestUpdate();
   });
 }
@@ -371,16 +364,9 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "AO3 Library Settings");
 
-  std::vector<std::string> rows = {"Your AO3 Folder",
-                                   "Archive Folder",
-                                   "Received Fics Folder",
-                                   "Never Index",
-                                   "Index Batch Size",
-                                   "Auto-Index on Library Open",
-                                   "Hide Finished Fics",
-                                   "Filter Mode",
-                                   "Side Button Layout",
-                                   "Library Cleanup"};
+  std::vector<std::string> rows = {"Your AO3 Folder",    "Archive Folder",     "Received Fics Folder",
+                                   "Never Index",        "Index Batch Size",   "Auto-Index on Library Open",
+                                   "Hide Finished Fics", "Side Button Layout", "Library Cleanup"};
 
   auto rowTitle = [&rows](int index) { return rows[index]; };
 
@@ -392,15 +378,14 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     if (index == 4) return std::to_string(batchSize);
     if (index == 5) return autoIndexOnOpen ? "ON" : "OFF";
     if (index == 6) return hideFinished ? "ON" : "OFF";
-    if (index == 7) return (filterMode == FilterMode::FOLDER_TREE) ? "Folder Tree" : "Automatic";
-    if (index == 8) return swapNavButtons ? "Scroll List" : "Open Panels";
+    if (index == 7) return swapNavButtons ? "Scroll List" : "Open Panels";
     return "";
   };
 
   int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 10, selectorIndex, rowTitle, nullptr, nullptr,
+  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, 9, selectorIndex, rowTitle, nullptr, nullptr,
                rowValue, true);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Select", tr(STR_DIR_UP), tr(STR_DIR_DOWN));

@@ -81,15 +81,13 @@ void Ao3LibraryActivity::onEnter() {
   skipNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
   autoIndexLaunched_ = false;
   receivedReviewLaunched_ = false;
-  loadFilterMode();
+  loadSettings();
   loadSortFilterState();
   requestUpdate();
 }
 
-void Ao3LibraryActivity::loadFilterMode() {
-  filterMode = FilterMode::AUTOMATIC;
+void Ao3LibraryActivity::loadSettings() {
   ao3Folder = "";
-  allowedHashes.clear();
   autoIndexOnOpen_ = false;
 
   const char* path = "/.crosspoint/ao3_settings.json";
@@ -102,62 +100,7 @@ void Ao3LibraryActivity::loadFilterMode() {
   if (deserializeJson(doc, json)) return;
 
   ao3Folder = doc["ao3Folder"] | "";
-  uint8_t fm = doc["filterMode"] | 0;
-  filterMode = (fm == 1) ? FilterMode::FOLDER_TREE : FilterMode::AUTOMATIC;
   autoIndexOnOpen_ = doc["autoIndexOnOpen"] | false;
-}
-
-void Ao3LibraryActivity::buildAllowedHashes(const std::string& scanPath, int maxDepth) {
-  allowedHashes.clear();
-
-  // Matches are collected once currentDepth >= maxDepth (see below) with no
-  // upper bound -- a deeper folder's epubs are legitimate matches too, so
-  // this can't simply stop recursing at maxDepth without also losing those.
-  // This cap is purely a safety net against pathological nesting (or a
-  // filesystem loop), set far beyond any real AO3 folder structure (which
-  // this session's own research found is at most one level deep).
-  constexpr int ABSOLUTE_MAX_RECURSION_DEPTH = 32;
-
-  std::function<void(const std::string&, int)> scanRecursive = [&](const std::string& dirPath, int currentDepth) {
-    if (currentDepth > ABSOLUTE_MAX_RECURSION_DEPTH) return;
-    HalFile dir = Storage.open(dirPath.c_str());
-    if (!dir || !dir.isDirectory()) {
-      if (dir) dir.close();
-      return;
-    }
-
-    char name[256];
-    HalFile file;
-    while (file = dir.openNextFile()) {
-      file.getName(name, sizeof(name));
-      std::string nameStr(name);
-      if (file.isDirectory() && name[0] != '.' && nameStr != "System Volume Information") {
-        std::string subPath = dirPath;
-        if (subPath.back() != '/') subPath += "/";
-        subPath += nameStr;
-        scanRecursive(subPath, currentDepth + 1);
-      } else if (!file.isDirectory() && currentDepth >= maxDepth) {
-        size_t dotPos = nameStr.find_last_of('.');
-        if (dotPos != std::string::npos) {
-          std::string ext = nameStr.substr(dotPos + 1);
-          std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-          if (ext == "epub") {
-            std::string fullPath = dirPath;
-            if (fullPath.back() != '/') fullPath += "/";
-            fullPath += nameStr;
-            const uint64_t h = ZipFile::fnvHash64(fullPath.c_str(), fullPath.size());
-            allowedHashes.push_back(h);
-          }
-        }
-      }
-      file.close();
-      yield();
-    }
-    dir.close();
-  };
-
-  scanRecursive(scanPath, 0);
-  std::sort(allowedHashes.begin(), allowedHashes.end());
 }
 
 void Ao3LibraryActivity::onExit() { Activity::onExit(); }
@@ -586,11 +529,6 @@ void Ao3LibraryActivity::loop() {
       } else {
         // Move Next Row (wrapping around all rows, Confirm last)
         overlayRowIndex = (overlayRowIndex + 1) % OVERLAY_ROW_COUNT;
-
-        // Folder Tree mode only: if Relationship row is disabled, skip it moving downwards
-        if (filterMode == FilterMode::FOLDER_TREE && overlayRowIndex == 1 && pendingState.fandom[0] == '\0') {
-          overlayRowIndex = 2;
-        }
       }
       requestUpdate(true);
       return;
@@ -603,84 +541,14 @@ void Ao3LibraryActivity::loop() {
       } else {
         // Move Prev Row (wrapping around backward: 0 becomes Confirm)
         overlayRowIndex = (overlayRowIndex + OVERLAY_ROW_COUNT - 1) % OVERLAY_ROW_COUNT;
-
-        // Folder Tree mode only: if Relationship row is disabled, skip it moving upwards
-        if (filterMode == FilterMode::FOLDER_TREE && overlayRowIndex == 1 && pendingState.fandom[0] == '\0') {
-          overlayRowIndex = 0;
-        }
       }
       requestUpdate(true);
       return;
     }
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
-      if (overlayRowIndex == 0 && filterMode == FilterMode::FOLDER_TREE) {
-        // Fandom row: cycle if <= 3, open picker if >= 4
-        std::vector<std::string> fandoms;
-        buildFandomList(fandoms);
-        if (fandoms.size() <= 4) {
-          pickerItems.clear();
-          pickerItems.push_back("Any");
-          for (const auto& f : fandoms) pickerItems.push_back(f);
-
-          size_t currentIdx = 0;
-          for (size_t i = 0; i < pickerItems.size(); i++) {
-            if (strcmp(pendingState.fandom, pickerItems[i].c_str()) == 0) {
-              currentIdx = i;
-              break;
-            }
-          }
-          currentIdx = (currentIdx + 1) % pickerItems.size();
-          if (currentIdx == 0) {
-            pendingState.fandom[0] = '\0';
-            pendingState.relationship[0] = '\0';
-            pendingState.relationshipNoneOnly = false;
-          } else {
-            strncpy(pendingState.fandom, pickerItems[currentIdx].c_str(), 31);
-            pendingState.fandom[31] = '\0';
-            pendingState.relationship[0] = '\0';
-            pendingState.relationshipNoneOnly = false;
-          }
-        } else {
-          screenState = ScreenState::FANDOM_PICKER;
-          pickerItems.clear();
-          pickerItems.push_back("Any");
-          for (const auto& f : fandoms) pickerItems.push_back(f);
-
-          pickerSelectedIndex = 0;
-          for (size_t i = 0; i < pickerItems.size(); i++) {
-            if (strcmp(pendingState.fandom, pickerItems[i].c_str()) == 0) {
-              pickerSelectedIndex = i;
-              break;
-            }
-          }
-        }
-      } else if (overlayRowIndex == 1 && filterMode == FilterMode::FOLDER_TREE) {
-        // Relationship row: always opens a list picker if fandom is active
-        if (pendingState.fandom[0] != '\0') {
-          screenState = ScreenState::RELATIONSHIP_PICKER;
-          std::vector<std::string> rels;
-          buildRelationshipList(pendingState.fandom, rels, pickerHasNone);
-
-          pickerItems.clear();
-          pickerItems.push_back("Any");
-          if (pickerHasNone) pickerItems.push_back("None");
-          for (const auto& r : rels) pickerItems.push_back(r);
-
-          pickerSelectedIndex = 0;
-          if (pendingState.relationshipNoneOnly) {
-            if (pickerHasNone) pickerSelectedIndex = 1;
-          } else if (pendingState.relationship[0] != '\0') {
-            for (size_t i = 0; i < pickerItems.size(); i++) {
-              if (strcmp(pendingState.relationship, pickerItems[i].c_str()) == 0) {
-                pickerSelectedIndex = i;
-                break;
-              }
-            }
-          }
-        }
-      } else if (overlayRowIndex == 0) {
-        // Rating row (Automatic mode): cycle Any -> G -> T -> M -> E -> Not Rated -> Any
+      if (overlayRowIndex == 0) {
+        // Rating row: cycle Any -> G -> T -> M -> E -> Not Rated -> Any
         switch (pendingState.rating) {
           case 0:
             pendingState.rating = 'G';
@@ -749,85 +617,6 @@ void Ao3LibraryActivity::loop() {
         saveSortFilterState();
         applyStateChange(previous, activeState);
       }
-      requestUpdate(true);
-      return;
-    }
-  }
-
-  // --- STATE: PICKERS ---
-  else if (screenState == ScreenState::FANDOM_PICKER || screenState == ScreenState::RELATIONSHIP_PICKER) {
-    // Touch (X4 Pro): tap top-left header to go back; tap a list row to select it.
-    if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
-      mappedInput.suppressCurrentTouchContact();
-      screenState = ScreenState::FILTER_PANEL;
-      requestUpdate(true);
-      return;
-    }
-    {
-      int tappedItem = -1;
-      if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 &&
-          tappedItem < static_cast<int>(pickerItems.size())) {
-        mappedInput.suppressCurrentTouchContact();
-        pickerSelectedIndex = tappedItem;
-        confirmViaTap = true;
-        // fall through to the Confirm handler below.
-      }
-    }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      screenState = ScreenState::FILTER_PANEL;
-      requestUpdate(true);
-      return;
-    }
-
-    const int total = static_cast<int>(pickerItems.size());
-    if (total > 0) {
-      // Tap: step one item
-      buttonNavigator.onPress({MappedInputManager::Button::Down, MappedInputManager::Button::Right}, [this, total] {
-        pickerSelectedIndex = (pickerSelectedIndex + 1) % total;
-        requestUpdate(true);
-      });
-      buttonNavigator.onPress({MappedInputManager::Button::Up, MappedInputManager::Button::Left}, [this, total] {
-        pickerSelectedIndex = (pickerSelectedIndex + total - 1) % total;
-        requestUpdate(true);
-      });
-      // Hold: skip 2 items continuously without lifting finger
-      buttonNavigator.onContinuous({MappedInputManager::Button::Down, MappedInputManager::Button::Right},
-                                   [this, total] {
-                                     pickerSelectedIndex = (pickerSelectedIndex + 2) % total;
-                                     requestUpdate(true);
-                                   });
-      buttonNavigator.onContinuous({MappedInputManager::Button::Up, MappedInputManager::Button::Left}, [this, total] {
-        pickerSelectedIndex = (pickerSelectedIndex + total - 2) % total;
-        requestUpdate(true);
-      });
-    }
-
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
-      if (screenState == ScreenState::FANDOM_PICKER) {
-        if (pickerSelectedIndex == 0) {
-          pendingState.fandom[0] = '\0';
-          pendingState.relationship[0] = '\0';
-          pendingState.relationshipNoneOnly = false;
-        } else {
-          strncpy(pendingState.fandom, pickerItems[pickerSelectedIndex].c_str(), 31);
-          pendingState.fandom[31] = '\0';
-          pendingState.relationship[0] = '\0';
-          pendingState.relationshipNoneOnly = false;
-        }
-      } else {
-        if (pickerSelectedIndex == 0) {
-          pendingState.relationship[0] = '\0';
-          pendingState.relationshipNoneOnly = false;
-        } else if (pickerSelectedIndex == 1 && pickerHasNone) {
-          pendingState.relationship[0] = '\0';
-          pendingState.relationshipNoneOnly = true;
-        } else {
-          strncpy(pendingState.relationship, pickerItems[pickerSelectedIndex].c_str(), 31);
-          pendingState.relationship[31] = '\0';
-          pendingState.relationshipNoneOnly = false;
-        }
-      }
-      screenState = ScreenState::FILTER_PANEL;
       requestUpdate(true);
       return;
     }
@@ -902,18 +691,8 @@ void Ao3LibraryActivity::loop() {
         if (!hasFolder) {
           // Redirect to settings
           screenState = ScreenState::MANAGE_PANEL;  // close panel first
-          FilterMode oldMode = filterMode;
-          std::string oldFolder = ao3Folder;
-          auto handler = [this, oldMode, oldFolder](const ActivityResult&) {
-            loadFilterMode();
-            bool modeChanged = (oldMode != filterMode);
-            bool folderChangedInTreeMode = (filterMode == FilterMode::FOLDER_TREE && oldFolder != ao3Folder);
-            if (modeChanged || folderChangedInTreeMode) {
-              memset(activeState.fandom, 0, 32);
-              memset(activeState.relationship, 0, 32);
-              activeState.relationshipNoneOnly = false;
-              saveSortFilterState();
-            }
+          auto handler = [this](const ActivityResult&) {
+            loadSettings();
             rebuildViewEntries();
             requestUpdate(true);
           };
@@ -934,18 +713,8 @@ void Ao3LibraryActivity::loop() {
       } else {
         // "AO3 Library Settings"
         screenState = ScreenState::LIBRARY;
-        FilterMode oldMode = filterMode;
-        std::string oldFolder = ao3Folder;
-        auto handler = [this, oldMode, oldFolder](const ActivityResult&) {
-          loadFilterMode();
-          bool modeChanged = (oldMode != filterMode);
-          bool folderChangedInTreeMode = (filterMode == FilterMode::FOLDER_TREE && oldFolder != ao3Folder);
-          if (modeChanged || folderChangedInTreeMode) {
-            memset(activeState.fandom, 0, 32);
-            memset(activeState.relationship, 0, 32);
-            activeState.relationshipNoneOnly = false;
-            saveSortFilterState();
-          }
+        auto handler = [this](const ActivityResult&) {
+          loadSettings();
           rebuildViewEntries();
           requestUpdate(true);
         };
@@ -961,11 +730,6 @@ void Ao3LibraryActivity::loop() {
 // ---------------------------------------------------------------------------
 
 void Ao3LibraryActivity::render(RenderLock&& lock) {
-  if (screenState == ScreenState::FANDOM_PICKER || screenState == ScreenState::RELATIONSHIP_PICKER) {
-    renderPicker();
-    return;
-  }
-
   // MANAGE_PANEL is a full-screen composited: library background + bottom slide-up panel
   renderLibrary(lock);
 
@@ -985,19 +749,9 @@ void Ao3LibraryActivity::render(RenderLock&& lock) {
 void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
   renderer.clearScreen();
 
-  // Draw Header Title (Truncate to 25 chars if fandom filter is active)
+  // Header title: the active view's name, else "AO3 Library"
   char headerTitle[32] = "AO3 Library";
   if (activeState.view != LibraryView::ALL) strcpy(headerTitle, viewLabel(activeState.view));
-  if (activeState.fandom[0] != '\0') {
-    // With a view active the fandom rides along after it ("WIPs - Dramione"), so it gets less room.
-    std::string cleanFandom(activeState.fandom);
-    std::string prefix = activeState.view != LibraryView::ALL ? std::string(viewLabel(activeState.view)) + " - " : "";
-    const size_t room = prefix.size() >= 26 ? 3 : 29 - prefix.size();
-    if (cleanFandom.length() > room) {
-      cleanFandom = cleanFandom.substr(0, utf8SafeTruncateBuffer(cleanFandom.c_str(), room - 2)) + "..";
-    }
-    strcpy(headerTitle, (prefix + cleanFandom).c_str());
-  }
   renderer.drawText(UI_12_FONT_ID, 15, 12, headerTitle, true, EpdFontFamily::BOLD);
   renderer.drawLine(0, 48, renderer.getScreenWidth(), 48);
 
@@ -1031,7 +785,7 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
       renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, none);
       renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() / 2 + 12,
                                 "Open the filter and set Show to All.");
-    } else if (activeState.fandom[0] != '\0') {
+    } else if (activeState.rating != 0 || activeState.completion != -1) {
       renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, "No matches for current filter.");
     } else {
       renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 12, "No AO3 books indexed yet.");
@@ -1220,58 +974,32 @@ void Ao3LibraryActivity::renderFilterOverlay() {
     }
   };
 
-  // 16-character truncation helper
-  auto getTruncatedValue = [](const char* src) -> std::string {
-    if (!src || src[0] == '\0') return "Any";
-    std::string raw(src);
-    if (raw.length() > 27) {
-      return raw.substr(0, utf8SafeTruncateBuffer(raw.c_str(), 25)) + "..";
-    }
-    return raw;
-  };
-
-  if (filterMode == FilterMode::FOLDER_TREE) {
-    // Row 0: Fandom
-    std::string fandomVal = getTruncatedValue(pendingState.fandom);
-    drawOverlayRow(0, "Fandom", fandomVal.c_str());
-
-    // Row 1: Relationship (disabled if fandom is "Any")
-    bool relDisabled = (pendingState.fandom[0] == '\0');
-    std::string relVal = "Any";
-    if (pendingState.relationshipNoneOnly) {
-      relVal = "None";
-    } else {
-      relVal = getTruncatedValue(pendingState.relationship);
-    }
-    drawOverlayRow(1, "Relationship", relVal.c_str(), relDisabled);
-  } else {
-    // Row 0: Rating
-    const char* ratingVal = "Any";
-    switch (pendingState.rating) {
-      case 'G':
-        ratingVal = "General";
-        break;
-      case 'T':
-        ratingVal = "Teen";
-        break;
-      case 'M':
-        ratingVal = "Mature";
-        break;
-      case 'E':
-        ratingVal = "Explicit";
-        break;
-      case '-':
-        ratingVal = "Not Rated";
-        break;
-    }
-    drawOverlayRow(0, "Rating", ratingVal);
-
-    // Row 1: Completion
-    const char* completionVal = pendingState.completion == 1   ? "Complete"
-                                : pendingState.completion == 0 ? "Incomplete"
-                                                               : "Any";
-    drawOverlayRow(1, "Completion", completionVal);
+  // Row 0: Rating
+  const char* ratingVal = "Any";
+  switch (pendingState.rating) {
+    case 'G':
+      ratingVal = "General";
+      break;
+    case 'T':
+      ratingVal = "Teen";
+      break;
+    case 'M':
+      ratingVal = "Mature";
+      break;
+    case 'E':
+      ratingVal = "Explicit";
+      break;
+    case '-':
+      ratingVal = "Not Rated";
+      break;
   }
+  drawOverlayRow(0, "Rating", ratingVal);
+
+  // Row 1: Completion
+  const char* completionVal = pendingState.completion == 1   ? "Complete"
+                              : pendingState.completion == 0 ? "Incomplete"
+                                                             : "Any";
+  drawOverlayRow(1, "Completion", completionVal);
 
   // Row 2: Sort By
   const char* sortLabel = "Title";
@@ -1316,32 +1044,6 @@ void Ao3LibraryActivity::renderFilterOverlay() {
   }
   // Register the Confirm button as tappable item 5 (X4 Pro); no-op on button-only builds.
   TouchRegistry::getInstance().add(Rect{margin, btnY, btnW, btnH}, OVERLAY_ROW_CONFIRM, TouchRegistry::Item);
-}
-
-// ---------------------------------------------------------------------------
-//  renderPicker — draws full screen pickers
-// ---------------------------------------------------------------------------
-
-void Ao3LibraryActivity::renderPicker() {
-  renderer.clearScreen();
-
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const char* title = (screenState == ScreenState::FANDOM_PICKER) ? "Select Fandom" : "Select Relationship";
-
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, title);
-
-  auto rowTitle = [this](int index) { return pickerItems[index]; };
-
-  Rect listRect{
-      0, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, renderer.getScreenWidth(),
-      renderer.getScreenHeight() - metrics.headerHeight - metrics.buttonHintsHeight - metrics.verticalSpacing * 2};
-
-  GUI.drawList(renderer, listRect, pickerItems.size(), pickerSelectedIndex, rowTitle);
-
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
-  renderer.displayBuffer();
 }
 
 // ---------------------------------------------------------------------------
@@ -1595,9 +1297,6 @@ void Ao3LibraryActivity::renderCompletionSymbol(int x, int y, int s, bool comple
 // ---------------------------------------------------------------------------
 
 void Ao3LibraryActivity::loadSortFilterState() {
-  memset(activeState.fandom, 0, 32);
-  memset(activeState.relationship, 0, 32);
-  activeState.relationshipNoneOnly = false;
   activeState.rating = 0;
   activeState.completion = -1;
   activeState.sortMode = SortMode::ALPHABETIC;
@@ -1613,9 +1312,6 @@ void Ao3LibraryActivity::loadSortFilterState() {
   JsonDocument doc;
   if (deserializeJson(doc, json)) return;
 
-  strncpy(activeState.fandom, doc["fandom"] | "", 31);
-  strncpy(activeState.relationship, doc["relationship"] | "", 31);
-  activeState.relationshipNoneOnly = doc["relationshipNoneOnly"] | false;
   activeState.rating = static_cast<char>(doc["rating"] | 0);
   activeState.completion = static_cast<int8_t>(doc["completion"] | -1);
   activeState.sortMode = static_cast<SortMode>(doc["sortMode"] | 0);
@@ -1625,38 +1321,16 @@ void Ao3LibraryActivity::loadSortFilterState() {
 
   const uint8_t persistedView = doc["view"] | 0;
   activeState.view = persistedView <= static_cast<uint8_t>(LibraryView::WIPS) ? static_cast<LibraryView>(persistedView)
-                                                                             : LibraryView::ALL;
-
-  if (activeState.fandom[0] == '\0') {
-    memset(activeState.relationship, 0, 32);
-    activeState.relationshipNoneOnly = false;
-  }
-
-  uint8_t persistedFm = doc["filterMode"] | 0;
-  if (activeState.fandom[0] != '\0' && persistedFm != static_cast<uint8_t>(filterMode)) {
-    memset(activeState.fandom, 0, 32);
-    memset(activeState.relationship, 0, 32);
-    activeState.relationshipNoneOnly = false;
-  }
-
-  if (filterMode == FilterMode::FOLDER_TREE && ao3Folder.empty()) {
-    memset(activeState.fandom, 0, 32);
-    memset(activeState.relationship, 0, 32);
-    activeState.relationshipNoneOnly = false;
-  }
+                                                                              : LibraryView::ALL;
 }
 
 void Ao3LibraryActivity::saveSortFilterState() const {
   JsonDocument doc;
-  doc["fandom"] = activeState.fandom;
-  doc["relationship"] = activeState.relationship;
-  doc["relationshipNoneOnly"] = activeState.relationshipNoneOnly;
   doc["rating"] = static_cast<int>(activeState.rating);
   doc["completion"] = static_cast<int>(activeState.completion);
   doc["sortMode"] = static_cast<uint8_t>(activeState.sortMode);
   doc["ascending"] = activeState.ascending;
   doc["view"] = static_cast<uint8_t>(activeState.view);
-  doc["filterMode"] = static_cast<uint8_t>(filterMode);
 
   String json;
   serializeJson(doc, json);
@@ -1755,7 +1429,7 @@ int Ao3LibraryActivity::viewPosition(uint64_t cacheHash) const {
 }
 
 // Resolves the active store view's fics to the same cache hashes the index records carry
-// (fnv of the file path -- the same derivation buildAllowedHashes() relies on).
+// (fnv of the file path, the same derivation ZipFile::fnvHash64 gives every cache dir).
 void Ao3LibraryActivity::loadViewOrder() {
   viewOrder_.clear();
   auto add = [this](const std::string& path) {
@@ -1771,10 +1445,6 @@ void Ao3LibraryActivity::loadViewOrder() {
 bool Ao3LibraryActivity::passesFilter(const ViewEntry& v, const FilterHashes& h) const {
   if (activeState.view == LibraryView::WIPS && v.isCompleted) return false;
   if (isStoreView() && viewPosition(v.cacheHash) < 0) return false;
-
-  if (filterMode == FilterMode::FOLDER_TREE) {
-    return std::binary_search(allowedHashes.begin(), allowedHashes.end(), v.cacheHash);
-  }
 
   if (h.ratingActive && v.rating != h.ratingValue) return false;
   if (h.completionActive && static_cast<bool>(v.isCompleted) != h.completionValue) return false;
@@ -1825,23 +1495,6 @@ void Ao3LibraryActivity::rebuildViewEntries() {
     f.close();
     indexState = IndexState::CORRUPT;
     return;
-  }
-
-  if (filterMode == FilterMode::FOLDER_TREE && allowedHashes.empty() && !ao3Folder.empty()) {
-    if (activeState.fandom[0] != '\0') {
-      std::string scanPath = ao3Folder;
-      if (scanPath.back() != '/') scanPath += "/";
-      scanPath += activeState.fandom;
-      if (activeState.relationship[0] != '\0') {
-        scanPath += "/";
-        scanPath += activeState.relationship;
-        buildAllowedHashes(scanPath, 0);
-      } else {
-        buildAllowedHashes(scanPath, 1);
-      }
-    } else {
-      buildAllowedHashes(ao3Folder, 2);
-    }
   }
 
   loadViewOrder();
@@ -1908,10 +1561,6 @@ void Ao3LibraryActivity::addUnindexedMarked(const std::vector<uint8_t>& markedIn
     if (markedInIndex[i]) continue;
     const auto& e = entries[i];
     const uint64_t hash = viewOrder_[i];
-    if (filterMode == FilterMode::FOLDER_TREE &&
-        !std::binary_search(allowedHashes.begin(), allowedHashes.end(), hash)) {
-      continue;
-    }
     if (!Storage.exists(e.path.c_str())) continue;
     if (hideFinished &&
         Ao3Librarian::getBookStatus(Epub::cachePathForFilePath(e.path, "/.crosspoint")) == BookStatus::FINISHED) {
@@ -1931,29 +1580,9 @@ void Ao3LibraryActivity::addUnindexedMarked(const std::vector<uint8_t>& markedIn
 }
 
 void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const SortFilterState& next) {
-  bool filterChanged = strcmp(prev.fandom, next.fandom) != 0 || strcmp(prev.relationship, next.relationship) != 0 ||
-                       prev.relationshipNoneOnly != next.relationshipNoneOnly || prev.rating != next.rating ||
-                       prev.completion != next.completion || prev.view != next.view;
+  bool filterChanged = prev.rating != next.rating || prev.completion != next.completion || prev.view != next.view;
 
   bool sortChanged = prev.sortMode != next.sortMode || prev.ascending != next.ascending;
-
-  if (filterMode == FilterMode::FOLDER_TREE && filterChanged) {
-    allowedHashes.clear();
-    if (next.fandom[0] != '\0') {
-      std::string scanPath = ao3Folder;
-      if (scanPath.back() != '/') scanPath += "/";
-      scanPath += next.fandom;
-      if (next.relationship[0] != '\0') {
-        scanPath += "/";
-        scanPath += next.relationship;
-        buildAllowedHashes(scanPath, 0);
-      } else {
-        buildAllowedHashes(scanPath, 1);
-      }
-    } else {
-      if (!ao3Folder.empty()) buildAllowedHashes(ao3Folder, 2);
-    }
-  }
 
   if (filterChanged) {
     rebuildViewEntries();
@@ -1964,64 +1593,4 @@ void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const Sor
   selectorIndex = 0;
   cachedPage = -1;
   requestUpdate();
-}
-
-// ---------------------------------------------------------------------------
-//  Picker List Builders
-// ---------------------------------------------------------------------------
-
-// Folder Tree mode only — lists subfolder names under ao3Folder. (Automatic mode
-// filters by rating/completion instead, which don't need a discovered-values list.)
-void Ao3LibraryActivity::buildFandomList(std::vector<std::string>& out) const {
-  if (filterMode != FilterMode::FOLDER_TREE || ao3Folder.empty()) return;
-
-  HalFile root = Storage.open(ao3Folder.c_str());
-  if (!root || !root.isDirectory()) {
-    if (root) root.close();
-    return;
-  }
-
-  char name[256];
-  HalFile entry;
-  while (entry = root.openNextFile()) {
-    entry.getName(name, sizeof(name));
-    if (entry.isDirectory() && name[0] != '.' && strcmp(name, "System Volume Information") != 0) {
-      out.push_back(name);
-    }
-    entry.close();
-  }
-  root.close();
-  std::sort(out.begin(), out.end(),
-            [](const std::string& a, const std::string& b) { return strcasecmp(a.c_str(), b.c_str()) < 0; });
-}
-
-// Folder Tree mode only — lists subfolder names under ao3Folder/<fandom>.
-void Ao3LibraryActivity::buildRelationshipList(const char* fandom, std::vector<std::string>& out,
-                                               bool& hasNoneEntries) const {
-  hasNoneEntries = false;
-
-  if (filterMode != FilterMode::FOLDER_TREE || ao3Folder.empty() || !fandom || fandom[0] == '\0') return;
-
-  std::string fandomPath = ao3Folder;
-  if (fandomPath.back() != '/') fandomPath += "/";
-  fandomPath += fandom;
-
-  HalFile root = Storage.open(fandomPath.c_str());
-  if (!root || !root.isDirectory()) {
-    if (root) root.close();
-    return;
-  }
-
-  char name[256];
-  HalFile entry;
-  while (entry = root.openNextFile()) {
-    entry.getName(name, sizeof(name));
-    if (entry.isDirectory() && name[0] != '.' && strcmp(name, "System Volume Information") != 0) {
-      out.push_back(name);
-    }
-    entry.close();
-  }
-  root.close();
-  std::sort(out.begin(), out.end(),
-            [](const std::string& a, const std::string& b) { return strcasecmp(a.c_str(), b.c_str()) < 0; });
 }

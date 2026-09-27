@@ -6,7 +6,6 @@
 #include "../../util/ButtonNavigator.h"
 #include "../Activity.h"
 
-enum class FilterMode : uint8_t { AUTOMATIC = 0, FOLDER_TREE = 1 };
 class Ao3LibrarySettingsActivity final : public Activity {
   int selectorIndex = 0;
   ButtonNavigator buttonNavigator;
@@ -19,7 +18,6 @@ class Ao3LibrarySettingsActivity final : public Activity {
   bool autoIndexOnOpen = false;
   bool hideFinished = false;
   bool swapNavButtons = false;
-  FilterMode filterMode = FilterMode::AUTOMATIC;
   bool showingCleanupResult = false;
   bool cleaningUpIndex = false;
   bool showingCleanupConfirm = false;
