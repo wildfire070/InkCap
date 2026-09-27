@@ -18,7 +18,7 @@ constexpr uint8_t VERSION = 5;
 constexpr uint16_t MAX_BOOKMARKS = 1024;
 constexpr size_t INITIAL_BOOKMARK_RESERVE = 8;
 constexpr char BOOKMARKS_DIR[] = "/.crosspoint/bookmarks";
-constexpr char READ_FOLDER[] = "/Read";
+constexpr char ARCHIVE_FOLDER[] = "/Archive";
 
 struct BookmarkFileHeader {
   std::string title;
@@ -92,12 +92,12 @@ std::string fileNameFromPath(const std::string& path) {
   return (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
 }
 
-bool isInReadFolder(const std::string& path) {
-  constexpr size_t n = sizeof(READ_FOLDER) - 1;
-  return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
+bool isInArchiveFolder(const std::string& path) {
+  constexpr size_t n = sizeof(ARCHIVE_FOLDER) - 1;
+  return path.size() > n && path.compare(0, n, ARCHIVE_FOLDER) == 0 && path[n] == '/';
 }
 
-bool isReadFolderCollisionVariant(const std::string& originalBase, const std::string& candidateBase) {
+bool isArchiveFolderCollisionVariant(const std::string& originalBase, const std::string& candidateBase) {
   if (candidateBase.size() <= originalBase.size() + 4) {
     return false;
   }
@@ -115,13 +115,13 @@ bool isReadFolderCollisionVariant(const std::string& originalBase, const std::st
   return true;
 }
 
-bool resolveMovedToReadDestinationPath(const std::string& originalPath, std::string& resolvedPath) {
+bool resolveMovedToArchiveDestinationPath(const std::string& originalPath, std::string& resolvedPath) {
   const std::string fileName = fileNameFromPath(originalPath);
-  if (fileName.empty() || !Storage.exists(READ_FOLDER)) {
+  if (fileName.empty() || !Storage.exists(ARCHIVE_FOLDER)) {
     return false;
   }
 
-  const std::string exactPath = std::string(READ_FOLDER) + "/" + fileName;
+  const std::string exactPath = std::string(ARCHIVE_FOLDER) + "/" + fileName;
   if (Storage.exists(exactPath.c_str())) {
     resolvedPath = exactPath;
     return true;
@@ -133,7 +133,7 @@ bool resolveMovedToReadDestinationPath(const std::string& originalPath, std::str
 
   std::string matchedPath;
   size_t matchCount = 0;
-  for (const auto& entry : Storage.listFiles(READ_FOLDER)) {
+  for (const auto& entry : Storage.listFiles(ARCHIVE_FOLDER)) {
     const std::string candidateName = entry.c_str();
     const size_t candidateDotPos = candidateName.rfind('.');
     const std::string candidateBase =
@@ -141,11 +141,11 @@ bool resolveMovedToReadDestinationPath(const std::string& originalPath, std::str
     const std::string candidateExt =
         (candidateDotPos != std::string::npos) ? candidateName.substr(candidateDotPos) : "";
 
-    if (candidateExt != originalExt || !isReadFolderCollisionVariant(originalBase, candidateBase)) {
+    if (candidateExt != originalExt || !isArchiveFolderCollisionVariant(originalBase, candidateBase)) {
       continue;
     }
 
-    matchedPath = std::string(READ_FOLDER) + "/" + candidateName;
+    matchedPath = std::string(ARCHIVE_FOLDER) + "/" + candidateName;
     matchCount++;
     if (matchCount > 1) {
       return false;
@@ -239,7 +239,7 @@ bool BookmarkStore::loadForBook(const std::string& filePath, const std::string& 
   const bool hasLegacyFile = legacyStoreFilePath != storeFilePath && Storage.exists(legacyStoreFilePath.c_str());
 
   if (!hasCurrentFile && !hasLegacyFile) {
-    if (bookType == "epub" && isInReadFolder(filePath) && Storage.exists(BOOKMARKS_DIR)) {
+    if (bookType == "epub" && isInArchiveFolder(filePath) && Storage.exists(BOOKMARKS_DIR)) {
       for (const auto& name : Storage.listFiles(BOOKMARKS_DIR)) {
         BookmarkFileHeader header;
         const std::string fullPath = std::string(BOOKMARKS_DIR) + "/" + name.c_str();
@@ -249,7 +249,7 @@ bool BookmarkStore::loadForBook(const std::string& filePath, const std::string& 
         if (!author.empty() && !header.author.empty() && header.author != author) continue;
 
         std::string resolvedMovedPath;
-        if (!resolveMovedToReadDestinationPath(header.path, resolvedMovedPath) || resolvedMovedPath != filePath) {
+        if (!resolveMovedToArchiveDestinationPath(header.path, resolvedMovedPath) || resolvedMovedPath != filePath) {
           continue;
         }
 
@@ -934,7 +934,7 @@ bool BookmarkStore::getAllBookmarkedBooks(std::vector<BookmarkedBookEntry>& out)
       if (bookType != "epub") continue;
 
       std::string movedPath;
-      if (!resolveMovedToReadDestinationPath(path, movedPath)) {
+      if (!resolveMovedToArchiveDestinationPath(path, movedPath)) {
         continue;
       }
       if (!BookmarkStore::migrateForFilePath(path, movedPath, title, author, bookType)) {

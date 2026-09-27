@@ -26,7 +26,7 @@ bool isArchived(const std::string& path);
 // Computes the mirrored destination path under the current archive root, preserving the
 // filename and any parent-folder structure the source had beyond its last
 // path component's containing folder. Dedupes with " (2)", " (3)", ... on a
-// same-name collision (matching BookMoveUtils::buildReadFolderDestination).
+// same-name collision (matching BookMoveUtils::buildArchiveDestination).
 // Creates the destination's parent directory.
 std::string buildArchiveDestination(const std::string& srcPath);
 

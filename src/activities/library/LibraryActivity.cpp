@@ -957,13 +957,12 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                      }
                      reloadAfterBookAction();
                    };
-                   // Finishing a book with "Move Finished Books to Read Folder" on asks first; declining still marks
+                   // Finishing a book with "Move Finished Books to Archive Folder" on asks first; declining still marks
                    // it finished and leaves the file where it is.
-                   if (BookActions::completingWouldMoveToReadFolder(book.path)) {
+                   if (BookActions::completingWouldArchive(book.path)) {
                      openDialog(
-                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput,
-                                                                 tr(STR_MOVE_TO_READ_PROMPT_TITLE),
-                                                                 tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                                 tr(STR_ARCHIVE_PROMPT_BODY)),
                          [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
                      return;
                    }
