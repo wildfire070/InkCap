@@ -1468,7 +1468,7 @@ void Ao3LibraryActivity::drawAo3Square(RenderLock& lock, int x, int y, int s, ch
   renderStatusSymbol(x + h + 1, y + 1, h - 1, status, false, true, false, false, -1, markedPosition);
   renderDetailsSymbol(x + 1, y + h + 1, h - 1, detailsMissing, false, false, true, false, -2);
   if (completionUnknown) {
-    renderSymbol(x + h + 1, y + h + 1, h - 1, '-', false, false, false, true, -2);  // not indexed: completion unknown
+    renderSymbol(x + h + 1, y + h + 1, h - 1, '?', false, false, false, true, -2);  // not indexed: completion unknown
   } else {
     renderCompletionSymbol(x + h + 1, y + h + 1, h - 1, completed, false, false, false, true, -2);
   }
