@@ -1948,10 +1948,12 @@ void EpubReaderActivity::applyBookStatsEditsFromDisk() {
 void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
-  if (stats.isCompleted && SETTINGS.moveFinishedToReadFolder && epub && !isInReadFolder(epub->getPath())) {
-    pendingReadFolderMove = true;
-  } else if (!stats.isCompleted) {
+  if (stats.isCompleted) {
+    requestReadFolderMove();
+  } else {
     pendingReadFolderMove = false;
+    readFolderPromptQueued = false;
+    readFolderPromptShown = false;
   }
   resumeReadingPaceTimer("book_stats_return");
   if (returnToReaderMenu) {
@@ -3088,6 +3090,21 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+  if (readFolderPromptQueued) {
+    readFolderPromptQueued = false;
+    readFolderPromptShown = true;
+    pauseReadingPaceTimer("read_folder_prompt");
+    startActivityForResult(
+        std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_MOVE_TO_READ_PROMPT_TITLE),
+                                               tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+        [this](const ActivityResult& result) {
+          resumeReadingPaceTimer("read_folder_prompt_return");
+          pendingReadFolderMove = !result.isCancelled;
+          requestUpdate();
+        });
+    return;
+  }
+
   if (pendingBookmarkFeedback && transientFeedbackDismissed(bookmarkFeedbackShowTime)) {
     pendingBookmarkFeedback = false;
     requestUpdate();
@@ -3170,13 +3187,15 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  // Arm the move here so any exit path relocates the book into /Read/.
-  // setBookCompleted() also arms this when the user marks a book finished before
-  // the End-of-Book screen.
+  // Reaching the End-of-Book screen asks whether to move the book into /Read/; the answer arms the move that
+  // onExit() carries out. setBookCompleted() asks the same question when the user marks a book finished earlier.
+  // Paging back into an unfinished book withdraws an accepted move and lets the prompt be asked again.
   if (atEndOfBook) {
-    pendingReadFolderMove = SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath());
+    requestReadFolderMove();
   } else if (!stats.isCompleted) {
     pendingReadFolderMove = false;
+    readFolderPromptQueued = false;
+    readFolderPromptShown = false;
   }
 
   // The suggestion menu owns Confirm/Back/navigation before automatic page
@@ -5125,6 +5144,8 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   sessionPaceSampleSeconds = 0;
   sessionPaceSampleCount = 0;
   pendingReadFolderMove = false;
+  readFolderPromptQueued = false;
+  readFolderPromptShown = false;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   armReadingPaceWarmup("book_stats_delete");
   initializeCompletionPromptTrigger();
@@ -5681,6 +5702,14 @@ void EpubReaderActivity::suppressPowerShortcutRelease() {
   mappedInput.suppressNextPowerConfirmRelease();
 }
 
+// With "Move Finished Books to Read Folder" on, a finished book is only moved after the user accepts a separate
+// prompt. Asked once per finish; a book already in /Read/ is never offered.
+void EpubReaderActivity::requestReadFolderMove() {
+  if (!SETTINGS.moveFinishedToReadFolder || !epub || isInReadFolder(epub->getPath())) return;
+  if (readFolderPromptQueued || readFolderPromptShown) return;
+  readFolderPromptQueued = true;
+}
+
 void EpubReaderActivity::setBookCompleted(bool isCompleted) {
   if (stats.isCompleted == isCompleted) {
     return;
@@ -5698,15 +5727,15 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.removeByPath(epub->getPath());
     }
-    if (SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath())) {
-      pendingReadFolderMove = true;
-    }
+    requestReadFolderMove();
   } else {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.addOrUpdateBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
     }
     recentsEntryRemoved = false;
     pendingReadFolderMove = false;
+    readFolderPromptQueued = false;
+    readFolderPromptShown = false;
   }
   if (isCompleted) {
     globalStats.completedBooks++;
