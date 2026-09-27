@@ -23,6 +23,7 @@ class ContentOpfParser final : public Print {
     IN_DC_SOURCE,
     IN_BOOK_COLLECTION,
     IN_BOOK_COLLECTION_TYPE,
+    IN_BOOK_COLLECTION_POSITION,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -52,9 +53,11 @@ class ContentOpfParser final : public Print {
   bool languageTruncated = false;
   bool seriesTruncated = false;
   bool collectionTypeTruncated = false;
+  bool collectionPositionTruncated = false;
   std::string collectionName;
   std::string collectionId;
   std::string collectionType;
+  std::string collectionPosition;
   bool hasExplicitStartReference = false;
   bool collectCssFiles = true;
 
