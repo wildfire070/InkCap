@@ -1483,25 +1483,24 @@ class ScopedReaderSettingsRestore {
 };
 
 // SD card folder finished books are moved into. Single source of truth for the path.
-constexpr char READ_FOLDER[] = "/Read";
+constexpr char ARCHIVE_FOLDER[] = "/Archive";
 
-// True if path is inside READ_FOLDER (starts with "<READ_FOLDER>/"). Non-allocating so
-// it is cheap to call from loop(), and avoids reintroducing a separate "/Read/" literal.
-bool isInReadFolder(const std::string& path) {
-  constexpr size_t n = sizeof(READ_FOLDER) - 1;  // excludes NUL
-  return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
+// True if path is inside ARCHIVE_FOLDER (starts with "<ARCHIVE_FOLDER>/"). Non-allocating so
+// it is cheap to call from loop(), and avoids reintroducing a separate "/Archive/" literal.
+bool isInArchiveFolder(const std::string& path) {
+  constexpr size_t n = sizeof(ARCHIVE_FOLDER) - 1;  // excludes NUL
+  return path.size() > n && path.compare(0, n, ARCHIVE_FOLDER) == 0 && path[n] == '/';
 }
 
-// Relocate a finished book into /Read/, then migrate path-keyed state such as
+// Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
-void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string& dstPath,
-                                  const std::string& oldCachePath, const std::string& title,
-                                  const std::string& author) {
+void archiveFinishedBook(const std::string& srcPath, const std::string& dstPath, const std::string& oldCachePath,
+                         const std::string& title, const std::string& author) {
   LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
   if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
-    LOG_ERR("ERS", "Failed to move finished book to '/Read' folder");
-    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
-    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
+    LOG_ERR("ERS", "Failed to archive finished book");
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
              title.c_str());
     APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
@@ -1943,11 +1942,11 @@ void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
   if (stats.isCompleted) {
-    requestReadFolderMove();
+    requestArchiveMove();
   } else {
-    pendingReadFolderMove = false;
-    readFolderPromptQueued = false;
-    readFolderPromptShown = false;
+    pendingArchiveMove = false;
+    archivePromptQueued = false;
+    archivePromptShown = false;
   }
   resumeReadingPaceTimer("book_stats_return");
   if (returnToReaderMenu) {
@@ -2590,14 +2589,12 @@ void EpubReaderActivity::onExit() {
     } else {
       const int autosyncPageNumber = section->currentPage;
       const int autosyncPageCount = section->pageCount;
-      const float autosyncChapterProgress = autosyncPageCount > 0
-                                                 ? static_cast<float>(autosyncPageNumber + 1) /
-                                                       static_cast<float>(autosyncPageCount)
-                                                 : 0.0f;
+      const float autosyncChapterProgress =
+          autosyncPageCount > 0 ? static_cast<float>(autosyncPageNumber + 1) / static_cast<float>(autosyncPageCount)
+                                : 0.0f;
       const float autosyncBookPercent = epub->calculateProgress(currentSpineIndex, autosyncChapterProgress);
-      ProgressAutoSync::runOnExit(renderer, autosyncBookId, epub->getPath(), epub->getCachePath(),
-                                  autosyncBookPercent, currentSpineIndex, autosyncPageNumber, autosyncPageCount,
-                                  epub->getSpineItemsCount());
+      ProgressAutoSync::runOnExit(renderer, autosyncBookId, epub->getPath(), epub->getCachePath(), autosyncBookPercent,
+                                  currentSpineIndex, autosyncPageNumber, autosyncPageCount, epub->getSpineItemsCount());
     }
   }
 
@@ -2621,14 +2618,14 @@ void EpubReaderActivity::onExit() {
   CLIPPINGS.unload();
   section.reset();
 
-  if (pendingReadFolderMove && epub) {
+  if (pendingArchiveMove && epub) {
     const std::string srcPath = epub->getPath();
     const std::string oldCachePath = epub->getCachePath();
     const std::string title = epub->getTitle();
     const std::string author = epub->getAuthor();
-    const std::string dstPath = BookMoveUtils::buildReadFolderDestination(srcPath);
+    const std::string dstPath = BookMoveUtils::buildArchiveDestination(srcPath);
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
-    moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath, title, author);
+    archiveFinishedBook(srcPath, dstPath, oldCachePath, title, author);
   } else {
     epub.reset();
   }
@@ -2884,8 +2881,8 @@ void EpubReaderActivity::maybeRunAutoSync() {
   // See the matching comment in onExit()'s AUTOSYNC_ON_EXIT block: isBuilding() alone stays true
   // through background indexing of later pages, long after the current page is actually
   // readable, so it's not the right gate here either.
-  if (!section || !section->activeBuildHasCaughtReadablePages() || activeFootnotePreview ||
-      automaticPageTurnActive || !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
+  if (!section || !section->activeBuildHasCaughtReadablePages() || activeFootnotePreview || automaticPageTurnActive ||
+      !renderer.hasFrameBuffer() || RenderLock::peek() || lastRenderCompleteMs == 0 ||
       (millis() - lastRenderCompleteMs) < AUTOSYNC_IDLE_DELAY_MS) {
     return;
   }
@@ -3075,18 +3072,17 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  if (readFolderPromptQueued) {
-    readFolderPromptQueued = false;
-    readFolderPromptShown = true;
+  if (archivePromptQueued) {
+    archivePromptQueued = false;
+    archivePromptShown = true;
     pauseReadingPaceTimer("read_folder_prompt");
-    startActivityForResult(
-        std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_MOVE_TO_READ_PROMPT_TITLE),
-                                               tr(STR_MOVE_TO_READ_PROMPT_BODY)),
-        [this](const ActivityResult& result) {
-          resumeReadingPaceTimer("read_folder_prompt_return");
-          pendingReadFolderMove = !result.isCancelled;
-          requestUpdate();
-        });
+    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                                  tr(STR_ARCHIVE_PROMPT_BODY)),
+                           [this](const ActivityResult& result) {
+                             resumeReadingPaceTimer("read_folder_prompt_return");
+                             pendingArchiveMove = !result.isCancelled;
+                             requestUpdate();
+                           });
     return;
   }
 
@@ -3166,15 +3162,15 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  // Reaching the End-of-Book screen asks whether to move the book into /Read/; the answer arms the move that
+  // Reaching the End-of-Book screen asks whether to move the book into /Archive/; the answer arms the move that
   // onExit() carries out. setBookCompleted() asks the same question when the user marks a book finished earlier.
   // Paging back into an unfinished book withdraws an accepted move and lets the prompt be asked again.
   if (atEndOfBook) {
-    requestReadFolderMove();
+    requestArchiveMove();
   } else if (!stats.isCompleted) {
-    pendingReadFolderMove = false;
-    readFolderPromptQueued = false;
-    readFolderPromptShown = false;
+    pendingArchiveMove = false;
+    archivePromptQueued = false;
+    archivePromptShown = false;
   }
 
   // The suggestion menu owns Confirm/Back/navigation before automatic page
@@ -5074,9 +5070,9 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   sessionReadingSeconds = 0;
   sessionPaceSampleSeconds = 0;
   sessionPaceSampleCount = 0;
-  pendingReadFolderMove = false;
-  readFolderPromptQueued = false;
-  readFolderPromptShown = false;
+  pendingArchiveMove = false;
+  archivePromptQueued = false;
+  archivePromptShown = false;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   armReadingPaceWarmup("book_stats_delete");
   initializeCompletionPromptTrigger();
@@ -5618,12 +5614,12 @@ void EpubReaderActivity::suppressPowerShortcutRelease() {
   mappedInput.suppressNextPowerConfirmRelease();
 }
 
-// With "Move Finished Books to Read Folder" on, a finished book is only moved after the user accepts a separate
-// prompt. Asked once per finish; a book already in /Read/ is never offered.
-void EpubReaderActivity::requestReadFolderMove() {
-  if (!SETTINGS.moveFinishedToReadFolder || !epub || isInReadFolder(epub->getPath())) return;
-  if (readFolderPromptQueued || readFolderPromptShown) return;
-  readFolderPromptQueued = true;
+// With "Move Finished Books to Archive Folder" on, a finished book is only moved after the user accepts a separate
+// prompt. Asked once per finish; a book already in /Archive/ is never offered.
+void EpubReaderActivity::requestArchiveMove() {
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || isInArchiveFolder(epub->getPath())) return;
+  if (archivePromptQueued || archivePromptShown) return;
+  archivePromptQueued = true;
 }
 
 void EpubReaderActivity::setBookCompleted(bool isCompleted) {
@@ -5643,15 +5639,15 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.removeByPath(epub->getPath());
     }
-    requestReadFolderMove();
+    requestArchiveMove();
   } else {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.addOrUpdateBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
     }
     recentsEntryRemoved = false;
-    pendingReadFolderMove = false;
-    readFolderPromptQueued = false;
-    readFolderPromptShown = false;
+    pendingArchiveMove = false;
+    archivePromptQueued = false;
+    archivePromptShown = false;
   }
   if (isCompleted) {
     globalStats.completedBooks++;
@@ -6413,9 +6409,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
 
       if (!fallbackBuildSucceeded && layoutAbortedForLowMemory && section && section->isPartial() &&
-          section->pageCount > 0 && !buildingFootnotePreview && (!pendingPercentJump || pendingPercentJumpApproximate) &&
-          pendingAnchor.empty() && pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX &&
-          !pendingRelayoutReposition) {
+          section->pageCount > 0 && !buildingFootnotePreview &&
+          (!pendingPercentJump || pendingPercentJumpApproximate) && pendingAnchor.empty() &&
+          pendingClippingIndex == UINT16_MAX && pendingParagraphIndex == UINT16_MAX && !pendingRelayoutReposition) {
         LOG_ERR("ERS", "Incremental build stopped for low heap; retaining readable partial cache (%u pages)",
                 section->pageCount);
         fallbackBuildSucceeded = true;

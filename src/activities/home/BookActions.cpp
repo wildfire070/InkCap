@@ -182,13 +182,13 @@ bool isBookCompleted(const std::string& fullPath) {
   return !cachePath.empty() && BookReadingStats::load(cachePath).isCompleted;
 }
 
-bool completingWouldMoveToReadFolder(const std::string& fullPath) {
-  return SETTINGS.moveFinishedToReadFolder && FsHelpers::hasEpubExtension(fullPath) &&
-         fullPath.rfind("/Read/", 0) != 0 && !isBookCompleted(fullPath);
+bool completingWouldArchive(const std::string& fullPath) {
+  return SETTINGS.moveFinishedToArchiveFolder && FsHelpers::hasEpubExtension(fullPath) &&
+         fullPath.rfind("/Archive/", 0) != 0 && !isBookCompleted(fullPath);
 }
 
 bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
-                         const bool allowMoveToReadFolder) {
+                         const bool allowArchive) {
   const bool isEpub = FsHelpers::hasEpubExtension(fullPath);
   const bool isXtc = FsHelpers::hasXtcExtension(fullPath);
   if (!isEpub && !isXtc) {
@@ -242,16 +242,15 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   // recents if it is opened again after being marked unfinished.
   if (SETTINGS.removeReadBooksFromRecents && completed) RECENT_BOOKS.removeByPath(fullPath);
 
-  if (allowMoveToReadFolder && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
-      fullPath.rfind("/Read/", 0) != 0) {
+  if (allowArchive && isEpub && completed && SETTINGS.moveFinishedToArchiveFolder &&
+      fullPath.rfind("/Archive/", 0) != 0) {
     const std::string oldCachePath = epub.getCachePath();
-    const std::string dstPath = BookMoveUtils::buildReadFolderDestination(fullPath);
+    const std::string dstPath = BookMoveUtils::buildArchiveDestination(fullPath);
     LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());
     if (!Storage.rename(fullPath.c_str(), dstPath.c_str())) {
       LOG_ERR("BookActions", "Failed to move book to 'Read' folder");
-      snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
-               tr(STR_MOVE_TO_READ_FAILED_TITLE));
-      snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
+      snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
+      snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
                displayName.c_str());
       APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
       APP_STATE.hasPendingAlert.store(true, std::memory_order_release);

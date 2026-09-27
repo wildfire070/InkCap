@@ -20,7 +20,6 @@
 #include <cstring>
 #include <limits>
 
-#include "util/BookMetadataUtils.h"
 #include "BookActions.h"
 #include "BookDetailsActivity.h"
 #include "BookFusionBookIdStore.h"
@@ -42,6 +41,7 @@
 #include "components/icons/listIcons.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "util/BookMetadataUtils.h"
 #include "util/BookMoveUtils.h"
 
 namespace fui = freeink::ui;
@@ -831,12 +831,12 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
               }
               requestUpdate(true);
             };
-            // Finishing a book with "Move Finished Books to Read Folder" on asks first; declining still marks it
+            // Finishing a book with "Move Finished Books to Archive Folder" on asks first; declining still marks it
             // finished and leaves the file where it is.
-            if (BookActions::completingWouldMoveToReadFolder(fullPath)) {
+            if (BookActions::completingWouldArchive(fullPath)) {
               startActivityForResult(
-                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_MOVE_TO_READ_PROMPT_TITLE),
-                                                         tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                         tr(STR_ARCHIVE_PROMPT_BODY)),
                   [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
               return;
             }
@@ -903,24 +903,23 @@ void FileBrowserActivity::openBookDetails(const size_t row) {
   const std::string fullPath = buildFullPath(basepath, entry);
   const size_t prevRow = findAdjacentBookRow(row, /*forward=*/false);
   const size_t nextRow = findAdjacentBookRow(row, /*forward=*/true);
-  startActivityForResult(
-      std::make_unique<BookDetailsActivity>(renderer, mappedInput, fullPath, "", "", prevRow != SIZE_MAX,
-                                            nextRow != SIZE_MAX),
-      [this, prevRow, nextRow](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          if (const auto* nav = std::get_if<BookDetailsNavResult>(&result.data)) {
-            if (nav->next && nextRow != SIZE_MAX) {
-              openBookDetails(nextRow);
-              return;
-            }
-            if (!nav->next && prevRow != SIZE_MAX) {
-              openBookDetails(prevRow);
-              return;
-            }
-          }
-        }
-        requestUpdate();
-      });
+  startActivityForResult(std::make_unique<BookDetailsActivity>(renderer, mappedInput, fullPath, "", "",
+                                                               prevRow != SIZE_MAX, nextRow != SIZE_MAX),
+                         [this, prevRow, nextRow](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             if (const auto* nav = std::get_if<BookDetailsNavResult>(&result.data)) {
+                               if (nav->next && nextRow != SIZE_MAX) {
+                                 openBookDetails(nextRow);
+                                 return;
+                               }
+                               if (!nav->next && prevRow != SIZE_MAX) {
+                                 openBookDetails(prevRow);
+                                 return;
+                               }
+                             }
+                           }
+                           requestUpdate();
+                         });
 }
 
 void FileBrowserActivity::startRenameFile(const std::string& fullPath, const std::string& entry) {
@@ -1599,7 +1598,7 @@ void FileBrowserActivity::sortFiles() {
       const auto itB = keyCache.find(b);
       const std::string& keyA = itA != keyCache.end() ? itA->second : std::string();
       const std::string& keyB = itB != keyCache.end() ? itB->second : std::string();
-      if (keyA.empty() != keyB.empty()) return keyB.empty();  // missing key always sorts to the end
+      if (keyA.empty() != keyB.empty()) return keyB.empty();                  // missing key always sorts to the end
       if (keyA.empty() || keyA == keyB) return FsHelpers::naturalLess(a, b);  // both missing, or tie -- stable fallback
       return ascending ? keyA < keyB : keyA > keyB;
     });
@@ -1619,7 +1618,7 @@ void FileBrowserActivity::openSortPopup() {
   // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
   // a runtime variable, so this array/loop calls I18N.get() directly instead.
   static const StrId kFieldLabelIds[SORT_FIELD_COUNT] = {
-      StrId::STR_TITLE,        StrId::STR_SORT_AUTHOR,       StrId::STR_SORT_STATUS, StrId::STR_SORT_RATING,
+      StrId::STR_TITLE,         StrId::STR_SORT_AUTHOR,       StrId::STR_SORT_STATUS,     StrId::STR_SORT_RATING,
       StrId::STR_SORT_CHAPTERS, StrId::STR_SORT_DATE_UPDATED, StrId::STR_SORT_LAST_OPENED};
   std::vector<std::string> labels;
   labels.reserve(SORT_FIELD_COUNT);

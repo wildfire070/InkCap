@@ -14,7 +14,7 @@
 #include "RecentBooksStore.h"
 
 namespace {
-constexpr char READ_FOLDER[] = "/Read";
+constexpr char ARCHIVE_FOLDER[] = "/Archive";
 
 bool getCachePath(const std::string& bookPath, const char* bookType, std::string& cachePath) {
   if (strcmp(bookType, "epub") == 0) {
@@ -33,12 +33,12 @@ bool getCachePath(const std::string& bookPath, const char* bookType, std::string
 
 namespace BookMoveUtils {
 
-std::string buildReadFolderDestination(const std::string& srcPath) {
+std::string buildArchiveDestination(const std::string& srcPath) {
   const size_t lastSlash = srcPath.rfind('/');
   const std::string filename = (lastSlash != std::string::npos) ? srcPath.substr(lastSlash + 1) : srcPath;
 
-  Storage.mkdir(READ_FOLDER);
-  std::string dstPath = std::string(READ_FOLDER) + "/" + filename;
+  Storage.mkdir(ARCHIVE_FOLDER);
+  std::string dstPath = std::string(ARCHIVE_FOLDER) + "/" + filename;
   if (!Storage.exists(dstPath.c_str())) {
     return dstPath;
   }
@@ -48,7 +48,7 @@ std::string buildReadFolderDestination(const std::string& srcPath) {
   const std::string ext = (dotPos != std::string::npos) ? filename.substr(dotPos) : "";
   int suffix = 2;
   do {
-    dstPath = std::string(READ_FOLDER) + "/" + base + " (" + std::to_string(suffix) + ")" + ext;
+    dstPath = std::string(ARCHIVE_FOLDER) + "/" + base + " (" + std::to_string(suffix) + ")" + ext;
     suffix++;
   } while (Storage.exists(dstPath.c_str()) && suffix < 100);
   return dstPath;
