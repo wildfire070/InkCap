@@ -27,7 +27,11 @@ uint8_t epubRenderModeDisplayIndex(uint8_t renderMode);
 uint8_t epubRenderModeForDisplayIndex(uint8_t displayIndex);
 std::string confirmationHeading(StrId actionLabelId);
 bool isBookCompleted(const std::string& fullPath);
-bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed);
+// True when marking `fullPath` finished right now would also move it into /Read (the move setting is on, the
+// book is an epub that is not finished yet and is not already there). Callers ask before doing that.
+bool completingWouldMoveToReadFolder(const std::string& fullPath);
+bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
+                         bool allowMoveToReadFolder = true);
 void drawToast(const GfxRenderer& renderer, const char* msg);
 
 }  // namespace BookActions
