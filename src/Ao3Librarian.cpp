@@ -1,12 +1,12 @@
 #include "Ao3Librarian.h"
 
-
 #include <Arduino.h>
 #include <Epub.h>
-#include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 #include <HalStorage.h>
-#include <Serialization.h>
+#include <I18n.h>
 #include <Logging.h>
+#include <Serialization.h>
+#include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 
 #include <algorithm>
 #include <cctype>
@@ -1713,6 +1713,23 @@ void Ao3Librarian::saveBookStatus(const std::string& cachePath, const BookStatus
     const uint8_t data = static_cast<uint8_t>(status);
     f.write(&data, 1);
     f.close();
+  }
+}
+
+const char* Ao3Librarian::statusLabel(const BookStatus status) {
+  switch (status) {
+    case BookStatus::START:
+      return tr(STR_STATUS_UNREAD);
+    case BookStatus::READING:
+      return tr(STR_STATUS_READING);
+    case BookStatus::FINISHED:
+      return tr(STR_STATUS_FINISHED);
+    case BookStatus::WAITING_FOR_CHAPTER:
+      return tr(STR_STATUS_WAITING_FOR_CHAPTER);
+    case BookStatus::NEW_CHAPTER_AVAILABLE:
+      return tr(STR_STATUS_NEW_CHAPTER_AVAILABLE);
+    default:
+      return tr(STR_STATUS_UNREAD);
   }
 }
 

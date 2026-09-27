@@ -10,7 +10,7 @@ enum class RenameMigrationResult {
   KeepRenamed,
 };
 
-std::string buildReadFolderDestination(const std::string& srcPath);
+std::string buildArchiveDestination(const std::string& srcPath);
 // Prepares reader metadata, renames the physical book, then commits the state
 // migration so one canonical metadata path is always available across resets.
 RenameMigrationResult migrateRenamedBookState(const std::string& oldPath, const std::string& newPath,

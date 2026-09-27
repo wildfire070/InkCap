@@ -782,8 +782,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                           "fileBrowserDisplay", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents,
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM));
-    add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
-                            "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
+    add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_ARCHIVE, &CrossPointSettings::moveFinishedToArchiveFolder,
+                            "moveFinishedToArchiveFolder", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_AUTO_BACKUP_STATS, &CrossPointSettings::autoBackupStats, "autoBackupStats",
                             StrId::STR_CAT_SYSTEM));
     // Persisted and available to the web settings API, but category-less because
@@ -1411,7 +1411,7 @@ inline std::vector<SettingInfo> buildSystemFilesCacheSettingsList(const std::vec
   addSettingByName(settings, allSettings, StrId::STR_HIDE_FILE_EXTENSION);
   addSettingByName(settings, allSettings, StrId::STR_FILE_BROWSER_DISPLAY);
   addSettingByName(settings, allSettings, StrId::STR_REMOVE_READ_FROM_RECENTS);
-  addSettingByName(settings, allSettings, StrId::STR_MOVE_FINISHED_TO_READ);
+  addSettingByName(settings, allSettings, StrId::STR_MOVE_FINISHED_TO_ARCHIVE);
   settings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   settings.push_back(SettingInfo::Action(StrId::STR_CACHE_ALL_BOOKS, SettingAction::CacheAllBooks));
   settings.push_back(SettingInfo::Action(StrId::STR_CACHE_EXCLUSIONS, SettingAction::CacheExclusions));

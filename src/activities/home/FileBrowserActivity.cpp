@@ -827,12 +827,12 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
               }
               requestUpdate(true);
             };
-            // Finishing a book with "Move Finished Books to Read Folder" on asks first; declining still marks it
+            // Finishing a book with "Move Finished Books to Archive Folder" on asks first; declining still marks it
             // finished and leaves the file where it is.
-            if (BookActions::completingWouldMoveToReadFolder(fullPath)) {
+            if (BookActions::completingWouldArchive(fullPath)) {
               startActivityForResult(
-                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_MOVE_TO_READ_PROMPT_TITLE),
-                                                         tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                         tr(STR_ARCHIVE_PROMPT_BODY)),
                   [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
               return;
             }
@@ -910,8 +910,8 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
             // casually reversible than Restore, so confirm it the same way
             // BookActionActivity's Archive option does.
             startActivityForResult(
-                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_CONFIRM_HEADING),
-                                                        tr(STR_ARCHIVE_CONFIRM_BODY)),
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                       tr(STR_ARCHIVE_PROMPT_BODY)),
                 [this, fullPath, data](const ActivityResult& confirmation) {
                   if (confirmation.isCancelled) return;
                   if (Ao3ArchiveUtils::archiveFic(fullPath, data.title, data.author).empty()) {
@@ -927,15 +927,21 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
             return;
           }
           case FileBrowserAction::RestoreFic:
-            if (Ao3ArchiveUtils::restoreFic(fullPath).empty()) {
-              RenderLock lock(*this);
-              BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-            } else {
-              RenderLock lock(*this);
-              loadFilesLocked();
-              selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
-            }
-            requestUpdate(true);
+            startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                          tr(STR_RESTORE_BODY)),
+                                   [this, fullPath](const ActivityResult& confirmation) {
+                                     if (confirmation.isCancelled) return;
+                                     if (Ao3ArchiveUtils::restoreFic(fullPath).empty()) {
+                                       RenderLock lock(*this);
+                                       BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+                                     } else {
+                                       RenderLock lock(*this);
+                                       loadFilesLocked();
+                                       selectorIndex =
+                                           entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+                                     }
+                                     requestUpdate(true);
+                                   });
             return;
           case FileBrowserAction::SetSleepFolder:
           case FileBrowserAction::ClearSleepFolder:

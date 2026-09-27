@@ -630,8 +630,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t fileBrowserDisplay = FILE_BROWSER_DISPLAY_1_LINE;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
   uint8_t removeReadBooksFromRecents = 0;
-  // Move epub to /Read/ folder on SD card when marked as finished (0 = disabled, 1 = enabled)
-  uint8_t moveFinishedToReadFolder = 0;
+  // Move epub to /Archive/ folder on SD card when marked as finished (0 = disabled, 1 = enabled)
+  uint8_t moveFinishedToArchiveFolder = 0;
   // Automatically write a dated global reading-stats backup before sleep when an RTC is available (0 = off, 1 = on).
   uint8_t autoBackupStats = 1;
   // Idle threshold for reading stats, stored in 10-second units to fit uint8_t.
