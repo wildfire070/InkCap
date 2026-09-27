@@ -11,7 +11,7 @@
 #include "../Activity.h"
 #include "Ao3LibrarySettingsActivity.h"
 
-// Automatic-mode filter criteria (Folder Tree mode uses allowedHashes instead — see passesFilter).
+// Rating / completion filter criteria (see passesFilter).
 struct FilterHashes {
   bool ratingActive;
   char ratingValue;
@@ -51,7 +51,7 @@ class Ao3LibraryActivity final : public Activity {
     CORRUPT   // file exists but failed magic/version/OOM sanity check
   };
 
-  enum class ScreenState { LIBRARY, FILTER_PANEL, FANDOM_PICKER, RELATIONSHIP_PICKER, MANAGE_PANEL };
+  enum class ScreenState { LIBRARY, FILTER_PANEL, MANAGE_PANEL };
 
   std::vector<ViewEntry> viewEntries;
   size_t selectorIndex = 0;
@@ -79,17 +79,9 @@ class Ao3LibraryActivity final : public Activity {
   // Filter & Sort State
   SortFilterState activeState;
   SortFilterState pendingState;
-  FilterMode filterMode = FilterMode::AUTOMATIC;
   std::string ao3Folder;
-  std::vector<uint64_t> allowedHashes;
-  int overlayRowIndex = 0;      // 0=Fandom/Rating, 1=Relationship/Completion, 2=Sort By, 3=Order, 4=Show, 5=Confirm
+  int overlayRowIndex = 0;      // 0=Rating, 1=Completion, 2=Sort By, 3=Order, 4=Show, 5=Confirm
   int managePanelRowIndex = 0;  // 0=Index New Books, 1=AO3 Library Settings
-
-  // Pickers support
-  std::vector<std::string> uniqueFandoms;
-  std::vector<std::string> pickerItems;
-  size_t pickerSelectedIndex = 0;
-  bool pickerHasNone = false;
 
   // Cache hashes of the active Marked for Later / New Chapters view, in the store's own order.
   // Empty for the other views. Both stores are capped at 10, so linear lookups are fine.
@@ -129,8 +121,7 @@ class Ao3LibraryActivity final : public Activity {
   void renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br, int yOffset = 0);
 
   // Sorting & Filtering helpers
-  void loadFilterMode();
-  void buildAllowedHashes(const std::string& scanPath, int maxDepth);
+  void loadSettings();
   void loadSortFilterState();
   void saveSortFilterState() const;
   void resortViewEntries();
@@ -144,12 +135,8 @@ class Ao3LibraryActivity final : public Activity {
   void loadViewOrder();
   int viewPosition(uint64_t cacheHash) const;
 
-  void buildFandomList(std::vector<std::string>& out) const;
-  void buildRelationshipList(const char* fandom, std::vector<std::string>& out, bool& hasNoneEntries) const;
-
   // Rendering subsets
   void renderLibrary(RenderLock& lock);
   void renderFilterOverlay();
-  void renderPicker();
   void renderManagePanel();
 };
