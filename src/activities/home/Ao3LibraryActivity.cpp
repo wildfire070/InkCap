@@ -2,13 +2,13 @@
 
 #include <ArduinoJson.h>
 #include <Epub.h>
-#include <ZipFile.h>
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Serialization.h>
 #include <Utf8.h>
+#include <ZipFile.h>
 
 #include <algorithm>
 #include <cstring>
@@ -25,11 +25,12 @@
 #include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
+#include "../../util/Ao3ReceiveUtils.h"
 #include "Ao3IndexActivity.h"
 #include "Ao3LibrarySettingsActivity.h"
-#include "BookActionActivity.h"
-#include "../../util/Ao3ReceiveUtils.h"
 #include "Ao3ReceivedReviewActivity.h"
+#include "BookActionActivity.h"
+#include "CrossPointSettings.h"
 
 // ---------------------------------------------------------------------------
 //  onEnter
@@ -1501,19 +1502,9 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   const FilterHashes filterHashes = computeFilterHashes(activeState);
   viewEntries.reserve(std::min<size_t>(recordCount, maxLibraryBooks()));
 
-  bool hideFinished = false;
-  {
-    const char* settingsPath = "/.crosspoint/ao3_settings.json";
-    if (Storage.exists(settingsPath)) {
-      String json = Storage.readFile(settingsPath);
-      if (!json.isEmpty()) {
-        JsonDocument doc;
-        if (!deserializeJson(doc, json)) {
-          hideFinished = doc["hideFinished"] | false;
-        }
-      }
-    }
-  }
+  // Shared with the regular Library's "Finished Books" toggle -- one flag, read directly rather
+  // than through ao3_settings.json (which no longer carries its own copy of this setting).
+  const bool hideFinished = SETTINGS.libraryHideFinishedBooks != 0;
 
   // Which of the Marked for Later fics have a live index record (whatever the filters then say about them).
   const bool markedView = activeState.view == LibraryView::MARKED_FOR_LATER;

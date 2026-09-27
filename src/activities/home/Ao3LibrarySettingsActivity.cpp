@@ -9,6 +9,7 @@
 #include "../../util/Ao3ArchiveUtils.h"
 #include "../../util/Ao3ReceiveUtils.h"
 #include "../ActivityResult.h"
+#include "CrossPointSettings.h"
 #include "FolderPickerActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -34,7 +35,6 @@ void Ao3LibrarySettingsActivity::loadSettings() {
   receiveFolder = doc["receiveFolder"] | "";
   batchSize = doc["batchSize"] | 10;
   autoIndexOnOpen = doc["autoIndexOnOpen"] | false;
-  hideFinished = doc["hideFinished"] | false;
   swapNavButtons = doc["swapNavButtons"] | false;
   JsonArray arr = doc["excludedFolders"];
   if (!arr.isNull()) {
@@ -51,7 +51,6 @@ void Ao3LibrarySettingsActivity::saveSettings() {
   doc["receiveFolder"] = receiveFolder;
   doc["batchSize"] = batchSize;
   doc["autoIndexOnOpen"] = autoIndexOnOpen;
-  doc["hideFinished"] = hideFinished;
   doc["swapNavButtons"] = swapNavButtons;
   JsonArray arr = doc["excludedFolders"].to<JsonArray>();
   for (const auto& folder : excludedFolders) {
@@ -273,8 +272,10 @@ void Ao3LibrarySettingsActivity::loop() {
       saveSettings();
       requestUpdate();
     } else if (selectorIndex == 6) {
-      hideFinished = !hideFinished;
-      saveSettings();
+      // Shared with the regular Library's "Finished Books" toggle (see LibrarySettingsActivity) --
+      // one flag, so hiding/showing finished items applies the same way in both libraries.
+      SETTINGS.libraryHideFinishedBooks = !SETTINGS.libraryHideFinishedBooks;
+      if (!SETTINGS.saveToFile()) LOG_ERR("AO3S", "Cannot save shared Hide Finished setting");
       requestUpdate();
     } else if (selectorIndex == 7) {
       swapNavButtons = !swapNavButtons;
@@ -364,9 +365,15 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "AO3 Library Settings");
 
-  std::vector<std::string> rows = {"Your AO3 Folder",    "Archive Folder",     "Received Fics Folder",
-                                   "Never Index",        "Index Batch Size",   "Auto-Index on Library Open",
-                                   "Hide Finished Fics", "Side Button Layout", "Library Cleanup"};
+  std::vector<std::string> rows = {"Your AO3 Folder",
+                                   "Archive Folder",
+                                   "Received Fics Folder",
+                                   "Never Index",
+                                   "Index Batch Size",
+                                   "Auto-Index on Library Open",
+                                   tr(STR_AO3_SHOW_FINISHED_FICS),
+                                   "Side Button Layout",
+                                   "Library Cleanup"};
 
   auto rowTitle = [&rows](int index) { return rows[index]; };
 
@@ -377,7 +384,7 @@ void Ao3LibrarySettingsActivity::render(RenderLock&&) {
     if (index == 3) return formatExclusionsPill();
     if (index == 4) return std::to_string(batchSize);
     if (index == 5) return autoIndexOnOpen ? "ON" : "OFF";
-    if (index == 6) return hideFinished ? "ON" : "OFF";
+    if (index == 6) return !SETTINGS.libraryHideFinishedBooks ? "ON" : "OFF";
     if (index == 7) return swapNavButtons ? "Scroll List" : "Open Panels";
     return "";
   };
