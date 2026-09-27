@@ -948,12 +948,26 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                               });
                    return;
                  case FileBrowserAction::ToggleCompleted: {
-                   bool completed = false;
-                   if (BookActions::toggleBookCompleted(book.path, book.title, completed)) {
-                     BookActions::drawToast(renderer, completed ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
-                     delay(1000);
+                   auto applyToggle = [this, book](const bool allowMove) {
+                     bool completed = false;
+                     if (BookActions::toggleBookCompleted(book.path, book.title, completed, allowMove)) {
+                       BookActions::drawToast(renderer,
+                                              completed ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
+                       delay(1000);
+                     }
+                     reloadAfterBookAction();
+                   };
+                   // Finishing a book with "Move Finished Books to Read Folder" on asks first; declining still marks
+                   // it finished and leaves the file where it is.
+                   if (BookActions::completingWouldMoveToReadFolder(book.path)) {
+                     openDialog(
+                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput,
+                                                                 tr(STR_MOVE_TO_READ_PROMPT_TITLE),
+                                                                 tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+                         [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
+                     return;
                    }
-                   reloadAfterBookAction();
+                   applyToggle(true);
                    return;
                  }
                  case FileBrowserAction::EpubRenderMode: {

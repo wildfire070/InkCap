@@ -182,7 +182,13 @@ bool isBookCompleted(const std::string& fullPath) {
   return !cachePath.empty() && BookReadingStats::load(cachePath).isCompleted;
 }
 
-bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed) {
+bool completingWouldMoveToReadFolder(const std::string& fullPath) {
+  return SETTINGS.moveFinishedToReadFolder && FsHelpers::hasEpubExtension(fullPath) &&
+         fullPath.rfind("/Read/", 0) != 0 && !isBookCompleted(fullPath);
+}
+
+bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
+                         const bool allowMoveToReadFolder) {
   const bool isEpub = FsHelpers::hasEpubExtension(fullPath);
   const bool isXtc = FsHelpers::hasXtcExtension(fullPath);
   if (!isEpub && !isXtc) {
@@ -236,7 +242,8 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   // recents if it is opened again after being marked unfinished.
   if (SETTINGS.removeReadBooksFromRecents && completed) RECENT_BOOKS.removeByPath(fullPath);
 
-  if (isEpub && completed && SETTINGS.moveFinishedToReadFolder && fullPath.rfind("/Read/", 0) != 0) {
+  if (allowMoveToReadFolder && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
+      fullPath.rfind("/Read/", 0) != 0) {
     const std::string oldCachePath = epub.getCachePath();
     const std::string dstPath = BookMoveUtils::buildReadFolderDestination(fullPath);
     LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());

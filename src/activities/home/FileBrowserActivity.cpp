@@ -818,18 +818,31 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                   requestUpdate();
                 });
             return;
-          case FileBrowserAction::ToggleCompleted:
-            if (BookActions::toggleBookCompleted(fullPath, getFileName(entry), completedFeedbackIsFinished)) {
-              pendingCompletedFeedback = true;
-              completedFeedbackShowTime = millis();
+          case FileBrowserAction::ToggleCompleted: {
+            auto applyToggle = [this, fullPath, displayName = getFileName(entry)](const bool allowMove) {
+              if (BookActions::toggleBookCompleted(fullPath, displayName, completedFeedbackIsFinished, allowMove)) {
+                pendingCompletedFeedback = true;
+                completedFeedbackShowTime = millis();
+              }
+              {
+                RenderLock lock(*this);
+                loadFilesLocked();
+                selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+              }
+              requestUpdate(true);
+            };
+            // Finishing a book with "Move Finished Books to Read Folder" on asks first; declining still marks it
+            // finished and leaves the file where it is.
+            if (BookActions::completingWouldMoveToReadFolder(fullPath)) {
+              startActivityForResult(
+                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_MOVE_TO_READ_PROMPT_TITLE),
+                                                         tr(STR_MOVE_TO_READ_PROMPT_BODY)),
+                  [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
+              return;
             }
-            {
-              RenderLock lock(*this);
-              loadFilesLocked();
-              selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
-            }
-            requestUpdate(true);
+            applyToggle(true);
             return;
+          }
           case FileBrowserAction::EpubRenderMode: {
             const uint8_t currentIndex =
                 BookActions::epubRenderModeDisplayIndex(EpubReaderActivity::loadBookRenderMode(fullPath));
