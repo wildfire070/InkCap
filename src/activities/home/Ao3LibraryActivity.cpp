@@ -1555,15 +1555,14 @@ void Ao3LibraryActivity::renderStatusSymbol(int x, int y, int s, BookStatus stat
 }
 
 // Bottom-left square: '?' when the fic's details are missing (unindexed, or its scraped info could not be read),
-// otherwise '-'. (It used to show the AO3 archive warning.)
+// otherwise blank. (It used to show the AO3 archive warning.)
 void Ao3LibraryActivity::renderDetailsSymbol(int x, int y, int s, bool missing, bool tl, bool tr, bool bl, bool br,
                                              int yOffset) {
-  const Color bg = missing ? DarkGray : White;
-  const char* txt = missing ? "?" : "-";
-  if (missing) renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, bg);
-  const int tw = renderer.getTextWidth(UI_10_FONT_ID, txt);
+  if (!missing) return;
+  renderer.fillRoundedRect(x, y, s, s, 6, tl, tr, bl, br, DarkGray);
+  const int tw = renderer.getTextWidth(UI_10_FONT_ID, "?");
   const int th = renderer.getTextHeight(UI_10_FONT_ID);
-  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, txt, !missing);
+  renderer.drawText(UI_10_FONT_ID, x + (s - tw) / 2, y + (s - th) / 2 + yOffset, "?", false);
 }
 
 void Ao3LibraryActivity::renderCompletionSymbol(int x, int y, int s, bool completed, bool tl, bool tr, bool bl, bool br,
