@@ -66,6 +66,7 @@
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "WordRef.h"
+#include "activities/home/BookActions.h"
 #include "activities/home/RecentBookProgress.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
@@ -78,6 +79,7 @@
 #include "components/TouchHeaderBackButton.h"
 #endif
 #include "fontIds.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/Dictionary.h"
@@ -1487,21 +1489,19 @@ class ScopedReaderSettingsRestore {
 
 // Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
-void archiveFinishedBook(const std::string& srcPath, const std::string& dstPath, const std::string& oldCachePath,
-                         const std::string& title, const std::string& author) {
-  LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
-  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
+// Goes through BookMoveUtils::archiveBook() rather than a hand-rolled rename+migrate, so a finish-triggered
+// archive still leaves the restore marker the standalone Restore action (and the two-way Unfinished->Restore
+// sync) depend on to find its way back.
+void archiveFinishedBook(const std::string& srcPath, const std::string& title) {
+  LOG_INF("ERS", "Moving finished epub: %s", srcPath.c_str());
+  if (BookMoveUtils::archiveBook(srcPath).empty()) {
     LOG_ERR("ERS", "Failed to archive finished book");
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
              title.c_str());
     APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
-    return;
   }
-
-  BookMoveUtils::migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author,
-                                       !SETTINGS.removeReadBooksFromRecents);
 }
 
 }  // namespace
@@ -1935,11 +1935,14 @@ void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
   if (stats.isCompleted) {
+    restorePromptQueued = false;
+    restorePromptShown = false;
     requestArchiveMove();
   } else {
     pendingArchiveMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
+    requestArchiveRestore();
   }
   resumeReadingPaceTimer("book_stats_return");
   if (returnToReaderMenu) {
@@ -2570,12 +2573,9 @@ void EpubReaderActivity::onExit() {
 
   if (pendingArchiveMove && epub) {
     const std::string srcPath = epub->getPath();
-    const std::string oldCachePath = epub->getCachePath();
     const std::string title = epub->getTitle();
-    const std::string author = epub->getAuthor();
-    const std::string dstPath = BookMoveUtils::buildArchiveDestination(srcPath);
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
-    archiveFinishedBook(srcPath, dstPath, oldCachePath, title, author);
+    archiveFinishedBook(srcPath, title);
   } else if (pendingManualArchiveAction != PendingManualArchiveAction::None && epub) {
     const std::string path = epub->getPath();
     const bool restoring = pendingManualArchiveAction == PendingManualArchiveAction::Restore;
@@ -2583,6 +2583,11 @@ void EpubReaderActivity::onExit() {
     const std::string result = restoring ? BookMoveUtils::restoreBook(path) : BookMoveUtils::archiveBook(path);
     if (result.empty()) {
       LOG_ERR("ERS", "Failed to %s: %s", restoring ? "restore" : "archive", path.c_str());
+    } else {
+      // Two-way sync: the standalone Archive/Restore action (and this same path when a Restore was
+      // armed by un-finishing an archived book -- see requestArchiveRestore()) also flips Finished,
+      // silently. A no-op when it's already at the target value (e.g. un-finishing already set it).
+      BookActions::setBookCompletedOnDisk(result, /*completed=*/!restoring);
     }
   } else {
     epub.reset();
@@ -3033,6 +3038,22 @@ void EpubReaderActivity::loop() {
                            [this](const ActivityResult& result) {
                              resumeReadingPaceTimer("read_folder_prompt_return");
                              pendingArchiveMove = !result.isCancelled;
+                             requestUpdate();
+                           });
+    return;
+  }
+
+  if (restorePromptQueued) {
+    restorePromptQueued = false;
+    restorePromptShown = true;
+    pauseReadingPaceTimer("archive_restore_prompt");
+    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                  tr(STR_RESTORE_BODY)),
+                           [this](const ActivityResult& result) {
+                             resumeReadingPaceTimer("archive_restore_prompt_return");
+                             if (!result.isCancelled) {
+                               pendingManualArchiveAction = PendingManualArchiveAction::Restore;
+                             }
                              requestUpdate();
                            });
     return;
@@ -5068,6 +5089,8 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   pendingArchiveMove = false;
   archivePromptQueued = false;
   archivePromptShown = false;
+  restorePromptQueued = false;
+  restorePromptShown = false;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   armReadingPaceWarmup("book_stats_delete");
   initializeCompletionPromptTrigger();
@@ -5632,6 +5655,14 @@ void EpubReaderActivity::requestArchiveMove() {
   archivePromptQueued = true;
 }
 
+// Symmetric counterpart to requestArchiveMove(): with "Move Finished Books to Archive Folder" on, un-finishing
+// an already-archived book offers to restore it. Asked once per un-finish.
+void EpubReaderActivity::requestArchiveRestore() {
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || !BookMoveUtils::isInArchiveFolder(epub->getPath())) return;
+  if (restorePromptQueued || restorePromptShown) return;
+  restorePromptQueued = true;
+}
+
 void EpubReaderActivity::setBookCompleted(bool isCompleted) {
   if (stats.isCompleted == isCompleted) {
     return;
@@ -5649,6 +5680,12 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.removeByPath(epub->getPath());
     }
+    // Reverses a restore offer left over from un-finishing this book earlier in the same session.
+    restorePromptQueued = false;
+    restorePromptShown = false;
+    if (pendingManualArchiveAction == PendingManualArchiveAction::Restore) {
+      pendingManualArchiveAction = PendingManualArchiveAction::None;
+    }
     requestArchiveMove();
   } else {
     if (SETTINGS.removeReadBooksFromRecents) {
@@ -5658,6 +5695,7 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     pendingArchiveMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
+    requestArchiveRestore();
   }
   if (isCompleted) {
     globalStats.completedBooks++;
@@ -8548,31 +8586,48 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
   startActivityForResult(
       std::make_unique<AO3SyncActivity>(renderer, mappedInput, workId, updateDate, bookPath),
       [this, bookPath, spineCountBeforeDownload, hadAfterword, eobSpineIndex](const ActivityResult& res) {
-        // Post-download cache writes run against a fresh, local Epub so they never
-        // disturb the reader's own (about-to-be-destroyed) epub/section state.
-        Epub freshEpub(bookPath, "/.crosspoint");
-        const std::string cachePath = freshEpub.getCachePath();
-
         if (!res.isCancelled && std::holds_alternative<AO3Result>(res.data)) {
           const auto& ao3Res = std::get<AO3Result>(res.data);
-          if (ao3Res.downloaded) {
-            // New chapters landed on disk: refresh the AO3 sidecar, force a re-index by
-            // dropping the stale spine/section caches, and land on the first new chapter.
-            freshEpub.saveAo3Info(freshEpub.getAo3WorkId(), ao3Res.scrapedDate, ao3Res.isCompleted);
-            Storage.remove((cachePath + "/book.bin").c_str());
-            Storage.removeDir((cachePath + "/sections").c_str());
-            // Extracted chapter HTML is reused if present, so stale copies would win over the update.
-            Storage.removeDir((cachePath + "/html").c_str());
-            Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
-            AO3_NEW_CHAPTERS_STORE.addBook(bookPath, freshEpub.getTitle(), freshEpub.getAuthor());
-            int firstNewChapter = eobSpineIndex;
-            if (hadAfterword && eobSpineIndex > 0) {
-              firstNewChapter -= 1;
+          if (ao3Res.downloaded || ao3Res.updateFound) {
+            // A new chapter clears any stale Finished status and moves the fic back into the active
+            // library first, silently -- the check-for-updates action itself was the user's
+            // confirmation, and staying archived would hide a fic with a new chapter to read. Restore
+            // before touching anything else below, so the cache-path lookup, status save, and New
+            // Chapters tracking all operate on its final (possibly restored) location.
+            std::string currentPath = bookPath;
+            if (Ao3ArchiveUtils::isArchived(bookPath)) {
+              const std::string restoredPath = Ao3ArchiveUtils::restoreFic(bookPath);
+              if (restoredPath.empty()) {
+                LOG_ERR("ERS", "Failed to restore archived fic after finding an update: %s", bookPath.c_str());
+              } else {
+                currentPath = restoredPath;
+              }
             }
-            EpubReaderUtils::saveProgress(freshEpub, firstNewChapter, 0, spineCountBeforeDownload);
-          } else if (ao3Res.updateFound) {
-            Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
-            AO3_NEW_CHAPTERS_STORE.addBook(bookPath, freshEpub.getTitle(), freshEpub.getAuthor());
+
+            // Post-download cache writes run against a fresh, local Epub so they never
+            // disturb the reader's own (about-to-be-destroyed) epub/section state.
+            Epub freshEpub(currentPath, "/.crosspoint");
+            const std::string cachePath = freshEpub.getCachePath();
+
+            if (ao3Res.downloaded) {
+              // New chapters landed on disk: refresh the AO3 sidecar, force a re-index by
+              // dropping the stale spine/section caches, and land on the first new chapter.
+              freshEpub.saveAo3Info(freshEpub.getAo3WorkId(), ao3Res.scrapedDate, ao3Res.isCompleted);
+              Storage.remove((cachePath + "/book.bin").c_str());
+              Storage.removeDir((cachePath + "/sections").c_str());
+              // Extracted chapter HTML is reused if present, so stale copies would win over the update.
+              Storage.removeDir((cachePath + "/html").c_str());
+              Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+              AO3_NEW_CHAPTERS_STORE.addBook(currentPath, freshEpub.getTitle(), freshEpub.getAuthor());
+              int firstNewChapter = eobSpineIndex;
+              if (hadAfterword && eobSpineIndex > 0) {
+                firstNewChapter -= 1;
+              }
+              EpubReaderUtils::saveProgress(freshEpub, firstNewChapter, 0, spineCountBeforeDownload);
+            } else {
+              Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+              AO3_NEW_CHAPTERS_STORE.addBook(currentPath, freshEpub.getTitle(), freshEpub.getAuthor());
+            }
           }
         }
         onGoHome();

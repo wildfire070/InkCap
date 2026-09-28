@@ -262,6 +262,12 @@ class EpubReaderActivity final : public Activity {
   bool archivePromptQueued = false;
   bool archivePromptShown = false;
   void requestArchiveMove();
+  // Symmetric counterpart to requestArchiveMove(): set once the user accepts the "Restore to Library?"
+  // prompt offered when un-finishing a book already in /Archive. Confirming arms pendingManualArchiveAction
+  // (Restore) rather than its own pending flag, since onExit() already knows how to carry that out.
+  bool restorePromptQueued = false;
+  bool restorePromptShown = false;
+  void requestArchiveRestore();
   // Set once the user accepts the standalone "Archive File"/"Restore" reader-menu action
   // (independent of Mark as Finished -- see EpubReaderMenuAction::TOGGLE_ARCHIVED). Consumed in
   // onExit() alongside pendingArchiveMove, since renaming the open file must wait until its handle

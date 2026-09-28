@@ -30,8 +30,17 @@ bool isBookCompleted(const std::string& fullPath);
 // True when marking `fullPath` finished right now would also move it into /Archive (the move setting is on, the
 // book is an epub that is not finished yet and is not already there). Callers ask before doing that.
 bool completingWouldArchive(const std::string& fullPath);
+// Symmetric counterpart: true when marking `fullPath` unfinished right now would also move it back out of
+// /Archive (the move setting is on, the book is an epub that is finished and currently archived). Callers ask
+// before doing that, the same way they ask before completingWouldArchive's move.
+bool uncompletingWouldRestore(const std::string& fullPath);
+// Sets a book's Finished status directly (not a toggle) given only its path, with no archive-move side effect --
+// the shared "set finished" write (stats + global count + recents) used by every place that flips Finished as a
+// side effect of another action (Archive/Restore), where the caller already handled any move itself. `fullPath`
+// must be the book's CURRENT path (e.g. the path archiveBook()/restoreBook() just returned, not its old one).
+bool setBookCompletedOnDisk(const std::string& fullPath, bool completed);
 bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
-                         bool allowArchive = true);
+                         bool allowMove = true);
 void drawToast(const GfxRenderer& renderer, const char* msg);
 
 }  // namespace BookActions
