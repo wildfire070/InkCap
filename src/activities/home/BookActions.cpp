@@ -192,39 +192,34 @@ bool isBookCompleted(const std::string& fullPath) {
 
 bool completingWouldArchive(const std::string& fullPath) {
   return SETTINGS.moveFinishedToArchiveFolder && FsHelpers::hasEpubExtension(fullPath) &&
-         fullPath.rfind("/Archive/", 0) != 0 && !isBookCompleted(fullPath);
+         !BookMoveUtils::isInArchiveFolder(fullPath) && !isBookCompleted(fullPath);
 }
 
-bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
-                         const bool allowArchive) {
-  const bool isEpub = FsHelpers::hasEpubExtension(fullPath);
-  const bool isXtc = FsHelpers::hasXtcExtension(fullPath);
-  if (!isEpub && !isXtc) {
+bool uncompletingWouldRestore(const std::string& fullPath) {
+  return SETTINGS.moveFinishedToArchiveFolder && FsHelpers::hasEpubExtension(fullPath) &&
+         BookMoveUtils::isInArchiveFolder(fullPath) && isBookCompleted(fullPath);
+}
+
+bool setBookCompletedOnDisk(const std::string& fullPath, const bool completed) {
+  // setupCacheDir() (not just bookStatsCachePath()'s bare path computation) because this may be the
+  // first time this book has ever had state written for it -- e.g. finishing a book from the File
+  // Browser without ever having opened it in the reader.
+  std::string cachePath;
+  if (FsHelpers::hasEpubExtension(fullPath)) {
+    Epub epub(fullPath, "/.crosspoint");
+    epub.setupCacheDir();
+    cachePath = epub.getCachePath();
+  } else if (FsHelpers::hasXtcExtension(fullPath)) {
+    Xtc xtc(fullPath, "/.crosspoint");
+    xtc.setupCacheDir();
+    cachePath = xtc.getCachePath();
+  } else {
     return false;
   }
 
-  Epub epub(fullPath, "/.crosspoint");
-  Xtc xtc(fullPath, "/.crosspoint");
-  std::string cachePath;
-  std::string title;
-  std::string author;
-  if (isEpub) {
-    epub.setupCacheDir();
-    cachePath = epub.getCachePath();
-    title = epub.getTitle();
-    author = epub.getAuthor();
-  } else {
-    if (!xtc.load()) {
-      return false;
-    }
-    xtc.setupCacheDir();
-    cachePath = xtc.getCachePath();
-    title = xtc.getTitle();
-    author = xtc.getAuthor();
-  }
-
   BookReadingStats stats = BookReadingStats::load(cachePath);
-  completed = !stats.isCompleted;
+  if (stats.isCompleted == completed) return true;
+
   stats.isCompleted = completed;
   if (completed && !stats.finishedDateManual) {
     ReadingStatsDateTime now;
@@ -250,23 +245,54 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   // recents if it is opened again after being marked unfinished.
   if (SETTINGS.removeReadBooksFromRecents && completed) RECENT_BOOKS.removeByPath(fullPath);
 
-  if (allowArchive && isEpub && completed && SETTINGS.moveFinishedToArchiveFolder &&
-      fullPath.rfind("/Archive/", 0) != 0) {
-    const std::string oldCachePath = epub.getCachePath();
-    const std::string dstPath = BookMoveUtils::buildArchiveDestination(fullPath);
-    LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());
-    if (!Storage.rename(fullPath.c_str(), dstPath.c_str())) {
-      LOG_ERR("BookActions", "Failed to move book to 'Read' folder");
-      snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
-      snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
-               displayName.c_str());
-      APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
-      APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
-      return true;
-    }
+  return true;
+}
 
-    BookMoveUtils::migrateMovedEpubState(fullPath, dstPath, oldCachePath, title, author,
-                                         !SETTINGS.removeReadBooksFromRecents);
+bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
+                         const bool allowMove) {
+  const bool isEpub = FsHelpers::hasEpubExtension(fullPath);
+  const bool isXtc = FsHelpers::hasXtcExtension(fullPath);
+  if (!isEpub && !isXtc) {
+    return false;
+  }
+  if (isXtc && !Xtc(fullPath, "/.crosspoint").load()) {
+    return false;
+  }
+
+  const std::string cachePath = bookStatsCachePath(fullPath);
+  if (cachePath.empty()) return false;
+  completed = !BookReadingStats::load(cachePath).isCompleted;
+
+  if (!setBookCompletedOnDisk(fullPath, completed)) {
+    return false;
+  }
+
+  // Two-way sync with the Archive folder, both gated by the same setting: finishing an epub not yet
+  // archived offers to move it in; un-finishing one already archived offers to move it back out. Each
+  // direction goes through the same archiveBook()/restoreBook() the standalone Archive File/Restore
+  // actions use, so a finish-triggered archive still leaves the restore marker Restore depends on.
+  if (allowMove && isEpub && SETTINGS.moveFinishedToArchiveFolder) {
+    if (completed && !BookMoveUtils::isInArchiveFolder(fullPath)) {
+      LOG_INF("BookActions", "Moving completed epub: %s", fullPath.c_str());
+      if (BookMoveUtils::archiveBook(fullPath).empty()) {
+        LOG_ERR("BookActions", "Failed to move book to Archive folder");
+        snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
+        snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
+                 displayName.c_str());
+        APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+        APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+      }
+    } else if (!completed && BookMoveUtils::isInArchiveFolder(fullPath)) {
+      LOG_INF("BookActions", "Restoring unfinished epub: %s", fullPath.c_str());
+      if (BookMoveUtils::restoreBook(fullPath).empty()) {
+        LOG_ERR("BookActions", "Failed to restore book from Archive folder");
+        snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_RESTORE_FAILED_TITLE));
+        snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_RESTORE_FAILED_BODY),
+                 displayName.c_str());
+        APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+        APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+      }
+    }
   }
 
   return true;

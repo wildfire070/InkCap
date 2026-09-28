@@ -62,6 +62,7 @@
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "WordRef.h"
+#include "activities/home/BookActions.h"
 #include "activities/home/RecentBookProgress.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
@@ -1484,21 +1485,19 @@ class ScopedReaderSettingsRestore {
 
 // Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
-void archiveFinishedBook(const std::string& srcPath, const std::string& dstPath, const std::string& oldCachePath,
-                         const std::string& title, const std::string& author) {
-  LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
-  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
+// Goes through BookMoveUtils::archiveBook() rather than a hand-rolled rename+migrate, so a finish-triggered
+// archive still leaves the restore marker the standalone Restore action (and the two-way Unfinished->Restore
+// sync) depend on to find its way back.
+void archiveFinishedBook(const std::string& srcPath, const std::string& title) {
+  LOG_INF("ERS", "Moving finished epub: %s", srcPath.c_str());
+  if (BookMoveUtils::archiveBook(srcPath).empty()) {
     LOG_ERR("ERS", "Failed to archive finished book");
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
              title.c_str());
     APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
-    return;
   }
-
-  BookMoveUtils::migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author,
-                                       !SETTINGS.removeReadBooksFromRecents);
 }
 
 }  // namespace
@@ -1932,11 +1931,14 @@ void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
   if (stats.isCompleted) {
+    restorePromptQueued = false;
+    restorePromptShown = false;
     requestArchiveMove();
   } else {
     pendingArchiveMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
+    requestArchiveRestore();
   }
   resumeReadingPaceTimer("book_stats_return");
   if (returnToReaderMenu) {
@@ -2610,12 +2612,9 @@ void EpubReaderActivity::onExit() {
 
   if (pendingArchiveMove && epub) {
     const std::string srcPath = epub->getPath();
-    const std::string oldCachePath = epub->getCachePath();
     const std::string title = epub->getTitle();
-    const std::string author = epub->getAuthor();
-    const std::string dstPath = BookMoveUtils::buildArchiveDestination(srcPath);
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
-    archiveFinishedBook(srcPath, dstPath, oldCachePath, title, author);
+    archiveFinishedBook(srcPath, title);
   } else if (pendingManualArchiveAction != PendingManualArchiveAction::None && epub) {
     const std::string path = epub->getPath();
     const bool restoring = pendingManualArchiveAction == PendingManualArchiveAction::Restore;
@@ -2623,6 +2622,11 @@ void EpubReaderActivity::onExit() {
     const std::string result = restoring ? BookMoveUtils::restoreBook(path) : BookMoveUtils::archiveBook(path);
     if (result.empty()) {
       LOG_ERR("ERS", "Failed to %s: %s", restoring ? "restore" : "archive", path.c_str());
+    } else {
+      // Two-way sync: the standalone Archive/Restore action (and this same path when a Restore was
+      // armed by un-finishing an archived book -- see requestArchiveRestore()) also flips Finished,
+      // silently. A no-op when it's already at the target value (e.g. un-finishing already set it).
+      BookActions::setBookCompletedOnDisk(result, /*completed=*/!restoring);
     }
   } else {
     epub.reset();
@@ -3080,6 +3084,22 @@ void EpubReaderActivity::loop() {
                            [this](const ActivityResult& result) {
                              resumeReadingPaceTimer("read_folder_prompt_return");
                              pendingArchiveMove = !result.isCancelled;
+                             requestUpdate();
+                           });
+    return;
+  }
+
+  if (restorePromptQueued) {
+    restorePromptQueued = false;
+    restorePromptShown = true;
+    pauseReadingPaceTimer("archive_restore_prompt");
+    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                  tr(STR_RESTORE_BODY)),
+                           [this](const ActivityResult& result) {
+                             resumeReadingPaceTimer("archive_restore_prompt_return");
+                             if (!result.isCancelled) {
+                               pendingManualArchiveAction = PendingManualArchiveAction::Restore;
+                             }
                              requestUpdate();
                            });
     return;
@@ -5093,6 +5113,8 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   pendingArchiveMove = false;
   archivePromptQueued = false;
   archivePromptShown = false;
+  restorePromptQueued = false;
+  restorePromptShown = false;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   armReadingPaceWarmup("book_stats_delete");
   initializeCompletionPromptTrigger();
@@ -5642,6 +5664,14 @@ void EpubReaderActivity::requestArchiveMove() {
   archivePromptQueued = true;
 }
 
+// Symmetric counterpart to requestArchiveMove(): with "Move Finished Books to Archive Folder" on, un-finishing
+// an already-archived book offers to restore it. Asked once per un-finish.
+void EpubReaderActivity::requestArchiveRestore() {
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || !BookMoveUtils::isInArchiveFolder(epub->getPath())) return;
+  if (restorePromptQueued || restorePromptShown) return;
+  restorePromptQueued = true;
+}
+
 void EpubReaderActivity::setBookCompleted(bool isCompleted) {
   if (stats.isCompleted == isCompleted) {
     return;
@@ -5659,6 +5689,12 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (SETTINGS.removeReadBooksFromRecents) {
       RECENT_BOOKS.removeByPath(epub->getPath());
     }
+    // Reverses a restore offer left over from un-finishing this book earlier in the same session.
+    restorePromptQueued = false;
+    restorePromptShown = false;
+    if (pendingManualArchiveAction == PendingManualArchiveAction::Restore) {
+      pendingManualArchiveAction = PendingManualArchiveAction::None;
+    }
     requestArchiveMove();
   } else {
     if (SETTINGS.removeReadBooksFromRecents) {
@@ -5668,6 +5704,7 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     pendingArchiveMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
+    requestArchiveRestore();
   }
   if (isCompleted) {
     globalStats.completedBooks++;

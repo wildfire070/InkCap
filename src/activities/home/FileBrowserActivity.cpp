@@ -842,6 +842,14 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                   [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
               return;
             }
+            // Symmetric direction: un-finishing a book already in /Archive asks before moving it back out.
+            if (BookActions::uncompletingWouldRestore(fullPath)) {
+              startActivityForResult(
+                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                         tr(STR_RESTORE_BODY)),
+                  [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
+              return;
+            }
             applyToggle(true);
             return;
           }
@@ -895,10 +903,14 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                                                        tr(STR_ARCHIVE_PROMPT_BODY)),
                 [this, fullPath](const ActivityResult& confirmation) {
                   if (confirmation.isCancelled) return;
-                  if (BookMoveUtils::archiveBook(fullPath).empty()) {
+                  const std::string newPath = BookMoveUtils::archiveBook(fullPath);
+                  if (newPath.empty()) {
                     RenderLock lock(*this);
                     BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
                   } else {
+                    // Two-way sync: archiving also marks the book Finished, silently -- confirming the
+                    // archive itself is the only prompt this needs.
+                    BookActions::setBookCompletedOnDisk(newPath, true);
                     RenderLock lock(*this);
                     loadFilesLocked();
                     selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
@@ -912,10 +924,13 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                                                        tr(STR_RESTORE_BODY)),
                 [this, fullPath](const ActivityResult& confirmation) {
                   if (confirmation.isCancelled) return;
-                  if (BookMoveUtils::restoreBook(fullPath).empty()) {
+                  const std::string newPath = BookMoveUtils::restoreBook(fullPath);
+                  if (newPath.empty()) {
                     RenderLock lock(*this);
                     BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
                   } else {
+                    // Two-way sync: restoring also marks the book Unfinished, silently.
+                    BookActions::setBookCompletedOnDisk(newPath, false);
                     RenderLock lock(*this);
                     loadFilesLocked();
                     selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
