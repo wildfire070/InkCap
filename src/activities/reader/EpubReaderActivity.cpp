@@ -1485,16 +1485,6 @@ class ScopedReaderSettingsRestore {
   EpubReaderActivity::ReaderSettingsSnapshot snapshot;
 };
 
-// SD card folder finished books are moved into. Single source of truth for the path.
-constexpr char ARCHIVE_FOLDER[] = "/Archive";
-
-// True if path is inside ARCHIVE_FOLDER (starts with "<ARCHIVE_FOLDER>/"). Non-allocating so
-// it is cheap to call from loop(), and avoids reintroducing a separate "/Archive/" literal.
-bool isInArchiveFolder(const std::string& path) {
-  constexpr size_t n = sizeof(ARCHIVE_FOLDER) - 1;  // excludes NUL
-  return path.size() > n && path.compare(0, n, ARCHIVE_FOLDER) == 0 && path[n] == '/';
-}
-
 // Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
 void archiveFinishedBook(const std::string& srcPath, const std::string& dstPath, const std::string& oldCachePath,
@@ -5607,7 +5597,7 @@ void EpubReaderActivity::suppressPowerShortcutRelease() {
 // With "Move Finished Books to Archive Folder" on, a finished book is only moved after the user accepts a separate
 // prompt. Asked once per finish; a book already in /Archive/ is never offered.
 void EpubReaderActivity::requestArchiveMove() {
-  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || isInArchiveFolder(epub->getPath())) return;
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || BookMoveUtils::isInArchiveFolder(epub->getPath())) return;
   if (archivePromptQueued || archivePromptShown) return;
   archivePromptQueued = true;
 }

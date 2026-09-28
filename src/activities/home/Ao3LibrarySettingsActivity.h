@@ -11,7 +11,6 @@ class Ao3LibrarySettingsActivity final : public Activity {
   ButtonNavigator buttonNavigator;
 
   std::string ao3Folder;
-  std::string archiveFolderName;
   std::string receiveFolder;
   std::vector<std::string> excludedFolders;
   int batchSize = 10;
@@ -27,7 +26,6 @@ class Ao3LibrarySettingsActivity final : public Activity {
   std::string getFolderLastComponent(const std::string& path) const;
   std::string formatFolderPill() const;
   std::string formatExclusionsPill() const;
-  std::string formatArchiveFolderPill() const;
   std::string formatReceiveFolderPill() const;
 
  public:

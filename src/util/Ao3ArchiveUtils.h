@@ -2,33 +2,20 @@
 
 #include <string>
 
-// Moves a finished AO3 fic out of the active library into a mirrored /AO3Read
-// folder (preserving any subfolder structure under the source path) without
-// losing its cache, bookmarks, or clippings -- and can move it back later.
-// Pairs with the general, non-AO3 src/util/BookMoveUtils.h, whose
-// migrateMovedEpubState() this reuses for the actual cache/bookmark/clipping
-// migration; the AO3-specific piece here is keeping Ao3Librarian's index in
-// sync with the move.
+// Moves a finished AO3 fic out of the active library into BookMoveUtils::ARCHIVE_FOLDER (the same
+// fixed /Archive/ folder every other finished book moves into) without losing its cache, bookmarks,
+// or clippings -- and can move it back later. Pairs with the general, non-AO3
+// src/util/BookMoveUtils.h, whose migrateMovedEpubState() and buildArchiveDestination() this reuses
+// for the actual move and cache/bookmark/clipping migration; the AO3-specific piece here is keeping
+// Ao3Librarian's index in sync with the move.
 namespace Ao3ArchiveUtils {
 
-// Fallback destination root when the user hasn't set a custom one via
-// Ao3LibrarySettingsActivity's "Archive Folder" row.
-inline constexpr char DEFAULT_ARCHIVE_ROOT[] = "/AO3Read";
-
-// The user's configured archive root (the "archiveFolderName" field in
-// /.crosspoint/ao3_settings.json, the same ad-hoc file "ao3Folder" already
-// lives in), or DEFAULT_ARCHIVE_ROOT if unset.
-std::string archiveRoot();
-
-// True if path already lives under the current archive root.
+// True if path is an archived AO3 fic: its own sidecar exists but the index has no live record for
+// it. Independent of which folder the file actually sits in -- archiving tombstones the OLD path's
+// index record and deliberately never writes a new one at the new path, so a valid sidecar with no
+// live record IS the definition of "archived" (a plain path-prefix check against ARCHIVE_FOLDER
+// isn't, since restoreFic() can leave a fic wherever its original path was).
 bool isArchived(const std::string& path);
-
-// Computes the mirrored destination path under the current archive root, preserving the
-// filename and any parent-folder structure the source had beyond its last
-// path component's containing folder. Dedupes with " (2)", " (3)", ... on a
-// same-name collision (matching BookMoveUtils::buildArchiveDestination).
-// Creates the destination's parent directory.
-std::string buildArchiveDestination(const std::string& srcPath);
 
 // Archives an AO3-indexed fic: moves the file, re-keys its cache dir and
 // migrated state (bookmarks/clippings/recents) via BookMoveUtils, and

@@ -147,6 +147,23 @@ TEST_F(LibraryBuilderTest, DirectoryEntriesAreEnumeratedOnce) {
   EXPECT_EQ(fake::directoryEntriesByPath["/folder/c.txt"], 1u);
 }
 
+TEST_F(LibraryBuilderTest, ArchiveFolderIsExcludedFromTheScan) {
+  fake::add("/Archive/finished.epub");
+  fake::add("/folder/Archive/not_the_real_one.epub");
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+
+  // The top-level /Archive is never descended into -- its contents are never enumerated.
+  EXPECT_EQ(fake::directoryEntriesByPath.count("/Archive/finished.epub"), 0u);
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord record{};
+  EXPECT_FALSE(recordAtPath(index, "/Archive/finished.epub", record));
+  // Only the exact top-level path is excluded; a folder that merely happens to be named
+  // "Archive" somewhere deeper in the tree is an ordinary folder.
+  EXPECT_TRUE(recordAtPath(index, "/folder/Archive/not_the_real_one.epub", record));
+}
+
 TEST_F(LibraryBuilderTest, FileTypesKeepMarkdownSeparateAndIncludeXtch) {
   EXPECT_EQ(fileTypeFor("book.epub"), FileEpub);
   EXPECT_EQ(fileTypeFor("book.xtc"), FileXtc);
