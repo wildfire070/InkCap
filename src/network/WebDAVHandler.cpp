@@ -12,6 +12,8 @@
 #include <memory>
 #include <new>
 
+#include "Ao3MarkedForLaterStore.h"
+#include "Ao3NewChaptersStore.h"
 #include "CrossPointSettings.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "util/BookCacheUtils.h"
@@ -667,6 +669,10 @@ void WebDAVHandler::handleMove(WebServer& s) {
     if (srcIsEpub) {
       BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle, epubAuthor,
                                            /*keepInRecents=*/true);
+      // migrateMovedEpubState() doesn't know about these two path-keyed AO3 stores -- without this, a
+      // marked/new-chapter fic moved via WebDAV silently loses that flag.
+      AO3_MARKED_FOR_LATER_STORE.updatePath(srcPath.c_str(), dstPath.c_str());
+      AO3_NEW_CHAPTERS_STORE.updatePath(srcPath.c_str(), dstPath.c_str());
     } else if (srcIsDir) {
       const std::string srcStd = srcPath.c_str();
       const std::string dstStd = dstPath.c_str();
@@ -688,6 +694,9 @@ void WebDAVHandler::handleMove(WebServer& s) {
         const std::string oldChildCachePath = Epub::cachePathForFilePath(oldFullPath, "/.crosspoint");
         BookMoveUtils::migrateMovedEpubState(oldFullPath, newFullPath, oldChildCachePath, title, author,
                                              /*keepInRecents=*/true);
+        // See the single-file case above for why these two stores need their own explicit update.
+        AO3_MARKED_FOR_LATER_STORE.updatePath(oldFullPath, newFullPath);
+        AO3_NEW_CHAPTERS_STORE.updatePath(oldFullPath, newFullPath);
       }
     }
     ImageFolderIndex::invalidateForPath(srcPath.c_str());

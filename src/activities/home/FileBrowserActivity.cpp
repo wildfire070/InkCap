@@ -22,6 +22,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "Ao3MarkedForLaterStore.h"
+#include "Ao3NewChaptersStore.h"
 #include "util/Ao3ArchiveUtils.h"
 #include "util/BookMetadataUtils.h"
 #include "BookActions.h"
@@ -1127,9 +1128,10 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
     return;
   }
 
-  // The Marked-for-Later queue is keyed by file path, so without this a renamed fic falls out
-  // of the queue (pruneMissing() sees the old path gone) and loses its queue position.
+  // Both queues below are keyed by file path, so without this a renamed fic falls out of them
+  // (pruneMissing()/a stale entry) and silently loses its queue position / new-chapter flag.
   AO3_MARKED_FOR_LATER_STORE.updatePath(oldPath, newPath);
+  AO3_NEW_CHAPTERS_STORE.updatePath(oldPath, newPath);
 
   bool appStateChanged = false;
   if (APP_STATE.favoriteSleepImagePath == oldPath) {
