@@ -20,6 +20,8 @@
 #include <cstring>
 #include <iterator>
 
+#include "Ao3MarkedForLaterStore.h"
+#include "Ao3NewChaptersStore.h"
 #include "AppVersion.h"
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
@@ -1305,6 +1307,11 @@ void CrossPointWebServer::handleRename() const {
     if (isEpub) {
       BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
                                            /*keepInRecents=*/true);
+      // migrateMovedEpubState() doesn't know about these two path-keyed AO3 stores (the in-app File
+      // Browser's own rename handles them separately too) -- without this, a marked/new-chapter fic
+      // renamed from the web portal silently loses that flag.
+      AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+      AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
     }
     ImageFolderIndex::invalidateForPath(itemPath.c_str());
     sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
@@ -1419,6 +1426,9 @@ void CrossPointWebServer::handleMove() const {
     if (isEpub) {
       BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
                                            /*keepInRecents=*/true);
+      // See handleRename() for why these two path-keyed AO3 stores need their own explicit update.
+      AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+      AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
     }
     ImageFolderIndex::invalidateForPath(itemPath.c_str());
     sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());

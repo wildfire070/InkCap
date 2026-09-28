@@ -64,6 +64,19 @@ bool Ao3NewChaptersStore::removeByPath(const std::string& path) {
   return true;
 }
 
+bool Ao3NewChaptersStore::updatePath(const std::string& oldPath, const std::string& newPath) {
+  ensureLoaded();
+
+  if (oldPath == newPath) return false;
+  auto it = std::find_if(entries.begin(), entries.end(), [&](const Ao3NewChaptersEntry& e) { return e.path == oldPath; });
+  if (it == entries.end()) {
+    return false;
+  }
+  it->path = newPath;
+  saveToFile();
+  return true;
+}
+
 bool Ao3NewChaptersStore::pruneMissing() {
   ensureLoaded();
 
