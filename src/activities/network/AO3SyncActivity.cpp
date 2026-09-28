@@ -12,6 +12,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/ActivityResult.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
@@ -454,9 +455,17 @@ void AO3SyncActivity::performDownload() {
 }
 
 void AO3SyncActivity::loop() {
+  // Outside all three interactive states below: clear the touch-prompt marker so the next time any
+  // of them is entered (even the same one again, e.g. a second failed retry landing back on ERROR)
+  // is treated as fresh and shows its own prompt, not skipped as "already shown."
+  if (state != AO3SyncState::UPDATE_FOUND && state != AO3SyncState::UP_TO_DATE && state != AO3SyncState::ERROR) {
+    touchPromptShownForState = AO3SyncState::INITIALIZING;
+  }
+
   if (state == AO3SyncState::UPDATE_FOUND || state == AO3SyncState::UP_TO_DATE) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (state == AO3SyncState::UPDATE_FOUND) {
+    const bool isUpdateFound = state == AO3SyncState::UPDATE_FOUND;
+    auto onAccept = [this, isUpdateFound] {
+      if (isUpdateFound) {
         performDownload();
       } else {
         AO3Result res;
@@ -466,19 +475,45 @@ void AO3SyncActivity::loop() {
         setResult(ActivityResult(res));
         finish();
       }
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      if (state == AO3SyncState::UPDATE_FOUND) {
+    };
+    auto onDecline = [this, isUpdateFound] {
+      if (isUpdateFound) {
         // Signal the update exists so status becomes NEW_CHAPTER_AVAILABLE
         AO3Result res;
         res.updateFound = true;
         setResult(ActivityResult(res));
       }
       finish();
+    };
+
+    // Touch (X4 Pro): drawButtonHints() (and the affordance it draws) is suppressed entirely on any
+    // touch-capable device, so this state has no touch affordance through the normal render path at
+    // all -- launch an actual ConfirmationActivity instead (genuinely touch-capable, built on
+    // OptionPopup), once per state entry. Button devices are unaffected: this only replaces how the
+    // choice is PRESENTED, not the choice itself or its outcome.
+    if (mappedInput.hasTouchHardware() && touchPromptShownForState != state) {
+      touchPromptShownForState = state;
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(
+              renderer, mappedInput, isUpdateFound ? tr(STR_AO3_UPDATE_QUERY) : tr(STR_AO3_UP_TO_DATE),
+              isUpdateFound ? (std::string("New date: ") + scrapedDate) : std::string()),
+          [onAccept, onDecline](const ActivityResult& result) {
+            if (result.isCancelled) {
+              onDecline();
+            } else {
+              onAccept();
+            }
+          });
+      return;
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      onAccept();
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      onDecline();
     }
   } else if (state == AO3SyncState::ERROR) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      finish();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    auto onRetry = [this] {
       // Check if WiFi is still connected, if not reconnect, otherwise just retry
       if (WiFi.status() == WL_CONNECTED) {
         if (downloadTotal > 0 || !scrapedDate.empty()) {
@@ -495,6 +530,26 @@ void AO3SyncActivity::loop() {
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                                [this](const ActivityResult& res) { onWifiSelectionComplete(!res.isCancelled); });
       }
+    };
+
+    if (mappedInput.hasTouchHardware() && touchPromptShownForState != state) {
+      touchPromptShownForState = state;
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(renderer, mappedInput, errorMessage, std::string()),
+          [this, onRetry](const ActivityResult& result) {
+            if (result.isCancelled) {
+              finish();
+            } else {
+              onRetry();
+            }
+          });
+      return;
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      finish();
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      onRetry();
     }
   }
 }
