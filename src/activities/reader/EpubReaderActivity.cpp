@@ -1483,6 +1483,25 @@ class ScopedReaderSettingsRestore {
   EpubReaderActivity::ReaderSettingsSnapshot snapshot;
 };
 
+// Shared by every place that moves a book into or out of /Archive/ after its Epub handle has already
+// been released (so there's no live reader UI left to show a toast against) -- queues the same
+// persistent, go-home-safe alert archiveFinishedBook() has always shown for the automatic
+// finish-triggered move, so a failure here is exactly as visible whether the move was automatic or
+// this session's newer manual/two-way-sync paths.
+void showArchiveMoveFailedAlert(const bool restoring, const std::string& title) {
+  if (restoring) {
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_RESTORE_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_RESTORE_FAILED_BODY),
+             title.c_str());
+  } else {
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
+             title.c_str());
+  }
+  APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+  APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+}
+
 // Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
 // Goes through BookMoveUtils::archiveBook() rather than a hand-rolled rename+migrate, so a finish-triggered
@@ -1492,11 +1511,7 @@ void archiveFinishedBook(const std::string& srcPath, const std::string& title) {
   LOG_INF("ERS", "Moving finished epub: %s", srcPath.c_str());
   if (BookMoveUtils::archiveBook(srcPath).empty()) {
     LOG_ERR("ERS", "Failed to archive finished book");
-    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_ARCHIVE_FAILED_TITLE));
-    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_ARCHIVE_FAILED_BODY),
-             title.c_str());
-    APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
-    APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    showArchiveMoveFailedAlert(/*restoring=*/false, title);
   }
 }
 
@@ -2617,11 +2632,13 @@ void EpubReaderActivity::onExit() {
     archiveFinishedBook(srcPath, title);
   } else if (pendingManualArchiveAction != PendingManualArchiveAction::None && epub) {
     const std::string path = epub->getPath();
+    const std::string title = epub->getTitle();
     const bool restoring = pendingManualArchiveAction == PendingManualArchiveAction::Restore;
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
     const std::string result = restoring ? BookMoveUtils::restoreBook(path) : BookMoveUtils::archiveBook(path);
     if (result.empty()) {
       LOG_ERR("ERS", "Failed to %s: %s", restoring ? "restore" : "archive", path.c_str());
+      showArchiveMoveFailedAlert(restoring, title);
     } else {
       // Two-way sync: the standalone Archive/Restore action (and this same path when a Restore was
       // armed by un-finishing an archived book -- see requestArchiveRestore()) also flips Finished,
@@ -2680,6 +2697,7 @@ void EpubReaderActivity::openReaderMenu() {
         !previewActive && epub && Dictionary::exists(epub->getCachePath().c_str()), !BOOKMARKS.getBookmarks().empty(),
         CLIPPINGS.hasClippings(),
         !previewActive && BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount), isBookCompleted,
+        epub && BookMoveUtils::isInArchiveFolder(epub->getPath()),
         SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE, stableCurrentPage,
         stablePageCount, getAutoPageTurnIntervalSeconds(), automaticPageTurnActive, saveReaderOptionsForBook, this,
         saveGlobalSettingsForBookReader, this, beginGlobalSettingsEditForBookReader, this,

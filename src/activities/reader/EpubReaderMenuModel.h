@@ -97,6 +97,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   RenderMode,
   IndexingMethod,
   ToggleCompleted,
+  ToggleArchived,
   Controls,
   ResetReadingPace,
   DeleteCache,
@@ -186,6 +187,7 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   settings.add(ReaderDrawerCatalogItem::RenderMode);
   settings.add(ReaderDrawerCatalogItem::IndexingMethod);
   settings.add(ReaderDrawerCatalogItem::ToggleCompleted);
+  settings.add(ReaderDrawerCatalogItem::ToggleArchived);
   if (available.showReadingPaceReset) settings.add(ReaderDrawerCatalogItem::ResetReadingPace);
   settings.add(ReaderDrawerCatalogItem::DeleteCache);
   settings.add(ReaderDrawerCatalogItem::DeleteStats);
