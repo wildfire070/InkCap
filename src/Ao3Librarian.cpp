@@ -1190,6 +1190,17 @@ char Ao3Librarian::mapWarning(const char* s) {
 }
 
 void Ao3Librarian::scanGlobalLibrary(std::vector<Ao3LibraryMetadata>& out) {
+  // No caller anywhere in the codebase today (dead code) -- guarded anyway, defensively, since
+  // Ao3LibraryMetadata is ~1.2KB per entry (summary[512]+seriesName[128]+tags[64]+filepath[256]+
+  // title[128]+author[128]+...) and this grows `out` once per AO3-indexed book on the WHOLE SD card
+  // with no upper bound -- a library of a few hundred fics alone could exceed available heap. InkCap
+  // builds with -fno-exceptions, so a failed push_back's std::bad_alloc has nothing to catch it and
+  // aborts the whole firmware (same crash class as SdCardFontRegistry/SettingsList/
+  // FontSelectionActivity and every other site fixed in this same sweep). Whoever wires this up in the
+  // future inherits a stop-collecting-early guard for free instead of a hard crash waiting to happen.
+  constexpr uint32_t SCAN_GLOBAL_LIBRARY_MIN_FREE_HEAP = 24576;
+  constexpr uint32_t SCAN_GLOBAL_LIBRARY_MIN_MAX_ALLOC_HEAP = 16384;
+
   const char* cacheRoot = "/.crosspoint";
   HalFile root = Storage.open(cacheRoot);
   if (!root || !root.isDirectory()) return;
@@ -1206,6 +1217,16 @@ void Ao3Librarian::scanGlobalLibrary(std::vector<Ao3LibraryMetadata>& out) {
           Ao3LibraryMetadata meta;
           if (f.read((uint8_t*)&meta, sizeof(meta)) == sizeof(meta)) {
             if (meta.isValid() && meta.version == 9) {
+              if (ESP.getFreeHeap() < SCAN_GLOBAL_LIBRARY_MIN_FREE_HEAP ||
+                  ESP.getMaxAllocHeap() < SCAN_GLOBAL_LIBRARY_MIN_MAX_ALLOC_HEAP) {
+                LOG_ERR("AO3L", "Stopping global library scan early: %u free (need %u), %u max alloc (need %u)",
+                        ESP.getFreeHeap(), SCAN_GLOBAL_LIBRARY_MIN_FREE_HEAP, ESP.getMaxAllocHeap(),
+                        SCAN_GLOBAL_LIBRARY_MIN_MAX_ALLOC_HEAP);
+                f.close();
+                entry.close();
+                root.close();
+                return;
+              }
               out.push_back(meta);
             }
           }
