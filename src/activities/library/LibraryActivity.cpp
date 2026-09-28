@@ -16,6 +16,7 @@
 #include <functional>
 
 #include "activities/home/BookActions.h"
+#include "activities/home/BookDetailsActivity.h"
 #include "activities/home/FileBrowserActionActivity.h"
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/BookReadingStats.h"
@@ -1002,6 +1003,22 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                    return;
                  case FileBrowserAction::SendNearby:
                    activityManager.goToNearbyBookSend(book.path, false);
+                   return;
+                 case FileBrowserAction::BookInfo:
+                   openDialog(makeUniqueNoThrow<BookDetailsActivity>(renderer, mappedInput, book.path, "", "",
+                                                                     /*hasPrev=*/false, /*hasNext=*/false),
+                              [this](const ActivityResult&) { reloadAfterBookAction(); });
+                   return;
+                 case FileBrowserAction::PinToHome:
+                   if (!RECENT_BOOKS.setPinned(book.path, true)) {
+                     RenderLock lock(*this);
+                     BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+                   }
+                   reloadAfterBookAction();
+                   return;
+                 case FileBrowserAction::UnpinFromHome:
+                   RECENT_BOOKS.setPinned(book.path, false);
+                   reloadAfterBookAction();
                    return;
                  case FileBrowserAction::ArchiveBook:
                    // Standalone action, independent of Mark as Finished -- same confirmation the
