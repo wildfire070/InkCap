@@ -15,7 +15,9 @@
 #include <cstdio>
 #include <functional>
 
+#include "Ao3MarkedForLaterStore.h"
 #include "activities/home/BookActions.h"
+#include "activities/home/BookDetailsActivity.h"
 #include "activities/home/FileBrowserActionActivity.h"
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/BookReadingStats.h"
@@ -26,6 +28,7 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "util/BookMoveUtils.h"
 #include "components/icons/libraryIcons.h"
 #include "components/icons/listIcons.h"
@@ -1019,6 +1022,53 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                                     // Two-way sync: archiving also marks the book Finished, silently.
                                     BookActions::setBookCompletedOnDisk(newPath, true);
                                   }
+                                }
+                                reloadAfterBookAction();
+                              });
+                   return;
+                 case FileBrowserAction::BookInfo:
+                   openDialog(makeUniqueNoThrow<BookDetailsActivity>(renderer, mappedInput, book.path, "", "",
+                                                                     /*hasPrev=*/false, /*hasNext=*/false),
+                              [this](const ActivityResult&) { reloadAfterBookAction(); });
+                   return;
+                 case FileBrowserAction::PinToHome:
+                   if (!RECENT_BOOKS.setPinned(book.path, true)) {
+                     RenderLock lock(*this);
+                     BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+                   }
+                   reloadAfterBookAction();
+                   return;
+                 case FileBrowserAction::UnpinFromHome:
+                   RECENT_BOOKS.setPinned(book.path, false);
+                   reloadAfterBookAction();
+                   return;
+                 case FileBrowserAction::MarkForLater:
+                   AO3_MARKED_FOR_LATER_STORE.addBook(book.path, book.title, book.author);
+                   reloadAfterBookAction();
+                   return;
+                 case FileBrowserAction::UnmarkForLater:
+                   AO3_MARKED_FOR_LATER_STORE.removeByPath(book.path);
+                   reloadAfterBookAction();
+                   return;
+                 case FileBrowserAction::ArchiveFic:
+                   // Archiving moves the file out of the current folder -- less casually reversible than
+                   // Restore, so confirm it the same way the File Browser's own Archive Fic option does.
+                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                                      tr(STR_ARCHIVE_PROMPT_BODY)),
+                              [this, book](const ActivityResult& confirmation) {
+                                if (!confirmation.isCancelled &&
+                                    Ao3ArchiveUtils::archiveFic(book.path, book.title, book.author).empty()) {
+                                  LOG_ERR("LIB", "Failed to archive fic: %s", book.path.c_str());
+                                }
+                                reloadAfterBookAction();
+                              });
+                   return;
+                 case FileBrowserAction::RestoreFic:
+                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                      tr(STR_RESTORE_BODY)),
+                              [this, book](const ActivityResult& confirmation) {
+                                if (!confirmation.isCancelled && Ao3ArchiveUtils::restoreFic(book.path).empty()) {
+                                  LOG_ERR("LIB", "Failed to restore fic: %s", book.path.c_str());
                                 }
                                 reloadAfterBookAction();
                               });
