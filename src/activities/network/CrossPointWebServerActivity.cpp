@@ -4,6 +4,7 @@
 #include <ESPmDNS.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
 #include <Memory.h>
 #include <WiFi.h>
 
@@ -101,6 +102,7 @@ void CrossPointWebServerActivity::onEnter() {
 }
 
 void CrossPointWebServerActivity::onExit() {
+  library::invalidateLibraryIndex();
   Activity::onExit();
 
   // AO3 library: browser/hotspot uploads may have added new fics — flag a rescan

@@ -210,13 +210,16 @@ void XtcReaderActivity::loop() {
   shortcutPreviousPagePending = false;
 
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
-  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  const int bottomHeight = UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Bottom);
+  const int topHeight =
+      SETTINGS.legacyXtcTopUsesBottom ? bottomHeight : UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top);
   const auto statusBarMode = static_cast<CrossPointSettings::XTC_STATUS_BAR_MODE>(SETTINGS.xtcStatusBarMode);
-  const bool tappedStatusBar =
-      touch.tapped && ((statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP &&
-                        ReaderUtils::isTopStatusBarTap(renderer, touch.y, statusBarHeight)) ||
-                       (statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_BOTTOM &&
-                        ReaderUtils::isBottomStatusBarTap(renderer, touch.y, statusBarHeight)));
+  const bool tappedStatusBar = touch.tapped && (((statusBarMode == CrossPointSettings::XTC_STATUS_BAR_TOP ||
+                                                  statusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTH) &&
+                                                 ReaderUtils::isTopStatusBarTap(renderer, touch.y, topHeight)) ||
+                                                ((statusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTTOM ||
+                                                  statusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTH) &&
+                                                 ReaderUtils::isBottomStatusBarTap(renderer, touch.y, bottomHeight)));
   if (tappedStatusBar) {
     if (SETTINGS.tapToHideStatusBar) {
       statusBarVisible = !statusBarVisible;
@@ -291,6 +294,15 @@ void XtcReaderActivity::loop() {
       mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
     mappedInput.suppressNextConfirmRelease();
     handleGlobalPowerButtonAction(CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK, QuickLockTrigger::LongMenu);
+    return;
+  }
+
+  if (longPressMenuAction == CrossPointSettings::LONG_MENU_LIBRARY && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS &&
+      (mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+       mappedInput.wasReleased(MappedInputManager::Button::Confirm))) {
+    longPressMenuHandled = mappedInput.isPressed(MappedInputManager::Button::Confirm);
+    mappedInput.suppressNextConfirmRelease();
+    activityManager.goToLibrary();
     return;
   }
 
@@ -715,13 +727,11 @@ void XtcReaderActivity::recordForwardPageTurn(const uint32_t seconds, const bool
   globalStats.totalPagesTurned++;
 }
 
-bool XtcReaderActivity::formatTimeLeftLabel(char* buf, const size_t len, const uint32_t pageToRender) const {
-  if (!buf || len == 0 || !xtc ||
-      SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE) {
+bool XtcReaderActivity::formatTimeLeftLabel(char* buf, const size_t len, const uint32_t pageToRender,
+                                            const bool bookEstimate) const {
+  if (!buf || len == 0 || !xtc) {
     return false;
   }
-
-  const bool bookEstimate = SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK;
   const auto pageInfo = getStatusBarInfo(pageToRender);
   const uint32_t current = bookEstimate ? pageToRender + 1U : static_cast<uint32_t>(pageInfo.currentPage);
   const uint32_t total = bookEstimate ? xtc->getPageCount() : static_cast<uint32_t>(pageInfo.pageCount);
@@ -998,6 +1008,7 @@ bool XtcReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
     case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
     case CrossPointSettings::SHORT_PWRBTN::FILE_BROWSER:
+    case CrossPointSettings::SHORT_PWRBTN::LIBRARY:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
       return true;
@@ -1031,6 +1042,9 @@ bool XtcReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_BROWSER:
       activityManager.goToFileBrowser(xtc ? xtc->getPath() : "");
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::LIBRARY:
+      activityManager.goToLibrary();
       return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_HOME_BUTTON_IN_READER:
       toggleHomeButtonInReader();
@@ -1069,6 +1083,9 @@ bool XtcReaderActivity::executeLongPressBackAction() {
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_FILE_BROWSER:
       activityManager.goToFileBrowser(xtc ? xtc->getPath() : "");
+      return true;
+    case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_LIBRARY:
+      activityManager.goToLibrary();
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_CLIPPING:
       return false;
@@ -1131,12 +1148,11 @@ void XtcReaderActivity::render(RenderLock&&) {
   }
 }
 
-XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo(const uint32_t pageToRender) const {
-  const auto statusBar = SETTINGS.statusBarSpec();
+XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo(const uint32_t pageToRender,
+                                                                     const bool includeTitle) const {
   const int bookPageCount = static_cast<int>(xtc->getPageCount());
   const int bookPage = static_cast<int>(pageToRender) + 1;
-  std::string title =
-      SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE ? xtc->getTitle() : "";
+  std::string title;
 
   if (!xtc->hasChapters()) {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
@@ -1147,25 +1163,28 @@ XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo(const uint3
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
-  if (statusBar.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
-    title = chapter.name[0] == '\0' ? tr(STR_UNNAMED) : chapter.name;
-  }
+  if (includeTitle) title = chapter.name[0] == '\0' ? tr(STR_UNNAMED) : chapter.name;
 
   return StatusBarInfo{static_cast<int>(pageToRender - chapter.startPage) + 1,
                        static_cast<int>(chapter.endPage - chapter.startPage) + 1, std::move(title)};
 }
 
-void XtcReaderActivity::renderStatusBarOverlay(const StatusBarOverlayPosition position,
-                                               const uint32_t pageToRender) const {
-  const bool drawBottom = SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_BOTTOM &&
+void XtcReaderActivity::renderStatusBarOverlay(const StatusBarOverlayPosition position, const uint32_t pageToRender,
+                                               const bool drawContent) const {
+  const bool drawBottom = (SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTTOM ||
+                           SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTH) &&
                           position == StatusBarOverlayPosition::Bottom;
-  const bool drawTop = SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP &&
+  const bool drawTop = (SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_TOP ||
+                        SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTH) &&
                        position == StatusBarOverlayPosition::Top;
   if (!drawBottom && !drawTop) {
     return;
   }
 
-  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  const bool legacyTop = drawTop && SETTINGS.legacyXtcTopUsesBottom;
+  const auto displayedBar = drawTop ? ReaderStatusBarPosition::Top : ReaderStatusBarPosition::Bottom;
+  const auto configuredBar = xtcStatusBarConfigPosition(displayedBar, legacyTop);
+  const int statusBarHeight = UITheme::getReaderStatusBarHeight(configuredBar);
   if (statusBarHeight <= 0) {
     return;
   }
@@ -1175,44 +1194,61 @@ void XtcReaderActivity::renderStatusBarOverlay(const StatusBarOverlayPosition po
                                    &orientedMarginLeft);
 
   int clearY;
-  int paddingBottom = 0;
   if (position == StatusBarOverlayPosition::Bottom) {
     clearY = renderer.getScreenHeight() - orientedMarginBottom - statusBarHeight - 4;
     if (clearY < 0) {
       clearY = 0;
     }
   } else {
-    clearY = orientedMarginTop;
-    paddingBottom = renderer.getScreenHeight() - statusBarHeight - orientedMarginBottom - orientedMarginTop - 4;
+    clearY = std::min(orientedMarginTop, UITheme::getTopStatusBarY(renderer));
   }
   const int clearHeight = position == StatusBarOverlayPosition::Bottom
                               ? renderer.getScreenHeight() - orientedMarginBottom - clearY
-                              : statusBarHeight + 4;
+                              : statusBarHeight + UITheme::getInstance().getMetrics().topPadding +
+                                    std::max(0, UITheme::getTopStatusBarInset(renderer)) + 4;
   if (clearHeight > 0) {
     renderer.fillRect(0, clearY, renderer.getScreenWidth(), clearHeight, false);
   }
 
   // XTC pages already contain a status strip in their bitmap. Clear that same
   // overlay area before returning so hiding it does not leave stale pixels.
-  if (!statusBarVisible) {
+  if (!statusBarVisible || !drawContent) {
     return;
   }
 
   const int pageCount = static_cast<int>(xtc->getPageCount());
   const int displayPage = static_cast<int>(pageToRender) + 1;
   const float progress = pageCount > 0 ? (static_cast<float>(displayPage) * 100.0f) / pageCount : 0.0f;
-  const auto pageInfo = getStatusBarInfo(pageToRender);
-  char timeLeftLabel[24] = {};
-  const char* timeLeft =
-      formatTimeLeftLabel(timeLeftLabel, sizeof(timeLeftLabel), pageToRender) ? timeLeftLabel : nullptr;
-  GUI.drawStatusBar(renderer, progress, pageInfo.currentPage, pageInfo.pageCount, pageInfo.title.c_str(), paddingBottom,
-                    0, false, timeLeft);
+  const auto config = SETTINGS.readerStatusBar(configuredBar);
+  const auto pageInfo = getStatusBarInfo(pageToRender, config.contains(ReaderStatusBarItem::TitleChapter));
+  char bookTime[24] = {};
+  char chapterTime[24] = {};
+  const std::string bookTitle = config.contains(ReaderStatusBarItem::TitleBook) ? xtc->getTitle() : "";
+  ReaderStatusBarContent content;
+  content.bookProgress = progress;
+  content.chapterPage = pageInfo.currentPage;
+  content.chapterPageCount = pageInfo.pageCount;
+  content.bookTitle = bookTitle.c_str();
+  content.chapterTitle = pageInfo.title.c_str();
+  content.timeLeftBook = config.contains(ReaderStatusBarItem::TimeLeftBook) &&
+                                 formatTimeLeftLabel(bookTime, sizeof(bookTime), pageToRender, true)
+                             ? bookTime
+                             : nullptr;
+  content.timeLeftChapter = config.contains(ReaderStatusBarItem::TimeLeftChapter) &&
+                                    formatTimeLeftLabel(chapterTime, sizeof(chapterTime), pageToRender, false)
+                                ? chapterTime
+                                : nullptr;
+  GUI.drawReaderStatusBar(renderer, displayedBar, content, legacyTop ? &config : nullptr);
 }
 
 void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
   const uint16_t pageWidth = xtc->getPageWidth();
   const uint16_t pageHeight = xtc->getPageHeight();
   const uint8_t bitDepth = xtc->getBitDepth();
+  const auto renderOverlays = [this, pageToRender](const bool drawContent) {
+    renderStatusBarOverlay(StatusBarOverlayPosition::Top, pageToRender, drawContent);
+    renderStatusBarOverlay(StatusBarOverlayPosition::Bottom, pageToRender, drawContent);
+  };
 
   if (bitDepth == 2) {
     auto showStreamError = [&]() {
@@ -1222,17 +1258,6 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
       renderer.displayBuffer();
     };
-    const auto clearHiddenStatusBar = [this, pageToRender] {
-      if (statusBarVisible) {
-        return;
-      }
-      if (SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP) {
-        renderStatusBarOverlay(StatusBarOverlayPosition::Top, pageToRender);
-      } else {
-        renderStatusBarOverlay(StatusBarOverlayPosition::Bottom, pageToRender);
-      }
-    };
-
     // XTCH stores two 48 KB planes. Stream each rendering pass through a 1 KB
     // scratch chunk so fragmented C3 heaps never need one contiguous 96 KB block.
     renderer.clearScreen();
@@ -1240,7 +1265,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
-    clearHiddenStatusBar();
+    renderOverlays(true);
 
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
@@ -1256,7 +1281,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
-    clearHiddenStatusBar();
+    renderOverlays(false);
     renderer.copyGrayscaleLsbBuffers();
 
     renderer.clearScreen(0x00);
@@ -1264,7 +1289,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
-    clearHiddenStatusBar();
+    renderOverlays(false);
     renderer.copyGrayscaleMsbBuffers();
     renderer.displayGrayBuffer();
 
@@ -1273,7 +1298,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       showStreamError();
       return;
     }
-    clearHiddenStatusBar();
+    renderOverlays(true);
     renderer.cleanupGrayscaleWithFrameBuffer();
     return;
   }
@@ -1332,11 +1357,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
 
   free(pageBuffer);
 
-  if (SETTINGS.xtcStatusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP) {
-    renderStatusBarOverlay(StatusBarOverlayPosition::Top, pageToRender);
-  } else {
-    renderStatusBarOverlay(StatusBarOverlayPosition::Bottom, pageToRender);
-  }
+  renderOverlays(true);
 
   // Display with appropriate refresh
   ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);

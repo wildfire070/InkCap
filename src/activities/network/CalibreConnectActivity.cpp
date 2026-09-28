@@ -3,6 +3,7 @@
 #include <ESPmDNS.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -69,6 +70,7 @@ void CalibreConnectActivity::onEnter() {
 }
 
 void CalibreConnectActivity::onExit() {
+  library::invalidateLibraryIndex();
   Activity::onExit();
 
   // AO3 library: books sent over Calibre wireless may be new fics — flag a rescan

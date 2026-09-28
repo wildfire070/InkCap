@@ -80,10 +80,11 @@ void NetworkModeSelectionActivity::onEnter() {
   Activity::onEnter();
 
   selectedIndex = 0;
+  buttonSelectionActive = !mappedInput.hasTouchHardware();
   ui.closeRouting();
   visibleRows = 1;
   topIndex = 0;
-  listNav.reset(listIndexForMenuIndex(selectedIndex));
+  listNav.reset(buttonSelectionActive ? listIndexForMenuIndex(selectedIndex) : -1);
   ui.reset();
   ui.app.on(ACTION_ROW, &NetworkModeSelectionActivity::onRowEvent, this);
   ui.app.setScreen(&NetworkModeSelectionActivity::listScreen, this);
@@ -127,7 +128,7 @@ void NetworkModeSelectionActivity::loop() {
     bool moved = false;
     {
       RenderLock lock(*this);
-      listNav.selected = listIndexForMenuIndex(selectedIndex);
+      listNav.selected = buttonSelectionActive ? listIndexForMenuIndex(selectedIndex) : -1;
       listNav.top = topIndex;
       listNav.visibleRows = visibleRows;
       // Page by the rows the last layout measured, not the fixed-height
@@ -148,6 +149,7 @@ void NetworkModeSelectionActivity::loop() {
     {
       RenderLock lock(*this);
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, MENU_ITEM_COUNT);
+      buttonSelectionActive = true;
       listNav.selected = listIndexForMenuIndex(selectedIndex);
       listNav.top = topIndex;
       listNav.visibleRows = visibleRows;
@@ -161,6 +163,7 @@ void NetworkModeSelectionActivity::loop() {
     {
       RenderLock lock(*this);
       selectedIndex = ButtonNavigator::previousIndex(selectedIndex, MENU_ITEM_COUNT);
+      buttonSelectionActive = true;
       listNav.selected = listIndexForMenuIndex(selectedIndex);
       listNav.top = topIndex;
       listNav.visibleRows = visibleRows;
@@ -214,7 +217,6 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
   fui::ListProps props;
   props.items = items.data();
   props.count = static_cast<uint16_t>(items.size());
-  props.selectedIndex = static_cast<int16_t>(listIndexForMenuIndex(selectedIndex));
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.labelText = screen.theme().bodyText;
@@ -230,7 +232,7 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.sectionGap = 10;
   const auto rows = configureUiList(props, screen.theme(), screen.body(), UiListRowType::WithSubtitle);
   visibleRows = rows > 0 ? rows : 1;
-  listNav.selected = listIndexForMenuIndex(selectedIndex);
+  listNav.selected = buttonSelectionActive ? listIndexForMenuIndex(selectedIndex) : -1;
   listNav.top = topIndex;
   listNav.visibleRows = visibleRows;
   listNav.syncToProps(screen.body(), props.rowHeight, props.rowGap, LIST_ITEM_COUNT, props);
