@@ -564,6 +564,12 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
 
                            const auto action =
                                static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
+                           // Every FileBrowserAction is listed below with no default:, so a value added to the
+                           // enum without a matching case here becomes a hard error, not a silent no-op --
+                           // this sibling switch's own missing cases (see LibraryActivity.cpp/BmpViewerActivity.cpp
+                           // git history) went unnoticed for a long time with no compiler signal at all.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
                            switch (action) {
                              case FileBrowserAction::Delete:
                                promptDeleteDirectory(fullPath, entry);
@@ -602,6 +608,7 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::Rename:
                                return;
                            }
+#pragma GCC diagnostic pop
                          });
 }
 
@@ -747,6 +754,8 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
         }
 
         const auto action = static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
         switch (action) {
           case FileBrowserAction::BookInfo:
             openBookDetails(bookRow);
@@ -1007,6 +1016,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::DeleteClippings:
             return;
         }
+#pragma GCC diagnostic pop
       });
 }
 
