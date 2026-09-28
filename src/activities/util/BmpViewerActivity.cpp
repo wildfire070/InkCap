@@ -27,6 +27,16 @@ bool isViewableImageFile(const std::string& filename) {
 
 bool isMacOSSidecarFile(const std::string& filename) { return filename.rfind("._", 0) == 0; }
 
+// loadSiblingImages() below grows a vector once per viewable image in the current folder, with no
+// upper bound on how many that could be (a photo/wallpaper folder can hold thousands) -- unlike most
+// enumerations in this codebase, InkCap builds with -fno-exceptions, so a failed push_back's
+// std::bad_alloc has nothing to catch it and aborts the whole firmware (see the SdCardFontRegistry/
+// SettingsList/FontSelectionActivity precedents for this same crash class). Stop collecting once heap
+// gets tight rather than risk it -- a partial sibling list (next/prev image may miss some files) is a
+// far better outcome than a hard crash.
+constexpr uint32_t SIBLING_IMAGES_MIN_FREE_HEAP = 24576;
+constexpr uint32_t SIBLING_IMAGES_MIN_MAX_ALLOC_HEAP = 16384;
+
 std::string imageDisplayName(const std::string& path) {
   const size_t filenameStart = path.find_last_of('/') + 1;
   const size_t extensionStart = path.find_last_of('.');
@@ -69,6 +79,14 @@ void BmpViewerActivity::loadSiblingImages() {
       if (name[0] != '.' && !isMacOSSidecarFile(name)) {
         std::string fname(name);
         if (isViewableImageFile(fname)) {
+          if (ESP.getFreeHeap() < SIBLING_IMAGES_MIN_FREE_HEAP ||
+              ESP.getMaxAllocHeap() < SIBLING_IMAGES_MIN_MAX_ALLOC_HEAP) {
+            LOG_ERR("BMP", "Stopping sibling-image scan early: %u free (need %u), %u max alloc (need %u)",
+                    ESP.getFreeHeap(), SIBLING_IMAGES_MIN_FREE_HEAP, ESP.getMaxAllocHeap(),
+                    SIBLING_IMAGES_MIN_MAX_ALLOC_HEAP);
+            file.close();
+            break;
+          }
           siblingImages.push_back(fname);
         }
       }

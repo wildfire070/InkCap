@@ -11,6 +11,16 @@
 #include "../../fontIds.h"
 #include "../ActivityResult.h"
 
+namespace {
+// A folder with a very large number of subdirectories can grow `directories` without bound; InkCap
+// builds with -fno-exceptions, so a failed push_back's std::bad_alloc has nothing to catch it and
+// aborts the whole firmware (same crash class as SdCardFontRegistry/SettingsList/
+// FontSelectionActivity/BmpViewerActivity's sibling-image scan). Stop collecting once heap gets tight
+// rather than risk it -- a truncated folder list is a far better outcome than a hard crash.
+constexpr uint32_t LOAD_DIRECTORIES_MIN_FREE_HEAP = 24576;
+constexpr uint32_t LOAD_DIRECTORIES_MIN_MAX_ALLOC_HEAP = 16384;
+}  // namespace
+
 void FolderPickerActivity::loadDirectories() {
   directories.clear();
   auto root = Storage.open(currentPath.c_str());
@@ -26,6 +36,14 @@ void FolderPickerActivity::loadDirectories() {
     file.getName(name, sizeof(name));
     if (name[0] != '.' && file.isDirectory() && strcmp(name, "System Volume Information") != 0 &&
         strcmp(name, ".crosspoint") != 0) {
+      if (ESP.getFreeHeap() < LOAD_DIRECTORIES_MIN_FREE_HEAP ||
+          ESP.getMaxAllocHeap() < LOAD_DIRECTORIES_MIN_MAX_ALLOC_HEAP) {
+        LOG_ERR("FolderPicker", "Stopping directory scan early: %u free (need %u), %u max alloc (need %u)",
+                ESP.getFreeHeap(), LOAD_DIRECTORIES_MIN_FREE_HEAP, ESP.getMaxAllocHeap(),
+                LOAD_DIRECTORIES_MIN_MAX_ALLOC_HEAP);
+        file.close();
+        break;
+      }
       directories.push_back(name);
     }
     file.close();
