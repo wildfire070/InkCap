@@ -6,6 +6,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "../../Ao3MarkedForLaterStore.h"
+#include "../../components/TouchHeaderBackButton.h"
 #include "../../components/UITheme.h"
 #include "../../util/Ao3ArchiveUtils.h"
 #include "../Ao3PageQrActivity.h"
@@ -87,7 +88,20 @@ void BookActionActivity::render(RenderLock&&) {
 }
 
 void BookActionActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  // Touch (X4 Pro): tap the header's back region to go back, tap a menu row (registered via
+  // GUI.drawList) to select and activate it in one tap -- same pattern Ao3LibrarySettingsActivity
+  // uses for its own drawList rows. No-op on button-only builds (both calls compile to
+  // constexpr-false stubs there, so this needs no #if guard).
+  const bool backViaTap = TouchHeaderBackButton::wasTapped(mappedInput, renderer);
+  if (backViaTap) mappedInput.suppressCurrentTouchContact();
+
+  int menuTapped = -1;
+  if (!backViaTap && mappedInput.wasItemTapped(menuTapped) && menuTapped >= 0 && menuTapped < ROW_COUNT) {
+    mappedInput.suppressCurrentTouchContact();
+    selectorIndex = menuTapped;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) || backViaTap) {
     if (currentStatus != initialStatus || markedForLaterChanged || wasRestored) {
       saveStatusIfModified();
       BookActionResult res;
@@ -101,7 +115,7 @@ void BookActionActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || menuTapped >= 0) {
     if (selectorIndex == 0) {
       // Cycle status
       uint8_t s = static_cast<uint8_t>(currentStatus);

@@ -28,6 +28,14 @@ class AO3SyncActivity final : public Activity {
   bool searchFinished = false;
   bool usingGayFallback = false;
 
+  // Touch (X4 Pro): the button-hint bar drawButtonHints() draws is deliberately suppressed on any
+  // touch-capable device (see BaseTheme::drawButtonHints), so the three interactive states below have
+  // no touch affordance at all through the normal render path -- launch an actual ConfirmationActivity
+  // instead, which is genuinely touch-capable (built on OptionPopup). Tracks which state a prompt was
+  // last shown for, so loop() launches it exactly once per state entry rather than every tick while
+  // the dialog is already up.
+  AO3SyncState touchPromptShownForState = AO3SyncState::INITIALIZING;
+
   void onWifiSelectionComplete(bool success);
   void performSearch();
   void performDownload();
