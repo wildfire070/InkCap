@@ -275,6 +275,13 @@ class EpubReaderActivity final : public Activity {
   // the book's current location, never both.
   enum class PendingManualArchiveAction : uint8_t { None, Archive, Restore };
   PendingManualArchiveAction pendingManualArchiveAction = PendingManualArchiveAction::None;
+  // AO3 two-way sync, symmetric with pendingManualArchiveAction above but for an AO3 fic: set once the
+  // user accepts the archive/restore prompt CYCLE_STATUS offers when the status cycle lands on or leaves
+  // Finished (see the CYCLE_STATUS case in onReaderMenuConfirm()). Consumed in onExit() the same way, but
+  // goes through Ao3ArchiveUtils::archiveFic()/restoreFic() instead of BookMoveUtils, so the AO3 index
+  // stays correctly tombstoned/recreated rather than corrupted the way a plain BookMoveUtils move would.
+  enum class PendingAo3ArchiveAction : uint8_t { None, Archive, Restore };
+  PendingAo3ArchiveAction pendingAo3ArchiveAction = PendingAo3ArchiveAction::None;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
 
