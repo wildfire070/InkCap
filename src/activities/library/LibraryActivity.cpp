@@ -967,6 +967,14 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                          [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
                      return;
                    }
+                   // Symmetric direction: un-finishing a book already in /Archive asks before moving it back out.
+                   if (BookActions::uncompletingWouldRestore(book.path)) {
+                     openDialog(
+                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                 tr(STR_RESTORE_BODY)),
+                         [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
+                     return;
+                   }
                    applyToggle(true);
                    return;
                  }
@@ -1003,8 +1011,14 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                                                                       tr(STR_ARCHIVE_PROMPT_TITLE),
                                                                       tr(STR_ARCHIVE_PROMPT_BODY)),
                               [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled && BookMoveUtils::archiveBook(book.path).empty()) {
-                                  LOG_ERR("LIB", "Failed to archive: %s", book.path.c_str());
+                                if (!confirmation.isCancelled) {
+                                  const std::string newPath = BookMoveUtils::archiveBook(book.path);
+                                  if (newPath.empty()) {
+                                    LOG_ERR("LIB", "Failed to archive: %s", book.path.c_str());
+                                  } else {
+                                    // Two-way sync: archiving also marks the book Finished, silently.
+                                    BookActions::setBookCompletedOnDisk(newPath, true);
+                                  }
                                 }
                                 reloadAfterBookAction();
                               });
@@ -1013,8 +1027,14 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                    openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
                                                                       tr(STR_RESTORE_BODY)),
                               [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled && BookMoveUtils::restoreBook(book.path).empty()) {
-                                  LOG_ERR("LIB", "Failed to restore: %s", book.path.c_str());
+                                if (!confirmation.isCancelled) {
+                                  const std::string newPath = BookMoveUtils::restoreBook(book.path);
+                                  if (newPath.empty()) {
+                                    LOG_ERR("LIB", "Failed to restore: %s", book.path.c_str());
+                                  } else {
+                                    // Two-way sync: restoring also marks the book Unfinished, silently.
+                                    BookActions::setBookCompletedOnDisk(newPath, false);
+                                  }
                                 }
                                 reloadAfterBookAction();
                               });
