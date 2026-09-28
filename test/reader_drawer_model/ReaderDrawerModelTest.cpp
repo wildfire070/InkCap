@@ -110,11 +110,26 @@ TEST(ReaderDrawerModel, CatalogOrderAndConditionalRowsMatchTouchDesign) {
   EXPECT_EQ(location.items[6], ReaderDrawerCatalogItem::DisplayQr);
 
   const auto& settings = complete[static_cast<size_t>(ReaderDrawerTab::Settings)];
-  EXPECT_EQ(settings.count, 10);
+  EXPECT_EQ(settings.count, 11);
   EXPECT_EQ(settings.items[0], ReaderDrawerCatalogItem::StatusBar);
   EXPECT_EQ(settings.items[1], ReaderDrawerCatalogItem::Controls);
-  EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::ResetReadingPace);
-  EXPECT_EQ(settings.items[9], ReaderDrawerCatalogItem::ResetBookReaderSettings);
+  EXPECT_EQ(settings.items[5], ReaderDrawerCatalogItem::ToggleCompleted);
+  EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::ToggleArchived);
+  EXPECT_EQ(settings.items[7], ReaderDrawerCatalogItem::ResetReadingPace);
+  EXPECT_EQ(settings.items[10], ReaderDrawerCatalogItem::ResetBookReaderSettings);
+}
+
+TEST(ReaderDrawerModel, SettingsTabSwapsToCycleStatusForAo3Books) {
+  // An AO3 fic's Finished/Archived state is driven by its own 5-state status cycle and its own
+  // index-aware Archive Fic/Restore, not the generic ToggleCompleted/ToggleArchived pair -- matching
+  // the button-driven menu's own isAo3Book split.
+  ReaderDrawerAvailability ao3Available{};
+  ao3Available.isAo3Book = true;
+  const ReaderDrawerCatalog ao3Catalog = makeReaderDrawerCatalog(ao3Available);
+  const auto& settings = ao3Catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
+  EXPECT_EQ(settings.count, 9);
+  EXPECT_EQ(settings.items[5], ReaderDrawerCatalogItem::CycleStatus);
+  EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::DeleteCache);
 }
 
 TEST(ReaderDrawerModel, ChangeMaskSeparatesPreviewRelayoutAndOrientation) {

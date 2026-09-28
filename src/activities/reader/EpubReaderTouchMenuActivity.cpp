@@ -304,8 +304,9 @@ EpubReaderTouchMenuActivity::EpubReaderTouchMenuActivity(
     GfxRenderer& renderer, MappedInputManager& mappedInput, std::shared_ptr<Epub> epub,
     const TouchReaderPreviewModel* previewModel, const float bookProgressPercent, const bool hasFootnotes,
     const bool hasDictionary, const bool hasBookmarks, const bool hasClippings, const bool isCurrentPageBookmarked,
-    const bool isBookCompleted, const bool showReadingPaceReset, const uint32_t stableCurrentPage,
-    const uint32_t stablePageCount, const uint16_t autoPageTurnIntervalSeconds, const bool automaticPageTurnActive,
+    const bool isBookCompleted, const bool isAo3Book, const bool isBookArchived, const bool showReadingPaceReset,
+    const uint32_t stableCurrentPage, const uint32_t stablePageCount, const uint16_t autoPageTurnIntervalSeconds,
+    const bool automaticPageTurnActive,
     ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback, void* saveReaderSettingsContext,
     ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback, void* saveGlobalSettingsContext,
     ReaderOptionsActivity::GlobalSettingsEditCallback beginGlobalSettingsEditCallback,
@@ -331,6 +332,8 @@ EpubReaderTouchMenuActivity::EpubReaderTouchMenuActivity(
       hasClippings(hasClippings),
       isCurrentPageBookmarked(isCurrentPageBookmarked),
       isBookCompleted(isBookCompleted),
+      isAo3Book(isAo3Book),
+      isBookArchived(isBookArchived),
       showReadingPaceReset(showReadingPaceReset),
       automaticPageTurnActive(automaticPageTurnActive),
       autoPageTurnIntervalSeconds(std::clamp(autoPageTurnIntervalSeconds, READER_AUTO_PAGE_TURN_MIN_SECONDS,
@@ -362,7 +365,7 @@ void EpubReaderTouchMenuActivity::onEnter() {
   mappedInput.setReaderTouchscreenOverride(true);
 
   const ReaderDrawerCatalog catalog = makeReaderDrawerCatalog(
-      {hasFootnotes, hasDictionary, hasBookmarks, hasClippings, showReadingPaceReset, stablePageCount > 0});
+      {hasFootnotes, hasDictionary, hasBookmarks, hasClippings, showReadingPaceReset, stablePageCount > 0, isAo3Book});
   for (size_t tab = 0; tab < rootRows.size(); ++tab) {
     rootRows[tab].reserve(catalog[tab].count);
     rootRows[tab].assign(catalog[tab].items.begin(), catalog[tab].items.begin() + catalog[tab].count);
@@ -1538,6 +1541,15 @@ void EpubReaderTouchMenuActivity::activateRow(const RowId row) {
       isBookCompleted = !isBookCompleted;
       closeAndReturn(false, EpubReaderMenuAction::TOGGLE_COMPLETED);
       return;
+    case RowId::ToggleArchived:
+      // No optimistic local flip needed: unlike ToggleCompleted (an immediate change), the reader
+      // confirms Archive/Restore before doing anything, so this row's own label never needs to reflect
+      // a result from this session again before the menu closes.
+      closeAndReturn(false, EpubReaderMenuAction::TOGGLE_ARCHIVED);
+      return;
+    case RowId::CycleStatus:
+      closeAndReturn(false, EpubReaderMenuAction::CYCLE_STATUS);
+      return;
     case RowId::DeleteBookmarks:
       closeAndReturn(false, EpubReaderMenuAction::DELETE_BOOKMARKS);
       return;
@@ -2416,6 +2428,10 @@ const char* EpubReaderTouchMenuActivity::rowLabel(const RowId row) const {
       return tr(STR_INDEXING_METHOD);
     case RowId::ToggleCompleted:
       return isBookCompleted ? tr(STR_MARK_UNFINISHED) : tr(STR_MARK_FINISHED);
+    case RowId::ToggleArchived:
+      return isBookArchived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_FILE);
+    case RowId::CycleStatus:
+      return tr(STR_BOOK_STATUS);
     case RowId::Controls:
       return tr(STR_CAT_CONTROLS);
     case RowId::ResetReadingPace:
@@ -2556,6 +2572,8 @@ bool EpubReaderTouchMenuActivity::rowShowsNavigationCaret(const RowId row) const
   switch (row) {
     case RowId::BookmarkToggle:
     case RowId::ToggleCompleted:
+    case RowId::ToggleArchived:
+    case RowId::CycleStatus:
     case RowId::Screenshot:
     case RowId::DisplayQr:
     case RowId::Lookup:

@@ -99,6 +99,8 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   RenderMode,
   IndexingMethod,
   ToggleCompleted,
+  ToggleArchived,
+  CycleStatus,
   Controls,
   ResetReadingPace,
   DeleteCache,
@@ -126,6 +128,10 @@ struct ReaderDrawerAvailability {
   bool hasClippings = false;
   bool showReadingPaceReset = false;
   bool hasStablePageNumbers = false;
+  // Gates ToggleCompleted/ToggleArchived vs CycleStatus in the Settings tab below, matching the
+  // button-driven menu's own isAo3Book split -- an AO3 fic's Finished/Archived state is driven by its
+  // 5-state reading-status cycle and its own index-aware Archive Fic/Restore instead.
+  bool isAo3Book = false;
 };
 
 struct ReaderDrawerTabCatalog {
@@ -187,7 +193,12 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   settings.add(ReaderDrawerCatalogItem::BookDictionary);
   settings.add(ReaderDrawerCatalogItem::RenderMode);
   settings.add(ReaderDrawerCatalogItem::IndexingMethod);
-  settings.add(ReaderDrawerCatalogItem::ToggleCompleted);
+  if (available.isAo3Book) {
+    settings.add(ReaderDrawerCatalogItem::CycleStatus);
+  } else {
+    settings.add(ReaderDrawerCatalogItem::ToggleCompleted);
+    settings.add(ReaderDrawerCatalogItem::ToggleArchived);
+  }
   if (available.showReadingPaceReset) settings.add(ReaderDrawerCatalogItem::ResetReadingPace);
   settings.add(ReaderDrawerCatalogItem::DeleteCache);
   settings.add(ReaderDrawerCatalogItem::DeleteStats);

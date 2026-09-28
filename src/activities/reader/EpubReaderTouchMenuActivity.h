@@ -29,8 +29,8 @@ class EpubReaderTouchMenuActivity final : public Activity {
   explicit EpubReaderTouchMenuActivity(
       GfxRenderer& renderer, MappedInputManager& mappedInput, std::shared_ptr<Epub> epub,
       const TouchReaderPreviewModel* previewModel, float bookProgressPercent, bool hasFootnotes, bool hasDictionary,
-      bool hasBookmarks, bool hasClippings, bool isCurrentPageBookmarked, bool isBookCompleted,
-      bool showReadingPaceReset, uint32_t stableCurrentPage, uint32_t stablePageCount,
+      bool hasBookmarks, bool hasClippings, bool isCurrentPageBookmarked, bool isBookCompleted, bool isAo3Book,
+      bool isBookArchived, bool showReadingPaceReset, uint32_t stableCurrentPage, uint32_t stablePageCount,
       uint16_t autoPageTurnIntervalSeconds, bool automaticPageTurnActive,
       ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback, void* saveReaderSettingsContext,
       ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback, void* saveGlobalSettingsContext,
@@ -100,6 +100,8 @@ class EpubReaderTouchMenuActivity final : public Activity {
   bool hasClippings = false;
   bool isCurrentPageBookmarked = false;
   bool isBookCompleted = false;
+  bool isAo3Book = false;
+  bool isBookArchived = false;
   bool showReadingPaceReset = false;
   bool settingsChanged = false;
   bool didChangeSettings = false;
