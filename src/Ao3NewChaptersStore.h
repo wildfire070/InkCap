@@ -41,6 +41,10 @@ class Ao3NewChaptersStore : public PersistableStore<Ao3NewChaptersStore> {
   // Returns true if an entry was found and removed. Persists on success.
   bool removeByPath(const std::string& path);
 
+  // Re-keys an entry in place (position preserved) after the book it tracks was renamed or moved.
+  // Returns true if an entry was found and updated. Persists on success.
+  bool updatePath(const std::string& oldPath, const std::string& newPath);
+
   // Remove entries whose backing file is no longer on the SD card.
   // Returns true if any entry was removed. Does not persist -- caller decides.
   bool pruneMissing();
