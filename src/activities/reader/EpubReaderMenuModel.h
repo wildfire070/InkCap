@@ -23,6 +23,9 @@ enum class EpubReaderMenuAction : uint8_t {
   RESET_READING_PACE,
   READING_STATS,
   TOGGLE_COMPLETED,
+  // Standalone Archive File / Restore, independent of TOGGLE_COMPLETED -- reads as whichever of the
+  // two applies to the book's current location.
+  TOGGLE_ARCHIVED,
   READER_OPTIONS,
   CONTROLS_OPTIONS,
   BOOKMARK_TOGGLE,

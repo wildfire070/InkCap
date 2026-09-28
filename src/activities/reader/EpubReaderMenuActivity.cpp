@@ -193,10 +193,11 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
     GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title, const int currentPage,
     const int totalPages, const int bookProgressPercent, const uint8_t currentOrientation, const bool hasFootnotes,
     const bool hasDictionary, const bool hasBookmarks, const bool hasClippings, const bool isCurrentPageBookmarked,
-    const bool isBookCompleted, const bool autoPageTurnActive, const uint16_t autoPageTurnIntervalSeconds,
-    const bool showReadingPaceReset, ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback,
-    void* saveReaderSettingsContext, ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback,
-    void* saveGlobalSettingsContext, ReaderOptionsActivity::GlobalSettingsEditCallback beginGlobalSettingsEditCallback,
+    const bool isBookCompleted, const bool isBookArchived, const bool autoPageTurnActive,
+    const uint16_t autoPageTurnIntervalSeconds, const bool showReadingPaceReset,
+    ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback, void* saveReaderSettingsContext,
+    ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback, void* saveGlobalSettingsContext,
+    ReaderOptionsActivity::GlobalSettingsEditCallback beginGlobalSettingsEditCallback,
     void* beginGlobalSettingsEditContext, const uint32_t stableCurrentPage, const uint32_t stablePageCount,
     ReaderOptionsActivity::GlobalSettingsEditCallback endGlobalSettingsEditCallback, void* endGlobalSettingsEditContext,
     const char* dictionaryFontFamilyName, const uint8_t dictionaryFontPointSize, const bool hasDictionaryFontOverride,
@@ -204,7 +205,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
     void* dictionaryFontChangedContext)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings, isCurrentPageBookmarked, isBookCompleted,
-                               showReadingPaceReset, hasDictionary, stablePageCount > 0)),
+                               showReadingPaceReset, hasDictionary, isBookArchived, stablePageCount > 0)),
       title(title),
       pendingOrientation(currentOrientation),
       currentPage(currentPage),
@@ -235,7 +236,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
 
 EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
     bool hasFootnotes, bool hasBookmarks, bool hasClippings, bool isCurrentPageBookmarked, bool isBookCompleted,
-    bool showReadingPaceReset, bool hasDictionary, bool hasStablePageNumbers) {
+    bool showReadingPaceReset, bool hasDictionary, bool isBookArchived, bool hasStablePageNumbers) {
   TabMenuItems items;
   auto& mainItems = items[MAIN_TAB_INDEX];
   auto& bookmarkItems = items[BOOKMARKS_TAB_INDEX];
@@ -292,6 +293,9 @@ EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
   settingsItems.push_back({MenuAction::CONTROLS_OPTIONS, StrId::STR_CAT_CONTROLS});
   settingsItems.push_back(
       {MenuAction::TOGGLE_COMPLETED, isBookCompleted ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+  // Standalone, independent of the toggle above.
+  settingsItems.push_back(
+      {MenuAction::TOGGLE_ARCHIVED, isBookArchived ? StrId::STR_RESTORE_TITLE : StrId::STR_ARCHIVE_FILE});
   return items;
 }
 

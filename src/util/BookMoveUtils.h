@@ -30,4 +30,17 @@ RenameMigrationResult migrateRenamedBookState(const std::string& oldPath, const 
 bool migrateMovedEpubState(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                            const std::string& title, const std::string& author, bool keepInRecents);
 
+// Archives any epub (not just an AO3 fic -- see Ao3ArchiveUtils::archiveFic for that): moves it into
+// ARCHIVE_FOLDER and re-keys its cache dir and migrated state (bookmarks/clippings/recents), same as
+// the automatic move-on-finish. Also records the pre-archive path in the cache dir so restoreBook()
+// can find its way back later -- a plain book has no index to consult for that, unlike AO3's
+// tombstoned-and-rescraped record. Returns the new path on success, empty string on failure.
+std::string archiveBook(const std::string& srcPath);
+
+// Reverses archiveBook(): reads the marker archiveBook() left behind to recover the original path,
+// moves the file back (deduping if something now occupies that path), and migrates state back.
+// Returns the restored path on success, empty string on failure (including when archivedPath was
+// never archived by archiveBook() itself, so no marker exists to restore from).
+std::string restoreBook(const std::string& archivedPath);
+
 }  // namespace BookMoveUtils

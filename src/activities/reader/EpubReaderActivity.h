@@ -266,6 +266,13 @@ class EpubReaderActivity final : public Activity {
   bool archivePromptQueued = false;
   bool archivePromptShown = false;
   void requestArchiveMove();
+  // Set once the user accepts the standalone "Archive File"/"Restore" reader-menu action
+  // (independent of Mark as Finished -- see EpubReaderMenuAction::TOGGLE_ARCHIVED). Consumed in
+  // onExit() alongside pendingArchiveMove, since renaming the open file must wait until its handle
+  // is released. Only one of the two is ever armed: the menu offers Archive or Restore depending on
+  // the book's current location, never both.
+  enum class PendingManualArchiveAction : uint8_t { None, Archive, Restore };
+  PendingManualArchiveAction pendingManualArchiveAction = PendingManualArchiveAction::None;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
 

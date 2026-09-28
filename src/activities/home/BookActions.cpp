@@ -51,7 +51,7 @@ std::string bookStatsCachePath(const std::string& path) {
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(includeRemoveFromRecents ? 8 : 7);
+  items.reserve(includeRemoveFromRecents ? 9 : 8);
   if (FsHelpers::hasEpubExtension(fullPath)) {
     items.push_back({FileBrowserAction::BookInfo, StrId::STR_BOOK_INFO});
   }
@@ -79,6 +79,14 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
   if (recentIt != recents.end()) {
     items.push_back({recentIt->pinned ? FileBrowserAction::UnpinFromHome : FileBrowserAction::PinToHome,
                      recentIt->pinned ? StrId::STR_UNPIN_FROM_HOME : StrId::STR_PIN_TO_HOME});
+  }
+  if (BookMoveUtils::isInArchiveFolder(fullPath)) {
+    // A book currently under /Archive -- offer Restore instead of Archive File.
+    items.push_back({FileBrowserAction::RestoreBook, StrId::STR_RESTORE_TITLE});
+  } else if (FsHelpers::hasEpubExtension(fullPath)) {
+    // Independent of Mark as Finished: archiving is a standalone action, reachable any time, not
+    // just as a side effect of finishing a book.
+    items.push_back({FileBrowserAction::ArchiveBook, StrId::STR_ARCHIVE_FILE});
   }
   if (includeRemoveFromRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecents, StrId::STR_REMOVE_FROM_RECENTS_ACTION});

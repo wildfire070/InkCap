@@ -32,6 +32,8 @@ enum class FileBrowserAction : int {
   UnpinFromHome = 20,
   Rename = 21,
   ReadingStats = 22,
+  ArchiveBook = 23,
+  RestoreBook = 24,
 };
 
 class FileBrowserActionActivity final : public Activity {

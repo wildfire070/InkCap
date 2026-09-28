@@ -27,6 +27,34 @@ bool getCachePath(const std::string& bookPath, const char* bookType, std::string
   }
   return true;
 }
+
+// Marker recording a book's pre-archive path, written into its OLD cache dir by archiveBook() so it
+// rides along (like Ao3ArchiveUtils::archiveFic's own "marked_for_later" marker) to the new cache dir
+// once migrateMovedEpubState renames it. Lets restoreBook() find its way back with no index to
+// consult -- a plain book has none, unlike AO3's tombstoned-and-rescraped record.
+constexpr char ARCHIVED_FROM_MARKER[] = "archived_from";
+
+// Appends the destination's own directory, preserving its filename, dedupes with " (2)", " (3)", ...
+// on a same-name collision. Shared by every path that computes where an archived or restored book
+// should land.
+std::string dedupedDestination(const std::string& desiredPath) {
+  if (!Storage.exists(desiredPath.c_str())) return desiredPath;
+
+  const size_t lastSlash = desiredPath.rfind('/');
+  const std::string dir = (lastSlash != std::string::npos) ? desiredPath.substr(0, lastSlash) : "";
+  const std::string filename = (lastSlash != std::string::npos) ? desiredPath.substr(lastSlash + 1) : desiredPath;
+  const size_t dotPos = filename.rfind('.');
+  const std::string base = (dotPos != std::string::npos) ? filename.substr(0, dotPos) : filename;
+  const std::string ext = (dotPos != std::string::npos) ? filename.substr(dotPos) : "";
+
+  std::string candidate;
+  int suffix = 2;
+  do {
+    candidate = dir + "/" + base + " (" + std::to_string(suffix) + ")" + ext;
+    suffix++;
+  } while (Storage.exists(candidate.c_str()) && suffix < 100);
+  return candidate;
+}
 }  // namespace
 
 namespace BookMoveUtils {
@@ -37,24 +65,79 @@ bool isInArchiveFolder(const std::string& path) {
 }
 
 std::string buildArchiveDestination(const std::string& srcPath) {
+  Storage.mkdir(ARCHIVE_FOLDER);
   const size_t lastSlash = srcPath.rfind('/');
   const std::string filename = (lastSlash != std::string::npos) ? srcPath.substr(lastSlash + 1) : srcPath;
+  return dedupedDestination(std::string(ARCHIVE_FOLDER) + "/" + filename);
+}
 
-  Storage.mkdir(ARCHIVE_FOLDER);
-  std::string dstPath = std::string(ARCHIVE_FOLDER) + "/" + filename;
-  if (!Storage.exists(dstPath.c_str())) {
-    return dstPath;
+std::string archiveBook(const std::string& srcPath) {
+  const std::string oldCachePath = Epub::cachePathForFilePath(srcPath, "/.crosspoint");
+  const std::string dstPath = buildArchiveDestination(srcPath);
+
+  Epub epub(srcPath, "/.crosspoint");
+  const std::string title = epub.getTitle();
+  const std::string author = epub.getAuthor();
+
+  // Written before the move so it rides along with the cache dir rename below.
+  Storage.writeFile((oldCachePath + "/" + ARCHIVED_FROM_MARKER).c_str(), srcPath.c_str());
+
+  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
+    LOG_ERR("BookMove", "Failed to archive %s -> %s", srcPath.c_str(), dstPath.c_str());
+    Storage.remove((oldCachePath + "/" + ARCHIVED_FROM_MARKER).c_str());
+    return "";
   }
 
-  const size_t dotPos = filename.rfind('.');
-  const std::string base = (dotPos != std::string::npos) ? filename.substr(0, dotPos) : filename;
-  const std::string ext = (dotPos != std::string::npos) ? filename.substr(dotPos) : "";
-  int suffix = 2;
-  do {
-    dstPath = std::string(ARCHIVE_FOLDER) + "/" + base + " (" + std::to_string(suffix) + ")" + ext;
-    suffix++;
-  } while (Storage.exists(dstPath.c_str()) && suffix < 100);
+  if (!migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author, /*keepInRecents=*/true)) {
+    LOG_ERR("BookMove", "State migration failed for %s -> %s, rolling back", srcPath.c_str(), dstPath.c_str());
+    if (!Storage.rename(dstPath.c_str(), srcPath.c_str())) {
+      LOG_ERR("BookMove", "Rollback rename also failed for %s -> %s; book may be stranded at %s", dstPath.c_str(),
+              srcPath.c_str(), dstPath.c_str());
+    }
+    return "";
+  }
+
   return dstPath;
+}
+
+std::string restoreBook(const std::string& archivedPath) {
+  const std::string archivedCachePath = Epub::cachePathForFilePath(archivedPath, "/.crosspoint");
+  const std::string markerPath = archivedCachePath + "/" + ARCHIVED_FROM_MARKER;
+  if (!Storage.exists(markerPath.c_str())) {
+    LOG_ERR("BookMove", "No archived-from marker for: %s", archivedPath.c_str());
+    return "";
+  }
+  const std::string originalPath = Storage.readFile(markerPath.c_str()).c_str();
+  if (originalPath.empty()) {
+    LOG_ERR("BookMove", "Empty archived-from marker for: %s", archivedPath.c_str());
+    return "";
+  }
+
+  const std::string restoredPath = dedupedDestination(originalPath);
+  Epub archivedEpub(archivedPath, "/.crosspoint");
+  const std::string title = archivedEpub.getTitle();
+  const std::string author = archivedEpub.getAuthor();
+
+  if (!Storage.rename(archivedPath.c_str(), restoredPath.c_str())) {
+    LOG_ERR("BookMove", "Failed to restore %s -> %s", archivedPath.c_str(), restoredPath.c_str());
+    return "";
+  }
+
+  if (!migrateMovedEpubState(archivedPath, restoredPath, archivedCachePath, title, author, /*keepInRecents=*/true)) {
+    LOG_ERR("BookMove", "State migration failed for %s -> %s, rolling back", archivedPath.c_str(),
+            restoredPath.c_str());
+    if (!Storage.rename(restoredPath.c_str(), archivedPath.c_str())) {
+      LOG_ERR("BookMove", "Rollback rename also failed for %s -> %s; book may be stranded at %s", restoredPath.c_str(),
+              archivedPath.c_str(), restoredPath.c_str());
+    }
+    return "";
+  }
+
+  // The marker rode along to the restored cache dir with the rest of the state; its job is done, so
+  // remove it -- a stale marker pointing at a location the book no longer occupies would misdirect a
+  // future restore if the book were somehow archived again without archiveBook() rewriting it first.
+  Storage.remove((Epub::cachePathForFilePath(restoredPath, "/.crosspoint") + "/" + ARCHIVED_FROM_MARKER).c_str());
+  return restoredPath;
 }
 
 RenameMigrationResult migrateRenamedBookState(const std::string& oldPath, const std::string& newPath,

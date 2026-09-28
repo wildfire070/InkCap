@@ -412,6 +412,8 @@ void BmpViewerActivity::showContextMenu() {
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::PinToHome:
                              case FileBrowserAction::UnpinFromHome:
+                             case FileBrowserAction::ArchiveBook:
+                             case FileBrowserAction::RestoreBook:
                              case FileBrowserAction::Rename:
                                return;
                            }
