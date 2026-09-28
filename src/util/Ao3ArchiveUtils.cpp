@@ -1,6 +1,5 @@
 #include "Ao3ArchiveUtils.h"
 
-#include <ArduinoJson.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -13,23 +12,9 @@
 
 namespace Ao3ArchiveUtils {
 
-std::string archiveRoot() {
-  const char* path = "/.crosspoint/ao3_settings.json";
-  if (!Storage.exists(path)) return DEFAULT_ARCHIVE_ROOT;
-  String json = Storage.readFile(path);
-  if (json.isEmpty()) return DEFAULT_ARCHIVE_ROOT;
-  JsonDocument doc;
-  if (deserializeJson(doc, json)) return DEFAULT_ARCHIVE_ROOT;
-  const char* configured = doc["archiveFolderName"] | "";
-  return configured[0] != '\0' ? std::string(configured) : std::string(DEFAULT_ARCHIVE_ROOT);
-}
-
 bool isArchived(const std::string& path) {
-  // Path-independent by design: archiving tombstones the OLD path's index
-  // record and deliberately never writes a new one at the new path, so a
-  // valid sidecar with no LIVE record at the current path IS the definition
-  // of "archived" -- robust even if the user renames the Archive Folder
-  // setting after already archiving fics (a plain path-prefix check isn't).
+  // Path-independent by design (see the header comment): a valid sidecar with no live index record
+  // IS the definition of "archived", robust even though restoreFic() can leave a fic anywhere.
   if (!FsHelpers::hasEpubExtension(path)) return false;
   Ao3LibraryMetadata meta;
   const Epub epub(path, "/.crosspoint");
@@ -37,31 +22,9 @@ bool isArchived(const std::string& path) {
   return !Ao3Librarian::hasLiveIndexRecord(path);
 }
 
-std::string buildArchiveDestination(const std::string& srcPath) {
-  const std::string root = archiveRoot();
-  const size_t lastSlash = srcPath.rfind('/');
-  const std::string filename = (lastSlash != std::string::npos) ? srcPath.substr(lastSlash + 1) : srcPath;
-
-  Storage.mkdir(root.c_str());
-  std::string dstPath = root + "/" + filename;
-  if (!Storage.exists(dstPath.c_str())) {
-    return dstPath;
-  }
-
-  const size_t dotPos = filename.rfind('.');
-  const std::string base = (dotPos != std::string::npos) ? filename.substr(0, dotPos) : filename;
-  const std::string ext = (dotPos != std::string::npos) ? filename.substr(dotPos) : "";
-  int suffix = 2;
-  do {
-    dstPath = root + "/" + base + " (" + std::to_string(suffix) + ")" + ext;
-    suffix++;
-  } while (Storage.exists(dstPath.c_str()) && suffix < 100);
-  return dstPath;
-}
-
 std::string archiveFic(const std::string& srcPath, const std::string& title, const std::string& author) {
   const std::string oldCachePath = Epub::cachePathForFilePath(srcPath, "/.crosspoint");
-  const std::string dstPath = buildArchiveDestination(srcPath);
+  const std::string dstPath = BookMoveUtils::buildArchiveDestination(srcPath);
 
   if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
     LOG_ERR("Ao3Archive", "Failed to move %s -> %s", srcPath.c_str(), dstPath.c_str());

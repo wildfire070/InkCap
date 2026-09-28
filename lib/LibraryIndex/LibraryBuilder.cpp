@@ -29,6 +29,12 @@ constexpr char NEW_PATH[] = "/.crosspoint/library.new";
 constexpr char BACKUP_PATH[] = "/.crosspoint/library.bak";
 constexpr char STAGE_PATH[] = "/.crosspoint/library.stage";
 constexpr char CACHE_DIR[] = "/.crosspoint";
+// Where a finished book is moved to when archived (BookMoveUtils::ARCHIVE_FOLDER in src/util --
+// duplicated as a literal here rather than an include, matching how this lib-level file already
+// hardcodes every other well-known top-level path rather than depending on the app layer). Excluded
+// from the walk below so an archived book disappears from the Library until it is restored, the same
+// way AO3's own indexer excludes its Archive Folder from re-indexing.
+constexpr char ARCHIVE_FOLDER[] = "/Archive";
 constexpr size_t LIBRARY_IO_BUFFER_SIZE = 4096;
 
 // Matches lib/FileIndex's buffer so a name this walk accepts is one the file
@@ -575,9 +581,11 @@ void walk(WalkState& st, const std::string& path, const int depth) {
     const std::string name(st.nameBuf);
 
     if (isDir) {
+      const std::string childPath = joinLibraryPath(path, name);
+      if (childPath == ARCHIVE_FOLDER) continue;  // archived books stay out of the Library until restored
       const size_t resumePosition = dir.position();
       dir.close();
-      walk(st, joinLibraryPath(path, name), depth + 1);
+      walk(st, childPath, depth + 1);
       if (st.failed) return;
 
       dir = Storage.open(path.c_str());
