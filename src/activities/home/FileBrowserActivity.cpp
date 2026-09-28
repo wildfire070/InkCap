@@ -595,6 +595,8 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::UnmarkForLater:
                              case FileBrowserAction::ArchiveFic:
                              case FileBrowserAction::RestoreFic:
+                             case FileBrowserAction::ArchiveBook:
+                             case FileBrowserAction::RestoreBook:
                              case FileBrowserAction::Rename:
                                return;
                            }
@@ -942,6 +944,42 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                                      }
                                      requestUpdate(true);
                                    });
+            return;
+          case FileBrowserAction::ArchiveBook:
+            // Standalone action, independent of Mark as Finished -- same confirmation as ArchiveFic
+            // above, since moving the file out of its current folder is equally not casually reversible.
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                       tr(STR_ARCHIVE_PROMPT_BODY)),
+                [this, fullPath](const ActivityResult& confirmation) {
+                  if (confirmation.isCancelled) return;
+                  if (BookMoveUtils::archiveBook(fullPath).empty()) {
+                    RenderLock lock(*this);
+                    BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+                  } else {
+                    RenderLock lock(*this);
+                    loadFilesLocked();
+                    selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+                  }
+                  requestUpdate(true);
+                });
+            return;
+          case FileBrowserAction::RestoreBook:
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                       tr(STR_RESTORE_BODY)),
+                [this, fullPath](const ActivityResult& confirmation) {
+                  if (confirmation.isCancelled) return;
+                  if (BookMoveUtils::restoreBook(fullPath).empty()) {
+                    RenderLock lock(*this);
+                    BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+                  } else {
+                    RenderLock lock(*this);
+                    loadFilesLocked();
+                    selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+                  }
+                  requestUpdate(true);
+                });
             return;
           case FileBrowserAction::SetSleepFolder:
           case FileBrowserAction::ClearSleepFolder:

@@ -765,7 +765,7 @@ class SimulatorSmokeTest {
         activityManager.replaceActivity(
             std::make_unique<EpubReaderMenuActivity>(renderer, mappedInputManager, "Smoke Test", 1, 1, 0,
                                                      SETTINGS.orientation, false, false, false, false, false, false,
-                                                     /*isAo3Book=*/false));
+                                                     /*isAo3Book=*/false, /*isBookArchived=*/false));
         queueStep("Reader Menu", SmokeStep::ReaderMenu);
         break;
 
