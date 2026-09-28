@@ -3925,6 +3925,10 @@ void EpubReaderActivity::openWordSelect(bool framebufferContainsPage, int initia
 
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const bool returnToReaderMenu,
                                              const PendingOverlayResume* replacementResume) {
+  // Every EpubReaderMenuAction is listed below with no default:, so a value added to the enum without a
+  // matching case here becomes a hard error, not a silent no-op.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::STATUS_BAR_SETTINGS:
       break;
@@ -4554,6 +4558,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     case EpubReaderMenuActivity::MenuAction::CONTROLS_OPTIONS:
       break;
   }
+#pragma GCC diagnostic pop
 }
 
 std::unique_ptr<Activity> EpubReaderActivity::createFrontlightReadingStatsActivity() {
