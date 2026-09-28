@@ -2670,6 +2670,18 @@ void EpubReaderActivity::onExit() {
       // silently. A no-op when it's already at the target value (e.g. un-finishing already set it).
       BookActions::setBookCompletedOnDisk(result, /*completed=*/!restoring);
     }
+  } else if (pendingAo3ArchiveAction != PendingAo3ArchiveAction::None && epub) {
+    const std::string path = epub->getPath();
+    const std::string title = epub->getTitle();
+    const std::string author = epub->getAuthor();
+    const bool restoring = pendingAo3ArchiveAction == PendingAo3ArchiveAction::Restore;
+    epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
+    const std::string result =
+        restoring ? Ao3ArchiveUtils::restoreFic(path) : Ao3ArchiveUtils::archiveFic(path, title, author);
+    if (result.empty()) {
+      LOG_ERR("ERS", "Failed to %s AO3 fic: %s", restoring ? "restore" : "archive", path.c_str());
+      showArchiveMoveFailedAlert(restoring, title);
+    }
   } else {
     epub.reset();
   }
@@ -4383,6 +4395,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       // 5-state reading status by one, mark it a manual override so saveProgress won't
       // auto-revert it, persist it, and toast the new state.
       if (epub) {
+        const BookStatus previousStatus = currentStatus;
         currentStatus = static_cast<BookStatus>((static_cast<uint8_t>(currentStatus) + 1) % 5);
         statusManuallySet = true;
         ao3FinishedRecordWritten = false;
@@ -4391,6 +4404,49 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           Ao3Librarian::setRecordFinished(epub->getPath(), currentStatus == BookStatus::FINISHED);
         }
         showStatusFeedback(currentStatus);
+
+        // Two-way sync, symmetric with the plain-book TOGGLE_COMPLETED/TOGGLE_ARCHIVED linkage: landing
+        // on Finished offers to archive; leaving Finished (the only way out via a single cycle step is
+        // to Waiting for Chapter) offers to restore. Both gated by the same setting, both go through
+        // Ao3ArchiveUtils (not BookMoveUtils) so the AO3 index stays correctly tombstoned/recreated.
+        // Cycling more than once in the same session before exiting must not leave a stale prompt
+        // decision from an earlier transition sitting armed -- e.g. Finished (armed Archive) then
+        // immediately cycled again to Waiting for Chapter before exiting must drop the now-contradicted
+        // Archive, not silently carry it out at onExit(). Re-derive "effective archived" from any
+        // still-armed pending action (not carried out yet, so isArchived() itself can't see it) rather
+        // than trusting a flag left over from a transition this one has already superseded.
+        if (SETTINGS.moveFinishedToArchiveFolder && epub->hasAo3Info()) {
+          const bool justFinished = currentStatus == BookStatus::FINISHED && previousStatus != BookStatus::FINISHED;
+          const bool justUnfinished = previousStatus == BookStatus::FINISHED && currentStatus != BookStatus::FINISHED;
+          bool archived = Ao3ArchiveUtils::isArchived(epub->getPath());
+          if (pendingAo3ArchiveAction == PendingAo3ArchiveAction::Archive) archived = true;
+          if (pendingAo3ArchiveAction == PendingAo3ArchiveAction::Restore) archived = false;
+          pendingAo3ArchiveAction = PendingAo3ArchiveAction::None;
+          if (justFinished && !archived) {
+            pauseReadingPaceTimer("ao3_archive_prompt");
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                       tr(STR_ARCHIVE_PROMPT_BODY)),
+                [this](const ActivityResult& result) {
+                  resumeReadingPaceTimer("ao3_archive_prompt_return");
+                  if (!result.isCancelled) pendingAo3ArchiveAction = PendingAo3ArchiveAction::Archive;
+                  requestUpdate();
+                });
+            break;
+          }
+          if (justUnfinished && archived) {
+            pauseReadingPaceTimer("ao3_restore_prompt");
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                       tr(STR_RESTORE_BODY)),
+                [this](const ActivityResult& result) {
+                  resumeReadingPaceTimer("ao3_restore_prompt_return");
+                  if (!result.isCancelled) pendingAo3ArchiveAction = PendingAo3ArchiveAction::Restore;
+                  requestUpdate();
+                });
+            break;
+          }
+        }
       }
       requestUpdate();
       break;
