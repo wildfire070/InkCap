@@ -62,7 +62,7 @@ bool isAo3IndexedFic(const std::string& path) {
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(includeRemoveFromRecents ? 8 : 7);
+  items.reserve(includeRemoveFromRecents ? 9 : 8);
   if (FsHelpers::hasEpubExtension(fullPath)) {
     items.push_back({FileBrowserAction::BookInfo, StrId::STR_BOOK_INFO});
   }
@@ -103,6 +103,14 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({marked ? FileBrowserAction::UnmarkForLater : FileBrowserAction::MarkForLater,
                      marked ? StrId::STR_UNMARK_FOR_LATER : StrId::STR_MARK_FOR_LATER});
     items.push_back({FileBrowserAction::ArchiveFic, StrId::STR_ARCHIVE_FILE});
+  } else if (BookMoveUtils::isInArchiveFolder(fullPath)) {
+    // A plain (non-AO3) book currently under /Archive -- offer Restore instead of Archive File,
+    // same either-or convention as the AO3 branch above.
+    items.push_back({FileBrowserAction::RestoreBook, StrId::STR_RESTORE_TITLE});
+  } else if (FsHelpers::hasEpubExtension(fullPath)) {
+    // Independent of Mark as Finished: archiving is a standalone action, reachable any time, not
+    // just as a side effect of finishing a book (matching how AO3's own Archive Fic works above).
+    items.push_back({FileBrowserAction::ArchiveBook, StrId::STR_ARCHIVE_FILE});
   }
   if (includeRemoveFromRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecents, StrId::STR_REMOVE_FROM_RECENTS_ACTION});

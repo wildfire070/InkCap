@@ -26,7 +26,8 @@ class EpubReaderMenuActivity final : public Activity {
       GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title, const int currentPage,
       const int totalPages, const int bookProgressPercent, const uint8_t currentOrientation, const bool hasFootnotes,
       const bool hasDictionary, const bool hasBookmarks, const bool hasClippings, const bool isCurrentPageBookmarked,
-      const bool isBookCompleted, const bool isAo3Book, const bool autoPageTurnActive = false,
+      const bool isBookCompleted, const bool isAo3Book, const bool isBookArchived,
+      const bool autoPageTurnActive = false,
       const uint16_t autoPageTurnIntervalSeconds = 0, const bool showReadingPaceReset = false,
       ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback = nullptr,
       void* saveReaderSettingsContext = nullptr,
@@ -67,7 +68,8 @@ class EpubReaderMenuActivity final : public Activity {
 
   static TabMenuItems buildMenuItems(bool hasFootnotes, bool hasBookmarks, bool hasClippings,
                                      bool isCurrentPageBookmarked, bool isBookCompleted, bool showReadingPaceReset,
-                                     bool hasDictionary, bool isAo3Book, bool hasStablePageNumbers);
+                                     bool hasDictionary, bool isAo3Book, bool isBookArchived,
+                                     bool hasStablePageNumbers);
   [[nodiscard]] const std::vector<MenuItem>& activeMenuItems() const;
   [[nodiscard]] size_t activeTabIndex() const { return static_cast<size_t>(activeTab); }
   void cycleActiveTab();

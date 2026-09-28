@@ -193,8 +193,8 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
     GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title, const int currentPage,
     const int totalPages, const int bookProgressPercent, const uint8_t currentOrientation, const bool hasFootnotes,
     const bool hasDictionary, const bool hasBookmarks, const bool hasClippings, const bool isCurrentPageBookmarked,
-    const bool isBookCompleted, const bool isAo3Book, const bool autoPageTurnActive,
-    const uint16_t autoPageTurnIntervalSeconds, const bool showReadingPaceReset,
+    const bool isBookCompleted, const bool isAo3Book, const bool isBookArchived,
+    const bool autoPageTurnActive, const uint16_t autoPageTurnIntervalSeconds, const bool showReadingPaceReset,
     ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback, void* saveReaderSettingsContext,
     ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback, void* saveGlobalSettingsContext,
     ReaderOptionsActivity::GlobalSettingsEditCallback beginGlobalSettingsEditCallback,
@@ -205,7 +205,8 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
     void* dictionaryFontChangedContext)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings, isCurrentPageBookmarked, isBookCompleted,
-                               showReadingPaceReset, hasDictionary, isAo3Book, stablePageCount > 0)),
+                               showReadingPaceReset, hasDictionary, isAo3Book, isBookArchived,
+                               stablePageCount > 0)),
       title(title),
       pendingOrientation(currentOrientation),
       currentPage(currentPage),
@@ -236,7 +237,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(
 
 EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
     bool hasFootnotes, bool hasBookmarks, bool hasClippings, bool isCurrentPageBookmarked, bool isBookCompleted,
-    bool showReadingPaceReset, bool hasDictionary, bool isAo3Book, bool hasStablePageNumbers) {
+    bool showReadingPaceReset, bool hasDictionary, bool isAo3Book, bool isBookArchived, bool hasStablePageNumbers) {
   TabMenuItems items;
   auto& mainItems = items[MAIN_TAB_INDEX];
   auto& bookmarkItems = items[BOOKMARKS_TAB_INDEX];
@@ -299,6 +300,10 @@ EpubReaderMenuActivity::TabMenuItems EpubReaderMenuActivity::buildMenuItems(
   } else {
     settingsItems.push_back(
         {MenuAction::TOGGLE_COMPLETED, isBookCompleted ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+    // Standalone, independent of the toggle above -- AO3 fics get their own Archive Fic / Restore in
+    // the AO3 book menu instead (which also updates the AO3 index), so this is plain epubs only.
+    settingsItems.push_back(
+        {MenuAction::TOGGLE_ARCHIVED, isBookArchived ? StrId::STR_RESTORE_TITLE : StrId::STR_ARCHIVE_FILE});
   }
   return items;
 }

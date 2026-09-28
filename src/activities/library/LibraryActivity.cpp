@@ -26,6 +26,7 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
+#include "util/BookMoveUtils.h"
 #include "components/icons/libraryIcons.h"
 #include "components/icons/listIcons.h"
 
@@ -993,6 +994,30 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                    return;
                  case FileBrowserAction::SendNearby:
                    activityManager.goToNearbyBookSend(book.path, false);
+                   return;
+                 case FileBrowserAction::ArchiveBook:
+                   // Standalone action, independent of Mark as Finished -- same confirmation the
+                   // finish-triggered move uses above, since moving the file out of its current
+                   // folder is equally not casually reversible.
+                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput,
+                                                                      tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                                      tr(STR_ARCHIVE_PROMPT_BODY)),
+                              [this, book](const ActivityResult& confirmation) {
+                                if (!confirmation.isCancelled && BookMoveUtils::archiveBook(book.path).empty()) {
+                                  LOG_ERR("LIB", "Failed to archive: %s", book.path.c_str());
+                                }
+                                reloadAfterBookAction();
+                              });
+                   return;
+                 case FileBrowserAction::RestoreBook:
+                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                      tr(STR_RESTORE_BODY)),
+                              [this, book](const ActivityResult& confirmation) {
+                                if (!confirmation.isCancelled && BookMoveUtils::restoreBook(book.path).empty()) {
+                                  LOG_ERR("LIB", "Failed to restore: %s", book.path.c_str());
+                                }
+                                reloadAfterBookAction();
+                              });
                    return;
                  case FileBrowserAction::PinFavorite:
                  case FileBrowserAction::UnpinFavorite:

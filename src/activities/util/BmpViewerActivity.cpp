@@ -416,6 +416,8 @@ void BmpViewerActivity::showContextMenu() {
                              case FileBrowserAction::UnmarkForLater:
                              case FileBrowserAction::ArchiveFic:
                              case FileBrowserAction::RestoreFic:
+                             case FileBrowserAction::ArchiveBook:
+                             case FileBrowserAction::RestoreBook:
                              case FileBrowserAction::Rename:
                                return;
                            }

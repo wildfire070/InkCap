@@ -24,6 +24,10 @@ enum class EpubReaderMenuAction : uint8_t {
   READING_STATS,
   TOGGLE_COMPLETED,
   CYCLE_STATUS,  // AO3 fics only: cycle the 5-state AO3 reading status
+  // Standalone Archive File / Restore, independent of TOGGLE_COMPLETED -- reads as whichever of the
+  // two applies to the book's current location. AO3 fics use their own Archive Fic / Restore in the
+  // AO3 book menu instead (which also removes the fic from the AO3 index); this is for plain epubs.
+  TOGGLE_ARCHIVED,
   READER_OPTIONS,
   CONTROLS_OPTIONS,
   BOOKMARK_TOGGLE,
