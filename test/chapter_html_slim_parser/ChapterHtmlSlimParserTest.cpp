@@ -261,6 +261,66 @@ TEST_F(ChapterHtmlSlimParserTest, CssImageWidthOverridesHtmlWidthAttribute) {
   EXPECT_EQ(image.getWidth(), 60);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, CssPercentImageWidthDoesNotShrinkBelowNativeSize) {
+  // Publishers wrap figures in boxes such as `width: 60%`, sized assuming a
+  // much wider screen than ours -- 60% of a tablet's width still leaves a
+  // picture close to its native size there, but the same rule shrinks a
+  // diagram to a thumbnail on our narrower page. A percentage should still be
+  // able to *enlarge* a picture, just never shrink it below what it actually
+  // is. Native 300x200; 60% of the 480px viewport is 288, below native --
+  // expect the floor to hold it at its native 300x200 instead.
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 300;
+  epub.optimizerImageHeight = 200;
+  const XML_Char* attributes[] = {"src", "diagram.jpg", "style", "width: 60%", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 300);
+  EXPECT_EQ(image.getHeight(), 200);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CssPercentImageWidthCanStillEnlargeAndIsCappedByContainer) {
+  // The floor only raises a percentage width up to native size -- a
+  // percentage that already resolves above native size still enlarges the
+  // picture as requested (existing behavior, unaffected by the floor), and
+  // one that would exceed the container is still capped to the container
+  // (also existing behavior). Native 100x100; 90% of 480 is 432 (well above
+  // native) -> unaffected by the floor, capped by nothing here.
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 100;
+  epub.optimizerImageHeight = 100;
+  const XML_Char* attributes[] = {"src", "icon.jpg", "style", "width: 90%", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 432);
+  EXPECT_EQ(image.getHeight(), 432);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CssPixelImageWidthStillShrinksBelowNativeSize) {
+  // The floor is specific to percentage units -- a publisher who explicitly
+  // picked a pixel width smaller than native (e.g. `width: 60px`) made a
+  // deliberate sizing choice, not a viewport-relative accident, and that
+  // choice must still be honored.
+  epub.optimizerImageAvailable = true;
+  epub.optimizerImageWidth = 300;
+  epub.optimizerImageHeight = 200;
+  const XML_Char* attributes[] = {"src", "diagram.jpg", "style", "width: 60px", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 60);
+  EXPECT_EQ(image.getHeight(), 40);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, HiddenElementsSuppressContentAndResumeVisibleText) {
   for (const char* tag : {"p", "h1", "span", "div", "a", "table"}) {
     for (const char* value : {"hidden", "", "false"}) {

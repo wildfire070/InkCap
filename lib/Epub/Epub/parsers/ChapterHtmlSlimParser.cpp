@@ -2660,6 +2660,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   // Use CSS width (resolve % against container width) and derive height from aspect ratio
                   displayWidth =
                       static_cast<int>(imgStyle.imageWidth.toPixels(emSize, static_cast<float>(containerWidth)) + 0.5f);
+                  // A percentage width is relative to the publisher's assumed viewport, often far
+                  // wider than our page -- `width: 60%` sized for a tablet still leaves a figure
+                  // close to its native size there, but shrinks it to a thumbnail on our narrower
+                  // page. Floor it at the image's own native width so a percentage can only enlarge
+                  // a picture, never shrink it below what it actually is; the containerWidth clamp
+                  // right below still applies if native size doesn't fit the page. A non-percent
+                  // width (the publisher explicitly picking e.g. `width: 100px`) is left alone --
+                  // that's a deliberate size choice, not a viewport-relative accident.
+                  if (imgStyle.imageWidth.unit == CssUnit::Percent && displayWidth < dims.width) {
+                    displayWidth = dims.width;
+                  }
                   if (displayWidth > containerWidth) displayWidth = containerWidth;
                   if (displayWidth < 1) displayWidth = 1;
                   displayHeight =
