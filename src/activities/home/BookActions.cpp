@@ -63,6 +63,10 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
   items.reserve(includeRemoveFromRecents ? 9 : 8);
+  // isAo3IndexedFic() is sidecar-based (see its own comment below), so it's true whether the fic is
+  // currently live-indexed or archived -- exactly the "is this an AO3 fic at all" check ToggleCompleted
+  // needs here, ahead of the later archive-branch's own isArchived()-first ordering.
+  const bool isAo3Fic = isAo3IndexedFic(fullPath);
   if (FsHelpers::hasEpubExtension(fullPath)) {
     items.push_back({FileBrowserAction::BookInfo, StrId::STR_BOOK_INFO});
   }
@@ -77,8 +81,14 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
   if (hasReadingStats(fullPath)) {
     items.push_back({FileBrowserAction::ReadingStats, StrId::STR_READING_STATS});
     items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
-    items.push_back({FileBrowserAction::ToggleCompleted,
-                     isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+    // AO3 fics use their own 5-state reading-status cycle (reader-only today, via CYCLE_STATUS) and
+    // their own index-aware Archive Fic/Restore, neither of which this generic toggle or its
+    // Archive-folder linkage (BookMoveUtils::archiveBook/restoreBook) know about -- offering it here
+    // would silently leave a stale AO3 index record behind a book BookMoveUtils just moved.
+    if (!isAo3Fic) {
+      items.push_back({FileBrowserAction::ToggleCompleted,
+                       isBookCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+    }
   }
   // Offered from all three real callers (RecentBooksActivity, FileBrowserActivity,
   // RecentBooksGridActivity) via this one shared code path, rather than a
@@ -98,7 +108,7 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
   // unreachable.
   if (Ao3ArchiveUtils::isArchived(fullPath)) {
     items.push_back({FileBrowserAction::RestoreFic, StrId::STR_RESTORE_TITLE});
-  } else if (isAo3IndexedFic(fullPath)) {
+  } else if (isAo3Fic) {
     const bool marked = AO3_MARKED_FOR_LATER_STORE.contains(fullPath);
     items.push_back({marked ? FileBrowserAction::UnmarkForLater : FileBrowserAction::MarkForLater,
                      marked ? StrId::STR_UNMARK_FOR_LATER : StrId::STR_MARK_FOR_LATER});
@@ -295,7 +305,11 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   // archived offers to move it in; un-finishing one already archived offers to move it back out. Each
   // direction goes through the same archiveBook()/restoreBook() the standalone Archive File/Restore
   // actions use, so a finish-triggered archive still leaves the restore marker Restore depends on.
-  if (allowMove && isEpub && SETTINGS.moveFinishedToArchiveFolder) {
+  // Never for an AO3 fic: buildBookActionItems() never offers ToggleCompleted for one (only its own
+  // index-aware Archive Fic/Restore, or the reader's Cycle Status), but this guards against some future
+  // caller reaching toggleBookCompleted() directly on an AO3 path, which would otherwise silently leave a
+  // stale AO3 index record behind a move BookMoveUtils doesn't know how to keep that index in sync with.
+  if (allowMove && isEpub && SETTINGS.moveFinishedToArchiveFolder && !isAo3IndexedFic(fullPath)) {
     if (completed && !BookMoveUtils::isInArchiveFolder(fullPath)) {
       LOG_INF("BookActions", "Moving completed epub: %s", fullPath.c_str());
       if (BookMoveUtils::archiveBook(fullPath).empty()) {
