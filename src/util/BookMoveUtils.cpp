@@ -14,8 +14,6 @@
 #include "RecentBooksStore.h"
 
 namespace {
-constexpr char ARCHIVE_FOLDER[] = "/Archive";
-
 bool getCachePath(const std::string& bookPath, const char* bookType, std::string& cachePath) {
   if (strcmp(bookType, "epub") == 0) {
     cachePath = Epub::cachePathForFilePath(bookPath, "/.crosspoint");
@@ -32,6 +30,11 @@ bool getCachePath(const std::string& bookPath, const char* bookType, std::string
 }  // namespace
 
 namespace BookMoveUtils {
+
+bool isInArchiveFolder(const std::string& path) {
+  constexpr size_t n = sizeof(ARCHIVE_FOLDER) - 1;  // excludes NUL
+  return path.size() > n && path.compare(0, n, ARCHIVE_FOLDER) == 0 && path[n] == '/';
+}
 
 std::string buildArchiveDestination(const std::string& srcPath) {
   const size_t lastSlash = srcPath.rfind('/');
