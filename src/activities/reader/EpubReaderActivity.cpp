@@ -2640,6 +2640,14 @@ void EpubReaderActivity::onExit() {
     const std::string dstPath = BookMoveUtils::buildArchiveDestination(srcPath);
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
     archiveFinishedBook(srcPath, dstPath, oldCachePath, title, author);
+  } else if (pendingManualArchiveAction != PendingManualArchiveAction::None && epub) {
+    const std::string path = epub->getPath();
+    const bool restoring = pendingManualArchiveAction == PendingManualArchiveAction::Restore;
+    epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
+    const std::string result = restoring ? BookMoveUtils::restoreBook(path) : BookMoveUtils::archiveBook(path);
+    if (result.empty()) {
+      LOG_ERR("ERS", "Failed to %s: %s", restoring ? "restore" : "archive", path.c_str());
+    }
   } else {
     epub.reset();
   }
@@ -2716,7 +2724,8 @@ void EpubReaderActivity::openReaderMenu() {
         !previewActive && epub && Dictionary::exists(epub->getCachePath().c_str()), !BOOKMARKS.getBookmarks().empty(),
         CLIPPINGS.hasClippings(),
         !previewActive && BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount), isBookCompleted,
-        epub && epub->hasAo3Info(), automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
+        epub && epub->hasAo3Info(), epub && BookMoveUtils::isInArchiveFolder(epub->getPath()),
+        automaticPageTurnActive, getAutoPageTurnIntervalSeconds(),
         SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE,
         saveReaderOptionsForBook, this, saveGlobalSettingsForBookReader, this, beginGlobalSettingsEditForBookReader,
         this, stableCurrentPage, stablePageCount, endGlobalSettingsEditForBookReader, this,
@@ -4306,6 +4315,27 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       setBookCompleted(markCompleted);
       showCompletedFeedback(markCompleted);
       requestUpdate();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::TOGGLE_ARCHIVED: {
+      // Standalone, independent of Completed/Finished -- confirms the same way the File
+      // Browser/Library's own Archive File and Restore actions do, then defers the actual
+      // rename to onExit() since the file cannot be moved while this reader holds it open.
+      if (!epub) break;
+      const bool archived = BookMoveUtils::isInArchiveFolder(epub->getPath());
+      pauseReadingPaceTimer("toggle_archived");
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                 archived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                 archived ? tr(STR_RESTORE_BODY) : tr(STR_ARCHIVE_PROMPT_BODY)),
+          [this, archived](const ActivityResult& result) {
+            resumeReadingPaceTimer("toggle_archived_return");
+            if (!result.isCancelled) {
+              pendingManualArchiveAction =
+                  archived ? PendingManualArchiveAction::Restore : PendingManualArchiveAction::Archive;
+            }
+            requestUpdate();
+          });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::CYCLE_STATUS: {
