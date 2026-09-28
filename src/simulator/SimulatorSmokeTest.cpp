@@ -10,10 +10,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #if CROSSINK_SCALABLE_FONTS
 #include <HalScalableFont.h>
 
-#include <filesystem>
 #include <fstream>
 
 #include "FontInstaller.h"
@@ -28,6 +28,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "activities/ActivityManager.h"
+#include "activities/home/BookActions.h"
 #include "activities/reader/EpubReaderMenuActivity.h"
 #include "activities/reader/ReaderFontLoading.h"
 #include "activities/reader/ReaderOptionsActivity.h"
@@ -36,6 +37,7 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "simulator/SimulatorHomeKeyInput.h"
+#include "util/BookMoveUtils.h"
 
 extern ActivityManager activityManager;
 extern GfxRenderer renderer;
@@ -440,6 +442,162 @@ class SimulatorSmokeTest {
     }
   }
 
+  // Copies a file between two HAL-style ("/foo/bar") paths on the isolated fs_ filesystem by going
+  // straight to the host files underneath -- Storage itself has no copy primitive, and this is only ever
+  // used to stage a throwaway duplicate-named fixture for the dedup-on-collision check below.
+  static bool copyHostFile(const std::string& halSrcPath, const std::string& halDstPath) {
+    std::error_code ec;
+    std::filesystem::copy_file("fs_" + halSrcPath, "fs_" + halDstPath, ec);
+    return !ec;
+  }
+
+  // Exercises BookMoveUtils::archiveBook()/restoreBook() and the Phase 4 two-way Finished<->Archived sync
+  // directly against the isolated fs_ filesystem, headlessly, before any book below is opened for reading
+  // (the reader must not have the file open while these move it around). This is the one part of the
+  // Archive/Restore work this session that host tests can't reach at all -- BookMoveUtils/BookActions
+  // construct a real Epub, and linking that for a host test would mean a first-ever host target that pulls
+  // in Epub's own full dependency graph (Ao3Librarian, GfxRenderer, ZipFile, image codecs...), a much
+  // heavier lift than any existing host test attempts. This binary already links all of it for real, so
+  // testing here is nearly free by comparison.
+  static void verifyArchiveMoveContract() {
+    const char* bookPathEnv = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");
+    if (bookPathEnv == nullptr || bookPathEnv[0] == '\0') return;  // no fixture configured for this run
+    const std::string originalPath = bookPathEnv;
+    if (!Storage.exists(originalPath.c_str())) {
+      fail("Archive-move contract: smoke book missing before the test even starts: %s", originalPath.c_str());
+    }
+    const size_t lastSlash = originalPath.rfind('/');
+    const std::string filename = (lastSlash != std::string::npos) ? originalPath.substr(lastSlash + 1) : originalPath;
+
+    // completingWouldArchive()/uncompletingWouldRestore() both read this setting; restored at the end.
+    const bool originalMoveSetting = SETTINGS.moveFinishedToArchiveFolder;
+    SETTINGS.moveFinishedToArchiveFolder = true;
+
+    if (!BookActions::completingWouldArchive(originalPath)) {
+      fail("Archive-move contract: completingWouldArchive() false for an unfinished, unarchived book");
+    }
+    if (BookActions::uncompletingWouldRestore(originalPath)) {
+      fail("Archive-move contract: uncompletingWouldRestore() true before the book is even archived");
+    }
+
+    // Standalone Archive File / Restore (Phase 3), independent of Finished status.
+    const std::string archivedPath = BookMoveUtils::archiveBook(originalPath);
+    if (archivedPath.empty()) fail("Archive-move contract: archiveBook() failed for %s", originalPath.c_str());
+    if (Storage.exists(originalPath.c_str())) {
+      fail("Archive-move contract: original path still exists after archiving: %s", originalPath.c_str());
+    }
+    if (!Storage.exists(archivedPath.c_str())) {
+      fail("Archive-move contract: archived path missing after archiving: %s", archivedPath.c_str());
+    }
+    if (!BookMoveUtils::isInArchiveFolder(archivedPath)) {
+      fail("Archive-move contract: archived path not recognized as inside /Archive: %s", archivedPath.c_str());
+    }
+
+    const std::string restoredPath = BookMoveUtils::restoreBook(archivedPath);
+    if (restoredPath.empty()) fail("Archive-move contract: restoreBook() failed for %s", archivedPath.c_str());
+    if (restoredPath != originalPath) {
+      fail("Archive-move contract: restored to %s, expected original %s", restoredPath.c_str(), originalPath.c_str());
+    }
+    if (!Storage.exists(restoredPath.c_str())) fail("Archive-move contract: restored path missing");
+    if (Storage.exists(archivedPath.c_str())) {
+      fail("Archive-move contract: archived path still exists after restoring: %s", archivedPath.c_str());
+    }
+
+    // Two-way sync, direction 1: finishing a book archives it, and -- this is the bug two-way sync fixed --
+    // the finish-triggered move must leave the same restore marker the standalone action does. It used to
+    // hand-roll the rename+migrate and never write one, so a book auto-archived by finishing could never be
+    // restored again; toggleBookCompleted() now goes through archiveBook() itself for exactly this reason.
+    bool completed = false;
+    if (!BookActions::toggleBookCompleted(originalPath, "Smoke Test Book", completed, /*allowMove=*/true)) {
+      fail("Archive-move contract: toggleBookCompleted() failed for %s", originalPath.c_str());
+    }
+    if (!completed) fail("Archive-move contract: toggleBookCompleted() did not mark the book completed");
+    if (Storage.exists(originalPath.c_str())) {
+      fail("Archive-move contract: finish-triggered move left the book at its original path");
+    }
+    const std::string finishArchivedPath = std::string(BookMoveUtils::ARCHIVE_FOLDER) + "/" + filename;
+    if (!Storage.exists(finishArchivedPath.c_str())) {
+      fail("Archive-move contract: finish-triggered move did not land at the expected path: %s",
+           finishArchivedPath.c_str());
+    }
+    const std::string restoredAfterFinish = BookMoveUtils::restoreBook(finishArchivedPath);
+    if (restoredAfterFinish.empty()) {
+      fail(
+          "Archive-move contract: restoreBook() failed on a finish-triggered archive -- restore marker "
+          "missing (this is exactly the bug the two-way sync fix closed)");
+    }
+    if (restoredAfterFinish != originalPath) {
+      fail("Archive-move contract: finish-triggered restore landed at %s, expected %s",
+           restoredAfterFinish.c_str(), originalPath.c_str());
+    }
+    if (!BookActions::setBookCompletedOnDisk(restoredAfterFinish, false)) {
+      fail("Archive-move contract: could not reset Finished status after the finish-triggered round trip");
+    }
+
+    // Two-way sync, direction 2: un-finishing an archived book restores it.
+    const std::string archivedAgain = BookMoveUtils::archiveBook(restoredAfterFinish);
+    if (archivedAgain.empty()) fail("Archive-move contract: second archiveBook() call failed");
+    if (!BookActions::setBookCompletedOnDisk(archivedAgain, true)) {
+      fail("Archive-move contract: setBookCompletedOnDisk(true) failed for %s", archivedAgain.c_str());
+    }
+    if (!BookActions::uncompletingWouldRestore(archivedAgain)) {
+      fail("Archive-move contract: uncompletingWouldRestore() false for a finished, archived book");
+    }
+    bool completedAfterUntoggle = true;
+    if (!BookActions::toggleBookCompleted(archivedAgain, "Smoke Test Book", completedAfterUntoggle,
+                                          /*allowMove=*/true)) {
+      fail("Archive-move contract: toggleBookCompleted() (un-finish) failed for %s", archivedAgain.c_str());
+    }
+    if (completedAfterUntoggle) fail("Archive-move contract: toggleBookCompleted() did not un-finish the book");
+    if (Storage.exists(archivedAgain.c_str())) {
+      fail("Archive-move contract: un-finishing an archived book did not restore it");
+    }
+    if (!Storage.exists(originalPath.c_str())) {
+      fail("Archive-move contract: un-finish-triggered restore did not land back at the original path");
+    }
+
+    // Dedup-on-collision: archiving two different files that happen to share a filename must not let the
+    // second overwrite the first.
+    const std::string dupDir = "/books/dup";
+    Storage.mkdir(dupDir.c_str());
+    const std::string dupPath = dupDir + "/" + filename;
+    if (!copyHostFile(originalPath, dupPath)) {
+      fail("Archive-move contract: could not stage a duplicate-named fixture at %s", dupPath.c_str());
+    }
+    const std::string firstArchived = BookMoveUtils::archiveBook(originalPath);
+    if (firstArchived.empty()) fail("Archive-move contract: archiveBook() failed staging the dedup test");
+    const std::string secondArchived = BookMoveUtils::archiveBook(dupPath);
+    if (secondArchived.empty()) fail("Archive-move contract: archiveBook() failed for the duplicate-named file");
+    if (secondArchived == firstArchived) {
+      fail("Archive-move contract: two same-named archives collided instead of deduping: %s",
+           secondArchived.c_str());
+    }
+    if (secondArchived.find(" (2)") == std::string::npos) {
+      fail("Archive-move contract: deduped archive path missing the expected \" (2)\" suffix: %s",
+           secondArchived.c_str());
+    }
+    if (!Storage.exists(firstArchived.c_str()) || !Storage.exists(secondArchived.c_str())) {
+      fail("Archive-move contract: one of the two deduped archives is missing");
+    }
+
+    // Leave /Archive/ and /books/ as this test found them.
+    const std::string firstRestored = BookMoveUtils::restoreBook(firstArchived);
+    if (firstRestored != originalPath) {
+      fail("Archive-move contract: dedup cleanup restore #1 landed at %s, expected %s", firstRestored.c_str(),
+           originalPath.c_str());
+    }
+    const std::string secondRestored = BookMoveUtils::restoreBook(secondArchived);
+    if (secondRestored != dupPath) {
+      fail("Archive-move contract: dedup cleanup restore #2 landed at %s, expected %s", secondRestored.c_str(),
+           dupPath.c_str());
+    }
+    Storage.remove(dupPath.c_str());
+    Storage.removeDir(dupDir.c_str());
+
+    SETTINGS.moveFinishedToArchiveFolder = originalMoveSetting;
+    LOG_INF("SMOKE", "Archive/Restore move contract passed");
+  }
+
   [[noreturn]] static void fail(const char* message) {
     LOG_ERR("SMOKE", "%s", message);
     std::_Exit(2);
@@ -711,6 +869,7 @@ class SimulatorSmokeTest {
           LOG_INF("SMOKE", "TTF discovery, size reuse, dictionary and reload passed");
         }
 #endif
+        verifyArchiveMoveContract();
         applyRequestedTheme();
         activityManager.goHome();
         queueStep("Home", SmokeStep::Home);
