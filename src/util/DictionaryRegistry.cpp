@@ -19,6 +19,17 @@ static constexpr const char* DICT_ROOT_CANDIDATES[] = {
     "/dictionaries",
 };
 
+namespace {
+// A dictionary root with many installed dictionaries can grow entries_ without bound. InkCap builds
+// with -fno-exceptions, so a failed push_back's std::bad_alloc has nothing to catch it and aborts the
+// whole firmware (same crash class as SdCardFontRegistry/SettingsList/FontSelectionActivity/
+// BmpViewerActivity's sibling-image scan/FolderPickerActivity's directory scan). Stop collecting once
+// heap gets tight rather than risk it -- a truncated dictionary list is a far better outcome than a
+// hard crash.
+constexpr uint32_t DICTIONARY_DISCOVER_MIN_FREE_HEAP = 24576;
+constexpr uint32_t DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP = 16384;
+}  // namespace
+
 bool DictionaryRegistry::discover() {
   entries_.clear();
   entries_.reserve(16);
@@ -113,6 +124,13 @@ bool DictionaryRegistry::discover() {
     }
 
     if (!ambiguous && foundStem[0] != '\0' && foundDict) {
+      if (ESP.getFreeHeap() < DICTIONARY_DISCOVER_MIN_FREE_HEAP ||
+          ESP.getMaxAllocHeap() < DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP) {
+        LOG_ERR("DREG", "Stopping dictionary scan early: %u free (need %u), %u max alloc (need %u)",
+                ESP.getFreeHeap(), DICTIONARY_DISCOVER_MIN_FREE_HEAP, ESP.getMaxAllocHeap(),
+                DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP);
+        break;
+      }
       DictionaryEntry e;
       e.name = name;
       e.stem = foundStem;
