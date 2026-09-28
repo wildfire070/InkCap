@@ -1,6 +1,7 @@
 #include "Ao3LibraryActivity.h"
 
 #include <ArduinoJson.h>
+#include <BoardConfig.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalDisplay.h>
@@ -47,6 +48,17 @@ constexpr int OVERLAY_HEIGHT = 340;
 constexpr int OVERLAY_ROW_SHOW = 4;
 constexpr int OVERLAY_ROW_CONFIRM = 5;
 constexpr int OVERLAY_ROW_COUNT = 6;
+
+// The Manage Panel's triangle indicator (in the button-hints bar) sits close enough to the right edge
+// that the X4 Pro's recessed bezel visually clips it -- same class of issue UIThemeTokens.h's own
+// listScrollInset already works around for the scroll indicator. Push it further inward on that board
+// specifically; every other board keeps the original position.
+int managePanelTriangleX(const int screenWidth) {
+#ifndef SIMULATOR
+  if (BoardConfig::isX4Pro()) return screenWidth - 36;
+#endif
+  return screenWidth - 26;
+}
 
 const char* viewLabel(LibraryView v) {
   switch (v) {
@@ -845,7 +857,7 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
   // Triangle indicator: Show 'Up' triangle when Manage Panel is closed
   if (screenState != ScreenState::MANAGE_PANEL) {
     const auto& metrics = UITheme::getInstance().getMetrics();
-    const int tx = renderer.getScreenWidth() - 26;
+    const int tx = managePanelTriangleX(renderer.getScreenWidth());
     const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
     const int ty = hintsY + metrics.buttonHintsHeight / 2;
 
@@ -906,9 +918,10 @@ void Ao3LibraryActivity::renderManagePanel() {
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Select", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  // Manage panel triangle indicator — in button hints bar, same X as header triangle
+  // Manage panel triangle indicator — in button hints bar, nudged in from the header triangle's X on
+  // X4 Pro (see managePanelTriangleX()) to clear that board's recessed bezel.
   {
-    const int tx = renderer.getScreenWidth() - 26;
+    const int tx = managePanelTriangleX(renderer.getScreenWidth());
     const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
     const int ty = hintsY + metrics.buttonHintsHeight / 2;
     if (screenState == ScreenState::MANAGE_PANEL) {
