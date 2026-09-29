@@ -11,6 +11,7 @@
 
 #include "../../Ao3Librarian.h"
 #include "../../MappedInputManager.h"
+#include "../../components/TouchHeaderBackButton.h"
 #include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
 #include "../../fontIds.h"
@@ -154,6 +155,14 @@ void Ao3EndOfBookSeriesActivity::loop() {
     return;
   }
 
+  // Touch (X4 Pro): tapping the header back button matches the short-press-Back
+  // action above. A constexpr no-op on button-only builds.
+  if (TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
+    mappedInput.suppressCurrentTouchContact();
+    activityManager.goToReader(originEpubPath_);
+    return;
+  }
+
   // Confirm → open the selected book
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!viewEntries.empty()) {
@@ -198,6 +207,18 @@ void Ao3EndOfBookSeriesActivity::loop() {
 
   const int total = static_cast<int>(viewEntries.size());
   if (total > 0) {
+    // Touch (X4 Pro): swipe up/down pages through entries three at a time,
+    // matching the long-press-skip-a-page button behavior below. A constexpr
+    // no-op on button-only builds.
+    const auto swipe = mappedInput.wasSwipe();
+    if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+      selectorIndex = swipe == MappedInputManager::SwipeDir::Up
+                          ? ButtonNavigator::nextPageIndex(selectorIndex, total, 3)
+                          : ButtonNavigator::previousPageIndex(selectorIndex, total, 3);
+      requestUpdate();
+      return;
+    }
+
     // All four nav buttons behave the same — no panels to open in this view.
     // Right and Down = next entry; Left and Up = prev entry.
     buttonNavigator.onPress({MappedInputManager::Button::Right}, [this, total] {
