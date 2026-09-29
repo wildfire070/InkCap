@@ -23,6 +23,7 @@
 #include "RecentBooksStore.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/BookStatsActivity.h"
+#include "activities/reader/BookStatsTracking.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/UITheme.h"
@@ -62,7 +63,7 @@ bool isAo3IndexedFic(const std::string& path) {
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(includeRemoveFromRecents ? 9 : 8);
+  items.reserve(includeRemoveFromRecents ? 13 : 12);
   // isAo3IndexedFic() is sidecar-based (see its own comment below), so it's true whether the fic is
   // currently live-indexed or archived -- exactly the "is this an AO3 fic at all" check ToggleCompleted
   // needs here, ahead of the later archive-branch's own isArchived()-first ordering.
@@ -79,8 +80,15 @@ std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std:
     items.push_back({FileBrowserAction::ResetReaderSettings, StrId::STR_RESET_BOOK_READER_SETTINGS});
   }
   if (hasReadingStats(fullPath)) {
-    items.push_back({FileBrowserAction::ReadingStats, StrId::STR_READING_STATS});
-    items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
+    if (SETTINGS.shouldTrackReadingStats()) {
+      const bool bookEnabled = isBookStatsTrackingEnabled(fullPath);
+      items.push_back({FileBrowserAction::ToggleBookStatsTracking, StrId::STR_TRACK_READING_STATS,
+                       bookEnabled ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF});
+      if (bookEnabled) {
+        items.push_back({FileBrowserAction::ReadingStats, StrId::STR_READING_STATS});
+        items.push_back({FileBrowserAction::DeleteStats, StrId::STR_DELETE_BOOK_STATS});
+      }
+    }
     // AO3 fics use their own 5-state reading-status cycle (reader-only today, via CYCLE_STATUS) and
     // their own index-aware Archive Fic/Restore, neither of which this generic toggle or its
     // Archive-folder linkage (BookMoveUtils::archiveBook/restoreBook) know about -- offering it here
@@ -157,7 +165,7 @@ bool deleteBookStats(const std::string& fullPath) {
 std::unique_ptr<Activity> createReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                      const std::string& fullPath, const std::string& title) {
   const std::string cachePath = bookStatsCachePath(fullPath);
-  if (cachePath.empty()) {
+  if (cachePath.empty() || !BookStatsTracking::isEnabled(cachePath)) {
     LOG_ERR("BookActions", "No reading stats for: %s", fullPath.c_str());
     return {};
   }
@@ -234,6 +242,19 @@ bool uncompletingWouldRestore(const std::string& fullPath) {
          BookMoveUtils::isInArchiveFolder(fullPath) && isBookCompleted(fullPath);
 }
 
+bool isBookStatsTrackingEnabled(const std::string& fullPath) {
+  return BookStatsTracking::isBookEnabled(bookStatsCachePath(fullPath));
+}
+
+bool toggleBookStatsTracking(const std::string& fullPath, bool& enabled) {
+  if (!hasReadingStats(fullPath) || !SETTINGS.shouldTrackReadingStats()) return false;
+  const std::string cachePath = bookStatsCachePath(fullPath);
+  enabled = !BookStatsTracking::isBookEnabled(cachePath);
+  if (BookStatsTracking::setBookEnabled(cachePath, enabled)) return true;
+  enabled = BookStatsTracking::isBookEnabled(cachePath);
+  return false;
+}
+
 bool setBookCompletedOnDisk(const std::string& fullPath, const bool completed) {
   // setupCacheDir() (not just bookStatsCachePath()'s bare path computation) because this may be the
   // first time this book has ever had state written for it -- e.g. finishing a book from the File
@@ -255,25 +276,27 @@ bool setBookCompletedOnDisk(const std::string& fullPath, const bool completed) {
   if (stats.isCompleted == completed) return true;
 
   stats.isCompleted = completed;
-  if (completed && !stats.finishedDateManual) {
+  const bool trackStats = BookStatsTracking::isEnabled(cachePath);
+  if (completed && trackStats && !stats.finishedDateManual) {
     ReadingStatsDateTime now;
     if (getCurrentLocalReadingStatsDateTime(now)) {
       stats.finishedDate = now.date;
     }
   }
 
-  GlobalReadingStats globalStats = GlobalReadingStats::load();
-  if (completed) {
-    globalStats.completedBooks++;
-  } else if (globalStats.completedBooks > 0) {
-    globalStats.completedBooks--;
-  }
-
   if (!stats.save(cachePath)) {
     LOG_ERR("BookActions", "Could not save completion for: %s", fullPath.c_str());
     return false;
   }
-  globalStats.save();
+  if (trackStats) {
+    GlobalReadingStats globalStats = GlobalReadingStats::load();
+    if (completed) {
+      globalStats.completedBooks++;
+    } else if (globalStats.completedBooks > 0) {
+      globalStats.completedBooks--;
+    }
+    globalStats.save();
+  }
 
   // Changing completion status does not open a book. The reader adds it to
   // recents if it is opened again after being marked unfinished.
