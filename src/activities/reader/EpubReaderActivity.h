@@ -21,6 +21,7 @@
 #include "GlobalReadingStats.h"
 #include "ManualPageTurnQueue.h"
 #include "ReaderProgressSaveDebouncer.h"
+#include "ReaderSettingsSnapshotIO.h"
 #include "SideButtonShortcuts.h"
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
@@ -40,46 +41,13 @@ class EpubReaderActivity final : public Activity {
  public:
   bool usesFullScreenReaderVerticalSwipes() const override { return true; }
 
-  struct ReaderSettingsSnapshot {
-    uint8_t fontFamily = 0;
-    uint8_t readerFontPointSize = 14;
-    uint8_t lineHeightPercent = 100;
-    uint8_t wordSpacing = 0;
-    uint8_t characterSpacing = CrossPointSettings::CHARACTER_SPACING_OFFSET;
-    uint8_t orientation = 0;
-    uint8_t screenMarginVertical = 5;
-    uint8_t screenMarginHorizontal = 5;
-    uint8_t publisherPageNumbers = 0;
-    uint8_t paragraphAlignment = 0;
-    uint8_t embeddedStyle = 1;
-    uint8_t hyphenationEnabled = 0;
-    uint8_t textAntiAliasing = 1;
-    uint8_t imageRendering = 0;
-    uint8_t extraParagraphSpacing = 1;
-    uint8_t forceParagraphIndents = 0;
-    uint8_t focusReadingEnabled = 0;
-    uint8_t guideReadingEnabled = 0;
-    uint8_t epubRenderMode = 0;
-    uint8_t indexingMethod = CrossPointSettings::INDEXING_FULL_SECTION;
-    char sdFontFamilyName[64] = "";
-  };
-
-  struct BookReaderSettingsData {
-    bool hasAutoPageTurnInterval = false;
-    uint16_t autoPageTurnSeconds = 0;
-    bool hasCustomReaderSettings = false;
-    uint32_t readerSettingsOverrideMask = 0;
-    bool hasSafeModeOverride = false;
-    bool hasRenderModeOverride = false;
-    bool hasDictionaryFontOverride = false;
-    uint8_t renderMode = 0;
-    // Fixed-size per-book state lives inside the already heap-owned reader
-    // activity. It avoids a separate string allocation during dictionary use.
-    char dictionarySdFontFamilyName[64] = "";
-    // Zero follows the reader's current physical point size.
-    uint8_t dictionaryFontPointSize = 0;
-    ReaderSettingsSnapshot readerSettings;
-  };
+  // Definitions live in ReaderSettingsSnapshotIO.h -- extracted so the on-disk
+  // version-gated parsing is host-testable without pulling in this whole
+  // 90-include activity. Aliased back in under their original names so every
+  // existing EpubReaderActivity::ReaderSettingsSnapshot/BookReaderSettingsData
+  // reference (inside and outside this file) keeps compiling unchanged.
+  using ReaderSettingsSnapshot = ReaderSettingsIO::ReaderSettingsSnapshot;
+  using BookReaderSettingsData = ReaderSettingsIO::BookReaderSettingsData;
 
  private:
   // The on-disk settings record also carries the dictionary family. Keeping it
