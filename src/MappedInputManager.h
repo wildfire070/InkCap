@@ -85,11 +85,13 @@ class MappedInputManager {
   void suppressNextBackRelease() { releaseSuppression.suppressBack(); }
   void suppressNextConfirmRelease() { releaseSuppression.suppressConfirm(); }
   void suppressNextPowerRelease() { releaseSuppression.suppressPower(); }
+  void suppressNextSideRelease(Button button);
   void suppressNextPowerConfirmRelease() { releaseSuppression.suppressPowerConfirm(); }
   bool isPowerReleaseSuppressed() const { return releaseSuppression.isPowerReleaseSuppressed(); }
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   void injectRelease(Button button) const { injectedReleases[static_cast<size_t>(button)] = true; }
+  bool hasInjectedRelease(Button button) const { return injectedReleases[static_cast<size_t>(button)]; }
   void clearInjectedReleases() const { injectedReleases.fill(false); }
   // See screenshotChordConsumedPending's own comment. markScreenshotChordConsumed()
   // is for main.cpp to call on every chord-consuming frame; consumeScreenshotChordFlag()
@@ -286,6 +288,8 @@ class MappedInputManager {
   bool edgeSlideQualified = false;
 #endif
   mutable ReleaseSuppression releaseSuppression;
+  mutable bool suppressPhysicalUpRelease = false;
+  mutable bool suppressPhysicalDownRelease = false;
   static constexpr size_t LABEL_BUFFER_SIZE = 128;
   mutable std::array<std::array<char, LABEL_BUFFER_SIZE>, 4> labelBuffers{};
   // One-frame synthetic releases let a chord route through the existing

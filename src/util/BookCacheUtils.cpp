@@ -26,10 +26,12 @@ constexpr PreservedCacheFile EPUB_USER_STATE_FILES[] = {
     {"bookfusion.json", "upload_preserve_bookfusion.json"},
     {"book-ids.json", "upload_preserve_book-ids.json"},
     {"ao3-status.bin", "upload_preserve_ao3-status.bin"},
+    {"reading_stats_off", "upload_preserve_reading_stats_off"},
 };
 
 constexpr PreservedCacheFile PAGE_PROGRESS_FILES[] = {
     {"progress.bin", "upload_preserve_progress.bin"},
+    {"reading_stats_off", "upload_preserve_reading_stats_off"},
 };
 
 constexpr PreservedCacheFile CACHE_CLEAR_USER_STATE_FILES[] = {
@@ -37,6 +39,7 @@ constexpr PreservedCacheFile CACHE_CLEAR_USER_STATE_FILES[] = {
     {"bookfusion.json", "clear_preserve_bookfusion.json"},
     {"book-ids.json", "clear_preserve_book-ids.json"},
     {"ao3-status.bin", "clear_preserve_ao3-status.bin"},
+    {"reading_stats_off", "clear_preserve_reading_stats_off"},
 };
 
 struct ResolvedPreservedCacheFile {

@@ -379,8 +379,8 @@ EpubReaderDrawerActivity::EpubReaderDrawerActivity(
     const uint32_t chapterPageCount, const bool chapterPageCountEstimated, const bool hasFootnotes,
     const bool hasDictionary, const bool hasBookmarks, const bool hasClippings, const bool isCurrentPageBookmarked,
     const bool isBookCompleted, const bool isBookArchived, const bool showReadingPaceReset,
-    const uint32_t stableCurrentPage, const uint32_t stablePageCount, const uint16_t autoPageTurnIntervalSeconds,
-    const bool automaticPageTurnActive,
+    const bool globalStatsEnabled, const bool bookStatsEnabled, const uint32_t stableCurrentPage,
+    const uint32_t stablePageCount, const uint16_t autoPageTurnIntervalSeconds, const bool automaticPageTurnActive,
     ReaderOptionsActivity::SaveSettingsCallback saveReaderSettingsCallback, void* saveReaderSettingsContext,
     ReaderOptionsActivity::SaveGlobalSettingsCallback saveGlobalSettingsCallback, void* saveGlobalSettingsContext,
     ReaderOptionsActivity::GlobalSettingsEditCallback beginGlobalSettingsEditCallback,
@@ -409,6 +409,8 @@ EpubReaderDrawerActivity::EpubReaderDrawerActivity(
       hasDictionary(hasDictionary),
       hasBookmarks(hasBookmarks),
       hasClippings(hasClippings),
+      globalStatsEnabled(globalStatsEnabled),
+      bookStatsEnabled(bookStatsEnabled),
       isCurrentPageBookmarked(isCurrentPageBookmarked),
       isBookCompleted(isBookCompleted),
       isBookArchived(isBookArchived),
@@ -447,9 +449,9 @@ void EpubReaderDrawerActivity::onEnter() {
   Activity::onEnter();
   if (mappedInput.hasTouchHardware()) mappedInput.setReaderTouchscreenOverride(true);
 
-  const ReaderDrawerCatalog catalog =
-      makeReaderDrawerCatalog({hasFootnotes, hasDictionary, hasBookmarks, hasClippings, showReadingPaceReset,
-                               stablePageCount > 0, !mappedInput.hasTouchHardware()});
+  const ReaderDrawerCatalog catalog = makeReaderDrawerCatalog(
+      {hasFootnotes, hasDictionary, hasBookmarks, hasClippings, showReadingPaceReset, stablePageCount > 0,
+       !mappedInput.hasTouchHardware(), globalStatsEnabled, bookStatsEnabled});
   for (size_t tab = 0; tab < rootRows.size(); ++tab) {
     rootRows[tab].reserve(catalog[tab].count);
     rootRows[tab].assign(catalog[tab].items.begin(), catalog[tab].items.begin() + catalog[tab].count);
@@ -880,10 +882,12 @@ void EpubReaderDrawerActivity::buildDrawer(UiApp::ScreenType& screen) {
     const fui::Rect sheetContent = screen.sheet(sheet, drawerHeight());
     drawerHandleRect = DrawerHandle::registerTap(screen.frame(), sheetContent, sheet, ACTION_DISMISS);
   }
+  int16_t buttonHeaderHeight = 0;
   if (buttonDevice) {
     const auto& metrics = UITheme::getInstance().getMetrics();
-    screen.takeTop(static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
-                                        metrics.tabBarHeight));
+    buttonHeaderHeight = static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
+                                              metrics.tabBarHeight);
+    screen.takeTop(buttonHeaderHeight);
   }
   // Give every tab row four pixels of white space above and below its icons.
   // The tab pill keeps its previous size so the selected background does not
@@ -893,7 +897,11 @@ void EpubReaderDrawerActivity::buildDrawer(UiApp::ScreenType& screen) {
   samplePreviewBounds = {};
   if (showsSamplePreview()) {
     const auto& metrics = UITheme::getInstance().getMetrics();
-    int previewHeight = screen.body().height * metrics.previewHeightPercent / 100;
+    // In portrait, keep the sample at its pre-header height so the new book
+    // progress row does not remove a line. Landscape needs room for its rows.
+    const int previewBaseHeight =
+        screen.body().height + (isLandscapeOrientation(renderer.getOrientation()) ? 0 : buttonHeaderHeight);
+    int previewHeight = previewBaseHeight * metrics.previewHeightPercent / 100;
     if (readerDrawerSliderPreviewsText(state.pane)) {
       // Leave both controls and both translated help lines usable in landscape.
       ReaderSliderRowProps row;
@@ -1806,6 +1814,9 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
       // confirms Archive/Restore before doing anything, so this row's own label never needs to reflect
       // a result from this session again before the menu closes.
       closeAndReturn(false, EpubReaderMenuAction::TOGGLE_ARCHIVED);
+      return;
+    case RowId::TrackBookStats:
+      closeAndReturn(false, EpubReaderMenuAction::TOGGLE_BOOK_STATS_TRACKING, true);
       return;
     case RowId::DeleteBookmarks:
       closeAndReturn(false, EpubReaderMenuAction::DELETE_BOOKMARKS);
@@ -3066,6 +3077,8 @@ const char* EpubReaderDrawerActivity::rowLabel(const RowId row) const {
       return isBookCompleted ? tr(STR_MARK_UNFINISHED) : tr(STR_MARK_FINISHED);
     case RowId::ToggleArchived:
       return isBookArchived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_FILE);
+    case RowId::TrackBookStats:
+      return tr(STR_TRACK_READING_STATS);
     case RowId::Controls:
       return tr(STR_CAT_CONTROLS);
     case RowId::ResetReadingPace:
@@ -3194,6 +3207,7 @@ const char* EpubReaderDrawerActivity::rowValue(const RowId row, char* buffer, co
 
 bool EpubReaderDrawerActivity::rowIsToggle(const RowId row) const {
   switch (row) {
+    case RowId::TrackBookStats:
     case RowId::TextAa:
     case RowId::Focus:
     case RowId::GuideDots:
@@ -3240,6 +3254,8 @@ bool EpubReaderDrawerActivity::rowShowsNavigationCaret(const RowId row) const {
 
 bool EpubReaderDrawerActivity::rowToggleValue(const RowId row) const {
   switch (row) {
+    case RowId::TrackBookStats:
+      return bookStatsEnabled;
     case RowId::TextAa:
       return draft.textAntiAliasing;
     case RowId::Focus:
