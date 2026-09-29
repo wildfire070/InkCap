@@ -57,7 +57,7 @@ inline constexpr std::array<StrId, CrossPointSettings::QUICK_ACTION_SLOT_ACTION_
 
 // Shared display order for shortcut pickers. The values remain the persisted
 // SHORT_PWRBTN IDs; only their presentation order is centralized here.
-inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 31> shortcutActionOrder = {
+inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 32> shortcutActionOrder = {
     CrossPointSettings::IGNORE,
     CrossPointSettings::SLEEP,
     CrossPointSettings::PAGE_TURN,
@@ -73,6 +73,7 @@ inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 31> shortcutAction
     CrossPointSettings::TOGGLE_TILT_PAGE_TURN,
     CrossPointSettings::SYNC_PROGRESS,
     CrossPointSettings::NEARBY_POSITION_SYNC,
+    CrossPointSettings::LIBRARY,
     CrossPointSettings::FILE_TRANSFER,
     CrossPointSettings::CALIBRE_WIRELESS,
     CrossPointSettings::JOIN_NETWORK,
@@ -94,7 +95,9 @@ inline constexpr std::array<CrossPointSettings::SHORT_PWRBTN, 31> shortcutAction
 inline bool supportsTiltPageTurn() { return halTiltSensor.isAvailable(); }
 
 inline bool isActionAvailable(const uint8_t action) {
-  if (action == CrossPointSettings::PREVIOUS_PAGE || action == CrossPointSettings::NEARBY_POSITION_SYNC) return true;
+  if (action == CrossPointSettings::PREVIOUS_PAGE || action == CrossPointSettings::NEARBY_POSITION_SYNC ||
+      action == CrossPointSettings::LIBRARY)
+    return true;
   if (action == CrossPointSettings::QUICK_ACTIONS || action == CrossPointSettings::QUICK_LOCK) return true;
   if (action == CrossPointSettings::TOGGLE_FRONTLIGHT) return Frontlight.present();
   if (action == CrossPointSettings::TOGGLE_TOUCHSCREEN) return gpio.hasTouch();
@@ -124,6 +127,7 @@ inline StrId actionLabel(const uint8_t action) {
   if (action == CrossPointSettings::PREVIOUS_PAGE) return StrId::STR_PREV_PAGE;
   if (action == CrossPointSettings::NEARBY_POSITION_SYNC) return StrId::STR_NEARBY_POSITION_SYNC;
   if (action == CrossPointSettings::AO3_RECEIVE) return StrId::STR_AO3_RECEIVE;
+  if (action == CrossPointSettings::LIBRARY) return StrId::STR_LIBRARY;
   return StrId::STR_HOME_BUTTON_LOCK;
 }
 

@@ -25,6 +25,10 @@ class SdCardFont;
 
 #include "Bitmap.h"
 
+namespace glyphBitmap {
+struct Frame;
+}
+
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
 enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
@@ -250,6 +254,9 @@ class GfxRenderer {
   // Drawing
   bool isPixelBlack(int x, int y) const;
   void drawPixel(int x, int y, bool state = true) const;
+  // Unscaled glyphs share one clipped, orientation-aware rasterizer.
+  void drawGlyphBitmap(const uint8_t* bitmap, int width, int height, const glyphBitmap::Frame& frame, bool twoBit,
+                       RenderMode mode, bool state) const;
   void drawLine(int x1, int y1, int x2, int y2, bool state = true) const;
   void drawLine(int x1, int y1, int x2, int y2, int lineWidth, bool state) const;
   void drawArc(int maxRadius, int cx, int cy, int xDir, int yDir, int lineWidth, bool state) const;
@@ -387,6 +394,10 @@ class GfxRenderer {
   // symmetrically and recursively, so nesting (loan-in-loan, or the render task
   // re-entering via a loan constructed inside its own render()) is always safe.
   void lockFrameBufferMutex() const { xSemaphoreTakeRecursive(frameBufferMutex_, portMAX_DELAY); }
+  // Non-blocking attempt: returns immediately (true/false) rather than waiting.
+  // Recursive, so a task that already holds this lock always gets true back,
+  // same re-entry guarantee as the blocking form above.
+  bool tryLockFrameBufferMutex() const { return xSemaphoreTakeRecursive(frameBufferMutex_, 0) == pdTRUE; }
   void unlockFrameBufferMutex() const { xSemaphoreGiveRecursive(frameBufferMutex_); }
   TaskHandle_t frameBufferMutexHolder() const { return xSemaphoreGetMutexHolder(frameBufferMutex_); }
   // The recursive mutex itself, for code that must borrow the render lock (see ScalableFontAccess).

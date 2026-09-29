@@ -7,6 +7,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <SdCardFontSystem.h>
@@ -461,6 +462,7 @@ void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const st
       return;
     }
 
+    library::invalidateLibraryIndex();
     BookActions::clearFileMetadata(fullPath);
     if (!Storage.remove(fullPath.c_str())) {
       LOG_ERR("FileBrowser", "Failed to delete file: %s", fullPath.c_str());
@@ -506,6 +508,7 @@ void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, con
     std::vector<std::string> metadataPaths;
     BookMetadataUtils::collectMetadataPathsRecursively(dirPath, metadataPaths);
 
+    library::invalidateLibraryIndex();
     if (!Storage.removeDir(dirPath.c_str())) {
       LOG_ERR("FileBrowser", "Failed to delete directory: %s", dirPath.c_str());
       return;
@@ -1146,6 +1149,7 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
     LOG_ERR("FileBrowser", "Failed to save renamed favorite image path");
   }
 
+  library::invalidateLibraryIndex();
   ImageFolderIndex::invalidateForPath(oldPath.c_str());
   ImageFolderIndex::invalidateForPath(newPath.c_str());
   sdFontSystem.markRegistryDirtyForPath(oldPath.c_str());
