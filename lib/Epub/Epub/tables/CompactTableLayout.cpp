@@ -76,13 +76,14 @@ uint16_t CompactTableLayout::innerWidthForSpan(const uint8_t columns, const uint
   return TableColumnLayout::innerWidth(tableWidth(), columns, startColumn, span, cellPadding_);
 }
 
-uint16_t CompactTableLayout::measure(const uint16_t offset, const uint16_t length, const EpdFontFamily::Style style) {
+uint16_t CompactTableLayout::measure(const uint16_t offset, const uint16_t length, const EpdFontFamily::Style style,
+                                     const int8_t tracking) {
   if (length == 0) return 0;
   const size_t end = static_cast<size_t>(offset) + length;
   if (end >= bufferCapacity_) return 0;
   const char saved = buffer_[end];
   buffer_[end] = '\0';
-  const int width = renderer_.getTextAdvanceX(fontId_, buffer_.get() + offset, style);
+  const int width = renderer_.getTextAdvanceX(fontId_, buffer_.get() + offset, style, 0, tracking);
   buffer_[end] = saved;
   return static_cast<uint16_t>(std::max(0, width));
 }
@@ -269,7 +270,7 @@ bool CompactTableLayout::appendLineToken(std::array<LineToken, MAX_ROW_TOKENS>& 
                                          const uint16_t length, const EpdFontFamily::Style style, const uint8_t flags,
                                          const bool attachToPrevious, bool& emittedAny, const BlockStyle& cellStyle,
                                          TableFragmentCell& output) {
-  const uint16_t width = measure(offset, length, style);
+  const uint16_t width = measure(offset, length, style, cellStyle.characterSpacing);
   const uint16_t gap = (lineCount > 0 && !attachToPrevious) ? renderer_.getSpaceWidth(fontId_, style) : 0;
   if (lineCount > 0 && static_cast<uint32_t>(lineWidth) + gap + width > maxWidth) {
     if (!emitLine(line, lineCount, lineWidth, maxWidth, cellStyle, output)) return false;
@@ -306,7 +307,7 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
     uint16_t remainingLength = token.length;
     bool attach = token.attachToPrevious;
     while (remainingLength > 0) {
-      const uint16_t fullWidth = measure(remainingOffset, remainingLength, style);
+      const uint16_t fullWidth = measure(remainingOffset, remainingLength, style, cell.style.characterSpacing);
       const uint16_t gap = (lineCount > 0 && !attach) ? renderer_.getSpaceWidth(fontId_, style) : 0;
       if (fullWidth <= maxWidth && (lineCount == 0 || static_cast<uint32_t>(lineWidth) + gap + fullWidth <= maxWidth)) {
         if (!appendLineToken(line, lineCount, lineWidth, maxWidth, remainingOffset, remainingLength, style, token.flags,
@@ -333,7 +334,7 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
         if (cp == 0) break;
         const uint16_t candidate =
             static_cast<uint16_t>(cursor - reinterpret_cast<const unsigned char*>(buffer_.get() + remainingOffset));
-        const uint16_t candidateWidth = measure(remainingOffset, candidate, style);
+        const uint16_t candidateWidth = measure(remainingOffset, candidate, style, cell.style.characterSpacing);
         if (candidateWidth <= maxWidth) {
           best = candidate;
         } else {
@@ -353,7 +354,7 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
         best = static_cast<uint16_t>(oneCodepoint - firstCodepoint);
       }
       const uint16_t chunkLen = best;
-      const uint16_t chunkWidth = measure(remainingOffset, chunkLen, style);
+      const uint16_t chunkWidth = measure(remainingOffset, chunkLen, style, cell.style.characterSpacing);
       line[lineCount++] = {remainingOffset, chunkLen, chunkWidth, style, token.flags, attach};
       lineWidth = chunkWidth;
       if (!flush()) return false;
