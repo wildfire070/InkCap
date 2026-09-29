@@ -154,13 +154,14 @@ TEST(ReaderDrawerModel, CatalogOrderAndConditionalRowsMatchTouchDesign) {
   EXPECT_EQ(location.items[6], ReaderDrawerCatalogItem::DisplayQr);
 
   const auto& settings = complete[static_cast<size_t>(ReaderDrawerTab::Settings)];
-  EXPECT_EQ(settings.count, 11);
+  EXPECT_EQ(settings.count, 12);
   EXPECT_EQ(settings.items[0], ReaderDrawerCatalogItem::StatusBar);
   EXPECT_EQ(settings.items[1], ReaderDrawerCatalogItem::Controls);
   EXPECT_EQ(settings.items[5], ReaderDrawerCatalogItem::ToggleCompleted);
   EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::ToggleArchived);
-  EXPECT_EQ(settings.items[7], ReaderDrawerCatalogItem::ResetReadingPace);
-  EXPECT_EQ(settings.items[10], ReaderDrawerCatalogItem::ResetBookReaderSettings);
+  EXPECT_EQ(settings.items[7], ReaderDrawerCatalogItem::TrackBookStats);
+  EXPECT_EQ(settings.items[8], ReaderDrawerCatalogItem::ResetReadingPace);
+  EXPECT_EQ(settings.items[11], ReaderDrawerCatalogItem::ResetBookReaderSettings);
 }
 
 TEST(ReaderDrawerModel, SettingsTabSwapsToCycleStatusForAo3Books) {
@@ -171,9 +172,29 @@ TEST(ReaderDrawerModel, SettingsTabSwapsToCycleStatusForAo3Books) {
   ao3Available.isAo3Book = true;
   const ReaderDrawerCatalog ao3Catalog = makeReaderDrawerCatalog(ao3Available);
   const auto& settings = ao3Catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
-  EXPECT_EQ(settings.count, 9);
+  EXPECT_EQ(settings.count, 10);
   EXPECT_EQ(settings.items[5], ReaderDrawerCatalogItem::CycleStatus);
-  EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::DeleteCache);
+  EXPECT_EQ(settings.items[6], ReaderDrawerCatalogItem::TrackBookStats);
+  EXPECT_EQ(settings.items[7], ReaderDrawerCatalogItem::DeleteCache);
+}
+
+TEST(ReaderDrawerModel, StatsRowsFollowGlobalAndBookTrackingChoices) {
+  ReaderDrawerAvailability available{};
+  available.buttonDevice = true;
+  available.bookStatsEnabled = false;
+  auto catalog = makeReaderDrawerCatalog(available);
+  EXPECT_EQ(catalog[static_cast<size_t>(ReaderDrawerTab::More)].count, 3);
+  const auto& settings = catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
+  EXPECT_EQ(settings.items[7], ReaderDrawerCatalogItem::TrackBookStats);
+  EXPECT_EQ(settings.items[settings.count - 1], ReaderDrawerCatalogItem::ResetBookReaderSettings);
+
+  available.globalStatsEnabled = false;
+  catalog = makeReaderDrawerCatalog(available);
+  const auto& globalOffSettings = catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
+  for (uint8_t i = 0; i < globalOffSettings.count; ++i) {
+    EXPECT_NE(globalOffSettings.items[i], ReaderDrawerCatalogItem::TrackBookStats);
+    EXPECT_NE(globalOffSettings.items[i], ReaderDrawerCatalogItem::DeleteStats);
+  }
 }
 
 TEST(ReaderDrawerModel, ButtonDevicesRestoreStatsAndTransfersInTheirTabs) {

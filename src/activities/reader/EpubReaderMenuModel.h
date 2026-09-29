@@ -21,6 +21,7 @@ enum class EpubReaderMenuAction : uint8_t {
   DELETE_CACHE,
   RESET_READING_PACE,
   READING_STATS,
+  TOGGLE_BOOK_STATS_TRACKING,
   TOGGLE_COMPLETED,
   CYCLE_STATUS,  // AO3 fics only: cycle the 5-state AO3 reading status
   // Standalone Archive File / Restore, independent of TOGGLE_COMPLETED -- reads as whichever of the
@@ -153,6 +154,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   TtfReset,
   ResetBookReaderSettings,
   ReadingStats,
+  TrackBookStats,
   SyncProgress,
   NearbyPositionSync,
   SendNearbyBook,
@@ -170,6 +172,8 @@ struct ReaderDrawerAvailability {
   // button-driven menu's own isAo3Book split -- an AO3 fic's Finished/Archived state is driven by its
   // 5-state reading-status cycle and its own index-aware Archive Fic/Restore instead.
   bool isAo3Book = false;
+  bool globalStatsEnabled = true;
+  bool bookStatsEnabled = true;
 };
 
 struct ReaderDrawerTabCatalog {
@@ -212,7 +216,8 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   more.add(ReaderDrawerCatalogItem::GoToPercent);
   if (available.hasStablePageNumbers) more.add(ReaderDrawerCatalogItem::GoToStablePage);
   more.add(ReaderDrawerCatalogItem::AutoPageTurn);
-  if (available.buttonDevice) more.add(ReaderDrawerCatalogItem::ReadingStats);
+  if (available.buttonDevice && available.globalStatsEnabled && available.bookStatsEnabled)
+    more.add(ReaderDrawerCatalogItem::ReadingStats);
   if (available.hasFootnotes) more.add(ReaderDrawerCatalogItem::Footnotes);
 
   auto& location = catalog[static_cast<size_t>(ReaderDrawerTab::Location)];
@@ -243,9 +248,10 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
     settings.add(ReaderDrawerCatalogItem::ToggleCompleted);
     settings.add(ReaderDrawerCatalogItem::ToggleArchived);
   }
+  if (available.globalStatsEnabled) settings.add(ReaderDrawerCatalogItem::TrackBookStats);
   if (available.showReadingPaceReset) settings.add(ReaderDrawerCatalogItem::ResetReadingPace);
   settings.add(ReaderDrawerCatalogItem::DeleteCache);
-  settings.add(ReaderDrawerCatalogItem::DeleteStats);
+  if (available.globalStatsEnabled && available.bookStatsEnabled) settings.add(ReaderDrawerCatalogItem::DeleteStats);
   settings.add(ReaderDrawerCatalogItem::ResetBookReaderSettings);
   return catalog;
 }

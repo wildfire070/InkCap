@@ -2,6 +2,8 @@
 
 ### Added
 
+- Turn reading stats tracking on or off for the whole device or individual EPUB and XTC books, while keeping saved history and Time Left estimates.
+- Assign separate short-press and long-press actions to the Left/Up and Right/Down side buttons; existing side-button layouts migrate to matching individual actions.
 - Assign Library to power, long-press, button-chord, Home-button, or Quick Actions shortcuts to open the book list directly.
 - Customize the top and bottom reader status bars separately, including item positions and progress bars, in EPUB, TXT, and XTC books. Each bar can be previewed where it appears while reading.
 - View a selected book's reading stats from its Library or File Browser action menu.
@@ -11,9 +13,11 @@
 - TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
 - In-reader menu for X3/X4/X4 Classic have been updated to a modified version of the in-reader menu for touch devices
 - Chapter pages and book progress information is displayed in the frontlight drawer when in the reader for X4 Pro
+- Add a Cover Grid Home theme on devices with PSRAM, showing the current book and six library covers.
 
 ### Changed
 
+- Set Power short-press and long-press to Sleep, Wake, or Sleep/Wake separately; holding Power can always wake the device. Chord shortcuts and the home button can also now sleep the device.
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
 - Text drawing resolves clipping and screen rotation once per glyph, reducing work when painting menus and book pages.
 - Library reuses its index on return visits and refreshes after file changes, instead of scanning the card every time.
@@ -23,6 +27,8 @@
 - EPUB reader menus now share five tabs across devices. Button devices gain live font and margin previews, Reading Stats, and in-book transfer options.
 - Brightness and warmth gestures now adjust in one-point steps for finer control.
 - The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
+- Long status titles shorten faster when they do not fit the screen.
+- Leaving an EPUB or TXT reader releases rebuildable font buffers for other screens.
 
 ### Fixed
 
@@ -38,6 +44,16 @@
 - Keep clipped text, exported excerpts, and chapter titles on complete characters when shortened.
 - Keep clipping-selection button hints from covering book text.
 - Changing a reader font with incremental indexing now returns after the current reading position is ready, instead of waiting for the whole chapter to be re-indexed.
+- Release builds use the pinned PlatformIO core during nested ESP-IDF configuration.
+- Adding the sleep moon to the last screen no longer flashes white in night mode.
+- Waking the reader skips the intermediate loading icon refresh.
+- Screenshot folder names keep complete non-English characters when shortened.
+- Longer power-on instructions wrap on the finished update screen.
+- Sticky now records periodic heap and PSRAM statistics over its ROM logging path.
+- RTL EPUBs use reading-order swipe and tap directions.
+- Korean text keeps natural syllable spacing when justified and wraps by word.
+- Footnote choices can be selected directly on the reading page, with a list fallback for links without a visible target.
+- Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 
 ## [v1.6.0] - 2026-09-21
 

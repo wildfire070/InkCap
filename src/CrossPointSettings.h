@@ -177,6 +177,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SIDE_LONG_PRESS_COUNT
   };
 
+  // Side-button actions share shortcut IDs with Power. These extra IDs are
+  // reader-only actions; keep their persisted values separate and stable.
+  enum SIDE_BUTTON_ACTION : uint8_t {
+    SIDE_PREVIOUS_CHAPTER = 64,
+    SIDE_NEXT_CHAPTER,
+    SIDE_INCREASE_FONT,
+    SIDE_DECREASE_FONT,
+    SIDE_ROTATE_COUNTERCLOCKWISE,
+    SIDE_ROTATE_CLOCKWISE,
+  };
+
   // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName)
   enum FONT_FAMILY { LEXENDDECA = 0, BITTER = 1, FONT_FAMILY_COUNT };
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
@@ -270,6 +281,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     // short power button and Home key only; not a Quick Actions slot.
     AO3_RECEIVE = 33,
     LIBRARY = 34,
+    // Power-only choices. Keep SLEEP=1 as the existing Sleep/Wake setting.
+    SLEEP_ONLY = 35,
+    WAKE_ONLY = 36,
     SHORT_PWRBTN_COUNT
   };
 
@@ -344,7 +358,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LYRA_CAROUSEL = 4,
     MINIMAL = 5,
     DASHBOARD = 6,
-    UI_THEME_COUNT = 7
+    COVER_GRID = 7,
+    UI_THEME_COUNT = 8
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
 
@@ -536,13 +551,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // EPUB reading orientation settings
   // 0 = portrait (default), 1 = landscape clockwise, 2 = inverted, 3 = landscape counter-clockwise
   uint8_t orientation = PORTRAIT;
-  // Button layouts (front layout retained for migration only)
+  // Legacy layouts are retained for migration only.
   uint8_t frontButtonLayout = BACK_CONFIRM_LEFT_RIGHT;
   uint8_t sideButtonLayout = PREV_NEXT;
   uint8_t frontButtonOrientationAware = FRONT_ORIENTATION_AWARE_OFF;
   uint8_t sideButtonOrientationAware = 0;
-  // Action performed when side buttons are long-pressed in reader
+  // Legacy shared side-button long action, retained for migration only.
   uint8_t sideButtonLongPress = SIDE_LONG_CHAPTER_SKIP;
+  uint8_t sideButtonUpShort = PREVIOUS_PAGE;
+  uint8_t sideButtonUpLong = SIDE_PREVIOUS_CHAPTER;
+  uint8_t sideButtonDownShort = PAGE_TURN;
+  uint8_t sideButtonDownLong = SIDE_NEXT_CHAPTER;
   // Front button remap (logical -> hardware)
   // Used by MappedInputManager to translate logical buttons into physical front buttons.
   uint8_t frontButtonBack = FRONT_HW_BACK;
@@ -603,7 +622,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t longPressButtonBehavior = OFF;
   // UI Theme
   uint8_t uiTheme = LYRA;
-  // Legacy Recent Books layout; retained for binary settings compatibility.
+  // Recently Opened layout in Library; keep the original raw values for older settings.
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // UI scale (list fonts + row heights); touch boards default one step larger
   uint8_t uiScale = defaultUiScale();
@@ -706,10 +725,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
         return 0;
     }
   }
-#ifdef CROSSINK_ENABLE_READING_STATS_TOGGLE
-  // Debug/test builds can disable stat writes so navigation tests do not affect personal reading stats.
+  // Master switch for automatic reading statistics; Time Left pace remains independent.
   uint8_t trackReadingStats = 1;
-#endif
   // FileBrowserSortField value (see SortPopup.h); 0xFF = none chosen yet, falls back to the
   // existing fixed alphabetical sort. No bookFusionSortField counterpart -- this branch has
   // no BookFusion browse screen to sort.
@@ -718,9 +735,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   ~CrossPointSettings() = default;
 
-  static constexpr uint16_t POWER_BUTTON_WAKE_SHORT_MS = 10;
-  static constexpr uint16_t POWER_BUTTON_WAKE_LONG_MS = 200;
   static constexpr uint16_t POWER_BUTTON_LONG_PRESS_MS = 400;
+  static constexpr uint16_t POWER_BUTTON_WAKE_SHORT_MS = 10;
+  static constexpr uint16_t POWER_BUTTON_WAKE_LONG_MS = POWER_BUTTON_LONG_PRESS_MS;
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
   static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = SLEEP_TIMEOUT_NEVER_MINUTES;
@@ -746,22 +763,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr size_t MAX_DEVICE_NAME_LENGTH = sizeof(deviceName) - 1;
 
   uint16_t getPowerButtonWakeDuration() const {
-    return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? POWER_BUTTON_WAKE_SHORT_MS
-                                                                    : POWER_BUTTON_WAKE_LONG_MS;
+    return shortPowerPressWakes() ? POWER_BUTTON_WAKE_SHORT_MS : POWER_BUTTON_WAKE_LONG_MS;
   }
+
+  bool shortPowerPressWakes() const { return shortPwrBtn == SLEEP || shortPwrBtn == WAKE_ONLY; }
 
   bool shouldShowClockInReader() const {
     return topReaderStatusBar.contains(ReaderStatusBarItem::Clock) ||
            bottomReaderStatusBar.contains(ReaderStatusBarItem::Clock);
   }
   bool shouldShowClockOutsideReader() const { return showClockOutsideReader != 0; }
-  bool shouldTrackReadingStats() const {
-#ifdef CROSSINK_ENABLE_READING_STATS_TOGGLE
-    return trackReadingStats != 0;
-#else
-    return true;
-#endif
-  }
+  bool shouldTrackReadingStats() const { return trackReadingStats != 0; }
   static const char* getDefaultDeviceName();
   const char* getEffectiveDeviceName() const;
   uint16_t getReadingIdleTimeThresholdSeconds() const;

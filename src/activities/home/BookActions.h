@@ -34,6 +34,8 @@ bool completingWouldArchive(const std::string& fullPath);
 // /Archive (the move setting is on, the book is an epub that is finished and currently archived). Callers ask
 // before doing that, the same way they ask before completingWouldArchive's move.
 bool uncompletingWouldRestore(const std::string& fullPath);
+bool isBookStatsTrackingEnabled(const std::string& fullPath);
+bool toggleBookStatsTracking(const std::string& fullPath, bool& enabled);
 // Sets a book's Finished status directly (not a toggle) given only its path, with no archive-move side effect --
 // the shared "set finished" write (stats + global count + recents) used by every place that flips Finished as a
 // side effect of another action (Archive/Restore), where the caller already handled any move itself. `fullPath`
