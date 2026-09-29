@@ -489,8 +489,7 @@ class ContentsDocumentScanner final : public Print {
 }  // namespace
 
 Epub::Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
-  cachePath = cachePathForFilePath(this->filepath, cacheDir);
-  migrateLegacyCachePath(cacheDir);
+  cachePath = resolveCachePathForFilePath(this->filepath, cacheDir);
 }
 
 std::string Epub::cachePathForFilePath(const std::string& filepath, const std::string& cacheDir) {
@@ -502,14 +501,15 @@ bool Epub::hasCache(const std::string& filepath, const std::string& cacheDir) {
   return BookMetadataCache::exists(cachePathForFilePath(filepath, cacheDir));
 }
 
-void Epub::migrateLegacyCachePath(const std::string& cacheDir) const {
+std::string Epub::resolveCachePathForFilePath(const std::string& filepath, const std::string& cacheDir) {
+  const std::string cachePath = cachePathForFilePath(filepath, cacheDir);
   if (Storage.exists(cachePath.c_str())) {
-    return;
+    return cachePath;
   }
 
   const std::string legacyCachePath = legacyCachePathForFilePath(filepath, cacheDir);
   if (legacyCachePath == cachePath || !Storage.exists(legacyCachePath.c_str())) {
-    return;
+    return cachePath;
   }
 
   if (Storage.rename(legacyCachePath.c_str(), cachePath.c_str())) {
@@ -517,6 +517,7 @@ void Epub::migrateLegacyCachePath(const std::string& cacheDir) const {
   } else {
     LOG_ERR("EBP", "Failed to migrate legacy EPUB cache: %s -> %s", legacyCachePath.c_str(), cachePath.c_str());
   }
+  return cachePath;
 }
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
@@ -1164,9 +1165,6 @@ bool Epub::loadMetadata(std::string& title, std::string& author, const bool allo
     if (!metadataCache) {
       LOG_ERR("EBP", "Could not allocate metadata cache reader");
     }
-  } else if (!allowCachedMetadata && !clearCache()) {
-    LOG_ERR("EBP", "Could not invalidate stale metadata cache");
-    return false;
   }
 
   BookMetadataCache::BookMetadata metadata;

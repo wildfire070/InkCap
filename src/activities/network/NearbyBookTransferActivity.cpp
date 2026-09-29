@@ -4,6 +4,7 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <SdCardFontSystem.h>
@@ -141,6 +142,7 @@ void NearbyBookTransferActivity::onEnter() {
 }
 
 void NearbyBookTransferActivity::onExit() {
+  library::invalidateLibraryIndex();
   sourceFile_.close();
   receiveFile_.close();
   stopRadio();

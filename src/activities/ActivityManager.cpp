@@ -88,9 +88,9 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
     context.bookTitle = activity.getCurrentBookTitle();
     context.bookPath = currentPath;
     context.activeEpub = activity.isEpubReaderActivity() && currentEpubValid;
-    if (shouldShowStickyReaderDetails(hasStickyReaderDetailsPanel(), Frontlight.present(), context.activeReaderBook) &&
-        activity.getFrontlightPanelBookDetails(context.bookDetails)) {
-      context.showReaderDetails = true;
+    if (activity.getFrontlightPanelBookDetails(context.bookDetails)) {
+      context.showReaderDetails =
+          shouldShowStickyReaderDetails(hasStickyReaderDetailsPanel(), Frontlight.present(), context.activeReaderBook);
       context.bookTitle = context.bookDetails.title;
     }
     context.readingStatsActivity = activity.createFrontlightReadingStatsActivity();
@@ -1244,15 +1244,26 @@ RequestUpdateResult ActivityManager::requestUpdateAndWait() {
 
 // RenderLock
 
-RenderLock::RenderLock() {
-  activityManager.renderer.lockFrameBufferMutex();
-  isLocked = true;
+RenderLock::RenderLock(const Mode mode) {
+  // Delegates to GfxRenderer's own recursive framebuffer mutex, not a separate
+  // ActivityManager-owned one -- see the render-task-vs-buffer-loan crash fix
+  // (e83dfa4f) this branch carries that crossink/development's simpler locking
+  // has never needed: NetworkBufferLoan/FrameBufferLoan (BookFusion sync,
+  // low-memory chapter builds) take/give this same recursive mutex around
+  // their whole window, including from inside the render task's own render()
+  // call in 3 of EpubReaderActivity's 6 loan sites -- a non-recursive mutex
+  // would deadlock there. Mode::Try still gets the requested non-blocking
+  // semantics on top of that same recursive primitive.
+  if (mode == Mode::Try) {
+    isLocked = activityManager.renderer.tryLockFrameBufferMutex();
+  } else {
+    activityManager.renderer.lockFrameBufferMutex();
+    isLocked = true;
+  }
+  assert(mode == Mode::Try || isLocked);
 }
 
-RenderLock::RenderLock([[maybe_unused]] Activity&) {
-  activityManager.renderer.lockFrameBufferMutex();
-  isLocked = true;
-}
+RenderLock::RenderLock([[maybe_unused]] Activity&, const Mode mode) : RenderLock(mode) {}
 
 RenderLock::~RenderLock() {
   if (isLocked) {

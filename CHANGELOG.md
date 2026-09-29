@@ -2,19 +2,31 @@
 
 ### Added
 
+- Assign Library to power, long-press, button-chord, Home-button, or Quick Actions shortcuts to open the book list directly.
+- Customize the top and bottom reader status bars separately, including item positions and progress bars, in EPUB, TXT, and XTC books. Each bar can be previewed where it appears while reading.
 - View a selected book's reading stats from its Library or File Browser action menu.
 - Library replaces Recent Books with a searchable book list, and adds various book metadata sort options.
 - Reset a book's reader settings from the in-reader Settings tab.
 - Assign actions to upward and downward slides along either screen edge on touch devices.
 - TTF font support on ESP32-S3 devices. Whole-point sizes from 8pt to 22pt will be automatically available.
+- In-reader menu for X3/X4/X4 Classic have been updated to a modified version of the in-reader menu for touch devices
+- Chapter pages and book progress information is displayed in the frontlight drawer when in the reader for X4 Pro
 
 ### Changed
 
 - Brightness and warmth gestures now respond while you drag, with longer swipes making larger adjustments.
+- Text drawing resolves clipping and screen rotation once per glyph, reducing work when painting menus and book pages.
+- Library reuses its index on return visits and refreshes after file changes, instead of scanning the card every time.
+- Home reads saved EPUB progress and chapter metadata without opening or indexing the book, and stops saved-item checks after the first file.
+- Optional EPUB background work yields immediately when rendering is busy, keeping input polling responsive.
+- SD-card fonts share identical character lookup tables across styles, reducing memory use and repeated card reads.
+- EPUB reader menus now share five tabs across devices. Button devices gain live font and margin previews, Reading Stats, and in-book transfer options.
+- Brightness and warmth gestures now adjust in one-point steps for finer control.
+- The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
 
 ### Fixed
 
-- Keyboard rows are shorter on button-only devices so side-button hints no longer cover the keys.
+- File Transfer choices no longer appear preselected when opened on a touch device.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
 - EPUB Safe Mode no longer pins inherited fonts and page layout as personal book settings.
 - The X4 Pro Home button now steps back through dictionary lookup, chapter selection, and nested settings instead of jumping to Home.
@@ -68,7 +80,7 @@
 - EPUB dictionary lookup can select an individual part of a hyphenated word.
 - Short Power-button frontlight and touchscreen shortcuts in EPUB books no longer run the configured long-press action.
 - Silent restarts now preserve the frontlight state instead of applying wake or schedule settings.
-- The Home button now returns from Customize Status Bar to the previous menu instead of leaving the reader.
+- The Home button now returns from Status Bars to the previous menu instead of leaving the reader.
 - OPDS book downloads can follow secure redirects without sharing catalog credentials with the download host.
 - Larger EPUB stylesheets work on PSRAM readers, including rules that hide duplicate images.
 - JPEG-heavy EPUBs can use PSRAM for decoding on supported readers, leaving internal memory available for reading.
