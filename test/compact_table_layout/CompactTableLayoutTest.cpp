@@ -163,6 +163,40 @@ TEST(CompactTableLayoutTest, BreaksUtf8AndOversizedCodepointsWithoutAbort) {
   EXPECT_EQ(row.cells.front().lines.front()->words.size(), 1u);
 }
 
+BlockStyle leftStyleWithSpacing(const int8_t spacing) {
+  BlockStyle style = leftStyle();
+  style.characterSpacing = spacing;
+  return style;
+}
+
+// A single-column cell containing two five-letter words separated by a space.
+// At 0 tracking both words fit on one line; widened per-glyph tracking must be
+// reflected in measure()'s width so the same content now wraps to a second
+// line -- proving layout (not just draw) accounts for character spacing.
+int lineCountForCharacterSpacing(const int8_t spacing) {
+  GfxRenderer renderer;
+  CompactTableLayout layout(renderer, 0, 20, 200, 10, 0, leftStyle());
+  const BlockStyle cellStyle = leftStyleWithSpacing(spacing);
+  if (!layout.beginRow()) return -1;
+  if (!layout.beginCell(false, 1, 0, cellStyle)) return -1;
+  if (!layout.appendWord("ABCDE", EpdFontFamily::REGULAR, false, false, 0)) return -1;
+  if (!layout.appendWord("FGHIJ", EpdFontFamily::REGULAR, false, false, 0)) return -1;
+  if (!layout.endCell({})) return -1;
+
+  TableFragmentRow row;
+  std::vector<std::shared_ptr<TextBlock>> flatLines;
+  std::vector<FootnoteEntry> footnotes;
+  uint32_t offset = 0;
+  if (layout.finishRow(row, flatLines, footnotes, offset) != CompactTableLayout::RowResult::Ok) return -1;
+  if (row.cells.size() != 1) return -1;
+  return static_cast<int>(row.cells.front().lines.size());
+}
+
+TEST(CompactTableLayoutTest, CharacterSpacingWideningIsReflectedInCellWrapping) {
+  EXPECT_EQ(lineCountForCharacterSpacing(0), 1);
+  EXPECT_EQ(lineCountForCharacterSpacing(2), 2);
+}
+
 TEST(CompactTableLayoutTest, UnsupportedRowsFlattenDeterministically) {
   GfxRenderer renderer;
   CompactTableLayout layout(renderer, 0, 80, 200, 10, 2, leftStyle());
