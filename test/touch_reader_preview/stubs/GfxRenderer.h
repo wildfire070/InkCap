@@ -23,6 +23,7 @@ class GfxRenderer {
   mutable std::vector<DrawCall> drawCalls;
 
   int getLineHeight(int) const { return 10; }
+  int getTextHeight(int) const { return 10; }
   int getSpaceWidth(int, EpdFontFamily::Style) const { return 1; }
   int getSpaceAdvance(int, uint32_t, uint32_t, EpdFontFamily::Style) const { return 1; }
   // Tracking is extra px between adjacent glyphs, as in the real renderer (never around a space).

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 #include <SdCardFontSystem.h>
 #include <esp_rom_crc.h>
@@ -275,6 +276,7 @@ bool removeRecursive(const char* path, size_t depth = 0) {
 
   if (!file.isDirectory()) {
     file.close();
+    library::invalidateLibraryIndex();
     const bool removed = Storage.remove(path);
     if (removed) clearCachesForPath(path);
     return removed;
@@ -566,6 +568,7 @@ void handleWrite() {
     return;
   }
 
+  library::invalidateLibraryIndex();
   // Rename any existing destination aside rather than deleting it outright:
   // if the rename below fails partway, the previous file must still be
   // recoverable instead of losing both the old file and the new upload.
@@ -646,6 +649,7 @@ void handleRename() {
   }
 
   if (Storage.rename(src, dst)) {
+    library::invalidateLibraryIndex();
     clearCachesForPath(src);
     clearCachesForPath(dst);
     ImageFolderIndex::invalidateForPath(src);

@@ -5,12 +5,19 @@
 
 TEST(EdgeSlide, ScalesLightAdjustmentWithSwipeLength) {
   EXPECT_EQ(SwipeAdjustment::amount(59, 800), 0);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 800), 5);
+  EXPECT_EQ(SwipeAdjustment::amount(60, 800), 1);
+  EXPECT_EQ(SwipeAdjustment::amount(68, 800), 2);
   EXPECT_GT(SwipeAdjustment::amount(400, 800), SwipeAdjustment::amount(100, 800));
   EXPECT_EQ(SwipeAdjustment::amount(799, 800), 100);
   EXPECT_EQ(SwipeAdjustment::amount(1200, 800), 100);
-  EXPECT_EQ(SwipeAdjustment::amount(60, 480), 5);
+  EXPECT_EQ(SwipeAdjustment::amount(60, 480), 1);
+  EXPECT_EQ(SwipeAdjustment::amount(65, 480), 2);
   EXPECT_EQ(SwipeAdjustment::amount(479, 480), 100);
+  for (const int axisSize : {480, 800}) {
+    for (int distance = 61; distance < axisSize; ++distance) {
+      EXPECT_LE(SwipeAdjustment::amount(distance, axisSize) - SwipeAdjustment::amount(distance - 1, axisSize), 1);
+    }
+  }
 }
 
 TEST(EdgeSlide, LiveLightTargetFollowsFingerBackFromLimit) {
