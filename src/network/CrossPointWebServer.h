@@ -28,13 +28,20 @@ class CrossPointWebServer {
     size_t lastCompleteSize = 0;
     unsigned long lastCompleteAt = 0;
 
-    // Populated once a Calibre WebSocket session ends (client disconnected) having
-    // uploaded at least one file. batchCompleteAt changes on every new batch, so
-    // callers can detect a fresh event the same way they already do for lastCompleteAt.
-    unsigned long batchCompleteAt = 0;
+    // The Calibre plugin reconnects the WebSocket for every individual file, so a
+    // disconnect does NOT mean the send job is over -- these accumulate across
+    // however many connect/upload/disconnect cycles happen back to back.
+    // lastBatchActivityAt is the millis() of the most recent addition to either
+    // list; once it's been idle a while with no new upload starting, the caller
+    // treats that gap as "the job is done" and calls clearBatchSummary().
+    unsigned long lastBatchActivityAt = 0;
     std::vector<std::string> batchSucceeded;
     std::vector<std::string> batchFailed;  // "filename: reason"
   };
+
+  // Reset the accumulated batch (see WsUploadStatus above) once the caller has
+  // read it out and shown it -- otherwise it would keep growing forever.
+  void clearBatchSummary();
 
   // Used by POST upload handler
   struct UploadState {
