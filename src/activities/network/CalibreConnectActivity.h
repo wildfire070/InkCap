@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "activities/Activity.h"
 #include "activities/ScreenTransitionRefresh.h"
@@ -28,6 +29,10 @@ class CalibreConnectActivity final : public Activity {
   std::string lastCompleteName;
   unsigned long lastCompleteAt = 0;
   unsigned long lastProcessedCompleteAt = 0;  // Track which server value we've already processed
+  unsigned long lastProcessedBatchCompleteAt = 0;
+  std::vector<std::string> batchSucceeded;
+  std::vector<std::string> batchFailed;
+  bool showBatchSummary = false;
   bool exitRequested = false;
   bool returnToReader = false;
 

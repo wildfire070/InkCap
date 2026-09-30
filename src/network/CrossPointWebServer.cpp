@@ -268,6 +268,13 @@ size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
+// Accumulated results for the current Calibre WebSocket session (one client
+// CONNECTED to DISCONNECTED span). Cleared on CONNECTED, finalized (batchCompleteAt
+// set) on DISCONNECTED -- read out by CalibreConnectActivity the same way it already
+// reads wsLastCompleteName, via change-tracking on batchCompleteAt.
+std::vector<String> wsBatchSucceeded;
+std::vector<String> wsBatchFailed;
+unsigned long wsBatchCompleteAt = 0;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -449,7 +456,10 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
 }
 
-void CrossPointWebServer::abortWsUpload(const char* tag) {
+void CrossPointWebServer::abortWsUpload(const char* tag, const char* reason) {
+  // Record against the batch before clearing wsUploadFileName below.
+  wsBatchFailed.push_back(wsUploadFileName + ": " + reason);
+
   // Explicit close() required: file-scope global persists beyond function scope
   wsUploadFile.close();
   String filePath = wsUploadPath;
@@ -477,7 +487,7 @@ void CrossPointWebServer::stop() {
 
   // Close any in-progress WebSocket upload and remove partial file
   if (wsUploadInProgress && wsUploadFile) {
-    abortWsUpload("WEB");
+    abortWsUpload("WEB", "Cancelled");
   }
 
   // Stop WebSocket server
@@ -566,6 +576,9 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   status.lastCompleteName = wsLastCompleteName.c_str();
   status.lastCompleteSize = wsLastCompleteSize;
   status.lastCompleteAt = wsLastCompleteAt;
+  status.batchCompleteAt = wsBatchCompleteAt;
+  for (const auto& name : wsBatchSucceeded) status.batchSucceeded.emplace_back(name.c_str());
+  for (const auto& name : wsBatchFailed) status.batchFailed.emplace_back(name.c_str());
   return status;
 }
 
@@ -2131,12 +2144,24 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       // A new client may have already started a fresh upload before this
       // DISCONNECTED event fires (race condition on quick cancel + retry).
       if (num == wsUploadClientNum && wsUploadInProgress && wsUploadFile) {
-        abortWsUpload("WS");
+        abortWsUpload("WS", "Connection lost mid-upload");
+      }
+      // The protocol has no explicit "batch done" message -- a Calibre send job is
+      // one connect, some number of START/.../DONE file transfers, then disconnect.
+      // Treat the disconnect as the end of that job, but only fire once per batch
+      // (a client with nothing transferred, e.g. a stray probe, shouldn't finalize
+      // an empty batch that a later real session would then just keep appending to).
+      if (!wsBatchSucceeded.empty() || !wsBatchFailed.empty()) {
+        wsBatchCompleteAt = millis();
       }
       break;
 
     case WStype_CONNECTED: {
       LOG_DBG("WS", "Client %u connected", num);
+      // Start each Calibre session with a clean slate for the batch summary.
+      wsBatchSucceeded.clear();
+      wsBatchFailed.clear();
+      wsBatchCompleteAt = 0;
       break;
     }
 
@@ -2168,6 +2193,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           }
           if (!sizeValid) {
             LOG_DBG("WS", "START rejected: invalid size token '%s'", sizeToken.c_str());
+            wsBatchFailed.push_back(wsUploadFileName + ": Invalid START format");
             wsServer->sendTXT(num, "ERROR:Invalid START format");
             return;
           }
@@ -2186,6 +2212,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           filePath += wsUploadFileName;
 
           if (isProtectedPath(filePath)) {
+            wsBatchFailed.push_back(wsUploadFileName + ": Access denied to protected path");
             wsServer->sendTXT(num, "ERROR:Access denied to protected path");
             wsUploadInProgress = false;
             wsUploadClientNum = 255;
@@ -2194,6 +2221,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           if (Storage.exists(filePath.c_str())) {
             LOG_DBG("WS", "Upload collision: %s", filePath.c_str());
+            wsBatchFailed.push_back(wsUploadFileName + ": File already exists");
             wsServer->sendTXT(num, "ERROR:File already exists: " + wsUploadFileName);
             return;
           }
@@ -2211,6 +2239,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             used = Storage.usedBytes();
 #endif
             if (total > 0 && used <= total && static_cast<uint64_t>(wsUploadSize) > total - used) {
+              wsBatchFailed.push_back(wsUploadFileName + ": Not enough free space on SD card");
               wsServer->sendTXT(num, "ERROR:Not enough free space on SD card");
               return;
             }
@@ -2219,6 +2248,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           // Open file for writing
           sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
           if (!Storage.openFileForWrite("WS", filePath, wsUploadFile)) {
+            wsBatchFailed.push_back(wsUploadFileName + ": Failed to create file");
             wsServer->sendTXT(num, "ERROR:Failed to create file");
             wsUploadInProgress = false;
             wsUploadClientNum = 255;
@@ -2232,6 +2262,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsLastCompleteName = wsUploadFileName;
             wsLastCompleteSize = 0;
             wsLastCompleteAt = millis();
+            wsBatchSucceeded.push_back(wsUploadFileName);
             LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
             clearBookCachePreservingUserState(filePath.c_str());
             ImageFolderIndex::invalidateForPath(filePath.c_str());
@@ -2260,14 +2291,14 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       // Write binary data directly to file
       size_t remaining = wsUploadSize - wsUploadReceived;
       if (length > remaining) {
-        abortWsUpload("WS");
+        abortWsUpload("WS", "Upload overflow");
         wsServer->sendTXT(num, "ERROR:Upload overflow");
         return;
       }
       size_t written = wsUploadFile.write(payload, length);
 
       if (written != length) {
-        abortWsUpload("WS");
+        abortWsUpload("WS", "Write failed - disk full?");
         wsServer->sendTXT(num, "ERROR:Write failed - disk full?");
         return;
       }
@@ -2291,6 +2322,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsLastCompleteName = wsUploadFileName;
         wsLastCompleteSize = wsUploadSize;
         wsLastCompleteAt = millis();
+        wsBatchSucceeded.push_back(wsUploadFileName);
 
         unsigned long elapsed = millis() - wsUploadStartTime;
         float kbps = (elapsed > 0) ? (wsUploadSize / 1024.0) / (elapsed / 1000.0) : 0;

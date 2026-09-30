@@ -27,6 +27,13 @@ class CrossPointWebServer {
     std::string lastCompleteName;
     size_t lastCompleteSize = 0;
     unsigned long lastCompleteAt = 0;
+
+    // Populated once a Calibre WebSocket session ends (client disconnected) having
+    // uploaded at least one file. batchCompleteAt changes on every new batch, so
+    // callers can detect a fresh event the same way they already do for lastCompleteAt.
+    unsigned long batchCompleteAt = 0;
+    std::vector<std::string> batchSucceeded;
+    std::vector<std::string> batchFailed;  // "filename: reason"
   };
 
   // Used by POST upload handler
@@ -81,7 +88,7 @@ class CrossPointWebServer {
   // WebSocket upload state
   void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
   static void wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
-  void abortWsUpload(const char* tag);
+  void abortWsUpload(const char* tag, const char* reason);
 
   // File scanning
   using FileVisitor = void (*)(const FileInfo& info, void* context);
