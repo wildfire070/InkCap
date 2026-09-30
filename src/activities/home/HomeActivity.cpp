@@ -29,6 +29,7 @@
 #include "../reader/BookStatsTracking.h"
 #include "../reader/EpubReaderUtils.h"
 #include "Ao3LibraryActivity.h"
+#include "Ao3ReceivedReviewActivity.h"
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
@@ -45,6 +46,7 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "util/Ao3ReceiveUtils.h"
 
 namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
@@ -1088,6 +1090,7 @@ void HomeActivity::onEnter() {
   minimalMenuOpen = false;
   minimalSuppressInitialFrontRelease = usesMinimalHomeInteraction();
   backPressSeen = false;
+  ao3ReviewChecked_ = false;
   minimalMenuIndex = 0;
   minimalHomeNavIndex = -1;
   carouselFramesReady = false;
@@ -1771,6 +1774,19 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
 }
 
 void HomeActivity::loop() {
+  // Fics received via AO3 Receive last session: name and duplicate-check them here, right after
+  // boot, rather than waiting for the user to open the AO3 Library screen on their own -- a
+  // received file otherwise sits under whatever raw filename the browser extension sent it as
+  // until that happens, which could be a long time (or never).
+  if (!ao3ReviewChecked_) {
+    ao3ReviewChecked_ = true;
+    if (Ao3ReceiveUtils::hasPending()) {
+      startActivityForResult(std::make_unique<Ao3ReceivedReviewActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) { requestUpdate(); });
+      return;
+    }
+  }
+
   if (quickActionsLongPowerHandled) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Power)) {
       quickActionsLongPowerHandled = false;
