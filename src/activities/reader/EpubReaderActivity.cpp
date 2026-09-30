@@ -3179,6 +3179,10 @@ void EpubReaderActivity::loop() {
                                                            side.action == CrossPointSettings::SIDE_ROTATE_CLOCKWISE));
           requestUpdate();
           break;
+        case CrossPointSettings::SIDE_ROTATE_FLIP:
+          applyOrientation(ReaderUtils::flippedOrientation(SETTINGS.orientation));
+          requestUpdate();
+          break;
         case CrossPointSettings::IGNORE:
           break;
         default: {

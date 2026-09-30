@@ -124,6 +124,9 @@ KOReaderSyncClient::Error validateAuthResponse(const char* body) {
 // floors for total free heap and the largest contiguous block.
 constexpr uint32_t MIN_FREE_HEAP_FOR_TLS = 35000;
 constexpr uint32_t MIN_MAX_ALLOC_HEAP_FOR_TLS = 20000;
+// Authentication returns a small JSON object. Cap unexpected HTML/error pages
+// before they can exhaust the C3 heap while the TLS connection is still open.
+constexpr size_t MAX_AUTH_RESPONSE_BYTES = 4096;
 
 #ifdef SIMULATOR
 void addAuthHeaders(HTTPClient& http) {
@@ -193,6 +196,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   LOG_DBG("KOSync", "Auth response: %d", httpCode);
 
   if (httpCode == 200) {
+    if (http.getSize() > static_cast<int>(MAX_AUTH_RESPONSE_BYTES)) {
+      LOG_ERR("KOSync", "Auth response exceeded %u bytes (HTTP %d)", static_cast<unsigned>(MAX_AUTH_RESPONSE_BYTES),
+              httpCode);
+      http.end();
+      return INVALID_AUTH_RESPONSE;
+    }
     String responseBody = http.getString();
     http.end();
     return validateAuthResponse(responseBody.c_str());
@@ -224,7 +233,14 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
     http.end();
     return NETWORK_ERROR;
   }
+  // boundedGet() truncates silently rather than signaling overflow -- a truncated body fails
+  // validateAuthResponse()'s JSON parse below, which is the actual error signal for that case.
   if (httpCode == 200) {
+    if (!http.responseComplete()) {
+      LOG_ERR("KOSync", "Auth response incomplete");
+      http.end();
+      return NETWORK_ERROR;
+    }
     const Error result = validateAuthResponse(responseBody.c_str());
     http.end();
     return result;
