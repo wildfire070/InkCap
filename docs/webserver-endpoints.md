@@ -123,7 +123,12 @@ File uploaded successfully: mybook.epub
 
 Notes:
 
-- Existing files with the same name are overwritten.
+- If a file with the same name already exists at the destination, the upload is rejected
+  with `400 File already exists: <name>` rather than overwritten. There is no `overwrite`
+  query parameter; any such parameter sent by a client is ignored.
+- The one exception is while AO3 Receive is active and no explicit `path` is given: uploads
+  land in the AO3 receive folder and a same-named collision is deduplicated instead, as
+  `<name> (2).epub`, `<name> (3).epub`, and so on.
 - EPUB cache data for the uploaded path is cleared after a successful upload.
 - HTTP upload uses a 4 KB write buffer before flushing to the SD card.
 
