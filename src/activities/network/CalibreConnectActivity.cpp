@@ -40,9 +40,13 @@ void CalibreConnectActivity::onEnter() {
     currentUploadName.clear();
     lastCompleteName.clear();
     lastCompleteAt = 0;
+    batchSucceeded.clear();
+    batchFailed.clear();
+    showBatchSummary = false;
   }
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
+  lastProcessedBatchCompleteAt = 0;
   exitRequested = false;
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -174,6 +178,12 @@ void CalibreConnectActivity::loop() {
           currentUploadName = status.filename;
           changed = true;
         }
+        // A new file starting means a new batch has begun -- drop the previous
+        // batch's summary rather than leaving it stuck on screen indefinitely.
+        if (showBatchSummary) {
+          showBatchSummary = false;
+          changed = true;
+        }
       } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
         lastProgressReceived = 0;
         lastProgressTotal = 0;
@@ -192,6 +202,18 @@ void CalibreConnectActivity::loop() {
         lastCompleteAt = 0;
         lastCompleteName.clear();
         // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
+        changed = true;
+      }
+      // Same "only on a new value" guard as lastCompleteAt above, so the summary
+      // doesn't get re-shown once the user has moved past it.
+      if (status.batchCompleteAt != 0 && status.batchCompleteAt != lastProcessedBatchCompleteAt) {
+        batchSucceeded = status.batchSucceeded;
+        batchFailed = status.batchFailed;
+        lastProcessedBatchCompleteAt = status.batchCompleteAt;
+        showBatchSummary = true;
+        // Don't show the single-file toast underneath the summary that just replaced it.
+        lastCompleteAt = 0;
+        lastCompleteName.clear();
         changed = true;
       }
     }
@@ -233,15 +255,22 @@ void CalibreConnectActivity::render(RenderLock&&) {
 
     int y = ipTop + height + metrics.verticalSpacing * 3;
     const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true, EpdFontFamily::BOLD);
-    y += heightText12 + metrics.verticalSpacing * 2;
 
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_INSTRUCTION_1));
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_CALIBRE_INSTRUCTION_2));
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_CALIBRE_INSTRUCTION_3));
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_CALIBRE_INSTRUCTION_4));
+    // Once a batch summary is ready, the connect instructions have already served
+    // their purpose -- drop them to give the (potentially multi-line) summary room.
+    if (!showBatchSummary) {
+      renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true,
+                        EpdFontFamily::BOLD);
+      y += heightText12 + metrics.verticalSpacing * 2;
 
-    y += height * 3 + metrics.verticalSpacing * 4;
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_INSTRUCTION_1));
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_CALIBRE_INSTRUCTION_2));
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_CALIBRE_INSTRUCTION_3));
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_CALIBRE_INSTRUCTION_4));
+
+      y += height * 3 + metrics.verticalSpacing * 4;
+    }
+
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_STATUS), true, EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
 
@@ -259,9 +288,43 @@ void CalibreConnectActivity::render(RenderLock&&) {
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
                           lastProgressReceived, lastProgressTotal);
       y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
-    }
+    } else if (showBatchSummary) {
+      // Bounds-checked list: stop (and say "+N more") rather than draw into the
+      // button hint row at the bottom of the screen.
+      const int maxY = pageHeight - metrics.tabBarHeight;
+      auto drawNameList = [&](const std::vector<std::string>& names) {
+        size_t shown = 0;
+        for (; shown < names.size() && y + height <= maxY; shown++) {
+          std::string line = "- " + names[shown];
+          line = renderer.truncatedText(SMALL_FONT_ID, line.c_str(), pageWidth - metrics.contentSidePadding * 2,
+                                        EpdFontFamily::REGULAR);
+          renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, line.c_str());
+          y += height;
+        }
+        if (shown < names.size() && y + height <= maxY) {
+          char moreMsg[32];
+          snprintf(moreMsg, sizeof(moreMsg), tr(STR_CALIBRE_AND_MORE_FORMAT),
+                   static_cast<int>(names.size() - shown));
+          renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, moreMsg);
+          y += height;
+        }
+      };
 
-    if (!showUploadProgress && lastCompleteAt > 0 && (millis() - lastCompleteAt) < 6000) {
+      char doneMsg[64];
+      snprintf(doneMsg, sizeof(doneMsg), tr(STR_CALIBRE_DONE_FORMAT), static_cast<int>(batchSucceeded.size()));
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, doneMsg, true, EpdFontFamily::BOLD);
+      y += height + metrics.verticalSpacing;
+      drawNameList(batchSucceeded);
+
+      if (!batchFailed.empty()) {
+        y += metrics.verticalSpacing;
+        char failedMsg[64];
+        snprintf(failedMsg, sizeof(failedMsg), tr(STR_CALIBRE_FAILED_FORMAT), static_cast<int>(batchFailed.size()));
+        renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, failedMsg, true, EpdFontFamily::BOLD);
+        y += height + metrics.verticalSpacing;
+        drawNameList(batchFailed);
+      }
+    } else if (lastCompleteAt > 0 && (millis() - lastCompleteAt) < 6000) {
       std::string msg = std::string(tr(STR_CALIBRE_RECEIVED)) + lastCompleteName;
       msg = renderer.truncatedText(SMALL_FONT_ID, msg.c_str(), pageWidth - metrics.contentSidePadding * 2,
                                    EpdFontFamily::REGULAR);
