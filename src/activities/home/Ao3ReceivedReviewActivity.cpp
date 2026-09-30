@@ -74,6 +74,21 @@ void Ao3ReceivedReviewActivity::nameFromMetadata(const std::string& path) {
   if (!renamed.empty()) indexFic(renamed);
 }
 
+// A received file that indexFic() couldn't recognize as an AO3 work (missing/unusual
+// publisher metadata, or a load failure) still deserves a name matching the rest of the
+// library if we can manage it -- otherwise it sits under whatever raw filename the browser
+// extension sent, forever, with no further chance to fix it. This reads only generic OPF
+// title/author (Epub::loadMetadata, metadata-only, no AO3-specific scraping), which any
+// well-formed EPUB has, so it works even for files indexFic() correctly declined to treat
+// as AO3. Not indexed as an AO3 work afterward -- it isn't one, as far as we could tell.
+void Ao3ReceivedReviewActivity::renameUsingGenericMetadataFallback(const std::string& path) {
+  std::string title;
+  std::string author;
+  Epub epub(path, "/.crosspoint");
+  if (!epub.loadMetadata(title, author, /*allowCachedMetadata=*/false) || title.empty()) return;
+  Ao3ReceiveUtils::renameToTitleAuthor(path, title, author);
+}
+
 void Ao3ReceivedReviewActivity::processFront() {
   const std::string path = queue.front();
   if (!Storage.exists(path.c_str())) {
@@ -98,7 +113,10 @@ void Ao3ReceivedReviewActivity::processFront() {
   }
 
   if (!indexFic(path)) {
-    // Not an AO3 fic, or unreadable: leave the file where it is and move on.
+    // Not recognized as an AO3 fic, or unreadable for a full load: still try to give it a
+    // library-convention name from generic EPUB metadata before moving on, rather than
+    // leaving it under the browser's raw filename with no further chance to fix it.
+    renameUsingGenericMetadataFallback(path);
     dropFront();
     return;
   }
