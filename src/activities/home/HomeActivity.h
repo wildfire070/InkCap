@@ -67,6 +67,11 @@ class HomeActivity final : public Activity {
   bool backPressSeen = false;
   // BookFusion downloads awaiting a duplicate check are reviewed once per Home entry.
   bool downloadReviewChecked_ = false;
+  // AO3 Receive uploads awaiting naming/duplicate review are reviewed once per Home entry,
+  // right after boot -- so a received fic gets its "<title> - <author>" name within
+  // seconds of the post-receive restart, not whenever the user next happens to open
+  // the AO3 Library screen.
+  bool ao3ReviewChecked_ = false;
   OptionPopup quickActionsPopup;
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
