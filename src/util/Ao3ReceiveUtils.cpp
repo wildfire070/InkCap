@@ -1,5 +1,6 @@
 #include "Ao3ReceiveUtils.h"
 
+#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Epub.h>
 #include <HalStorage.h>
@@ -65,6 +66,15 @@ std::string uniqueFilePath(const std::string& folder, const std::string& fileNam
   const std::string ext = dot == std::string::npos ? "" : fileName.substr(dot);
   for (int n = 2; n <= MAX_UNIQUE_SUFFIX; n++) {
     candidate = prefix + base + " (" + std::to_string(n) + ")" + ext;
+    if (!Storage.exists(candidate.c_str())) return candidate;
+  }
+
+  // MAX_UNIQUE_SUFFIX-1 same-titled collisions in one folder is vanishingly unlikely, but a
+  // purely numeric suffix has a hard ceiling and uploads shouldn't simply fail outright if
+  // it's ever hit. Fall back to a millis()-based suffix, paired with a small counter so this
+  // loop is still guaranteed to terminate even where millis() reads as constant (host tests).
+  for (int attempt = 0; attempt < 10; attempt++) {
+    candidate = prefix + base + " (" + std::to_string(millis()) + "-" + std::to_string(attempt) + ")" + ext;
     if (!Storage.exists(candidate.c_str())) return candidate;
   }
   return "";

@@ -10,6 +10,8 @@
  * (which reads its AO3 work ID, even for AO3's own downloads whose metadata lacks one),
  * looks for another copy of the same work already in the AO3 library, and if there is
  * one asks whether to replace it. "Keep both" leaves the new file in the receive folder.
+ * A file that can't be recognized as an AO3 work still gets a best-effort rename from
+ * generic EPUB metadata rather than being left under its raw upload filename forever.
  *
  * Runs after the post-transfer restart rather than during the transfer: indexing needs
  * heap that a live Wi-Fi session doesn't leave.
@@ -28,6 +30,7 @@ class Ao3ReceivedReviewActivity final : public Activity {
   void askAboutDuplicate(const std::string& newPath, const std::string& oldPath, const std::string& title);
   static bool indexFic(const std::string& path);
   static void nameFromMetadata(const std::string& path);
+  static void renameUsingGenericMetadataFallback(const std::string& path);
 
  public:
   explicit Ao3ReceivedReviewActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
