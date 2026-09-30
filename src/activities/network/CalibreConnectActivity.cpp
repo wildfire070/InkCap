@@ -46,7 +46,6 @@ void CalibreConnectActivity::onEnter() {
   }
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
-  lastProcessedBatchCompleteAt = 0;
   exitRequested = false;
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -204,13 +203,18 @@ void CalibreConnectActivity::loop() {
         // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
         changed = true;
       }
-      // Same "only on a new value" guard as lastCompleteAt above, so the summary
-      // doesn't get re-shown once the user has moved past it.
-      if (status.batchCompleteAt != 0 && status.batchCompleteAt != lastProcessedBatchCompleteAt) {
+      // The Calibre plugin reconnects the WebSocket per file, so there's no single
+      // event that means "the whole send job is done" -- only a quiet gap after the
+      // last file with nothing new starting. Once that gap has passed, treat the job
+      // as finished, snapshot the accumulated results, and tell the server to start
+      // a fresh accumulation for next time.
+      constexpr unsigned long BATCH_IDLE_MS = 5000;
+      if (!showBatchSummary && !status.inProgress && status.lastBatchActivityAt != 0 &&
+          (millis() - status.lastBatchActivityAt) >= BATCH_IDLE_MS) {
         batchSucceeded = status.batchSucceeded;
         batchFailed = status.batchFailed;
-        lastProcessedBatchCompleteAt = status.batchCompleteAt;
         showBatchSummary = true;
+        webServer->clearBatchSummary();
         // Don't show the single-file toast underneath the summary that just replaced it.
         lastCompleteAt = 0;
         lastCompleteName.clear();
