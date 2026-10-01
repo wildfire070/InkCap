@@ -41,9 +41,11 @@ void CalibreConnectActivity::onEnter() {
     lastCompleteAt = 0;
     batchSucceeded.clear();
     batchFailed.clear();
+    batchConfirmed = false;
   }
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
+  lastProcessedJobCompleteAt = 0;
   exitRequested = false;
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -191,18 +193,47 @@ void CalibreConnectActivity::loop() {
         // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
         changed = true;
       }
-      // The Calibre plugin reconnects the WebSocket per file with varying gaps between
-      // files, so there's no reliable single signal for "the whole send job is done"
-      // (a fixed idle timeout was tried and fired mid-job on real multi-book sends,
-      // showing a premature partial count). Instead, just mirror the server's running
-      // tally live for as long as this screen stays open, per the on-screen instruction
-      // to keep it open while sending -- whatever's showing when the user is done
-      // watching is the real, complete total, because nothing ever resets it early.
-      if (status.batchSucceeded.size() != batchSucceeded.size() ||
-          status.batchFailed.size() != batchFailed.size()) {
+      // The Calibre plugin reconnects the WebSocket per file with varying gaps
+      // between files, so there's no reliable single signal for "the whole send
+      // job is done" from the upload protocol alone (a fixed idle timeout was
+      // tried and fired mid-job on real multi-book sends, showing a premature
+      // partial count). A patched plugin can ping /api/calibre-job-done once its
+      // own upload_books() call returns, which is authoritative -- but plenty of
+      // people will be running the stock plugin, so this still has to degrade
+      // gracefully to a live, continuously-updated tally when that never comes.
+
+      // 1) New activity after a confirmed job means the next send has started --
+      // clear the previous job's frozen display before the next result lands in
+      // it. The server's live batch only has anything in it here because
+      // handleCalibreJobDone() clears it on confirmation (step 3 below) and a
+      // fresh upload_books() call is now adding to it again.
+      if (batchConfirmed && (!status.batchSucceeded.empty() || !status.batchFailed.empty())) {
+        batchSucceeded.clear();
+        batchFailed.clear();
+        batchConfirmed = false;
+        changed = true;
+      }
+
+      // 2) Live running tally -- skipped once confirmed, so the server having
+      // cleared its own live batch post-confirmation doesn't blank out the
+      // summary just shown (the frozen snapshot stays as-is until step 1 above
+      // detects genuinely new activity).
+      if (!batchConfirmed && (status.batchSucceeded.size() != batchSucceeded.size() ||
+                              status.batchFailed.size() != batchFailed.size())) {
         batchSucceeded = status.batchSucceeded;
         batchFailed = status.batchFailed;
-        // The running tally has taken over from the single-file toast.
+        lastCompleteAt = 0;
+        lastCompleteName.clear();
+        changed = true;
+      }
+
+      // 3) Explicit, authoritative confirmation from a patched plugin. Locks the
+      // display to this exact snapshot until step 1 reopens it for the next job.
+      if (status.jobCompleteAt != 0 && status.jobCompleteAt != lastProcessedJobCompleteAt) {
+        lastProcessedJobCompleteAt = status.jobCompleteAt;
+        batchSucceeded = status.lastJobSucceeded;
+        batchFailed = status.lastJobFailed;
+        batchConfirmed = true;
         lastCompleteAt = 0;
         lastCompleteName.clear();
         changed = true;

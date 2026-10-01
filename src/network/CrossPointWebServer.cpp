@@ -274,6 +274,10 @@ unsigned long wsLastCompleteAt = 0;
 // re-entered.
 std::vector<String> wsBatchSucceeded;
 std::vector<String> wsBatchFailed;
+// See WsUploadStatus::jobCompleteAt/lastJobSucceeded/lastJobFailed in the header.
+unsigned long wsJobCompleteAt = 0;
+std::vector<String> wsLastJobSucceeded;
+std::vector<String> wsLastJobFailed;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -350,10 +354,13 @@ void CrossPointWebServer::begin() {
   // Store AP mode flag for later use (e.g., in handleStatus)
   apMode = isInApMode;
 
-  // wsBatchSucceeded/wsBatchFailed are file-scope globals that outlive this object,
-  // so a stale tally from a previous Calibre session must not leak into this one.
+  // These are file-scope globals that outlive this object, so a stale tally
+  // from a previous Calibre session must not leak into this one.
   wsBatchSucceeded.clear();
   wsBatchFailed.clear();
+  wsJobCompleteAt = 0;
+  wsLastJobSucceeded.clear();
+  wsLastJobFailed.clear();
 
   LOG_DBG("WEB", "[MEM] Free heap before begin: %d bytes", ESP.getFreeHeap());
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
@@ -394,6 +401,10 @@ void CrossPointWebServer::begin() {
 
   // Upload endpoint with special handling for multipart form data
   server->on("/upload", HTTP_POST, [this] { handleUploadPost(upload); }, [this] { handleUpload(upload); });
+
+  // Optional explicit "Calibre send job just finished" signal -- see the
+  // job-done patch in the calibre-plugins repo and handleCalibreJobDone().
+  server->on("/api/calibre-job-done", HTTP_POST, [this] { handleCalibreJobDone(); });
 
   // Create folder endpoint
   server->on("/mkdir", HTTP_POST, [this] { handleCreateFolder(); });
@@ -582,7 +593,23 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   status.lastCompleteAt = wsLastCompleteAt;
   for (const auto& name : wsBatchSucceeded) status.batchSucceeded.emplace_back(name.c_str());
   for (const auto& name : wsBatchFailed) status.batchFailed.emplace_back(name.c_str());
+  status.jobCompleteAt = wsJobCompleteAt;
+  for (const auto& name : wsLastJobSucceeded) status.lastJobSucceeded.emplace_back(name.c_str());
+  for (const auto& name : wsLastJobFailed) status.lastJobFailed.emplace_back(name.c_str());
   return status;
+}
+
+void CrossPointWebServer::handleCalibreJobDone() {
+  // Freeze the current batch as "the job that just finished" before clearing
+  // the live accumulator for whatever job comes next.
+  wsLastJobSucceeded = wsBatchSucceeded;
+  wsLastJobFailed = wsBatchFailed;
+  wsBatchSucceeded.clear();
+  wsBatchFailed.clear();
+  wsJobCompleteAt = millis();
+  LOG_DBG("WEB", "Calibre job-done signal: %u succeeded, %u failed", (unsigned)wsLastJobSucceeded.size(),
+          (unsigned)wsLastJobFailed.size());
+  server->send(200, "text/plain", "OK");
 }
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
