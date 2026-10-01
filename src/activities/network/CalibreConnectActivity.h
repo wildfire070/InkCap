@@ -39,9 +39,16 @@ class CalibreConnectActivity final : public Activity {
   std::vector<std::string> batchSucceeded;
   std::vector<std::string> batchFailed;
   bool batchConfirmed = false;
+  // Scroll state for the batch summary's name list -- topIndex into the flattened
+  // succeeded+failed line list, visibleRows computed during the last render() and
+  // reused by loop() to clamp input-driven scrolling (see scrollListBy in
+  // components/UiAppHelpers.h, the convention every other list screen uses).
+  int batchListTopIndex = 0;
+  int batchListVisibleRows = 1;
   bool exitRequested = false;
   bool returnToReader = false;
 
+  int batchLineCount() const;
   void renderServerRunning() const;
 
   void onWifiSelectionComplete(bool connected);

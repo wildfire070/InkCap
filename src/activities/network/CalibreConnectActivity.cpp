@@ -7,17 +7,28 @@
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
+#include <algorithm>
+
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "components/CompactHeader.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
 }  // namespace
+
+int CalibreConnectActivity::batchLineCount() const {
+  int count = static_cast<int>(batchSucceeded.size());
+  if (!batchFailed.empty()) {
+    count += 1 + static_cast<int>(batchFailed.size());  // +1 for the "M failed:" header line
+  }
+  return count;
+}
 
 void CalibreConnectActivity::onEnter() {
   Activity::onEnter();
@@ -42,6 +53,7 @@ void CalibreConnectActivity::onEnter() {
     batchSucceeded.clear();
     batchFailed.clear();
     batchConfirmed = false;
+    batchListTopIndex = 0;
   }
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
@@ -132,6 +144,34 @@ void CalibreConnectActivity::loop() {
     exitRequested = true;
   }
 
+  // Scroll the batch summary's name list -- Up/Down move one line, a swipe moves
+  // a full page. Harmless to process even while the list isn't on screen right
+  // now (mid-upload-progress): render()'s own scrollListBy clamp on the next
+  // paint keeps batchListTopIndex sane regardless.
+  if (!batchSucceeded.empty() || !batchFailed.empty()) {
+    int scrollDelta = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+      scrollDelta = 1;
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
+      scrollDelta = -1;
+    } else if (mappedInput.hasTouch()) {
+      const auto swipe = mappedInput.wasSwipe();
+      if (swipe == MappedInputManager::SwipeDir::Up) {
+        scrollDelta = batchListVisibleRows;
+      } else if (swipe == MappedInputManager::SwipeDir::Down) {
+        scrollDelta = -batchListVisibleRows;
+      }
+    }
+    if (scrollDelta != 0) {
+      RenderLock lock(*this);
+      const int next = scrollListBy(batchListTopIndex, scrollDelta, batchListVisibleRows, batchLineCount());
+      if (next != batchListTopIndex) {
+        batchListTopIndex = next;
+        requestUpdate();
+      }
+    }
+  }
+
   if (webServer && webServer->isRunning()) {
     const unsigned long timeSinceLastHandleClient = millis() - lastHandleClientTime;
     if (lastHandleClientTime > 0 && timeSinceLastHandleClient > 100) {
@@ -211,6 +251,7 @@ void CalibreConnectActivity::loop() {
         batchSucceeded.clear();
         batchFailed.clear();
         batchConfirmed = false;
+        batchListTopIndex = 0;
         changed = true;
       }
 
@@ -312,40 +353,44 @@ void CalibreConnectActivity::render(RenderLock&&) {
                           lastProgressReceived, lastProgressTotal);
       y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
     } else if (hasBatchResults) {
-      // Bounds-checked list: stop (and say "+N more") rather than draw into the
-      // button hint row at the bottom of the screen.
-      const int maxY = pageHeight - metrics.tabBarHeight;
-      auto drawNameList = [&](const std::vector<std::string>& names) {
-        size_t shown = 0;
-        for (; shown < names.size() && y + height <= maxY; shown++) {
-          std::string line = "- " + names[shown];
-          line = renderer.truncatedText(SMALL_FONT_ID, line.c_str(), pageWidth - metrics.contentSidePadding * 2,
-                                        EpdFontFamily::REGULAR);
-          renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, line.c_str());
-          y += height;
-        }
-        if (shown < names.size() && y + height <= maxY) {
-          char moreMsg[32];
-          snprintf(moreMsg, sizeof(moreMsg), tr(STR_CALIBRE_AND_MORE_FORMAT),
-                   static_cast<int>(names.size() - shown));
-          renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, moreMsg);
-          y += height;
-        }
-      };
-
       char doneMsg[64];
       snprintf(doneMsg, sizeof(doneMsg), tr(STR_CALIBRE_DONE_FORMAT), static_cast<int>(batchSucceeded.size()));
       renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, doneMsg, true, EpdFontFamily::BOLD);
       y += height + metrics.verticalSpacing;
-      drawNameList(batchSucceeded);
 
+      // Flatten succeeded+failed into one scrollable list of lines (the "M
+      // failed:" header, if any, is just another bold line in the same list) so
+      // a long batch scrolls within this section instead of truncating with
+      // "+N more" -- see batchListTopIndex/batchListVisibleRows in the header.
+      struct SummaryLine {
+        std::string text;
+        bool bold;
+      };
+      std::vector<SummaryLine> lines;
+      lines.reserve(batchLineCount());
+      for (const auto& name : batchSucceeded) {
+        lines.push_back({"- " + name, false});
+      }
       if (!batchFailed.empty()) {
-        y += metrics.verticalSpacing;
         char failedMsg[64];
         snprintf(failedMsg, sizeof(failedMsg), tr(STR_CALIBRE_FAILED_FORMAT), static_cast<int>(batchFailed.size()));
-        renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, failedMsg, true, EpdFontFamily::BOLD);
-        y += height + metrics.verticalSpacing;
-        drawNameList(batchFailed);
+        lines.push_back({failedMsg, true});
+        for (const auto& name : batchFailed) {
+          lines.push_back({"- " + name, false});
+        }
+      }
+
+      const int maxY = pageHeight - metrics.tabBarHeight;
+      batchListVisibleRows = std::max(1, static_cast<int>((maxY - y) / height));
+      batchListTopIndex = scrollListBy(batchListTopIndex, 0, batchListVisibleRows, static_cast<int>(lines.size()));
+      const int lastVisible = std::min(static_cast<int>(lines.size()), batchListTopIndex + batchListVisibleRows);
+      for (int i = batchListTopIndex; i < lastVisible; i++) {
+        std::string lineText = renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(),
+                                                       pageWidth - metrics.contentSidePadding * 2,
+                                                       EpdFontFamily::REGULAR);
+        renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, lineText.c_str(), lines[i].bold,
+                          lines[i].bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+        y += height;
       }
     } else if (lastCompleteAt > 0 && (millis() - lastCompleteAt) < 6000) {
       std::string msg = std::string(tr(STR_CALIBRE_RECEIVED)) + lastCompleteName;
@@ -354,7 +399,10 @@ void CalibreConnectActivity::render(RenderLock&&) {
       renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, msg.c_str());
     }
 
-    const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "", "", "");
+    const bool canScrollBatchList = hasBatchResults && !showUploadProgress && batchLineCount() > batchListVisibleRows;
+    const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "",
+                                              canScrollBatchList ? tr(STR_DIR_UP) : "",
+                                              canScrollBatchList ? tr(STR_DIR_DOWN) : "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
   renderer.displayBuffer(screenTransitionRefresh.modeFor(static_cast<uint8_t>(state)));
