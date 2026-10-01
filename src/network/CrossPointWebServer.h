@@ -35,6 +35,17 @@ class CrossPointWebServer {
     // running and are only reset when the screen is re-entered (see begin()).
     std::vector<std::string> batchSucceeded;
     std::vector<std::string> batchFailed;  // "filename: reason"
+
+    // Set once per explicit "the whole send job just finished" ping from a
+    // patched Calibre plugin (POST /api/calibre-job-done; see the job-done
+    // patch in the calibre-plugins repo) -- jobCompleteAt changes on each ping,
+    // and lastJobSucceeded/lastJobFailed are a frozen snapshot of the batch at
+    // that exact moment (the live batch above is cleared right after, ready for
+    // the next job). An unpatched plugin never calls this, so jobCompleteAt
+    // simply stays 0 forever and callers rely on the live batch instead.
+    unsigned long jobCompleteAt = 0;
+    std::vector<std::string> lastJobSucceeded;
+    std::vector<std::string> lastJobFailed;
   };
 
   // Used by POST upload handler
@@ -114,6 +125,7 @@ class CrossPointWebServer {
   void handleDownload() const;
   void handleUpload(UploadState& state) const;
   void handleUploadPost(UploadState& state) const;
+  void handleCalibreJobDone();
   void handleCreateFolder() const;
   void handleRename() const;
   void handleMove() const;
