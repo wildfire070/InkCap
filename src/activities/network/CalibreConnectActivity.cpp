@@ -41,7 +41,6 @@ void CalibreConnectActivity::onEnter() {
     lastCompleteAt = 0;
     batchSucceeded.clear();
     batchFailed.clear();
-    showBatchSummary = false;
   }
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
@@ -172,12 +171,6 @@ void CalibreConnectActivity::loop() {
           currentUploadName = status.filename;
           changed = true;
         }
-        // A new file starting means a new batch has begun -- drop the previous
-        // batch's summary rather than leaving it stuck on screen indefinitely.
-        if (showBatchSummary) {
-          showBatchSummary = false;
-          changed = true;
-        }
       } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
         lastProgressReceived = 0;
         lastProgressTotal = 0;
@@ -198,19 +191,18 @@ void CalibreConnectActivity::loop() {
         // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
         changed = true;
       }
-      // The Calibre plugin reconnects the WebSocket per file, so there's no single
-      // event that means "the whole send job is done" -- only a quiet gap after the
-      // last file with nothing new starting. Once that gap has passed, treat the job
-      // as finished, snapshot the accumulated results, and tell the server to start
-      // a fresh accumulation for next time.
-      constexpr unsigned long BATCH_IDLE_MS = 5000;
-      if (!showBatchSummary && !status.inProgress && status.lastBatchActivityAt != 0 &&
-          (millis() - status.lastBatchActivityAt) >= BATCH_IDLE_MS) {
+      // The Calibre plugin reconnects the WebSocket per file with varying gaps between
+      // files, so there's no reliable single signal for "the whole send job is done"
+      // (a fixed idle timeout was tried and fired mid-job on real multi-book sends,
+      // showing a premature partial count). Instead, just mirror the server's running
+      // tally live for as long as this screen stays open, per the on-screen instruction
+      // to keep it open while sending -- whatever's showing when the user is done
+      // watching is the real, complete total, because nothing ever resets it early.
+      if (status.batchSucceeded.size() != batchSucceeded.size() ||
+          status.batchFailed.size() != batchFailed.size()) {
         batchSucceeded = status.batchSucceeded;
         batchFailed = status.batchFailed;
-        showBatchSummary = true;
-        webServer->clearBatchSummary();
-        // Don't show the single-file toast underneath the summary that just replaced it.
+        // The running tally has taken over from the single-file toast.
         lastCompleteAt = 0;
         lastCompleteName.clear();
         changed = true;
@@ -254,10 +246,11 @@ void CalibreConnectActivity::render(RenderLock&&) {
 
     int y = ipTop + height + metrics.verticalSpacing * 3;
     const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
+    const bool hasBatchResults = !batchSucceeded.empty() || !batchFailed.empty();
 
-    // Once a batch summary is ready, the connect instructions have already served
-    // their purpose -- drop them to give the (potentially multi-line) summary room.
-    if (!showBatchSummary) {
+    // Once at least one file has landed, the connect instructions have already
+    // served their purpose -- drop them to give the (potentially long) tally room.
+    if (!hasBatchResults) {
       renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true,
                         EpdFontFamily::BOLD);
       y += heightText12 + metrics.verticalSpacing * 2;
@@ -287,7 +280,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
                           lastProgressReceived, lastProgressTotal);
       y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
-    } else if (showBatchSummary) {
+    } else if (hasBatchResults) {
       // Bounds-checked list: stop (and say "+N more") rather than draw into the
       // button hint row at the bottom of the screen.
       const int maxY = pageHeight - metrics.tabBarHeight;

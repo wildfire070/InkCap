@@ -268,13 +268,12 @@ size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
-// Accumulated results across a Calibre send job. The plugin reconnects the
-// WebSocket per file, so these deliberately survive CONNECTED/DISCONNECTED and
-// only get cleared by clearBatchSummary() once CalibreConnectActivity has
-// decided (via an idle gap on wsLastBatchActivityAt) that the job is over.
+// Running tally for the current Calibre Wireless screen visit (see
+// WsUploadStatus::batchSucceeded/batchFailed in the header for why these are
+// never cleared mid-session). Reset only in begin(), i.e. when the screen is
+// re-entered.
 std::vector<String> wsBatchSucceeded;
 std::vector<String> wsBatchFailed;
-unsigned long wsLastBatchActivityAt = 0;
 
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
@@ -351,9 +350,10 @@ void CrossPointWebServer::begin() {
   // Store AP mode flag for later use (e.g., in handleStatus)
   apMode = isInApMode;
 
-  // wsBatch* are file-scope globals that outlive this object, so a stale batch
-  // from a previous, already-dismissed Calibre session must not leak into this one.
-  clearBatchSummary();
+  // wsBatchSucceeded/wsBatchFailed are file-scope globals that outlive this object,
+  // so a stale tally from a previous Calibre session must not leak into this one.
+  wsBatchSucceeded.clear();
+  wsBatchFailed.clear();
 
   LOG_DBG("WEB", "[MEM] Free heap before begin: %d bytes", ESP.getFreeHeap());
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
@@ -463,7 +463,6 @@ void CrossPointWebServer::begin() {
 void CrossPointWebServer::abortWsUpload(const char* tag, const char* reason) {
   // Record against the batch before clearing wsUploadFileName below.
   wsBatchFailed.push_back(wsUploadFileName + ": " + reason);
-  wsLastBatchActivityAt = millis();
 
   // Explicit close() required: file-scope global persists beyond function scope
   wsUploadFile.close();
@@ -478,12 +477,6 @@ void CrossPointWebServer::abortWsUpload(const char* tag, const char* reason) {
   wsUploadInProgress = false;
   wsUploadClientNum = 255;
   wsLastProgressSent = 0;
-}
-
-void CrossPointWebServer::clearBatchSummary() {
-  wsBatchSucceeded.clear();
-  wsBatchFailed.clear();
-  wsLastBatchActivityAt = 0;
 }
 
 void CrossPointWebServer::stop() {
@@ -587,7 +580,6 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   status.lastCompleteName = wsLastCompleteName.c_str();
   status.lastCompleteSize = wsLastCompleteSize;
   status.lastCompleteAt = wsLastCompleteAt;
-  status.lastBatchActivityAt = wsLastBatchActivityAt;
   for (const auto& name : wsBatchSucceeded) status.batchSucceeded.emplace_back(name.c_str());
   for (const auto& name : wsBatchFailed) status.batchFailed.emplace_back(name.c_str());
   return status;
@@ -2159,15 +2151,12 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       }
       // NOT a batch boundary: the Calibre plugin reconnects for every file, so a
       // disconnect here is routine mid-job and does not mean the send is done.
-      // See WsUploadStatus::lastBatchActivityAt for how "done" is actually detected.
+      // wsBatchSucceeded/wsBatchFailed just keep accumulating regardless (see
+      // their declaration above) -- only begin() ever clears them.
       break;
 
     case WStype_CONNECTED: {
       LOG_DBG("WS", "Client %u connected", num);
-      // Deliberately don't touch wsBatchSucceeded/wsBatchFailed here -- a
-      // reconnect for the next file in the same job is indistinguishable from
-      // the start of a new one, so clearing on CONNECT would lose everything
-      // sent before it. clearBatchSummary() is the only thing that clears them.
       break;
     }
 
@@ -2200,7 +2189,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           if (!sizeValid) {
             LOG_DBG("WS", "START rejected: invalid size token '%s'", sizeToken.c_str());
             wsBatchFailed.push_back(wsUploadFileName + ": Invalid START format");
-            wsLastBatchActivityAt = millis();
             wsServer->sendTXT(num, "ERROR:Invalid START format");
             return;
           }
@@ -2220,7 +2208,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           if (isProtectedPath(filePath)) {
             wsBatchFailed.push_back(wsUploadFileName + ": Access denied to protected path");
-            wsLastBatchActivityAt = millis();
             wsServer->sendTXT(num, "ERROR:Access denied to protected path");
             wsUploadInProgress = false;
             wsUploadClientNum = 255;
@@ -2230,7 +2217,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           if (Storage.exists(filePath.c_str())) {
             LOG_DBG("WS", "Upload collision: %s", filePath.c_str());
             wsBatchFailed.push_back(wsUploadFileName + ": File already exists");
-            wsLastBatchActivityAt = millis();
             wsServer->sendTXT(num, "ERROR:File already exists: " + wsUploadFileName);
             return;
           }
@@ -2249,7 +2235,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 #endif
             if (total > 0 && used <= total && static_cast<uint64_t>(wsUploadSize) > total - used) {
               wsBatchFailed.push_back(wsUploadFileName + ": Not enough free space on SD card");
-              wsLastBatchActivityAt = millis();
               wsServer->sendTXT(num, "ERROR:Not enough free space on SD card");
               return;
             }
@@ -2259,7 +2244,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           sdFontSystem.markRegistryDirtyForPath(filePath.c_str());
           if (!Storage.openFileForWrite("WS", filePath, wsUploadFile)) {
             wsBatchFailed.push_back(wsUploadFileName + ": Failed to create file");
-            wsLastBatchActivityAt = millis();
             wsServer->sendTXT(num, "ERROR:Failed to create file");
             wsUploadInProgress = false;
             wsUploadClientNum = 255;
@@ -2274,7 +2258,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsLastCompleteSize = 0;
             wsLastCompleteAt = millis();
             wsBatchSucceeded.push_back(wsUploadFileName);
-            wsLastBatchActivityAt = millis();
             LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
             clearBookCachePreservingUserState(filePath.c_str());
             ImageFolderIndex::invalidateForPath(filePath.c_str());
@@ -2335,7 +2318,6 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsLastCompleteSize = wsUploadSize;
         wsLastCompleteAt = millis();
         wsBatchSucceeded.push_back(wsUploadFileName);
-        wsLastBatchActivityAt = millis();
 
         unsigned long elapsed = millis() - wsUploadStartTime;
         float kbps = (elapsed > 0) ? (wsUploadSize / 1024.0) / (elapsed / 1000.0) : 0;
