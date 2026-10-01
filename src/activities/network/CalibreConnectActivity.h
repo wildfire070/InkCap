@@ -29,11 +29,16 @@ class CalibreConnectActivity final : public Activity {
   std::string lastCompleteName;
   unsigned long lastCompleteAt = 0;
   unsigned long lastProcessedCompleteAt = 0;  // Track which server value we've already processed
-  // Running tally for this screen visit, mirrored from the server. Shown instead of
-  // the single-file toast once non-empty -- see loop()/render() for why there's no
-  // "batch complete" flag: whatever's here is simply shown live, continuously.
+  unsigned long lastProcessedJobCompleteAt = 0;  // Track which job-done ping we've already processed
+  // Running tally for this screen visit, mirrored from the server and shown
+  // instead of the single-file toast once non-empty. While batchConfirmed is
+  // false this just tracks the server's live, still-growing batch (the only
+  // option for an unpatched Calibre plugin); once a job-done ping arrives (see
+  // loop()), it's locked to that frozen, confirmed snapshot until new activity
+  // after it signals the next job has started.
   std::vector<std::string> batchSucceeded;
   std::vector<std::string> batchFailed;
+  bool batchConfirmed = false;
   bool exitRequested = false;
   bool returnToReader = false;
 
