@@ -29,9 +29,11 @@ class CalibreConnectActivity final : public Activity {
   std::string lastCompleteName;
   unsigned long lastCompleteAt = 0;
   unsigned long lastProcessedCompleteAt = 0;  // Track which server value we've already processed
+  // Running tally for this screen visit, mirrored from the server. Shown instead of
+  // the single-file toast once non-empty -- see loop()/render() for why there's no
+  // "batch complete" flag: whatever's here is simply shown live, continuously.
   std::vector<std::string> batchSucceeded;
   std::vector<std::string> batchFailed;
-  bool showBatchSummary = false;
   bool exitRequested = false;
   bool returnToReader = false;
 
