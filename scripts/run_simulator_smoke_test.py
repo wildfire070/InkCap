@@ -90,6 +90,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         env["CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS"] = str(args.page_turns)
         if args.theme:
             env["CROSSINK_SIMULATOR_SMOKE_THEME"] = str(THEMES[args.theme])
+        if args.calibre_batch:
+            env["CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH"] = "1"
         if args.headless:
             env.setdefault("SDL_VIDEODRIVER", "dummy")
 
@@ -103,6 +105,15 @@ def run_smoke(args: argparse.Namespace) -> int:
             stderr=subprocess.STDOUT,
             timeout=args.timeout,
         )
+
+        if args.screenshot_out:
+            shots_dir = temp_root / "fs_" / "screenshots"
+            if shots_dir.exists():
+                out_dir = Path(args.screenshot_out)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                for shot in shots_dir.glob("*.bmp"):
+                    shutil.copy2(shot, out_dir / shot.name)
+                    print(f"Saved screenshot: {out_dir / shot.name}", flush=True)
 
     print(proc.stdout, end="")
 
@@ -139,6 +150,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=45, help="Seconds before the simulator run is treated as hung")
     parser.add_argument("--page-turns", type=int, default=2, help="Number of EPUB page-forward taps to run")
     parser.add_argument("--theme", choices=sorted(THEMES), help="UI theme to use during the smoke test")
+    parser.add_argument("--calibre-batch", action="store_true",
+                        help="Run the Calibre batch summary screenshot test instead of the normal smoke sequence")
+    parser.add_argument("--screenshot-out", help="Copy any screenshots taken during the run into this directory before cleanup")
     parser.add_argument("--no-build", dest="build", action="store_false", help="Run the existing simulator binary")
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)

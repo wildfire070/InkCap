@@ -30,8 +30,10 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "activities/ActivityManager.h"
+#include "activities/RenderLock.h"
 #include "activities/home/BookActions.h"
 #include "activities/home/RecentBookProgress.h"
+#include "activities/network/CalibreConnectActivity.h"
 #include "activities/reader/EpubReaderDrawerActivity.h"
 #include "activities/reader/ReaderFontLoading.h"
 #include "activities/reader/ReaderOptionsActivity.h"
@@ -43,6 +45,7 @@
 #include "simulator/SimulatorHomeKeyInput.h"
 #include "util/BookMoveUtils.h"
 #include "util/ButtonShortcutController.h"
+#include "util/ScreenshotUtil.h"
 
 extern ActivityManager activityManager;
 extern GfxRenderer renderer;
@@ -120,8 +123,16 @@ class SimulatorSmokeTest {
   unsigned libraryRefreshPass = 0;
   uint16_t libraryBaselineBooks = 0;
   SmokeStep inputCompletionStep = SmokeStep::Done;
+  // -1 = not running; 0+ = frames elapsed since tickCalibreBatchTest() activated it.
+  int calibreBatchTestFrame = -1;
 
   static bool enabled() { return std::getenv("CROSSINK_SIMULATOR_SMOKE_TEST") != nullptr; }
+
+  // Standalone alternate mode (see tickCalibreBatchTest()), selected via its own
+  // env var rather than being a step in the normal sequence below.
+  static bool calibreBatchTestRequested() {
+    return std::getenv("CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH") != nullptr;
+  }
 
   static int pageTurnCount() {
     const char* raw = std::getenv("CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS");
@@ -908,8 +919,45 @@ class SimulatorSmokeTest {
     LOG_INF("SMOKE", "Legacy Home progress migration without EPUB loading passed");
   }
 
+  // Pushes CalibreConnectActivity directly (which, under
+  // CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH, fills itself with synthetic batch
+  // data -- see CalibreConnectActivity::onEnter()), waits for it to render, and
+  // screenshots it. Exists purely so that screen's rendering (long scrolling
+  // list, bold headers, failure entries) can be verified from the simulator
+  // without flashing hardware or running a real Calibre transfer; it bypasses
+  // the normal step sequence below entirely rather than being woven into it.
+  void tickCalibreBatchTest() {
+    if (calibreBatchTestFrame < 0) {
+      LOG_INF("SMOKE", "Starting Calibre batch summary screenshot test");
+      activityManager.replaceActivity(
+          std::make_unique<CalibreConnectActivity>(renderer, mappedInputManager, /*returnToReader=*/false));
+      calibreBatchTestFrame = 0;
+      return;
+    }
+    constexpr int kSettleFrames = 5;
+    if (calibreBatchTestFrame < kSettleFrames) {
+      calibreBatchTestFrame++;
+      return;
+    }
+    if (activityManager.requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+      fail("Calibre batch summary screen did not render");
+    }
+    {
+      RenderLock lock;
+      ScreenshotUtil::takeScreenshot(renderer);
+    }
+    LOG_INF("SMOKE", "Calibre batch summary screenshot captured");
+    LOG_INF("SMOKE", "Simulator smoke test passed");
+    std::_Exit(0);
+  }
+
   void tickImpl() {
     mappedInputManager.simulatorClearInputFrame();
+
+    if (calibreBatchTestRequested()) {
+      tickCalibreBatchTest();
+      return;
+    }
 
     if (settleFrames > 0) {
       --settleFrames;
