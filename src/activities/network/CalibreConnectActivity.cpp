@@ -393,7 +393,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
         std::string lineText = renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(),
                                                        pageWidth - metrics.contentSidePadding * 2,
                                                        EpdFontFamily::REGULAR);
-        renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, lineText.c_str(), lines[i].bold,
+        renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, lineText.c_str(), true,
                           lines[i].bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
         y += height;
       }
