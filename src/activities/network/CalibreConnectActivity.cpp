@@ -8,6 +8,7 @@
 #include <esp_task_wdt.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
@@ -59,6 +60,30 @@ void CalibreConnectActivity::onEnter() {
   lastProcessedCompleteAt = 0;
   lastProcessedJobCompleteAt = 0;
   exitRequested = false;
+
+#ifdef SIMULATOR
+  if (std::getenv("CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH") != nullptr) {
+    // Test-only: skip real WiFi/server startup and render the batch summary
+    // directly with synthetic data, so this screen (long scrolling list, bold
+    // headers, failure entries) can be screenshot-verified from the simulator
+    // without a physical device or a real Calibre transfer -- see
+    // scripts/run_simulator_smoke_test.py --calibre-batch.
+    RenderLock lock(*this);
+    state = CalibreConnectState::SERVER_RUNNING;
+    connectedSSID = "Simulator WiFi (fake)";
+    connectedIP = "127.0.0.1";
+    for (int i = 1; i <= 22; i++) {
+      char name[64];
+      snprintf(name, sizeof(name), "Test Fic Chapter %02d.epub", i);
+      batchSucceeded.push_back(name);
+    }
+    batchFailed = {"Already On Device.epub: File already exists",
+                   "Corrupted Upload.epub: Write failed - disk full?"};
+    batchConfirmed = true;
+    requestUpdate();
+    return;
+  }
+#endif
 
   if (WiFi.status() != WL_CONNECTED) {
     startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
