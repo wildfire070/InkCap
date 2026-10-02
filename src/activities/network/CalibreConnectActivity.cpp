@@ -412,15 +412,41 @@ void CalibreConnectActivity::render(RenderLock&&) {
 
       const int maxY = pageHeight - metrics.tabBarHeight;
       batchListVisibleRows = std::max(1, static_cast<int>((maxY - y) / height));
-      batchListTopIndex = scrollListBy(batchListTopIndex, 0, batchListVisibleRows, static_cast<int>(lines.size()));
-      const int lastVisible = std::min(static_cast<int>(lines.size()), batchListTopIndex + batchListVisibleRows);
+      const int totalLines = static_cast<int>(lines.size());
+      batchListTopIndex = scrollListBy(batchListTopIndex, 0, batchListVisibleRows, totalLines);
+      const bool needsScrollbar = totalLines > batchListVisibleRows;
+
+      // Touch-capable devices (e.g. X4 Pro) never show GUI.drawButtonHints's
+      // Up/Down labels below -- BaseTheme::drawButtonHints/drawSideButtonHints
+      // both no-op when gpio.hasTouch() is true -- so that text hint alone
+      // leaves no indication this list scrolls at all on those devices. Draw an
+      // actual scrollbar, which works regardless of input method, reserving
+      // room for it up front so line text doesn't run under it.
+      constexpr int kScrollbarWidth = 5;
+      constexpr int kScrollbarGap = 8;
+      const int scrollbarReserve = needsScrollbar ? kScrollbarWidth + kScrollbarGap : 0;
+      const int textMaxWidth = pageWidth - metrics.contentSidePadding * 2 - scrollbarReserve;
+      const int listTop = y;
+
+      const int lastVisible = std::min(totalLines, batchListTopIndex + batchListVisibleRows);
       for (int i = batchListTopIndex; i < lastVisible; i++) {
-        std::string lineText = renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(),
-                                                       pageWidth - metrics.contentSidePadding * 2,
+        std::string lineText = renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(), textMaxWidth,
                                                        EpdFontFamily::REGULAR);
         renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, lineText.c_str(), true,
                           lines[i].bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
         y += height;
+      }
+
+      if (needsScrollbar) {
+        const int trackTop = listTop;
+        const int trackHeight = maxY - listTop;
+        const int trackX = pageWidth - metrics.contentSidePadding - kScrollbarWidth;
+        renderer.drawRect(trackX, trackTop, kScrollbarWidth, trackHeight);
+        const int maxTopIndex = totalLines - batchListVisibleRows;
+        const int thumbHeight = std::max(kScrollbarWidth * 2, trackHeight * batchListVisibleRows / totalLines);
+        const int thumbTravel = trackHeight - thumbHeight;
+        const int thumbY = trackTop + (maxTopIndex > 0 ? thumbTravel * batchListTopIndex / maxTopIndex : 0);
+        renderer.fillRect(trackX, thumbY, kScrollbarWidth, thumbHeight);
       }
     } else if (lastCompleteAt > 0 && (millis() - lastCompleteAt) < 6000) {
       std::string msg = std::string(tr(STR_CALIBRE_RECEIVED)) + lastCompleteName;
