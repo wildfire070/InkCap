@@ -88,6 +88,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_BOOK"] = simulator_book_path
         env["CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS"] = str(args.page_turns)
+        if args.home_themes:
+            env["CROSSINK_SIMULATOR_SMOKE_HOME_THEMES"] = "1"
         if args.theme:
             env["CROSSINK_SIMULATOR_SMOKE_THEME"] = str(THEMES[args.theme])
         if args.calibre_batch:
@@ -153,6 +155,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibre-batch", action="store_true",
                         help="Run the Calibre batch summary screenshot test instead of the normal smoke sequence")
     parser.add_argument("--screenshot-out", help="Copy any screenshots taken during the run into this directory before cleanup")
+    parser.add_argument("--home-themes", action="store_true", help="Compare drawer theme changes with fresh Home renders (X4 Pro)")
     parser.add_argument("--no-build", dest="build", action="store_false", help="Run the existing simulator binary")
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)

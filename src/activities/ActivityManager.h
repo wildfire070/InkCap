@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -176,6 +177,7 @@ class ActivityManager {
   bool hasActivityNamed(const char* activityName) const;
 #ifdef SIMULATOR
   bool isCurrentActivityNamed(const char* activityName) const;
+  Activity* simulatorCurrentActivity() const { return currentActivity.get(); }
 #endif
   bool canSnapshotForSleepOverlay() const;
   bool requestManualReaderRefresh();
@@ -187,6 +189,7 @@ class ActivityManager {
   void notifyInputLockChanged(bool locked);
   void notifyUserInput();
   bool skipLoopDelay() const;
+  uint8_t inputPollDelayMs() const;
   std::string getCurrentBookPath() const;
   ScreenshotInfo getScreenshotInfo() const;
 

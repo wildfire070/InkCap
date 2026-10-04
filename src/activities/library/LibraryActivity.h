@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "LibraryInputBuffer.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -20,6 +21,21 @@ class LibraryActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool blocksGlobalInput() const override { return actionPopup.isActive(); }
+
+#ifdef SIMULATOR
+  size_t simulatorPendingInputs() const { return pendingInput.size(); }
+  int simulatorSelection() const { return selection; }
+  int simulatorRowCount() const { return rowCount(); }
+  bool simulatorReadBook(int row, RecentBook& book) { return readBook(row, book); }
+  void simulatorSetView(uint8_t method, bool reverse, const std::string& search = "") {
+    sort = static_cast<Sort>(method);
+    descending = reverse;
+    query = search;
+    refreshIndexIfNeeded();
+    resetViewport();
+  }
+  void simulatorRefresh() { refreshLibrary(); }
+#endif
 
  private:
   enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead, Series, Genre };
@@ -46,8 +62,16 @@ class LibraryActivity final : public Activity {
   float gridProgress = -1.0f;
   bool uiReady = false;
   bool initialScanPending = false;
-  bool longPressFired = false;
+  bool confirmLongPressCaptured = false;
   bool ignoreConfirmRelease = false;
+  // These fields belong only to the input task, including during rendering.
+  LibraryInputBuffer pendingInput;
+  bool inputOverflow = false;
+  bool touchTracking = false;
+  int touchStartX = 0;
+  int touchStartY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
   bool scanFailed = false;
   bool filterFailed = false;
   bool pendingCacheDeletedFeedback = false;
@@ -56,6 +80,7 @@ class LibraryActivity final : public Activity {
   // Searches and file-type filters allocate one u16 per visible source book, fallibly.
   std::unique_ptr<uint16_t[]> filtered;
   uint16_t filteredCount = 0;
+  // Indices into the bounded recent-books history, independent of the Library index.
   uint16_t recentRows[RecentBooksStore::MAX_RECENT_BOOKS]{};
   size_t recentCount = 0;
   // SDK rowProvider consumes the strings before asking for the next row.
@@ -89,8 +114,12 @@ class LibraryActivity final : public Activity {
   uint16_t dateGroupForRow(int row);
   bool metadataGroupForRow(int row, std::string& out);
   bool hasActiveFilter() const;
-  void refreshIndexIfNeeded();
+  void latchInput();
+  void queueInput(LibraryInputBuffer::Type type, int x = -1, int y = -1);
+  void handleInput(const LibraryInputBuffer::Event& input);
+  void refreshIndexIfNeeded(bool showScanning = false);
   bool rebuildIndex(bool showScanning);
+  void readRecentBook(size_t historyRow, RecentBook& book) const;
   void resolveRecents();
   void applyFilter();
   void resetViewport();

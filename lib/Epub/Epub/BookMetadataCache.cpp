@@ -14,8 +14,9 @@
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
 constexpr uint8_t BOOK_CACHE_VERSION =
-    14;  // v14: added tags (dc:subject); v13: fixed bookshelf column name; added
-         // chapters, completionStatus, updatedDate, liked, readStatus
+    15;  // v15: namespace-aware OPF parsing; v14: added tags (dc:subject); v13: fixed
+         // bookshelf column name; added chapters, completionStatus, updatedDate, liked,
+         // readStatus
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";

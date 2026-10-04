@@ -296,6 +296,12 @@ class GfxRenderer {
   // Text
   // `tracking` (here and on drawText/getKerning/getTextAdvanceX) is extra pixels between adjacent
   // non-space glyphs (letter-spacing); 0 leaves every measurement and draw call unchanged.
+  struct TextVerticalBounds {
+    int top = 0;
+    int bottom = 0;
+  };
+  // Visible regular-text glyph bounds relative to the y coordinate passed to drawText().
+  TextVerticalBounds getTextVerticalBounds(int fontId, const char* text) const;
   int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                    BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const;
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,

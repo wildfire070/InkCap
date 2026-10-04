@@ -326,6 +326,10 @@ class SettingsActivity final : public Activity {
                             bool returnToParentOnClose = false, View view = View::Root);
   bool allowGlobalHomeSwipeGesture() const override { return false; }
   bool handleHomeGesture() override;
+#ifdef SIMULATOR
+  int simulatorCategoryIndex() const { return selectedCategoryIndex; }
+  int simulatorSelectedIndex() const { return selectedSettingIndex; }
+#endif
   void onEnter() override;
   void onExit() override;
   void loop() override;

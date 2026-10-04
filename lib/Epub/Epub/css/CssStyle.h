@@ -73,7 +73,8 @@ constexpr uint8_t CSS_TEXT_DECORATION_MASK =
 // block/line -- it's used to tell apart elements like <dt>/<dd> that FanFicFare
 // (and similar EPUB generators) mark `display: inline` in specific contexts
 // (e.g. a Series row) from their ordinary block-level siblings (e.g. a Tags
-// row) in otherwise-identical markup.
+// row) in otherwise-identical markup, and so replaced elements can
+// participate in text layout.
 enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2 };
 
 // Vertical alignment options for inline elements (e.g. superscript/subscript)
@@ -188,7 +189,7 @@ struct CssStyle {
   CssLength paddingRight;   // Padding right
   CssLength imageHeight;    // Height for img (e.g. 2em) – width derived from aspect ratio when only height set
   CssLength imageWidth;     // Width for img when both or only width set
-  CssDisplay display = CssDisplay::Block;                       // display property (Block or None)
+  CssDisplay display = CssDisplay::Block;
   bool backgroundBlack = false;                                 // Simple black inline/block background support
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
   bool pageBreakBefore = false;

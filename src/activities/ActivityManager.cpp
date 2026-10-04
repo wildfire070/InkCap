@@ -357,7 +357,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 }
 #endif
 
-bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, const GfxRenderer& renderer,
                                ActivityManager& activityManager) {
   MappedInputManager::CompletedSwipe completed;
   if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
@@ -397,10 +397,13 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
       break;
   }
   if (state.active) {
-    const int amount = state.direction == static_cast<int>(progress.direction)
-                           ? SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight())
-                           : 0;
-    updateLiveLightSwipe(activity, activityManager, state, amount);
+    // Drifting inward ends the slide at its last applied value.
+    if (!progress.leftEdgeBand) {
+      const int amount = state.direction == static_cast<int>(progress.direction)
+                             ? SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight())
+                             : 0;
+      updateLiveLightSwipe(activity, activityManager, state, amount);
+    }
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
       finishLiveLightSwipe(state, activityManager);
@@ -1021,8 +1024,30 @@ void ActivityManager::goToReaderAndRunMenuAction(std::string path, const uint8_t
 void ActivityManager::goToSleep(bool fromTimeout) {
   const bool canSnapshotOverlay = currentActivity && currentActivity->canSnapshotForSleepOverlay();
   const GfxRenderer::Orientation sleepPopupOrientation = renderer.getOrientation();
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay, getCurrentBookPath(),
-                                                  fromTimeout, sleepPopupOrientation));
+  std::string currentBookPath = getCurrentBookPath();
+  auto sleepActivity = makeUniqueNoThrow<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
+                                                        std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
+  const bool renderBeforeExit = currentActivity && sleepActivity && sleepActivity->rendersBeforeExit();
+  if (!sleepActivity) {
+    LOG_ERR("ACT", "Could not allocate sleep activity; saving outgoing activities before sleep");
+  }
+  if (renderBeforeExit || !sleepActivity) {
+    // Keep the outgoing render task from repainting over the sleep screen while
+    // onExit() flushes progress, stats and bookmarks to the card.
+    RenderLock lock;
+    TouchRegistry::getInstance().clear();
+    if (sleepActivity) sleepActivity->onEnter();
+    exitActivity(lock);
+    while (!stackActivities.empty()) {
+      stackActivities.back()->onExit();
+      stackActivities.pop_back();
+    }
+    pendingActivity.reset();
+    pendingAction = PendingAction::None;
+    currentActivity = std::move(sleepActivity);
+    return;
+  }
+  replaceActivity(std::move(sleepActivity));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 
@@ -1182,6 +1207,8 @@ void ActivityManager::endGlobalSettingsEdit() {
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
+
+uint8_t ActivityManager::inputPollDelayMs() const { return currentActivity ? currentActivity->inputPollDelayMs() : 10; }
 
 std::string ActivityManager::getCurrentBookPath() const {
   if (currentActivity) {

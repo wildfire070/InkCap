@@ -289,7 +289,7 @@ bool recoverInterruptedPreservation(const std::string& cachePath, const Preserve
   // Stats moved out of the cache are absent from the cache-directory scan in
   // resolvePreservedFiles(). Find their temporary siblings before that scan.
   const size_t slash = cachePath.find_last_of('/');
-  if (slash == std::string::npos || !statsTmpPrefix) return false;
+  if (slash == std::string::npos) return false;
   const std::string parentPath = slash == 0 ? "/" : cachePath.substr(0, slash);
   const std::string prefix = cachePath.substr(slash + 1) + "." + statsTmpPrefix;
   FsFile parent = Storage.open(parentPath.c_str());
@@ -322,9 +322,10 @@ bool recoverInterruptedPreservation(const std::string& cachePath, const Preserve
     LOG_ERR("BookCache", "Failed to inspect preserved stats beside: %s", cachePath.c_str());
     return false;
   }
-  for (const std::string& name : pendingStats) {
-    if (!recoverPreservedTemp(cachePath, name, std::string(statsTmpPrefix) + name)) return false;
-  }
+  if (!std::all_of(pendingStats.begin(), pendingStats.end(), [&](const std::string& name) {
+        return recoverPreservedTemp(cachePath, name, std::string(statsTmpPrefix) + name);
+      }))
+    return false;
   return removeStatsRecoveryMarker(cachePath, statsTmpPrefix);
 }
 

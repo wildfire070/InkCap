@@ -62,8 +62,9 @@ class CssParser {
   static constexpr uint32_t CSS_CACHE_MAGIC = 0x435843FF;  // bytes: 0xFF, "CXC"
   // 20: merges HEAD's own bump to 19 (prior lineages' descendant-selector/border/
   // font-size-ladder/align=""/PSRAM-arena additions) with crossink/development's
-  // bump to 18 (new list-style-type CSS property support) -- must exceed both so
-  // caches written under either lineage are invalidated.
+  // bump to 18 (list-style-type support) and then 19 again (inline EPUB images,
+  // #685) -- must exceed all of these so caches written under any lineage are
+  // invalidated.
   static constexpr uint8_t CSS_CACHE_VERSION = 20;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers

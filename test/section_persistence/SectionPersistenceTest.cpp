@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+// Include standard headers before the class/private macros below: libstdc++
+// templates declared with `class` do not compile if first parsed under them.
+#include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -22,10 +26,26 @@ namespace {
 // whenever those change (loadSectionFile() rejects anything else as a
 // version mismatch, which is exactly what silently broke this test after an
 // earlier CrossInk sync bumped 66/0xF6 to 75/0xF4 without touching this file).
-constexpr uint8_t kFullVersion = 83;
-constexpr uint8_t kPartialVersion = 0xFC;
-constexpr uint8_t kPreviousFullVersion = 82;
-constexpr uint8_t kPreviousPartialVersion = 0xFB;
+// The chain below covers every version actually shipped on either lineage
+// before they were unified here, so a device carrying a stale cache from any
+// of them gets correctly rejected rather than misread.
+constexpr uint8_t kFullVersion = 85;
+constexpr uint8_t kPartialVersion = 0xFD;
+constexpr uint8_t kPreviousFullVersion = 83;
+constexpr uint8_t kPreviousPartialVersion = 0xFC;
+constexpr uint8_t kOlderFullVersion = 82;
+constexpr uint8_t kOlderPartialVersion = 0xFB;
+constexpr uint8_t kEarlierFullVersion = 81;
+constexpr uint8_t kEarlierPartialVersion = 0xC2;
+constexpr uint8_t kLastReleaseFullVersion = 80;
+constexpr uint8_t kLastReleasePartialVersion = 0xC1;
+constexpr uint8_t kPreReleaseFullVersion = 79;
+constexpr uint8_t kPreReleasePartialVersion = 0xF4;
+constexpr uint8_t kBetaFullVersion = 78;
+constexpr uint8_t kBetaPartialVersion = 0xF2;
+constexpr uint8_t kAlphaFullVersion = 77;
+constexpr uint8_t kAlphaPartialVersion = 0xF3;
+constexpr uint8_t kPreviousReleasePrepPartialVersion = 0x80;
 
 ReaderRenderSpec renderSpec() {
   ReaderRenderSpec spec;
@@ -158,7 +178,11 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 }
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
-  for (const uint8_t staleVersion : {kPreviousFullVersion, kPreviousPartialVersion}) {
+  for (const uint8_t staleVersion :
+       {kPreviousFullVersion, kPreviousPartialVersion, kOlderFullVersion, kOlderPartialVersion, kEarlierFullVersion,
+        kEarlierPartialVersion, kLastReleaseFullVersion, kLastReleasePartialVersion, kPreReleaseFullVersion,
+        kPreReleasePartialVersion, kBetaFullVersion, kBetaPartialVersion, kAlphaFullVersion, kAlphaPartialVersion,
+        kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
     harness.appendPages(1);

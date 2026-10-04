@@ -54,17 +54,13 @@ struct ReaderStatusBarConfig {
   uint8_t progressBarThickness = 1;
 
   constexpr bool contains(ReaderStatusBarItem item) const {
-    for (const auto slot : slots) {
-      if (slot == item) return true;
-    }
-    return false;
+    return std::any_of(slots.begin(), slots.end(), [item](const auto slot) { return slot == item; });
   }
 
   constexpr bool hasTextItems(bool clockAvailable) const {
-    for (const auto slot : slots) {
-      if (slot != ReaderStatusBarItem::Empty && (slot != ReaderStatusBarItem::Clock || clockAvailable)) return true;
-    }
-    return false;
+    return std::any_of(slots.begin(), slots.end(), [clockAvailable](const auto slot) {
+      return slot != ReaderStatusBarItem::Empty && (slot != ReaderStatusBarItem::Clock || clockAvailable);
+    });
   }
 };
 

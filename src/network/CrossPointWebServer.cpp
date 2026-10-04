@@ -1338,48 +1338,43 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  // For an epub, capture cache path + title/author (a lightweight,
-  // metadata-only load, matching Ao3IndexActivity's own scraping-skip load)
-  // BEFORE the rename below, so bookmarks/clippings/the AO3 index record and
-  // RecentBooksStore can be migrated to the new path afterward instead of
-  // being silently orphaned under the old one.
-  const bool isEpub = FsHelpers::hasEpubExtension(itemPath);
-  std::string oldCachePath, epubTitle, epubAuthor;
-  if (isEpub) {
-    Epub epub(itemPath.c_str(), "/.crosspoint");
-    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                  /*skipScraping=*/true)) {
-      oldCachePath = epub.getCachePath();
-      epubTitle = epub.getTitle();
-      epubAuthor = epub.getAuthor();
-    }
-  } else {
-    clearBookCache(itemPath.c_str());
-  }
-
-  const bool success = file.rename(newPath.c_str());
+  // Release the validation handle before migrating metadata and renaming the
+  // book; real SD cards cannot open the same path through multiple readers.
   file.close();
-
-  if (success) {
-    LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
-    if (isEpub) {
-      BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
-                                           /*keepInRecents=*/true);
-      // migrateMovedEpubState() doesn't know about these two path-keyed AO3 stores (the in-app File
-      // Browser's own rename handles them separately too) -- without this, a marked/new-chapter fic
-      // renamed from the web portal silently loses that flag.
-      AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
-      AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
-    }
-    ImageFolderIndex::invalidateForPath(itemPath.c_str());
-    sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
-    ImageFolderIndex::invalidateForPath(newPath.c_str());
-    sdFontSystem.markRegistryDirtyForPath(newPath.c_str());
-    server->send(200, "text/plain", "Renamed successfully");
-  } else {
-    LOG_ERR("WEB", "Failed to rename file: %s -> %s", itemPath.c_str(), newPath.c_str());
-    server->send(500, "text/plain", "Failed to rename file");
+  const auto migration = BookMoveUtils::renameFilePreservingBookState(itemPath.c_str(), newPath.c_str());
+  if (migration == BookMoveUtils::RenameMigrationResult::InvalidBookType) {
+    server->send(400, "text/plain", "Renaming a book cannot change its file type");
+    return;
   }
+  if (migration == BookMoveUtils::RenameMigrationResult::DestinationStateExists) {
+    server->send(409, "text/plain", "Target filename has saved reading data. Choose another filename.");
+    return;
+  }
+  if (migration == BookMoveUtils::RenameMigrationResult::RolledBack) {
+    LOG_ERR("WEB", "Failed to rename file while preserving reader state: %s -> %s", itemPath.c_str(), newPath.c_str());
+    server->send(500, "text/plain", "Could not rename file while preserving saved reading data");
+    return;
+  }
+
+  LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
+  if (FsHelpers::hasEpubExtension(itemPath)) {
+    // renameFilePreservingBookState() doesn't know about these two path-keyed AO3 stores (the in-app
+    // File Browser's own rename handles them separately too) -- without this, a marked/new-chapter fic
+    // renamed from the web portal silently loses that flag.
+    AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+    AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+  }
+  ImageFolderIndex::invalidateForPath(itemPath.c_str());
+  sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
+  ImageFolderIndex::invalidateForPath(newPath.c_str());
+  sdFontSystem.markRegistryDirtyForPath(newPath.c_str());
+  if (migration == BookMoveUtils::RenameMigrationResult::KeepRenamed) {
+    LOG_ERR("WEB", "Rename kept new path after incomplete state rollback: %s", newPath.c_str());
+    server->send(500, "text/plain",
+                 "File was renamed, but some saved references could not be updated. Refresh the file list.");
+    return;
+  }
+  server->send(200, "text/plain", "Renamed successfully");
 }
 
 void CrossPointWebServer::handleMove() const {

@@ -5,6 +5,27 @@ All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8 unless a format notes a
 fixed-size char buffer.
 
+## `/.crosspoint/home_carousel_cache_<index>.bin`
+
+### Version 6
+
+The v1.6.1 release normalizes development version 8 to version 6, one step
+after v1.6.0. The new per-position filenames and artwork cache keys prevent
+reuse of older combined snapshots.
+
+Each Carousel position has a disposable snapshot containing only cover artwork,
+titles and position dots. Progress, reading time, header, menu icons and button
+hints are drawn live after restoration. Each file contains a `CarouselCacheHeader`
+followed by one full framebuffer. The header's `frameCount` records the number of
+recent books used to compose the artwork, rather than the number of stored frames.
+The key tracks ordered book paths, titles, cover paths, thumbnail availability and
+image polarity, rather than reading progress or statistics.
+
+Frames are rendered and saved only when viewed; returning Home does not prepare
+other positions in advance. The development version 7 combined
+`home_carousel_cache.bin` is removed after the first successful write. Cache
+regeneration is automatic; EPUB layout caches and reading history are unaffected.
+
 ## `/.crosspoint/ttf-rendering.json`
 
 This user-owned JSON file stores only custom TTF families whose raster settings
@@ -190,15 +211,18 @@ and genre. Version 6 appends the four-byte series position.
 
 ## `book.bin`
 
-### Version 10
+### Version 15
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
 The current firmware writes this version from `BookMetadataCache`.
-Version 10 adds `ao3WorkId`, `ao3UpdateDate`, and `ao3IsCompleted` to the
-metadata block for the AO3 library feature. Version 9 stores book and TOC
-title strings NFC-composed so decomposed diacritics render correctly with
-device fonts, and rebuilds metadata after the EPUB guide start-reference
-handling changed.
+Version 15 rebuilds metadata with namespace-aware OPF parsing so optimizer-generated
+XML prefixes do not leave an empty chapter list. The binary layout is unchanged.
+Version 14 added `tags` (`dc:subject`). Version 13 fixed the bookshelf column name and
+added `chapters`, `completionStatus`, `updatedDate`, `liked`, and `readStatus`.
+Version 10 added `ao3WorkId`, `ao3UpdateDate`, and `ao3IsCompleted` to the metadata
+block for the AO3 library feature. Version 9 stores book and TOC title strings
+NFC-composed so decomposed diacritics render correctly with device fonts, and
+rebuilds metadata after the EPUB guide start-reference handling changed.
 
 ImHex pattern:
 
@@ -282,7 +306,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 9
+### Version 10
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -452,6 +476,27 @@ Binary layout:
 
 ## `section.bin`
 
+### Version 81
+
+Version 81 carries `text-indent` from the HTML and body root styles into
+descendant paragraph blocks. Existing full section caches (byte `80`) and
+suspended partial caches (`0xC1`) rebuild so inherited paragraph indentation is
+reflected in saved page positions. Complete files use byte `81`; suspended
+partials use marker `0xC2`. The CSS rule cache format is unchanged.
+
+### Version 80
+
+Version 80 places small inline images within text lines while keeping larger
+images as centered blocks. Page-image records add a one-byte inline flag after
+their coordinates; full section caches (byte `80`) and suspended partial caches (`0xC1`) rebuild so
+existing books receive the new layout. The CSS rule cache moves to version `19`
+so `display: inline` rules retain their meaning.
+
+The v1.6.1 release retains version `80` and partial marker `0xC1`: development
+versions `78` and `79` used the older image payload, and earlier release
+preparation used partial marker `0x80`. Reusing those identifiers could accept
+incompatible saved pages. All of those older caches rebuild automatically.
+
 ### Version 79
 
 Version 79 keeps the version 78 serialized layout. Korean words now wrap at
@@ -492,8 +537,10 @@ version byte `66`, and suspended partials use sentinel byte `0xF6`.
 The stable v1.5.1 release retains these identifiers from RC6. Do not normalize
 published RC versions to the previous stable version plus one: v1.5.0 used
 `60` / `0xF9`, and RC4 already shipped `61` / `0xF8` with older layout output.
-Reusing those identifiers could accept stale RC caches as current. Per-book
-reader settings likewise retain version `9` and their version 7/8 migrations.
+Reusing those identifiers could accept stale RC caches as current. Version 9
+per-book reader settings and their version 7/8 migrations remain
+readable. Version 10 adds a field-override mask so a book can inherit unrelated
+global reader settings.
 
 ### Version 62
 

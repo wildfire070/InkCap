@@ -54,6 +54,9 @@ class Activity {
   virtual RequestUpdateResult requestUpdateAndWait();
 
   virtual bool skipLoopDelay() { return false; }
+  // Read on the main task even while render() holds the render lock.
+  // Overrides must return a fixed value that does not depend on render state.
+  virtual uint8_t inputPollDelayMs() const { return 10; }
   virtual bool preventAutoSleep() { return false; }
   // While true, main-loop global controls and activity replacement are
   // suspended so an exclusive storage owner cannot race the filesystem.

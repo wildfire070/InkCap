@@ -32,14 +32,19 @@
 #include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
 #include "activities/home/BookActions.h"
+#include "activities/home/HomeActivity.h"
 #include "activities/home/RecentBookProgress.h"
+#include "activities/library/LibraryActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
+#include "activities/reader/BookReadingStats.h"
 #include "activities/reader/EpubReaderDrawerActivity.h"
 #include "activities/reader/ReaderFontLoading.h"
 #include "activities/reader/ReaderOptionsActivity.h"
 #include "activities/reader/ReaderUtils.h"
 #include "activities/reader/SideButtonShortcuts.h"
 #include "activities/settings/QuickActionsActivity.h"
+#include "activities/settings/SettingsActivity.h"
+#include "activities/util/FrontlightPanelActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "simulator/SimulatorHomeKeyInput.h"
@@ -59,6 +64,7 @@ enum class SmokeStep : uint8_t {
   FileBrowser,
   FileBrowserSettings,
   Library,
+  RecentLibrary,
   Settings,
   SideButtons,
   ReaderOptions,
@@ -66,6 +72,11 @@ enum class SmokeStep : uint8_t {
   Sleep,
   Reader,
   ReaderInput,
+  CarouselHome,
+  ThemeHome,
+  ThemeSettings,
+  ThemeReturned,
+  ThemeFresh,
   Done,
 };
 
@@ -97,11 +108,14 @@ class SimulatorSmokeTest {
     AssertTouchscreenEnabled,
     AssertTtfProfileNative,
     OpenSmokeBook,
+    OpenFrontlightSettings,
     DisableReaderTouch,
     EnableReaderTouch,
     TouchDown,
     TouchMove,
     TouchRelease,
+    AssertReaderMenu,
+    AssertSettingsNavigation,
     AssertActivity,
     Render
   };
@@ -125,6 +139,29 @@ class SimulatorSmokeTest {
   SmokeStep inputCompletionStep = SmokeStep::Done;
   // -1 = not running; 0+ = frames elapsed since tickCalibreBatchTest() activated it.
   int calibreBatchTestFrame = -1;
+  unsigned carouselCachePass = 0;
+  std::filesystem::file_time_type carouselCacheWrittenAt;
+  std::filesystem::file_time_type carouselSecondWrittenAt;
+  uint64_t carouselCacheHash = 0;
+  uint64_t carouselScreenHash = 0;
+  unsigned homeThemePass = 0;
+  uint64_t homeThemeScreenHash = 0;
+  std::string homeThemeBookPath;
+
+  void prepareRecentLibrary() {
+    SETTINGS.librarySortMethod = 4;
+    SETTINGS.librarySortDescending = 1;
+    SETTINGS.libraryUseMetadata = 1;
+    SETTINGS.libraryShowTxt = 1;
+    SETTINGS.libraryHideFinishedBooks = 0;
+    for (int i = 0; i < 20; ++i) {
+      const std::string path = "/books/recent-smoke-" + std::to_string(i) + ".txt";
+      if (!Storage.writeFile(path.c_str(), "Recent Library smoke fixture")) fail("Cannot create recent fixture");
+      RECENT_BOOKS.addOrUpdateBook(path, "Title " + std::to_string(i), "Author " + std::to_string(i), "");
+    }
+    Storage.remove(library::libraryIndexPath());
+    library::invalidateLibraryIndex();
+  }
 
   static bool enabled() { return std::getenv("CROSSINK_SIMULATOR_SMOKE_TEST") != nullptr; }
 
@@ -951,6 +988,128 @@ class SimulatorSmokeTest {
     std::_Exit(0);
   }
 
+  static uint64_t hashBytes(const uint8_t* bytes, size_t size, uint64_t hash = 14695981039346656037ull) {
+    for (size_t i = 0; i < size; ++i) {
+      hash ^= bytes[i];
+      hash *= 1099511628211ull;
+    }
+    return hash;
+  }
+
+  static uint64_t hashCarouselCache() {
+    FsFile file;
+    if (!Storage.openFileForRead("SMOKE", "/.crosspoint/home_carousel_cache_0.bin", file)) {
+      fail("Carousel did not publish an artwork cache");
+    }
+    if (file.size() < renderer.getBufferSize() || file.size() >= 2 * renderer.getBufferSize()) {
+      file.close();
+      fail("Carousel snapshot must contain only one viewed artwork frame");
+    }
+    uint64_t hash = 14695981039346656037ull;
+    uint8_t bytes[128];
+    int count;
+    while ((count = file.read(bytes, sizeof(bytes))) > 0) hash = hashBytes(bytes, count, hash);
+    file.close();
+    return hash;
+  }
+
+  void queueCarouselSwipe(bool next) {
+    ++carouselCachePass;
+    inputScript.clear();
+    scriptIndex = 0;
+    inputCompletionStep = SmokeStep::CarouselHome;
+#if CROSSINK_APP_CAP_TOUCH
+    if (mappedInputManager.hasTouchHardware()) {
+      const int startX = renderer.getScreenWidth() * (next ? 3 : 1) / 4;
+      const int endX = renderer.getScreenWidth() * (next ? 1 : 3) / 4;
+      const int y = renderer.getScreenHeight() / 2;
+      inputScript.push_back(touchDown(startX, y));
+      inputScript.push_back(touchMove(endX, y));
+      inputScript.push_back(touchRelease(endX, y));
+    } else
+#endif
+    {
+      addTap(next ? MappedInputManager::Button::Right : MappedInputManager::Button::Left);
+    }
+    inputScript.push_back(render("Carousel viewed position", 8));
+    step = SmokeStep::ReaderInput;
+  }
+
+  void verifyCarouselCacheReturn() {
+    const auto writtenAt = std::filesystem::last_write_time("fs_/.crosspoint/home_carousel_cache_0.bin");
+    const uint64_t cacheHash = hashCarouselCache();
+    uint64_t screenHash;
+    {
+      RenderLock lock;
+      screenHash = hashBytes(renderer.getFrameBuffer(), renderer.getBufferSize());
+    }
+    if (carouselCachePass == 0) {
+      if (Storage.exists("/.crosspoint/home_carousel_cache_1.bin") ||
+          Storage.exists("/.crosspoint/home_carousel_cache_2.bin")) {
+        fail("Carousel eagerly prepared unviewed positions");
+      }
+      carouselCacheWrittenAt = writtenAt;
+      carouselCacheHash = cacheHash;
+      const RecentBook& book = RECENT_BOOKS.getBooks().front();
+      const std::string cachePath = Epub::resolveCachePathForFilePath(book.path, "/.crosspoint");
+      const float oldProgress = RecentBookProgress::loadCachedEpubPercent(book);
+      RecentBookProgress::saveCachedEpubPercent(cachePath, oldProgress < 50.0f ? 75.0f : 25.0f);
+      BookReadingStats stats = BookReadingStats::load(cachePath);
+      stats.sessionCount = 1;
+      stats.totalReadingSeconds += 7200;
+      if (!stats.save(cachePath)) fail("Cannot save carousel stats fixture");
+    } else if (carouselCachePass <= 2) {
+      if (writtenAt != carouselCacheWrittenAt || cacheHash != carouselCacheHash) {
+        fail("Reading progress/stats or tracking settings rebuilt the carousel artwork");
+      }
+      if (screenHash == carouselScreenHash) fail("Carousel restored stale progress/stats or menu pixels");
+      if (carouselCachePass == 1) {
+        SETTINGS.trackReadingStats = 0;
+      } else {
+        SETTINGS.screenInverted = !SETTINGS.screenInverted;
+      }
+    } else if (carouselCachePass == 3) {
+      if (cacheHash == carouselCacheHash) fail("Dark Mode did not invalidate carousel artwork");
+      carouselCacheHash = cacheHash;
+      const RecentBook book = RECENT_BOOKS.getBooks().front();
+      if (!RECENT_BOOKS.updateBook(book.path, "Changed carousel title", book.author, book.coverBmpPath,
+                                   book.coverState))
+        fail("Cannot update carousel title fixture");
+    } else if (carouselCachePass == 4) {
+      if (cacheHash == carouselCacheHash) fail("Title changes did not invalidate carousel artwork");
+      carouselCacheHash = cacheHash;
+      carouselCacheWrittenAt = writtenAt;
+      queueCarouselSwipe(true);
+      return;
+    } else {
+      if (cacheHash != carouselCacheHash || writtenAt != carouselCacheWrittenAt) {
+        fail("Navigating the carousel rewrote an already cached position");
+      }
+      const bool secondExists = Storage.exists("/.crosspoint/home_carousel_cache_1.bin");
+      if (!secondExists || Storage.exists("/.crosspoint/home_carousel_cache_2.bin")) {
+        fail("Carousel navigation did not cache only the viewed position");
+      }
+      const auto secondWrittenAt = std::filesystem::last_write_time("fs_/.crosspoint/home_carousel_cache_1.bin");
+      const int selected = carouselCachePass == 5 ? 1 : 0;
+      if (activityManager.getCurrentBookPath() != RECENT_BOOKS.getBooks()[selected].path) {
+        fail("Carousel swipe did not select the expected book");
+      }
+      if (carouselCachePass == 5) {
+        carouselSecondWrittenAt = secondWrittenAt;
+        queueCarouselSwipe(false);
+        return;
+      }
+      if (secondWrittenAt != carouselSecondWrittenAt) fail("Carousel rewrote the previous position while leaving it");
+      LOG_INF("SMOKE", "Carousel lazy cache, live progress/stats/menu, Dark Mode and title invalidation passed");
+      step = SmokeStep::Done;
+      return;
+    }
+    carouselScreenHash = screenHash;
+    ++carouselCachePass;
+    activityManager.goHome();
+    queueStep("Carousel return cache", SmokeStep::CarouselHome, 8);
+  }
+
   void tickImpl() {
     mappedInputManager.simulatorClearInputFrame();
 
@@ -971,6 +1130,22 @@ class SimulatorSmokeTest {
     switch (step) {
       case SmokeStep::Start:
         LOG_INF("SMOKE", "Starting simulator smoke test");
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_HOME_THEMES")) {
+          if (!mappedInputManager.hasHomeKey() || !mappedInputManager.hasTouchHardware())
+            fail("Home theme regression requires the X4 Pro simulator");
+          for (const char* path : {"/books/theme-first.txt", "/books/theme-second.txt"}) {
+            if (!Storage.writeFile(path, "Home theme fixture")) fail("Cannot create Home theme fixture");
+            RECENT_BOOKS.addOrUpdateBook(path, path, {}, {}, RecentBook::CoverState::Missing);
+          }
+          SETTINGS.uiTheme = CrossPointSettings::LYRA_CAROUSEL;
+          SETTINGS.uiScale = CrossPointSettings::UI_SCALE_SMALL;
+          UITheme::getInstance().reload();
+          homeThemeBookPath = "/books/theme-first.txt";
+          activityManager.replaceActivity(std::make_unique<HomeActivity>(
+              renderer, mappedInputManager, HomeMenuItem::NONE, HalDisplay::FAST_REFRESH, homeThemeBookPath));
+          queueStep("Initial carousel Home", SmokeStep::ThemeHome, 8);
+          break;
+        }
         verifyLoadingPopupBackdrop();
         verifyCachedHomeProgressMigration();
         if (!CrossPointSettings::verifySleepTimeoutMigrationContract()) {
@@ -1200,14 +1375,97 @@ class SimulatorSmokeTest {
           break;
         }
 #endif
+        prepareRecentLibrary();
         activityManager.goToLibrary();
-        queueStep("Library", SmokeStep::Library);
+        queueStep("Recent Library", SmokeStep::RecentLibrary);
         break;
 
       case SmokeStep::FileBrowserSettings:
+        prepareRecentLibrary();
         activityManager.goToLibrary();
+        queueStep("Recent Library", SmokeStep::RecentLibrary);
+        break;
+
+      case SmokeStep::RecentLibrary: {
+        RenderLock lock;
+        auto* activity = static_cast<LibraryActivity*>(activityManager.simulatorCurrentActivity());
+        if (Storage.exists(library::libraryIndexPath()) || !library::libraryIndexNeedsRefresh())
+          fail("Recently Opened built the missing Library index");
+        RecentBook book;
+        if (activity->simulatorRowCount() != 18 || !activity->simulatorReadBook(0, book) ||
+            book.path != "/books/recent-smoke-19.txt")
+          fail("Recent Library did not show bounded history in newest-first order");
+        activity->simulatorSetView(4, false);
+        if (!activity->simulatorReadBook(0, book) || book.path != "/books/recent-smoke-2.txt")
+          fail("Recent Library did not reverse history");
+        activity->simulatorSetView(4, true, "Author 19");
+        if (activity->simulatorRowCount() != 1 || !activity->simulatorReadBook(0, book) ||
+            book.path != "/books/recent-smoke-19.txt")
+          fail("Recent Library author search failed");
+        SETTINGS.libraryShowTxt = 0;
+        activity->simulatorSetView(4, true);
+        if (activity->simulatorRowCount() != 0) fail("Recent Library file filter failed");
+        SETTINGS.libraryShowTxt = 1;
+        SETTINGS.libraryUseMetadata = 0;
+        activity->simulatorSetView(4, true, "recent-smoke-19");
+        if (activity->simulatorRowCount() != 1 || !activity->simulatorReadBook(0, book) ||
+            book.title != "recent-smoke-19" || !book.author.empty())
+          fail("Recent Library filename display/search failed");
+        SETTINGS.libraryUseMetadata = 1;
+        // An unreadable index must also be irrelevant to a history refresh.
+        if (!Storage.writeFile(library::libraryIndexPath(), "broken")) fail("Cannot write broken index fixture");
+        activity->simulatorSetView(4, true);
+        activity->simulatorRefresh();
+        FsFile broken;
+        if (!Storage.openFileForRead("SMOKE", library::libraryIndexPath(), broken)) fail("Missing broken index");
+        const auto brokenSize = broken.size();
+        broken.close();
+        if (brokenSize != 6 || !library::libraryIndexNeedsRefresh() || activity->simulatorRowCount() != 18)
+          fail("Recent Library refreshed the full index");
+        activity->simulatorSetView(1, false);
+        activity->simulatorSetView(4, true);
+        if (activity->simulatorRowCount() != 18 || !activity->simulatorReadBook(0, book))
+          fail("Recent Library stayed unavailable after a failed full scan");
+        const char* epubPath = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");
+        if (epubPath) {
+          const std::string cachePath = Epub(epubPath, "/.crosspoint").getCachePath();
+          if (!Storage.exists(cachePath.c_str()) && !Storage.mkdir(cachePath.c_str()))
+            fail("Cannot create completed-book cache");
+          auto stats = BookReadingStats::load(cachePath);
+          stats.isCompleted = true;
+          if (!stats.save(cachePath)) fail("Cannot save completed-book fixture");
+          RECENT_BOOKS.addOrUpdateBook(epubPath, "Completed smoke book", "", "");
+          SETTINGS.libraryHideFinishedBooks = 1;
+          activity->simulatorSetView(4, true);
+          if (activity->simulatorRowCount() != 17) fail("Recent Library did not hide finished EPUB");
+          SETTINGS.libraryHideFinishedBooks = 0;
+          activity->simulatorSetView(4, true);
+          if (activity->simulatorRowCount() != 18 || !activity->simulatorReadBook(0, book) || book.path != epubPath)
+            fail("Recent Library did not restore finished EPUB");
+          RECENT_BOOKS.removeByPath(epubPath);
+          stats.isCompleted = false;
+          if (!stats.save(cachePath)) fail("Cannot restore completed-book fixture");
+        }
+        for (int i = 0; i < 20; ++i) {
+          const std::string path = "/books/recent-smoke-" + std::to_string(i) + ".txt";
+          if (!Storage.remove(path.c_str())) fail("Cannot remove recent fixture");
+        }
+        activity->simulatorRefresh();
+        if (activity->simulatorRowCount() != 0) fail("Recent Library did not prune missing books");
+        // The builder deliberately retains an unreadable previous index. Remove
+        // that fixture before checking a deferred build from a missing index.
+        if (!Storage.remove(library::libraryIndexPath())) fail("Cannot remove broken index fixture");
+        // Switching to a full-library sort must still build the deferred index.
+        activity->simulatorSetView(1, false);
+        if (library::libraryIndexNeedsRefresh() || activity->simulatorRowCount() == 0)
+          fail("Full Library did not build its deferred index");
+        SETTINGS.librarySortMethod = 1;
+        SETTINGS.librarySortDescending = 0;
+        LOG_INF("SMOKE",
+                "Recent Library missing/corrupt index, 18-book limit, ordering, search, filters and completion passed");
         queueStep("Library", SmokeStep::Library);
         break;
+      }
 
       case SmokeStep::Library: {
         // Rendering an error screen is not a successful Library smoke test.
@@ -1223,6 +1481,51 @@ class SimulatorSmokeTest {
         if (library::libraryIndexNeedsRefresh()) fail("Successful Library scan stayed dirty");
         if (libraryRefreshPass == 0) {
           libraryBaselineBooks = books;
+          auto* libraryActivity = static_cast<LibraryActivity*>(activityManager.simulatorCurrentActivity());
+          const int beforeSelection = libraryActivity->simulatorSelection();
+          {
+            RenderLock busyRender;
+            mappedInputManager.simulatorClearInputFrame();
+            mappedInputManager.simulatorInjectRelease(MappedInputManager::Button::Down);
+            libraryActivity->loop();
+            mappedInputManager.simulatorClearInputFrame();
+            mappedInputManager.simulatorInjectRelease(MappedInputManager::Button::Up);
+            libraryActivity->loop();
+            if (libraryActivity->simulatorPendingInputs() != 2 ||
+                libraryActivity->simulatorSelection() != beforeSelection)
+              fail("Library did not buffer navigation while rendering");
+#if CROSSINK_APP_CAP_TOUCH
+            mappedInputManager.simulatorClearInputFrame();
+            mappedInputManager.simulatorInjectTouchDown(200, 300);
+            libraryActivity->loop();
+            mappedInputManager.simulatorClearInputFrame();
+            mappedInputManager.simulatorInjectTouchMove(200, 100);
+            libraryActivity->loop();
+            mappedInputManager.simulatorClearInputFrame();
+            mappedInputManager.simulatorInjectTouchRelease(200, 100);
+            libraryActivity->loop();
+            if (libraryActivity->simulatorPendingInputs() != 5)
+              fail("Library did not buffer touch press, cancellation and scroll");
+#endif
+          }
+          mappedInputManager.simulatorClearInputFrame();
+          while (libraryActivity->simulatorPendingInputs()) libraryActivity->loop();
+          const int selectionBeforeOverflow = libraryActivity->simulatorSelection();
+          {
+            RenderLock busyRender;
+            for (size_t i = 0; i <= LibraryInputBuffer::CAPACITY; ++i) {
+              mappedInputManager.simulatorClearInputFrame();
+              mappedInputManager.simulatorInjectRelease(MappedInputManager::Button::Down);
+              libraryActivity->loop();
+            }
+            if (libraryActivity->simulatorPendingInputs() != 1)
+              fail("Library overflow did not cancel the partial input sequence");
+          }
+          mappedInputManager.simulatorClearInputFrame();
+          libraryActivity->loop();
+          if (libraryActivity->simulatorSelection() != selectionBeforeOverflow)
+            fail("Library replayed navigation after input overflow");
+          LOG_INF("SMOKE", "Library input buffering during rendering and overflow passed");
           // Deliberately bypass invalidation to prove that a normal return visit
           // reuses the index instead of walking the card again.
           if (!Storage.writeFile(REFRESH_FIXTURE, "Library refresh smoke fixture"))
@@ -1257,11 +1560,27 @@ class SimulatorSmokeTest {
           inputScript.clear();
           scriptIndex = 0;
           inputCompletionStep = SmokeStep::SideButtons;
-          addTap(MappedInputManager::Button::Confirm);  // Reader tab
-          addTap(MappedInputManager::Button::Confirm);  // Controls tab
-          addTap(MappedInputManager::Button::Down);     // Power Button
-          addTap(MappedInputManager::Button::Down);     // Front Buttons
-          addTap(MappedInputManager::Button::Down);     // Side Buttons
+          const auto down = mappedInputManager.menuButton(MappedInputManager::Button::Down);
+          const auto up = mappedInputManager.menuButton(MappedInputManager::Button::Up);
+          const auto left = mappedInputManager.menuButton(MappedInputManager::Button::Left);
+          const auto right = mappedInputManager.menuButton(MappedInputManager::Button::Right);
+          addTap(right);
+          inputScript.push_back(render("Settings Right selects Reader tab", 3));
+          inputScript.push_back(assertSettingsNavigation(1, 0));
+          addTap(down);
+          inputScript.push_back(render("Settings Down selects first row", 3));
+          inputScript.push_back(assertSettingsNavigation(1, 1));
+          addTap(left);
+          inputScript.push_back(render("Settings Left switches tabs while a row is focused", 3));
+          inputScript.push_back(assertSettingsNavigation(0, 1));
+          addTap(up);
+          inputScript.push_back(render("Settings Up returns to tab band", 3));
+          inputScript.push_back(assertSettingsNavigation(0, 0));
+          addTap(right);  // Reader tab
+          addTap(right);  // Controls tab
+          addTap(down);   // Power Button
+          addTap(down);   // Front Buttons
+          addTap(down);   // Side Buttons
           addTap(MappedInputManager::Button::Confirm);
           inputScript.push_back(render("Side Button Settings", 250));
           step = SmokeStep::ReaderInput;
@@ -1314,10 +1633,114 @@ class SimulatorSmokeTest {
         runReaderInputScript();
         break;
 
+      case SmokeStep::CarouselHome:
+        verifyCarouselCacheReturn();
+        break;
+
+      case SmokeStep::ThemeHome: {
+        if (activityManager.getCurrentBookPath() != homeThemeBookPath) fail("Theme switch lost the selected book");
+#if CROSSINK_APP_CAP_TOUCH
+        const int width = renderer.getScreenWidth();
+        const int height = renderer.getScreenHeight();
+        inputScript = {touchDown(width / 2, 8),
+                       touchMove(width / 2, height / 4),
+                       touchRelease(width / 2, height / 4),
+                       render("Home frontlight drawer", 4),
+                       assertActivity("FrontlightPanel"),
+                       {ScriptActionType::OpenFrontlightSettings, MappedInputManager::Button::Back, nullptr, 0, 0, 0},
+                       render("Home drawer Settings", 4),
+                       assertActivity("Settings")};
+        scriptIndex = 0;
+        inputCompletionStep = SmokeStep::ThemeSettings;
+        step = SmokeStep::ReaderInput;
+#else
+        // Entry into the Start state already fails without touch hardware
+        // (see CROSSINK_SIMULATOR_SMOKE_HOME_THEMES above); unreachable here.
+        fail("Home theme regression requires touch hardware");
+#endif
+        break;
+      }
+
+      case SmokeStep::ThemeSettings: {
+        static constexpr uint8_t themes[] = {CrossPointSettings::LYRA_3_COVERS, CrossPointSettings::DASHBOARD,
+                                             CrossPointSettings::MINIMAL,       CrossPointSettings::COVER_GRID,
+                                             CrossPointSettings::LYRA,          CrossPointSettings::CLASSIC,
+                                             CrossPointSettings::ROUNDEDRAFF,   CrossPointSettings::LYRA_CAROUSEL,
+                                             CrossPointSettings::LYRA_CAROUSEL, CrossPointSettings::LYRA_CAROUSEL};
+        // Change the global values while the real Settings child is open, then
+        // return through its real drawer callback. Compare with a fresh Home.
+        {
+          RenderLock lock;
+          SETTINGS.uiTheme = themes[homeThemePass];
+          if (homeThemePass == 8) SETTINGS.uiScale = CrossPointSettings::UI_SCALE_LARGE;
+          UITheme::getInstance().reload();
+        }
+        inputScript = {press(MappedInputManager::Button::Back), release(MappedInputManager::Button::Back),
+                       render("Home after drawer Settings", 8), assertActivity("Home")};
+        scriptIndex = 0;
+        inputCompletionStep = SmokeStep::ThemeReturned;
+        step = SmokeStep::ReaderInput;
+        break;
+      }
+
+      case SmokeStep::ThemeReturned: {
+        if (activityManager.getCurrentBookPath() != homeThemeBookPath) fail("Theme switch lost the selected book");
+        {
+          RenderLock lock;
+          homeThemeScreenHash = hashBytes(renderer.getFrameBuffer(), renderer.getBufferSize());
+        }
+        activityManager.replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInputManager, HomeMenuItem::NONE,
+                                                                       HalDisplay::FAST_REFRESH, homeThemeBookPath));
+        queueStep("Fresh Home reference", SmokeStep::ThemeFresh, 8);
+        break;
+      }
+
+      case SmokeStep::ThemeFresh: {
+        {
+          RenderLock lock;
+          if (hashBytes(renderer.getFrameBuffer(), renderer.getBufferSize()) != homeThemeScreenHash)
+            fail("Home after drawer theme change differs from fresh Home (pass %u)", homeThemePass);
+        }
+        LOG_INF("SMOKE", "Home theme/scale return matches fresh render (pass %u)", homeThemePass);
+        if (++homeThemePass == 10) {
+          LOG_INF("SMOKE", "Simulator smoke test passed");
+          std::_Exit(0);
+        }
+        step = SmokeStep::ThemeHome;
+        break;
+      }
+
       case SmokeStep::Done:
+        if (SETTINGS.uiTheme == CrossPointSettings::LYRA_CAROUSEL && carouselCachePass == 0 &&
+            std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK")) {
+          const RecentBook book = RECENT_BOOKS.getBooks().front();
+          for (const char* path : {"/books/carousel-second.txt", "/books/carousel-third.txt"}) {
+            if (!Storage.writeFile(path, "Carousel side cover fixture")) fail("Cannot create carousel fixture");
+            RECENT_BOOKS.addOrUpdateBook(path, path, {}, {}, RecentBook::CoverState::Missing);
+          }
+          RECENT_BOOKS.addOrUpdateBook(book.path, book.title, book.author, book.coverBmpPath, book.coverState);
+          SETTINGS.trackReadingStats = 1;
+          activityManager.goHome();
+          queueStep("Carousel return cache", SmokeStep::CarouselHome, 8);
+          break;
+        }
         LOG_INF("SMOKE", "Simulator smoke test passed");
         std::_Exit(0);
     }
+  }
+
+  static ScriptAction assertReaderMenu(const ReaderDrawerTab tab, const ReaderDrawerPane pane, const int selected) {
+    return {ScriptActionType::AssertReaderMenu,
+            MappedInputManager::Button::Back,
+            nullptr,
+            selected,
+            static_cast<int>(tab),
+            static_cast<int>(pane)};
+  }
+
+  static ScriptAction assertSettingsNavigation(const int category, const int selected) {
+    return {
+        ScriptActionType::AssertSettingsNavigation, MappedInputManager::Button::Back, nullptr, 0, category, selected};
   }
 
   static ScriptAction press(MappedInputManager::Button button) {
@@ -1380,6 +1803,10 @@ class SimulatorSmokeTest {
     return {ScriptActionType::Render, MappedInputManager::Button::Back, label, framesToSettle, 0, 0};
   }
 
+  static ScriptAction assertActivity(const char* name) {
+    return {ScriptActionType::AssertActivity, MappedInputManager::Button::Back, name, 0, 0, 0};
+  }
+
 #if CROSSINK_APP_CAP_TOUCH
   static ScriptAction touchDown(const int x, const int y) {
     return {ScriptActionType::TouchDown, MappedInputManager::Button::Back, nullptr, 0, x, y};
@@ -1390,9 +1817,7 @@ class SimulatorSmokeTest {
   static ScriptAction touchRelease(const int x, const int y) {
     return {ScriptActionType::TouchRelease, MappedInputManager::Button::Back, nullptr, 0, x, y};
   }
-  static ScriptAction assertActivity(const char* name) {
-    return {ScriptActionType::AssertActivity, MappedInputManager::Button::Back, name, 0, 0, 0};
-  }
+
 #endif
 
   void addTap(MappedInputManager::Button button) {
@@ -1404,6 +1829,21 @@ class SimulatorSmokeTest {
     inputScript.clear();
     scriptIndex = 0;
     inputCompletionStep = SmokeStep::Done;
+
+    int currentFontIndex = SETTINGS.fontFamily;
+    std::vector<uint8_t> currentFontSizes(std::begin(BUILTIN_READER_FONT_SIZES), std::end(BUILTIN_READER_FONT_SIZES));
+    if (SETTINGS.sdFontFamilyName[0] != '\0') {
+      sdFontSystem.ensureRegistry();
+      const auto& families = sdFontSystem.registry().getFamilies();
+      for (size_t i = 0; i < families.size(); ++i) {
+        if (families[i].name != SETTINGS.sdFontFamilyName) continue;
+        currentFontIndex = CrossPointSettings::BUILTIN_FONT_COUNT + static_cast<int>(i);
+        currentFontSizes = families[i].availableSizes();
+        break;
+      }
+    }
+    const auto sizeIt = std::find(currentFontSizes.begin(), currentFontSizes.end(), SETTINGS.readerFontPointSize);
+    const int currentSizeIndex = sizeIt == currentFontSizes.end() ? 0 : std::distance(currentFontSizes.begin(), sizeIt);
 
     const int turns = pageTurnCount();
 #if CROSSINK_APP_CAP_TOUCH
@@ -1431,14 +1871,18 @@ class SimulatorSmokeTest {
         inputScript.push_back(touchDown(width / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2), tabY));
         inputScript.push_back(touchRelease(width / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2), tabY));
         addTap(MappedInputManager::Button::Confirm);
-        addTap(MappedInputManager::Button::Down);
-        addTap(MappedInputManager::Button::Down);
+        addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+        addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
         addTap(MappedInputManager::Button::Confirm);
         inputScript.push_back(render("TTF Rendering opened in reader drawer", 4));
         inputScript.push_back(assertActivity("EpubReaderDrawer"));
         addTap(MappedInputManager::Button::Confirm);
         inputScript.push_back(render("TTF Hinting choices opened in reader drawer", 3));
-        addTap(MappedInputManager::Button::Down);
+        const int currentHinting = TTF_RENDER_PROFILES.profileFor(SETTINGS.sdFontFamilyName).hinting;
+        inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::EnumOptions, currentHinting));
+        const auto hintingDirection = mappedInputManager.menuButton(
+            currentHinting > 1 ? MappedInputManager::Button::Up : MappedInputManager::Button::Down);
+        for (int i = 0; i < std::abs(currentHinting - 1); ++i) addTap(hintingDirection);
         addTap(MappedInputManager::Button::Confirm);
         inputScript.push_back(render("TTF Native hinting selected", 4));
         inputScript.push_back(assertTtfProfileNative());
@@ -1604,6 +2048,22 @@ class SimulatorSmokeTest {
       inputScript.push_back(render("Reader Menu opened from touch gesture", 4));
       inputScript.push_back(assertActivity("EpubReaderDrawer"));
 
+      const int fontTabX = width / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2);
+      inputScript.push_back(touchDown(fontTabX, tabY));
+      inputScript.push_back(touchRelease(fontTabX, tabY));
+      addTap(MappedInputManager::Button::Confirm);
+      inputScript.push_back(render("Touch Reader Font choices", 3));
+      addTap(MappedInputManager::Button::Confirm);
+      inputScript.push_back(render("Touch Font Family opens on current choice", 4));
+      inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::FontFamily, currentFontIndex));
+      addTap(MappedInputManager::Button::Back);
+      addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+      addTap(MappedInputManager::Button::Confirm);
+      inputScript.push_back(render("Touch Font Size opens on current choice", 4));
+      inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::EnumOptions, currentSizeIndex));
+      addTap(MappedInputManager::Button::Back);
+      addTap(MappedInputManager::Button::Back);
+
       // Touch every bottom-drawer tab slot, then dismiss from its handle.
       for (int tab = 0; tab < static_cast<int>(READER_DRAWER_TAB_COUNT); ++tab) {
         const int tabX = width * (tab * 2 + 1) / (static_cast<int>(READER_DRAWER_TAB_COUNT) * 2);
@@ -1662,6 +2122,9 @@ class SimulatorSmokeTest {
       return;
     }
 #endif
+    const auto menuDown = mappedInputManager.menuButton(MappedInputManager::Button::Down);
+    const auto menuLeft = mappedInputManager.menuButton(MappedInputManager::Button::Left);
+    const auto menuRight = mappedInputManager.menuButton(MappedInputManager::Button::Right);
     for (int i = 0; i < turns; i++) {
       addTap(MappedInputManager::Button::PageForward);
       inputScript.push_back(render("Reader after page forward", 4));
@@ -1669,21 +2132,57 @@ class SimulatorSmokeTest {
 
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("Reader Menu opened from EPUB", 4));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::More, ReaderDrawerPane::Root, 0));
+    // Select retains its original tab-band behavior, including wraparound.
+    for (const auto tab : {ReaderDrawerTab::Location, ReaderDrawerTab::Settings, ReaderDrawerTab::Font,
+                           ReaderDrawerTab::Layout, ReaderDrawerTab::More}) {
+      addTap(MappedInputManager::Button::Confirm);
+      inputScript.push_back(render("Reader Menu Select advances tab", 3));
+      inputScript.push_back(assertReaderMenu(tab, ReaderDrawerPane::Root, 0));
+    }
+    addTap(menuLeft);
+    addTap(menuLeft);
+    inputScript.push_back(render("Reader Menu Font tab reached with Left", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::Root, 0));
+    addTap(menuLeft);
+    inputScript.push_back(render("Reader Menu wraps left to Settings", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Settings, ReaderDrawerPane::Root, 0));
+    addTap(menuRight);
+    inputScript.push_back(render("Reader Menu wraps right to Font", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::Root, 0));
 
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     inputScript.push_back(render("Reader Menu first row focused", 3));
+    addTap(menuDown);
+    inputScript.push_back(render("Reader Menu Down moves row focus", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::Root, 1));
+    addTap(menuRight);
+    inputScript.push_back(render("Reader Menu Right switches tab while a row is focused", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Layout, ReaderDrawerPane::Root, 0));
+    addTap(menuLeft);
+    addTap(menuDown);
+    inputScript.push_back(render("Reader Menu first Font row focused again", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::Root, 0));
 
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("Reader Font opened from Reader Menu", 4));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::ReaderFont, 0));
 
-    addTap(MappedInputManager::Button::Down);
+    addTap(MappedInputManager::Button::Confirm);
+    inputScript.push_back(render("Font Family opens on current choice", 4));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::FontFamily, currentFontIndex));
+    addTap(MappedInputManager::Button::Back);
+    inputScript.push_back(render("Reader Font after closing Font Family", 3));
+
+    addTap(menuDown);
     inputScript.push_back(render("Font Size selected", 3));
 
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("Font Size choices opened", 3));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Font, ReaderDrawerPane::EnumOptions, currentSizeIndex));
 
 #if CROSSINK_APP_READER_SAMPLE_PREVIEW
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("C3 font size paragraph preview", 4));
 #endif
@@ -1694,7 +2193,7 @@ class SimulatorSmokeTest {
 #if CROSSINK_APP_READER_SAMPLE_PREVIEW
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("C3 font family picker", 4));
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("C3 font family paragraph preview", 4));
     addTap(MappedInputManager::Button::Back);
@@ -1705,16 +2204,16 @@ class SimulatorSmokeTest {
     inputScript.push_back(render("Reader Menu tab focus restored", 4));
 
 #if CROSSINK_APP_READER_SAMPLE_PREVIEW
-    addTap(MappedInputManager::Button::Down);
-    addTap(MappedInputManager::Button::Down);
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
+    addTap(menuDown);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("C3 spacing paragraph preview", 4));
     addTap(MappedInputManager::Button::Confirm);
     addTap(MappedInputManager::Button::Down);
     inputScript.push_back(render("C3 line spacing adjusted", 4));
     addTap(MappedInputManager::Button::Back);
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     addTap(MappedInputManager::Button::Down);
     inputScript.push_back(render("C3 word spacing adjusted", 4));
@@ -1723,18 +2222,19 @@ class SimulatorSmokeTest {
     inputScript.push_back(render("C3 font tab restored", 3));
 #endif
 
-    addTap(MappedInputManager::Button::Confirm);
+    addTap(menuRight);
     inputScript.push_back(render("Reader Menu advanced to next tab", 4));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::Layout, ReaderDrawerPane::Root, 0));
 
 #if CROSSINK_APP_READER_SAMPLE_PREVIEW
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     inputScript.push_back(render("C3 margin paragraph preview", 4));
     addTap(MappedInputManager::Button::Confirm);
     addTap(MappedInputManager::Button::Down);
     inputScript.push_back(render("C3 vertical margin adjusted", 4));
     addTap(MappedInputManager::Button::Back);
-    addTap(MappedInputManager::Button::Down);
+    addTap(menuDown);
     addTap(MappedInputManager::Button::Confirm);
     addTap(MappedInputManager::Button::Down);
     inputScript.push_back(render("C3 horizontal margin adjusted", 4));
@@ -1745,6 +2245,12 @@ class SimulatorSmokeTest {
 
     addTap(MappedInputManager::Button::Back);
     inputScript.push_back(render("Reader after closing Reader Menu", 4));
+    inputScript.push_back(assertActivity("EpubReader"));
+    addTap(MappedInputManager::Button::Confirm);
+    inputScript.push_back(render("Reader Menu reopened on More", 4));
+    inputScript.push_back(assertReaderMenu(ReaderDrawerTab::More, ReaderDrawerPane::Root, 0));
+    addTap(MappedInputManager::Button::Back);
+    inputScript.push_back(render("Reader restored after checking default tab", 4));
 
     LOG_INF("SMOKE", "Running reader input script with %d page turn(s)", turns);
   }
@@ -1812,6 +2318,12 @@ class SimulatorSmokeTest {
 
     const auto& action = inputScript[scriptIndex++];
     switch (action.type) {
+      case ScriptActionType::OpenFrontlightSettings: {
+        auto* panel = dynamic_cast<FrontlightPanelActivity*>(activityManager.simulatorCurrentActivity());
+        if (!panel) fail("Expected frontlight drawer before opening Settings");
+        panel->simulatorActivateQuickAction(3);
+        break;
+      }
       case ScriptActionType::Press:
         mappedInputManager.simulatorInjectPress(action.button);
         break;
@@ -1880,6 +2392,28 @@ class SimulatorSmokeTest {
         mappedInputManager.simulatorInjectTouchRelease(action.x, action.y);
 #endif
         break;
+      case ScriptActionType::AssertReaderMenu: {
+        if (!activityManager.isCurrentActivityNamed("EpubReaderDrawer"))
+          fail("Expected reader menu for navigation assertion");
+        const auto* drawer = static_cast<EpubReaderDrawerActivity*>(activityManager.simulatorCurrentActivity());
+        const auto& state = drawer->simulatorState();
+        if ((state.pane == ReaderDrawerPane::FontFamily || state.pane == ReaderDrawerPane::EnumOptions) &&
+            !drawer->simulatorFocusedRowVisible())
+          fail("Reader picker current choice is not highlighted and visible");
+        if (static_cast<int>(state.tab) != action.x || static_cast<int>(state.pane) != action.y ||
+            state.selectedIndex != action.settleFrames)
+          fail("Reader menu navigation mismatch: tab=%d pane=%d row=%d, expected %d/%d/%d", static_cast<int>(state.tab),
+               static_cast<int>(state.pane), state.selectedIndex, action.x, action.y, action.settleFrames);
+        break;
+      }
+      case ScriptActionType::AssertSettingsNavigation: {
+        if (!activityManager.isCurrentActivityNamed("Settings")) fail("Expected settings for navigation assertion");
+        const auto* settings = static_cast<SettingsActivity*>(activityManager.simulatorCurrentActivity());
+        if (settings->simulatorCategoryIndex() != action.x || settings->simulatorSelectedIndex() != action.y)
+          fail("Settings navigation mismatch: category=%d row=%d, expected %d/%d", settings->simulatorCategoryIndex(),
+               settings->simulatorSelectedIndex(), action.x, action.y);
+        break;
+      }
       case ScriptActionType::AssertActivity:
         if (!activityManager.isCurrentActivityNamed(action.label)) fail("Expected current activity: %s", action.label);
         break;

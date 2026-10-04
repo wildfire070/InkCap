@@ -136,6 +136,11 @@ const fui::KeyboardLayout URL_SNIPPET_LAYOUT{URL_SNIP_ROWS, 4};
 
 void KeyboardEntryActivity::onEnter() {
   Activity::onEnter();
+  inputLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+#if CROSSINK_APP_CAP_TOUCH
+  pendingFeedback = 0;
+  feedbackSequence = 0;
+#endif
   cursorPos = text.length();
   layoutId = inputType == InputType::Url ? fui::KeyboardLayoutId::QwertyEn : keyboard_layouts::startingLayout();
   const uint16_t enabledLayouts = keyboard_layouts::enabled();
@@ -148,6 +153,7 @@ void KeyboardEntryActivity::onEnter() {
   passwordVisible = false;
   selRow = 0;
   selCol = 0;
+  buttonSelectionVisible = !mappedInput.hasTouchHardware();
   delPressCount = 0;
   hintVisible = false;
   hintShowTime = 0;
@@ -163,6 +169,16 @@ void KeyboardEntryActivity::onEnter() {
 }
 
 void KeyboardEntryActivity::onExit() { Activity::onExit(); }
+
+#if CROSSINK_APP_CAP_TOUCH
+void KeyboardEntryActivity::showTouchFeedback(const int16_t value) {
+  // Keep zero reserved for no feedback, including after sequence wraparound.
+  if (++feedbackSequence == 0) ++feedbackSequence;
+  pendingFeedback.store((static_cast<uint32_t>(feedbackSequence) << 16) | static_cast<uint16_t>(value));
+  requestUpdate();
+}
+
+#endif
 
 const fui::KeyboardLayout& KeyboardEntryActivity::currentLayout() const {
   if (symbols) return fui::builtinKeyboardLayout(layoutId, shifted, true);
@@ -207,6 +223,7 @@ void KeyboardEntryActivity::clampSelection() {
 void KeyboardEntryActivity::moveSelectionRow(const int delta) {
   const fui::KeyboardLayout& layout = currentLayout();
   if (layout.rowCount == 0) return;
+  buttonSelectionVisible = true;
   const int oldCols = selRow < layout.rowCount ? layout.rows[selRow].count : 1;
   selRow = (selRow + delta + layout.rowCount) % layout.rowCount;
   const int newCols = layout.rows[selRow].count;
@@ -223,6 +240,7 @@ void KeyboardEntryActivity::moveSelectionCol(const int delta) {
   if (selRow < 0 || selRow >= layout.rowCount) return;
   const int cols = layout.rows[selRow].count;
   if (cols <= 0) return;
+  buttonSelectionVisible = true;
   selCol = (selCol + delta + cols) % cols;
 }
 
@@ -446,7 +464,7 @@ KeyboardEntryActivity::InputFieldTouchTarget KeyboardEntryActivity::inputFieldTo
   const int pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int lineHeight = inputLineHeight;
   const int inputStartY = metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
                           metrics.verticalSpacing + metrics.verticalSpacing * 4 + metrics.keyboardVerticalOffset;
 
@@ -550,7 +568,7 @@ fui::Rect KeyboardEntryActivity::keyboardRect() const {
   if (hasTouch) {
     const int inputStartY = metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
                             metrics.verticalSpacing * 5 + metrics.keyboardVerticalOffset;
-    const int inputBottom = inputStartY + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing + 8;
+    const int inputBottom = inputStartY + inputLineHeight + metrics.verticalSpacing + 8;
     y = std::max(y, inputBottom);
   }
   return fui::Rect{0, static_cast<int16_t>(y), static_cast<int16_t>(pageWidth),
@@ -571,6 +589,7 @@ void KeyboardEntryActivity::loop() {
     size_t touchedCursorPos = 0;
     const InputFieldTouchTarget inputTarget = inputFieldTouchTargetFromPoint(tx, ty, touchedCursorPos);
     if (inputTarget == InputFieldTouchTarget::PasswordToggle) {
+      buttonSelectionVisible = false;
       passwordVisible = !passwordVisible;
       togglePos = false;
       hintVisible = false;
@@ -578,6 +597,7 @@ void KeyboardEntryActivity::loop() {
       return;
     }
     if (inputTarget == InputFieldTouchTarget::Cursor) {
+      buttonSelectionVisible = false;
       cursorPos = std::min(touchedCursorPos, text.length());
       cursorMode = false;
       togglePos = false;
@@ -606,16 +626,20 @@ void KeyboardEntryActivity::loop() {
     const fui::TouchHoldRouter::Result result =
         touchRouter.update(interactions, tapCandidate, static_cast<int16_t>(tx), static_cast<int16_t>(ty), tapped,
                            static_cast<int16_t>(tapX), static_cast<int16_t>(tapY), inContact, millis());
+    if (result.activeChanged && interactions.activeIndex() >= 0) {
+      buttonSelectionVisible = false;
+      showTouchFeedback(interactions.publishedData()[interactions.activeIndex()].value);
+    }
     if (result.event) {
+      buttonSelectionVisible = false;
+      showTouchFeedback(result.event.value);
       syncSelectionToValue(result.event.value);
       if (activateValue(result.event.value, result.event.longPress)) {
         requestUpdate();
       }
       return;
     }
-    if (result.activeChanged) {
-      requestUpdate();
-    }
+    // Feedback requests coalesce while the panel is busy; input keeps polling.
     if (tapCandidate || tapped) {
       return;
     }
@@ -651,6 +675,7 @@ void KeyboardEntryActivity::loop() {
       togglePos = false;
       passwordVisible = false;
       cursorMode = false;
+      buttonSelectionVisible = true;
       hintVisible = false;
       downLongHandled = true;
       requestUpdate();
@@ -726,8 +751,15 @@ void KeyboardEntryActivity::loop() {
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    confirmHeld = true;
-    confirmLongHandled = false;
+    if (mappedInput.hasTouchHardware() && !buttonSelectionVisible.load()) {
+      // Touch typing hides the button focus. Reveal it first so Confirm cannot
+      // activate a key whose selection is not visible.
+      buttonSelectionVisible = true;
+      requestUpdate();
+    } else {
+      confirmHeld = true;
+      confirmLongHandled = false;
+    }
   }
 
   const fui::KeyboardKey* selKey = selectedKey();
@@ -773,6 +805,9 @@ void KeyboardEntryActivity::loop() {
 }
 
 void KeyboardEntryActivity::render(RenderLock&&) {
+#if CROSSINK_APP_CAP_TOUCH
+  const uint32_t feedback = pendingFeedback.load();
+#endif
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();
@@ -785,7 +820,7 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, header, title.c_str());
   }
 
-  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int lineHeight = inputLineHeight;
   const int inputStartY = metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
                           metrics.verticalSpacing + metrics.verticalSpacing * 4 + metrics.keyboardVerticalOffset;
   int inputHeight = 0;
@@ -1029,8 +1064,17 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   target.setFont(fui::GfxRendererTarget::FONT_BODY, UI_12_FONT_ID);
   const fui::DeviceContext device = target.deviceContext();
   const fui::InputSnapshot noInput{};
-  interactions.beginPublishCycle();
-  fui::Frame<56> frame(target, device, noInput, interactions);
+#if CROSSINK_APP_CAP_TOUCH
+  auto& frameInteractions = paintInteractions;
+  frameInteractions.clearFlash();
+  if (feedback && !cursorMode && !buttonSelectionVisible.load()) {
+    frameInteractions.setFlash(ACTION_KEY, static_cast<int16_t>(feedback & 0xFFFF));
+  }
+#else
+  auto& frameInteractions = interactions;
+  frameInteractions.beginPublishCycle();
+#endif
+  fui::Frame<56> frame(target, device, noInput, frameInteractions);
 
   fui::KeyboardProps props;
   const fui::KeyboardLayout& layout = currentLayout();
@@ -1085,7 +1129,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   props.modeLabel =
       (symbols || (inputType == InputType::Url && urlPanel)) ? tr(STR_KEY_MODE_ABC) : tr(STR_KEY_MODE_SYMBOLS);
   props.inputMask = static_cast<uint16_t>(fui::InputTouch | fui::InputLongPress);
-  props.selectedIndex = cursorMode ? -1 : static_cast<int16_t>(selectedLogicalIndex());
+  props.selectedIndex =
+      (cursorMode || !buttonSelectionVisible.load()) ? -1 : static_cast<int16_t>(selectedLogicalIndex());
   props.labelText.font = layoutId == fui::KeyboardLayoutId::ArabicAr && !symbols ? fui::GfxRendererTarget::FONT_SMALL
                                                                                  : fui::GfxRendererTarget::FONT_BODY;
   props.altText.font = fui::GfxRendererTarget::FONT_SMALL;
@@ -1096,12 +1141,22 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     props.altHintRightPadding = 5;
   }
   frame.target().fill(kbRect, props.background);
+  // The SDK fills the keys rect with this paint too. The outer fill already
+  // covers it and the surrounding panel, so avoid drawing that area twice.
+  props.background = fui::Paint::none();
   // Fingers land low on the bottom row (occlusion) and there is no key below
   // to catch the miss — extend its hit band down to the button hints bar.
   const int bottomEdge = mappedInput.hasTouchHardware() ? renderer.getScreenHeight()
                                                         : renderer.getScreenHeight() - metrics.buttonHintsHeight;
   props.bottomHitOverflow = static_cast<int16_t>(std::max(0, bottomEdge - keysRect.bottom()));
   fui::keyboard(frame, keysRect, props);
+#if CROSSINK_APP_CAP_TOUCH
+  interactions.beginPublishCycle();
+  interactions.clear();
+  for (size_t i = 0; i < frameInteractions.count(); ++i) {
+    interactions.addInteraction(frameInteractions.data()[i]);
+  }
+#endif
   interactions.publish();
   interactionsReady.store(true, std::memory_order_release);
 
@@ -1112,6 +1167,14 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   GUI.drawSideButtonHints(renderer, ">", "<");
 
   renderer.displayBuffer();
+#if CROSSINK_APP_CAP_TOUCH
+  // Only acknowledge the frame actually displayed. A newer press (including
+  // the same key again) must survive an older refresh completing.
+  uint32_t expected = feedback;
+  if (feedback && pendingFeedback.compare_exchange_strong(expected, 0)) {
+    requestUpdate();  // Remove the flash even if typing has stopped.
+  }
+#endif
 }
 
 void KeyboardEntryActivity::onComplete(std::string text) {

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "DeviceCapabilities.h"
 #include "GlobalActions.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "components/TouchRegistry.h"
@@ -146,6 +147,22 @@ void MappedInputManager::expireReleaseSuppressions() const {
   state.powerHeld = isPhysicalPressed(Button::Power);
   state.powerReleased = wasPhysicallyReleased(Button::Power);
   releaseSuppression.expireAfterReleaseFrame(state);
+}
+
+MappedInputManager::Button MappedInputManager::menuButton(const Button direction) const {
+  if (!deviceUsesHorizontalSideButtonsForMenus(gpio)) return direction;
+  switch (direction) {
+    case Button::Left:
+      return Button::Up;
+    case Button::Right:
+      return Button::Down;
+    case Button::Up:
+      return Button::Left;
+    case Button::Down:
+      return Button::Right;
+    default:
+      return direction;
+  }
 }
 
 bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint8_t) const) const {
@@ -634,6 +651,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
         (edgeSlideSide == EdgeSlide::RightUp && x < width - band)) {
       edgeSlideSide = EdgeSlide::None;
       progress.finished = true;
+      progress.leftEdgeBand = true;
       return true;
     } else {
       edgeSlideLastX = x;
@@ -666,6 +684,7 @@ bool MappedInputManager::getEdgeSlideProgress(EdgeSlideProgress& progress) {
   const EdgeSlide side = edgeSlideSide;
   if ((side == EdgeSlide::LeftUp && x >= band) || (side == EdgeSlide::RightUp && x < width - band)) {
     edgeSlideSide = EdgeSlide::None;
+    progress.leftEdgeBand = true;
     return true;
   }
   progress.direction = ::EdgeSlide::directionFor(edgeSlideStartX, edgeSlideStartY, x, y, width, height);

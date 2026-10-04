@@ -624,7 +624,7 @@ void XtcReaderActivity::syncStatsTrackingState() {
   if (!xtc) return;
   const bool active = SETTINGS.shouldTrackReadingStats() && bookStatsEnabled;
   if (active == statsTrackingActive) return;
-  if (statsTrackingActive && !active) {
+  if (statsTrackingActive) {
     pendingStatsCommit = true;
     if (stats.save(xtc->getCachePath())) {
       globalStats.save();
@@ -860,16 +860,14 @@ std::unique_ptr<Activity> XtcReaderActivity::createFrontlightReadingStatsActivit
   if (!xtc || !statsTrackingActive) return {};
 
   BookReadingStats displayStats = stats;
-  if (statsTrackingActive) {
-    displayStats.totalReadingSeconds = displayStats.totalReadingSeconds > UINT32_MAX - sessionReadingSeconds
+  displayStats.totalReadingSeconds = displayStats.totalReadingSeconds > UINT32_MAX - sessionReadingSeconds
+                                         ? UINT32_MAX
+                                         : displayStats.totalReadingSeconds + sessionReadingSeconds;
+  uint32_t currentPageSeconds = 0;
+  if (currentPageReadingSecondsForStats(currentPageSeconds, "frontlight_stats_preview")) {
+    displayStats.totalReadingSeconds = displayStats.totalReadingSeconds > UINT32_MAX - currentPageSeconds
                                            ? UINT32_MAX
-                                           : displayStats.totalReadingSeconds + sessionReadingSeconds;
-    uint32_t currentPageSeconds = 0;
-    if (currentPageReadingSecondsForStats(currentPageSeconds, "frontlight_stats_preview")) {
-      displayStats.totalReadingSeconds = displayStats.totalReadingSeconds > UINT32_MAX - currentPageSeconds
-                                             ? UINT32_MAX
-                                             : displayStats.totalReadingSeconds + currentPageSeconds;
-    }
+                                           : displayStats.totalReadingSeconds + currentPageSeconds;
   }
 
   const bool hasSyncedStats = GlobalReadingStats::hasSyncedStats();
