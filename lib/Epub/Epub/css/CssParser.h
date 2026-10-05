@@ -60,11 +60,14 @@ class CssParser {
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
   static constexpr uint32_t CSS_CACHE_MAGIC = 0x435843FF;  // bytes: 0xFF, "CXC"
-  // 20: merges HEAD's own bump to 19 (prior lineages' descendant-selector/border/
-  // font-size-ladder/align=""/PSRAM-arena additions) with crossink/development's
-  // bump to 18 (new list-style-type CSS property support) -- must exceed both so
-  // caches written under either lineage are invalidated.
-  static constexpr uint8_t CSS_CACHE_VERSION = 20;
+  // 21: merges HEAD's own bump to 20 (prior lineages' descendant-selector/border/
+  // font-size-ladder/align=""/PSRAM-arena additions, itself already combining a
+  // 19 and crossink/development's 18 for list-style-type support) with
+  // crossink/development's own independent bump to 20 (new CssLength-based
+  // font-size property, deferred-resolution smaller/larger/keywords, for the
+  // S3 scalable-font heading engine) -- must exceed both so caches written
+  // under either lineage are invalidated.
+  static constexpr uint8_t CSS_CACHE_VERSION = 21;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers
   // can admit larger publisher stylesheets; rule-count and internal-heap

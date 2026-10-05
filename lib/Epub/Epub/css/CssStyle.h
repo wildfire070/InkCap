@@ -73,7 +73,8 @@ constexpr uint8_t CSS_TEXT_DECORATION_MASK =
 // block/line -- it's used to tell apart elements like <dt>/<dd> that FanFicFare
 // (and similar EPUB generators) mark `display: inline` in specific contexts
 // (e.g. a Series row) from their ordinary block-level siblings (e.g. a Tags
-// row) in otherwise-identical markup.
+// row) in otherwise-identical markup. Also lets replaced elements participate
+// in text layout.
 enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2 };
 
 // Vertical alignment options for inline elements (e.g. superscript/subscript)
@@ -110,8 +111,9 @@ struct CssPropertyFlags {
   uint32_t borderRight : 1;
   uint32_t borderBottom : 1;
   uint32_t borderLeft : 1;
-  uint32_t fontSize : 1;
+  uint32_t fontSizeMultiplier : 1;
   uint32_t listStyleType : 1;
+  uint32_t fontSize : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -140,15 +142,16 @@ struct CssPropertyFlags {
         borderRight(0),
         borderBottom(0),
         borderLeft(0),
-        fontSize(0),
-        listStyleType(0) {}
+        fontSizeMultiplier(0),
+        listStyleType(0),
+        fontSize(0) {}
 
   [[nodiscard]] bool anySet() const {
-    return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
-           marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
-           imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
+    return fontSize || textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop ||
+           marginBottom || marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight ||
+           imageHeight || imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
            pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
-           fontSize || listStyleType;
+           fontSizeMultiplier || listStyleType;
   }
 
   void clearAll() {
@@ -156,10 +159,9 @@ struct CssPropertyFlags {
     marginTop = marginBottom = marginLeft = marginRight = 0;
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
     imageHeight = imageWidth = display = backgroundBlack = verticalAlign = direction = 0;
-    pageBreakBefore = pageBreakAfter = fontVariantCaps = 0;
+    pageBreakBefore = pageBreakAfter = fontVariantCaps = listStyleType = fontSize = 0;
     borderTop = borderRight = borderBottom = borderLeft = 0;
-    fontSize = 0;
-    listStyleType = 0;
+    fontSizeMultiplier = 0;
   }
 };
 
@@ -177,6 +179,7 @@ struct CssStyle {
   CssTextDirection direction = CssTextDirection::Ltr;
   CssFontVariantCaps fontVariantCaps = CssFontVariantCaps::Normal;
 
+  CssLength fontSize;       // Resolved against parent/root font, not the box width
   CssLength textIndent;     // First-line indent (deferred resolution)
   CssLength marginTop;      // Vertical spacing before block
   CssLength marginBottom;   // Vertical spacing after block
@@ -188,7 +191,7 @@ struct CssStyle {
   CssLength paddingRight;   // Padding right
   CssLength imageHeight;    // Height for img (e.g. 2em) – width derived from aspect ratio when only height set
   CssLength imageWidth;     // Width for img when both or only width set
-  CssDisplay display = CssDisplay::Block;                       // display property (Block or None)
+  CssDisplay display = CssDisplay::Block;
   bool backgroundBlack = false;                                 // Simple black inline/block background support
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
   bool pageBreakBefore = false;
@@ -213,6 +216,10 @@ struct CssStyle {
   // Apply properties from another style, only overwriting if the other style
   // has that property explicitly defined
   void applyOver(const CssStyle& base) {
+    if (base.hasFontSize()) {
+      fontSize = base.fontSize;
+      defined.fontSize = 1;
+    }
     if (base.hasTextAlign()) {
       textAlign = base.textAlign;
       defined.textAlign = 1;
@@ -317,9 +324,9 @@ struct CssStyle {
       borderLeft = base.borderLeft;
       defined.borderLeft = 1;
     }
-    if (base.hasFontSize()) {
+    if (base.hasFontSizeMultiplier()) {
       fontSizeMultiplier = base.fontSizeMultiplier;
-      defined.fontSize = 1;
+      defined.fontSizeMultiplier = 1;
     }
     if (base.hasListStyleType()) {
       listStyleType = base.listStyleType;
@@ -327,6 +334,7 @@ struct CssStyle {
     }
   }
 
+  [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
   [[nodiscard]] bool hasFontStyle() const { return defined.fontStyle; }
   [[nodiscard]] bool hasFontWeight() const { return defined.fontWeight; }
@@ -353,7 +361,7 @@ struct CssStyle {
   [[nodiscard]] bool hasBorderRight() const { return defined.borderRight; }
   [[nodiscard]] bool hasBorderBottom() const { return defined.borderBottom; }
   [[nodiscard]] bool hasBorderLeft() const { return defined.borderLeft; }
-  [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
+  [[nodiscard]] bool hasFontSizeMultiplier() const { return defined.fontSizeMultiplier; }
   [[nodiscard]] bool hasListStyleType() const { return defined.listStyleType; }
 
   void reset() {

@@ -12,6 +12,8 @@ enum class RenameMigrationResult {
   Success,
   RolledBack,
   KeepRenamed,
+  InvalidBookType,
+  DestinationStateExists,
 };
 
 // True if path is inside ARCHIVE_FOLDER (starts with "<ARCHIVE_FOLDER>/"). Non-allocating so it is
@@ -22,6 +24,12 @@ bool isInArchiveFolder(const std::string& path);
 // folders). Dedupes with " (2)", " (3)", ... on a same-name collision. Creates ARCHIVE_FOLDER itself
 // if it doesn't exist yet. Shared by every path that archives a book, AO3 or not.
 std::string buildArchiveDestination(const std::string& srcPath);
+
+std::string buildReadFolderDestination(const std::string& srcPath);
+// Renames a file and migrates supported books' path-based reader state. Book
+// renames must keep the same reader format. Other files also keep pinned image
+// references, with rollback if those references cannot be saved.
+RenameMigrationResult renameFilePreservingBookState(const std::string& oldPath, const std::string& newPath);
 // Prepares reader metadata, renames the physical book, then commits the state
 // migration so one canonical metadata path is always available across resets.
 RenameMigrationResult migrateRenamedBookState(const std::string& oldPath, const std::string& newPath,

@@ -296,6 +296,12 @@ class GfxRenderer {
   // Text
   // `tracking` (here and on drawText/getKerning/getTextAdvanceX) is extra pixels between adjacent
   // non-space glyphs (letter-spacing); 0 leaves every measurement and draw call unchanged.
+  struct TextVerticalBounds {
+    int top = 0;
+    int bottom = 0;
+  };
+  // Visible regular-text glyph bounds relative to the y coordinate passed to drawText().
+  TextVerticalBounds getTextVerticalBounds(int fontId, const char* text) const;
   int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                    BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const;
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
@@ -339,6 +345,9 @@ class GfxRenderer {
                       int8_t tracking = 0) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
+  // Zero means bitmap font: EPUB content sizing stays disabled.
+  uint8_t getFontPointSize(int fontId) const;
+  int getFontIdForSize(int fontId, uint8_t points) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,
                             EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Word-wrap \p text into at most \p maxLines lines, each no wider than

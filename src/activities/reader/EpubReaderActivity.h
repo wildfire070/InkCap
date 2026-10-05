@@ -16,6 +16,7 @@
 #include "BookStatus.h"
 #include "BookmarkStore.h"
 #include "EndOfBookOptions.h"
+#include "EpubLinkReturnState.h"
 #include "EpubReaderMenuModel.h"
 #include "FootnoteLinkTargets.h"
 #include "GlobalReadingStats.h"
@@ -241,6 +242,9 @@ class EpubReaderActivity final : public Activity {
   // Set once the user accepts the "Move to Archive Folder?" prompt (see requestArchiveMove()).
   // Consumed in onExit() to relocate the finished book into /Archive/.
   bool pendingArchiveMove = false;
+  // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
+  // Consumed in onExit() to relocate the finished book into /Read/.
+  bool pendingReadFolderMove = false;
   // The prompt is asked once per finish: queued when a finish would move the book, shown from loop(),
   // and re-armed when the book is paged back into or marked unfinished.
   bool archivePromptQueued = false;
@@ -275,11 +279,8 @@ class EpubReaderActivity final : public Activity {
   ReaderPinchGesture pinchFontGesture;
   FootnoteLinkTargets currentPageFootnoteTouchTargets{};
 #endif
-  struct SavedPosition {
-    int spineIndex;
-    int pageNumber;
-  };
-  static constexpr int MAX_FOOTNOTE_DEPTH = 3;
+  using SavedPosition = EpubLinkReturnState::Position;
+  static constexpr int MAX_FOOTNOTE_DEPTH = EpubLinkReturnState::MAX_DEPTH;
   SavedPosition savedPositions[MAX_FOOTNOTE_DEPTH] = {};
   int footnoteDepth = 0;
 
@@ -416,8 +417,11 @@ class EpubReaderActivity final : public Activity {
   // suppression exists to protect.
   bool saveProgress(int spineIndex, int currentPage, int pageCount, bool allowDuringFootnotePreview = false);
   bool queueProgressSave(int spineIndex, int currentPage, int pageCount, bool forceSave = false);
-  bool flushQueuedProgress();
+  void saveProgressBeforeRestart();
   bool saveFootnoteOriginProgress();
+  bool saveReadingProgress();
+  bool saveLinkStack() const;
+  void loadLinkStack();
   void cacheCurrentSectionPosition();
   void pauseReadingPaceTimer(const char* reason = "unknown");
   void resumeReadingPaceTimer(const char* reason = "unknown");
@@ -495,6 +499,7 @@ class EpubReaderActivity final : public Activity {
   void clearPendingManualPageTurns(bool requestRecoveryRedraw = true);
   void finishManualPageTurnBrakeIfReady();
   void cancelSilentNextChapterPrefetchForForwardTurn();
+  bool isAtBookStart() const;
   void pageTurn(bool isForwardTurn, const char* source = "unknown");
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();
@@ -559,6 +564,7 @@ class EpubReaderActivity final : public Activity {
            !backgroundBuildYieldForInput.load(std::memory_order_relaxed);
   }
   bool isReaderActivity() const override { return true; }
+  bool isBookReaderActivity() const override { return true; }
   bool isEpubReaderActivity() const override { return true; }
   void onInputLockChanged(bool locked) override;
   void onUserInput() override;

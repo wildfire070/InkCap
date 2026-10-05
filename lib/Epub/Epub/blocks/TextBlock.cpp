@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "../../../ScalableFont/ScalableFontSizing.h"
+
 namespace {
 
 constexpr uint16_t MAX_WORDS_PER_TEXT_BLOCK = 512;
@@ -232,6 +234,10 @@ bool TextBlock::hasRuby() const {
   return false;
 }
 
+int TextBlock::resolvedFontId(const GfxRenderer& renderer, const int fontId) const {
+  return renderer.getFontIdForSize(fontId, blockStyle.fontSize);
+}
+
 void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const int x, const int y,
                        const bool foregroundBlack) const {
   if (!isValid) {
@@ -240,10 +246,11 @@ void TextBlock::render(const GfxRenderer& renderer, const int bodyFontId, const 
   }
 
   // Prefer this line's own resolved block-level font-size font (see
-  // ChapterHtmlSlimParser::resolveBlockFont/FontSizeLadder.h) over the
-  // chapter body font the caller passed in -- shadows the parameter so every
-  // existing `fontId` use below picks this up with no further changes.
-  const int fontId = blockStyle.headingFontId != 0 ? blockStyle.headingFontId : bodyFontId;
+  // ChapterHtmlSlimParser::resolveBlockFont/FontSizeLadder.h, or the scalable
+  // engine's resolvedFontId()) over the chapter body font the caller passed
+  // in -- shadows the parameter so every existing `fontId` use below picks
+  // this up with no further changes.
+  const int fontId = blockStyle.headingFontId != 0 ? blockStyle.headingFontId : resolvedFontId(renderer, bodyFontId);
   const bool scanning = renderer.isFontCacheScanning();
   // A block with no real headingFontId but a residual scale (see
   // BlockStyle::fontSizeResidualScale) was laid out UNSCALED against a
@@ -448,13 +455,16 @@ bool TextBlock::serialize(HalFile& file) const {
          serialization::tryWritePod(file, blockStyle.directionDefined) &&
          serialization::tryWritePod(file, blockStyle.characterSpacing) &&
          // A cached section reloads TextBlocks directly, without re-running
-         // ChapterHtmlSlimParser::resolveBlockFont() -- persist its resolved
-         // output here or a reopened book would silently lose block-level
-         // font-size resolution until the cache is next invalidated/rebuilt.
+         // ChapterHtmlSlimParser::resolveBlockFont()/applyBlockFontSize() --
+         // persist their resolved output here or a reopened book would
+         // silently lose block-level font-size resolution until the cache is
+         // next invalidated/rebuilt.
          serialization::tryWritePod(file, blockStyle.fontSizeMultiplier) &&
          serialization::tryWritePod(file, blockStyle.headingFontId) &&
          serialization::tryWritePod(file, blockStyle.fontSizeResidualScale) &&
-         serialization::tryWritePod(file, blockStyle.hrSectDivider);
+         serialization::tryWritePod(file, blockStyle.hrSectDivider) &&
+         serialization::tryWritePod(file, blockStyle.fontSize) &&
+         serialization::tryWritePod(file, blockStyle.lineHeight);
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
@@ -565,7 +575,11 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       !serialization::tryReadPod(file, blockStyle.fontSizeMultiplier) ||
       !serialization::tryReadPod(file, blockStyle.headingFontId) ||
       !serialization::tryReadPod(file, blockStyle.fontSizeResidualScale) ||
-      !serialization::tryReadPod(file, blockStyle.hrSectDivider)) {
+      !serialization::tryReadPod(file, blockStyle.hrSectDivider) ||
+      !serialization::tryReadPod(file, blockStyle.fontSize) ||
+      !serialization::tryReadPod(file, blockStyle.lineHeight) ||
+      (blockStyle.fontSize != 0 &&
+       (blockStyle.fontSize < ScalableContentMinPointSize || blockStyle.fontSize > ScalableContentMaxPointSize))) {
     LOG_ERR("TXB", "Deserialization failed: truncated block style metadata");
     return nullptr;
   }
