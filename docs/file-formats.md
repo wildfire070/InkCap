@@ -5,6 +5,43 @@ All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8 unless a format notes a
 fixed-size char buffer.
 
+## `epub_<hash>/links.bin`
+
+The EPUB reader writes followed-link Back history on clean exit (Home, sleep,
+or reader replacement for sync). The record has a one-byte depth (1–3), followed
+by that many pairs of little-endian `u16` spine index and `u16` page number,
+oldest first: 5, 9, or 13 bytes. Empty history removes the file. A transient
+footnote preview resumes at its immediate origin and omits that final entry;
+earlier full-section links remain in the record.
+
+On open, the reader checks the exact length and each spine index, closes the
+file, and deletes it before adopting the history. Malformed records are also
+consumed. A later clean exit rewrites the current stack; an unclean shutdown
+cannot revive history from a previous session. This new sidecar does not change
+EPUB layout cache formats. As with in-memory Back history, changing font or
+layout may shift the destination page.
+
+## `/.crosspoint/home_carousel_cache_<index>.bin`
+
+### Version 6
+
+The v1.6.1 release normalizes development version 8 to version 6, one step
+after v1.6.0. The new per-position filenames and artwork cache keys prevent
+reuse of older combined snapshots.
+
+Each Carousel position has a disposable snapshot containing only cover artwork,
+titles and position dots. Progress, reading time, header, menu icons and button
+hints are drawn live after restoration. Each file contains a `CarouselCacheHeader`
+followed by one full framebuffer. The header's `frameCount` records the number of
+recent books used to compose the artwork, rather than the number of stored frames.
+The key tracks ordered book paths, titles, cover paths, thumbnail availability and
+image polarity, rather than reading progress or statistics.
+
+Frames are rendered and saved only when viewed; returning Home does not prepare
+other positions in advance. The development version 7 combined
+`home_carousel_cache.bin` is removed after the first successful write. Cache
+regeneration is automatic; EPUB layout caches and reading history are unaffected.
+
 ## `/.crosspoint/ttf-rendering.json`
 
 This user-owned JSON file stores only custom TTF families whose raster settings
@@ -111,13 +148,19 @@ do not contain series or genre.
 
 `LibraryIndexFile` (`lib/LibraryIndex/LibraryIndexFile.{h,cpp}`) reads the
 `CLX1` on-disk index for the Library screen: one sorted, searchable
-snapshot of up to 4,096 books on the card, built by `LibraryBuilder` so paging,
+snapshot of up to 32,767 books on the card, built by `LibraryBuilder` so paging,
 sorting, and searching the shelf cost a handful of seeks instead of a
 directory walk per screen. The format itself (`lib/LibraryIndex/LibraryFormat.h`)
 is free of `HalStorage` and Arduino so its layout and validation rules are
 host-testable (`test/library_format`, `test/library_index_file`).
-If the scan finds another book beyond the limit, the rebuild fails and keeps
-the previous index instead of publishing a partial shelf.
+Builds keep RAM flat on every device: each sort holds a fixed buffer and spills
+sorted runs to the card when a library outgrows it, and the previous index is
+matched through a sorted file rather than an in-RAM table. While building, the
+transient files `library.stage`, `library.stage.f`, `library.prior`,
+`library.rename`, `library.order`, `library.authors`, `library.canon`, and
+`library.runs` live in `/.crosspoint`; every build removes them when it ends. If
+the scan finds another book beyond the limit, the rebuild fails and keeps the
+previous index instead of publishing a partial shelf.
 
 Every section starts on a 512-byte boundary. Records are a fixed 128 bytes
 each, so record `k` always lives at `recordStart + 128*k` with no offset table
@@ -188,17 +231,76 @@ the index" lookups), the filename, then five length-prefixed fields —
 display author, title, the pre-spelling-harmonisation source author, series,
 and genre. Version 6 appends the four-byte series position.
 
+## `/.crosspoint/library.meta` and `/.crosspoint/library.metd`
+
+### Version 1
+
+`LibraryMetadataCache` (`lib/LibraryIndex/LibraryMetadataCache.{h,cpp}`) keeps
+EPUB metadata from the moment each book is parsed, independent of whether the
+Library build that parsed it finishes. A later build looks a book up only when
+the previous `library.idx` cannot supply reusable metadata, so a cancelled or
+failed scan resumes without re-parsing what it already read. Failed parses are
+not stored. A book is identified by its complete-path FNV-1a hash (the same
+`clixPathHash` the index uses), file size, and packed FAT modification time;
+books with no modification time are never cached.
+
+`library.meta` holds a 32-byte header padded to 512 bytes, then 65,536 16-byte
+slots of an open-addressing hash table (linear probing, at most 64 probes). An
+all-zero slot is empty. A slot whose check does not match is skipped. There is
+one slot per path; storing a changed book replaces its slot's payload offset.
+
+`library.metd` is append-only. Each record is a 32-byte header followed by
+title, author, series, and genre bytes (each at most 255 bytes, cut at a UTF-8
+boundary). Payloads are written before the slot that points at them, and every
+read verifies the record checksum, so a torn write costs a re-parse rather than
+wrong metadata. The cache is discarded and recreated when the header does not
+validate, more than 75% of slots are used, or the payload passes 64 MiB. Bump
+the cache version whenever the set of extracted metadata fields changes.
+
+```c++
+struct CacheHeader {             // 32 bytes at offset 0
+    char magic[4];               // "CLM1"
+    u8 version;                  // 1
+    u8 padding[3];
+    u32 slotCount;               // 65536
+    u32 usedSlots;               // slots ever claimed; written on close
+    u8 reserved[16];
+};
+
+struct CacheSlot {               // slot i @ 512 + 16*i
+    u64 pathHash;
+    u32 payloadOffset;           // into library.metd
+    u32 check;                   // FNV-1a of pathHash and payloadOffset, low bit set
+};
+
+struct PayloadHeader {           // 32 bytes, then the four strings back to back
+    u32 magic;                   // "CLMP"
+    u64 pathHash;
+    u32 fileSize;
+    u32 modificationTime;
+    u32 seriesPosition;          // same encoding as library.idx version 6
+    u8 titleLen;
+    u8 authorLen;
+    u8 seriesLen;
+    u8 genreLen;
+    u32 checksum;                // FNV-1a of this header (checksum zeroed) and the strings
+};
+```
+
 ## `book.bin`
 
-### Version 10
+### Version 13
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
 The current firmware writes this version from `BookMetadataCache`.
-Version 10 adds `ao3WorkId`, `ao3UpdateDate`, and `ao3IsCompleted` to the
-metadata block for the AO3 library feature. Version 9 stores book and TOC
-title strings NFC-composed so decomposed diacritics render correctly with
-device fonts, and rebuilds metadata after the EPUB guide start-reference
-handling changed.
+Version 13 (upstream) rebuilds metadata with namespace-aware OPF parsing so
+optimizer-generated XML prefixes do not leave an empty chapter list. The
+binary layout is otherwise unchanged. Version 12 adds `tags` (dc:subject).
+Version 11 adds `seriesName`, `seriesIndex`, `contentRating`, `chapters`,
+`completionStatus`, `updatedDate`, `liked`, and `readStatus` metadata for the
+AO3 library feature. Version 9 stores book and TOC title strings
+NFC-composed so decomposed diacritics render correctly with device fonts,
+and rebuilds metadata after the EPUB guide start-reference handling changed.
 
 ImHex pattern:
 
@@ -207,7 +309,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 10
+#define EXPECTED_VERSION 13
 #define MAX_STRING_LENGTH 65535
 
 struct String {
@@ -282,7 +384,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 9
+### Version 10
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -452,27 +554,69 @@ Binary layout:
 
 ## `section.bin`
 
+### Version 84
+
+Version 84 is a combined bump: small EPUB images can now share a text line
+instead of always becoming a centered block; HTML/body root `text-indent`
+inherits into descendant paragraph blocks; scalable-font EPUB headings and
+whole text blocks carry a resolved point size and line height (`u8 fontSize`
+plus `u16 lineHeight` appended after `directionDefined` in the serialized
+`BlockStyle`, with the inherited Q8 font scale staying layout-only and
+unserialized); and nested paragraphs/blocks retain inherited CSS bold/italic
+styles including explicit child overrides. None of these changes the fixed
+payload size, but all four can change cached page positions, glyph styles, or
+wrapping. Complete files use byte `84`; suspended partials use `0xFE`. Older
+full and partial caches rebuild automatically.
+
+CSS cache revision `21` adds a five-byte font-size length (float value plus
+unit) after `imageWidth`, using defined-property bits 27 (the existing
+multiplier flag, renamed) and 28 (the new length-based flag). Older CSS
+caches rebuild automatically.
+
+On scalable fonts, headings default to 2, 1.5, 1.17, 1, 0.83, and 0.67 times the
+inherited size, rounded to whole points and bounded to 8-44 pt. Enabled book
+styles can override block sizes using em, rem, %, px, pt, and size keywords.
+CSS 16px/12pt maps to the user's selected body size; em/% use the parent and
+rem uses the HTML root. Inline span size changes and table-cell sizing remain
+uniform in this phase. Light mode and bitmap fonts retain their existing sizes.
+
+### Version 83 (upstream)
+
+Korean/Hangul word boundaries and line-end splits changed cached page
+positions. Full caches (byte `83`) and suspended partials (`0xC4`) both
+rebuilt.
+
+### Version 82
+
+Character spacing joined the section header (cache validation); TextBlocks
+persist it per line, changing cached word widths and page breaks.
+
+### Version 81 (upstream)
+
+Inline CSS padding changed layout for dialogue and other styled text
+positions. Full and suspended partial section caches rebuilt together.
+
+### Version 80
+
+Ordered lists now number their items, `list-style-type: none` suppresses
+markers, and `<ul>`/`<ol>` margins and padding contribute to child insets,
+affecting page layout.
+
 ### Version 79
 
-Version 79 keeps the version 78 serialized layout. Korean words now wrap at
-spaces by default; with hyphenation enabled, they can also split at a legal
-CJK boundary at a line end without a visible hyphen. Justification stretches
-word spaces only. Full caches (byte `79`) and suspended partial caches
-(`0xF4`) both rebuild because earlier page positions are no longer valid.
+TextBlocks persist `hrSectDivider` (the FanFicFare `.hr-sect` divider flag
+`addLineToPage()` uses to draw its flanking lines).
 
 ### Version 78
 
-Version 78 changed layout for inline CSS padding. Full and suspended partial
-section caches rebuild together.
+TextBlocks persist `fontSizeResidualScale` (the font-size scale-fallback for
+blocks the FontSizeLadder couldn't map onto a real font resource, e.g. an
+SD-card body font).
 
 ### Version 77
 
-Version 77 keeps the serialized layout unchanged. It was bumped because ordered
-lists now number their items, `list-style-type: none` suppresses markers, and
-`<ul>`/`<ol>` margins and padding contribute to child insets. Complete files use
-byte `77`; suspended partials use the previously unused sentinel `0xF3`.
-The related CSS rule cache uses version `18`; version `17` already occurs in
-local branch history.
+TextBlocks persist block-level font-size resolution (`fontSizeMultiplier`/
+`headingFontId`).
 
 ### Version 75
 
@@ -492,8 +636,10 @@ version byte `66`, and suspended partials use sentinel byte `0xF6`.
 The stable v1.5.1 release retains these identifiers from RC6. Do not normalize
 published RC versions to the previous stable version plus one: v1.5.0 used
 `60` / `0xF9`, and RC4 already shipped `61` / `0xF8` with older layout output.
-Reusing those identifiers could accept stale RC caches as current. Per-book
-reader settings likewise retain version `9` and their version 7/8 migrations.
+Reusing those identifiers could accept stale RC caches as current. Version 9
+per-book reader settings and their version 7/8 migrations remain
+readable. Version 10 adds a field-override mask so a book can inherit unrelated
+global reader settings.
 
 ### Version 62
 
@@ -646,6 +792,8 @@ struct BlockStyle {
     bool textIndentDefined;
     bool isRtl;
     bool directionDefined;
+    u8 fontSize;
+    u16 lineHeight;
 };
 
 struct TextBlock {

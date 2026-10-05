@@ -299,7 +299,7 @@ std::string getPanicInfo(bool full) {
   } else {
     std::string info;
 
-    info += "InxAO3 version: " CROSSINK_VERSION;
+    info += std::string("InxAO3 version: ") + AppVersion::version();
     info += "\nInxAO3 device type: " CROSSINK_FIRMWARE_DEVICE_TYPE;
     char elfSha[65] = {};
     esp_app_get_elf_sha256(elfSha, sizeof(elfSha));

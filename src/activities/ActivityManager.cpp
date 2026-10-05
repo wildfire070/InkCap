@@ -113,6 +113,12 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
 
   const FrontlightBookSource source = chooseFrontlightBookSource(false, false, lastValid && !context.activeReaderBook);
 
+  // Transfer actions use the last EPUB even when reading stats are disabled.
+  if (source == FrontlightBookSource::LastBook) {
+    context.bookPath = APP_STATE.openEpubPath;
+    context.bookTitle = fileNameFromPath(context.bookPath);
+  }
+
   if (!SETTINGS.shouldTrackReadingStats()) return context;
   const GlobalReadingStats global = GlobalReadingStats::load();
   std::string cachePath;
@@ -120,8 +126,6 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
   BookReadingStats bookStats;
   float progress = -1.0f;
   if (source == FrontlightBookSource::LastBook) {
-    context.bookPath = APP_STATE.openEpubPath;
-    context.bookTitle = fileNameFromPath(context.bookPath);
     statsTitle = context.bookTitle;
     cachePath = Epub::cachePathForFilePath(context.bookPath, "/.crosspoint");
     if (BookStatsTracking::isBookEnabled(cachePath))
@@ -356,7 +360,7 @@ bool applyLiveTwoFingerLightSwipe(Activity& activity, MappedInputManager& mapped
 }
 #endif
 
-bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer,
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, const GfxRenderer& renderer,
                                ActivityManager& activityManager) {
   MappedInputManager::CompletedSwipe completed;
   if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
@@ -396,10 +400,13 @@ bool applyEdgeSlideAction(Activity& activity, MappedInputManager& mappedInput, A
       break;
   }
   if (state.active) {
-    const int amount = state.direction == static_cast<int>(progress.direction)
-                           ? SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight())
-                           : 0;
-    updateLiveLightSwipe(activity, activityManager, state, amount);
+    // Drifting inward ends the slide at its last applied value.
+    if (!progress.leftEdgeBand) {
+      const int amount = state.direction == static_cast<int>(progress.direction)
+                             ? SwipeAdjustment::amount(progress.distance, mappedInput.getRenderer().getScreenHeight())
+                             : 0;
+      updateLiveLightSwipe(activity, activityManager, state, amount);
+    }
     if (progress.finished) {
       mappedInput.suppressCurrentTouchContact();
       finishLiveLightSwipe(state, activityManager);
@@ -613,6 +620,10 @@ void ActivityManager::loop() {
           handler(pendingResult);
         }
 
+        // Continue an explicit Home/Reader unwind through each child using
+        // normal cancellation results. This lets every parent restore state.
+        if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
+
         // Queue an update to ensure the popped activity gets re-rendered. A
         // partial-screen overlay first restores the full-screen activity below
         // it now that the result handler has finished reconciling settings.
@@ -643,6 +654,7 @@ void ActivityManager::loop() {
       RenderLock lock;
 
       if (pendingAction == PendingAction::Replace) {
+        pendingHomeReaderTarget = nullptr;
         // Destroy the current activity
         exitActivity(lock);
         // Clear the stack
@@ -703,6 +715,9 @@ void ActivityManager::loop() {
           APP_STATE.consumePendingOverlayResume(consumed);
         }
       }
+
+      // Resume a targeted reader unwind only after onEnter has completed.
+      if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -1016,8 +1031,30 @@ void ActivityManager::goToReaderAndRunMenuAction(std::string path, const uint8_t
 void ActivityManager::goToSleep(bool fromTimeout) {
   const bool canSnapshotOverlay = currentActivity && currentActivity->canSnapshotForSleepOverlay();
   const GfxRenderer::Orientation sleepPopupOrientation = renderer.getOrientation();
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay, getCurrentBookPath(),
-                                                  fromTimeout, sleepPopupOrientation));
+  std::string currentBookPath = getCurrentBookPath();
+  auto sleepActivity = makeUniqueNoThrow<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
+                                                        std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
+  const bool renderBeforeExit = currentActivity && sleepActivity && sleepActivity->rendersBeforeExit();
+  if (!sleepActivity) {
+    LOG_ERR("ACT", "Could not allocate sleep activity; saving outgoing activities before sleep");
+  }
+  if (renderBeforeExit || !sleepActivity) {
+    // Keep the outgoing render task from repainting over the sleep screen while
+    // onExit() flushes progress, stats and bookmarks to the card.
+    RenderLock lock;
+    TouchRegistry::getInstance().clear();
+    if (sleepActivity) sleepActivity->onEnter();
+    exitActivity(lock);
+    while (!stackActivities.empty()) {
+      stackActivities.back()->onExit();
+      stackActivities.pop_back();
+    }
+    pendingActivity.reset();
+    pendingAction = PendingAction::None;
+    currentActivity = std::move(sleepActivity);
+    return;
+  }
+  replaceActivity(std::move(sleepActivity));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 
@@ -1143,7 +1180,59 @@ bool ActivityManager::requestManualReaderRefresh() {
   return true;
 }
 
+bool ActivityManager::handleHomeReaderShortcut() {
+  // Consume repeated presses while a pop or replacement is already queued.
+  if (pendingAction != PendingAction::None || pendingHomeReaderTarget) return true;
+  if (!currentActivity || currentActivity->isHomeActivity()) return true;
+
+  if (currentActivity->isBookReaderActivity()) {
+    goHome();
+    return true;
+  }
+
+  const auto reader = std::find_if(stackActivities.rbegin(), stackActivities.rend(),
+                                   [](const auto& activity) { return activity && activity->isBookReaderActivity(); });
+  if (reader == stackActivities.rend()) {
+    goHome();
+    return true;
+  }
+
+  pendingHomeReaderTarget = reader->get();
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
+bool ActivityManager::continueHomeReaderUnwind() {
+  if (!pendingHomeReaderTarget) return false;
+  if (!currentActivity) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (currentActivity.get() == pendingHomeReaderTarget) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (pendingAction != PendingAction::None) return false;
+
+  const auto target = std::find_if(stackActivities.begin(), stackActivities.end(),
+                                   [this](const auto& activity) { return activity.get() == pendingHomeReaderTarget; });
+  if (target == stackActivities.end()) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
 bool ActivityManager::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER) return handleHomeReaderShortcut();
   return currentActivity && (currentActivity->isReaderActivity() || currentActivity->isHomeActivity()) &&
          currentActivity->handleShortcutAction(action);
 }
@@ -1177,6 +1266,8 @@ void ActivityManager::endGlobalSettingsEdit() {
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
+
+uint8_t ActivityManager::inputPollDelayMs() const { return currentActivity ? currentActivity->inputPollDelayMs() : 10; }
 
 std::string ActivityManager::getCurrentBookPath() const {
   if (currentActivity) {

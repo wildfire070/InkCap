@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ScalableFontSizing.h"
+
 // Borrows the app's render mutex when already held; otherwise owns it for
 // this scope. A whole draw retains the outer RenderLock and borrowed pixels.
 //
@@ -102,8 +104,8 @@ class HalScalableFont {
   static constexpr size_t StreamBufferBytes = StreamWindowBytes * StreamWindowCount;
   bool openSource(const uint8_t* bytes, size_t size, bool streamed, const freeink::font::FtFont::RenderOptions& options,
                   uint32_t contentHash, bool temporary = false);
-  static constexpr uint8_t MinPointSize = 8;
-  static constexpr uint8_t MaxPointSize = 22;
+  static constexpr uint8_t MinPointSize = ScalableContentMinPointSize;
+  static constexpr uint8_t MaxPointSize = ScalableContentMaxPointSize;
   static constexpr size_t SizeCount = MaxPointSize - MinPointSize + 1;
   uint32_t cacheId_ = 0;
   int weight_ = 400;

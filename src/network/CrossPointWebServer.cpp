@@ -32,6 +32,7 @@
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
+#include "components/HeaderDate.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
@@ -164,7 +165,6 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
   if (!halClock.isAvailable()) {
     switch (setting.nameId) {
       case StrId::STR_HIDE_CLOCK:
-      case StrId::STR_CLOCK_OUTSIDE_READER:
       case StrId::STR_AUTO_BACKUP_STATS:
       case StrId::STR_CLOCK_UTC_OFFSET:
       case StrId::STR_CLOCK_FORMAT:
@@ -476,9 +476,38 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
 }
 
+bool CrossPointWebServer::dropUploadIfCancelled() const {
+  if (!uploadCancelCheck || !uploadCancelCheck(uploadCancelContext)) return false;
+  server->client().stop();
+  return true;
+}
+
+void CrossPointWebServer::abortUpload(UploadState& state) const {
+  state.success = false;
+  state.bufferPos = 0;
+  if (state.file) {
+    state.file.close();
+    String filePath = state.path;
+    if (!filePath.endsWith("/")) filePath += "/";
+    filePath += state.fileName;
+    Storage.remove(filePath.c_str());
+  }
+  state.error = "Upload aborted";
+  LOG_DBG("WEB", "Upload aborted");
+}
+
+void CrossPointWebServer::abortFontUpload() {
+  fontUpload.bufferPos = 0;
+  if (fontUpload.file) fontUpload.file.close();
+  if (!fontUpload.filePath.empty()) Storage.remove(fontUpload.filePath.c_str());
+  fontUpload.valid = false;
+  LOG_DBG("WEB", "Font upload aborted");
+}
+
 void CrossPointWebServer::abortWsUpload(const char* tag, const char* reason) {
   // Record against the batch before clearing wsUploadFileName below.
   wsBatchFailed.push_back(wsUploadFileName + ": " + reason);
+
 
   // Explicit close() required: file-scope global persists beyond function scope
   wsUploadFile.close();
@@ -675,7 +704,7 @@ void CrossPointWebServer::handleStatus() const {
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
 
   JsonDocument doc;
-  doc["version"] = CROSSINK_VERSION;
+  doc["version"] = AppVersion::version();
   doc["ip"] = ipAddr;
   doc["mode"] = apMode ? "AP" : "STA";
   doc["rssi"] = apMode ? 0 : WiFi.RSSI();
@@ -1079,6 +1108,10 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
 
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
       // This reduces SD card write operations and improves throughput
@@ -1115,6 +1148,11 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.size += upload.currentSize;
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    // The final body chunk can produce END even after cancellation.
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -1155,17 +1193,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
-    state.bufferPos = 0;  // Discard buffered data
-    if (state.file) {
-      state.file.close();
-      // Try to delete the incomplete file
-      String filePath = state.path;
-      if (!filePath.endsWith("/")) filePath += "/";
-      filePath += state.fileName;
-      Storage.remove(filePath.c_str());
-    }
-    state.error = "Upload aborted";
-    LOG_DBG("WEB", "Upload aborted");
+    abortUpload(state);
   }
 }
 
@@ -1338,48 +1366,44 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  // For an epub, capture cache path + title/author (a lightweight,
-  // metadata-only load, matching Ao3IndexActivity's own scraping-skip load)
-  // BEFORE the rename below, so bookmarks/clippings/the AO3 index record and
-  // RecentBooksStore can be migrated to the new path afterward instead of
-  // being silently orphaned under the old one.
-  const bool isEpub = FsHelpers::hasEpubExtension(itemPath);
-  std::string oldCachePath, epubTitle, epubAuthor;
-  if (isEpub) {
-    Epub epub(itemPath.c_str(), "/.crosspoint");
-    if (epub.load(true, true, Epub::XLocationLoadMode::Skip, /*cacheCumulativeSpineSizes=*/false,
-                  /*skipScraping=*/true)) {
-      oldCachePath = epub.getCachePath();
-      epubTitle = epub.getTitle();
-      epubAuthor = epub.getAuthor();
-    }
-  } else {
-    clearBookCache(itemPath.c_str());
-  }
-
-  const bool success = file.rename(newPath.c_str());
+  // Release the validation handle before migrating metadata and renaming the
+  // book; real SD cards cannot open the same path through multiple readers.
   file.close();
-
-  if (success) {
-    LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
-    if (isEpub) {
-      BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
-                                           /*keepInRecents=*/true);
-      // migrateMovedEpubState() doesn't know about these two path-keyed AO3 stores (the in-app File
-      // Browser's own rename handles them separately too) -- without this, a marked/new-chapter fic
-      // renamed from the web portal silently loses that flag.
-      AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
-      AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
-    }
-    ImageFolderIndex::invalidateForPath(itemPath.c_str());
-    sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
-    ImageFolderIndex::invalidateForPath(newPath.c_str());
-    sdFontSystem.markRegistryDirtyForPath(newPath.c_str());
-    server->send(200, "text/plain", "Renamed successfully");
-  } else {
-    LOG_ERR("WEB", "Failed to rename file: %s -> %s", itemPath.c_str(), newPath.c_str());
-    server->send(500, "text/plain", "Failed to rename file");
+  const bool isEpub = FsHelpers::hasEpubExtension(itemPath);
+  const auto migration = BookMoveUtils::renameFilePreservingBookState(itemPath.c_str(), newPath.c_str());
+  if (migration == BookMoveUtils::RenameMigrationResult::InvalidBookType) {
+    server->send(400, "text/plain", "Renaming a book cannot change its file type");
+    return;
   }
+  if (migration == BookMoveUtils::RenameMigrationResult::DestinationStateExists) {
+    server->send(409, "text/plain", "Target filename has saved reading data. Choose another filename.");
+    return;
+  }
+  if (migration == BookMoveUtils::RenameMigrationResult::RolledBack) {
+    LOG_ERR("WEB", "Failed to rename file while preserving reader state: %s -> %s", itemPath.c_str(), newPath.c_str());
+    server->send(500, "text/plain", "Could not rename file while preserving saved reading data");
+    return;
+  }
+
+  LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
+  if (isEpub) {
+    // renameFilePreservingBookState() doesn't know about these two path-keyed AO3 stores (the in-app
+    // File Browser's own rename handles them separately too) -- without this, a marked/new-chapter fic
+    // renamed from the web portal silently loses that flag.
+    AO3_MARKED_FOR_LATER_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+    AO3_NEW_CHAPTERS_STORE.updatePath(itemPath.c_str(), newPath.c_str());
+  }
+  ImageFolderIndex::invalidateForPath(itemPath.c_str());
+  sdFontSystem.markRegistryDirtyForPath(itemPath.c_str());
+  ImageFolderIndex::invalidateForPath(newPath.c_str());
+  sdFontSystem.markRegistryDirtyForPath(newPath.c_str());
+  if (migration == BookMoveUtils::RenameMigrationResult::KeepRenamed) {
+    LOG_ERR("WEB", "Rename kept new path after incomplete state rollback: %s", newPath.c_str());
+    server->send(500, "text/plain",
+                 "File was renamed, but some saved references could not be updated. Refresh the file list.");
+    return;
+  }
+  server->send(200, "text/plain", "Renamed successfully");
 }
 
 void CrossPointWebServer::handleMove() const {
@@ -1617,8 +1641,11 @@ void CrossPointWebServer::handleGetStatusBars() const {
   writeReaderStatusBarJson(doc["bottom"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom));
   doc["xtcMode"] = SETTINGS.xtcStatusBarMode;
   doc["clockAvailable"] = halClock.isAvailable();
+  JsonArray displaySlots = doc["display"].to<JsonArray>();
+  for (const auto item : SETTINGS.displayStatusBar.slots) displaySlots.add(static_cast<uint8_t>(item));
 
   JsonObject labels = doc["labels"].to<JsonObject>();
+  labels["display"] = tr(STR_STATUS_BAR);
   labels["top"] = tr(STR_TOP_STATUS_BAR);
   labels["bottom"] = tr(STR_BOTTOM_STATUS_BAR);
   labels["left"] = tr(STR_STATUS_BAR_LEFT);
@@ -1637,6 +1664,9 @@ void CrossPointWebServer::handleGetStatusBars() const {
     option["label"] = label;
   };
   addOption(ReaderStatusBarItem::Clock, tr(STR_STATUS_BAR_CLOCK));
+  addOption(ReaderStatusBarItem::Date, tr(STR_DATE));
+  char dateText[32];
+  doc["datePreview"] = formatHeaderDateText(dateText, sizeof(dateText)) ? dateText : "";
   addOption(ReaderStatusBarItem::Battery, tr(STR_BATTERY));
   const auto combined = [](const char* first, const char* second) { return std::string(first) + " (" + second + ")"; };
   addOption(ReaderStatusBarItem::TimeLeftBook, combined(tr(STR_TIME_LEFT), tr(STR_BOOK)).c_str());
@@ -1675,7 +1705,9 @@ void CrossPointWebServer::handlePostStatusBars() {
     return;
   }
   ReaderStatusBarsPayload bars;
-  if (!CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
+  DisplayStatusBarConfig display;
+  if ((!doc["display"].isNull() && !readDisplayStatusBarJson(doc["display"], display, halClock.isAvailable())) ||
+      !CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
     server->send(400, "text/plain", "Invalid status bar configuration");
     return;
   }
@@ -1691,6 +1723,7 @@ void CrossPointWebServer::handlePostStatusBars() {
     SETTINGS.topReaderStatusBar = bars.top;
     SETTINGS.bottomReaderStatusBar = bars.bottom;
     SETTINGS.xtcStatusBarMode = bars.xtcMode;
+    if (!doc["display"].isNull()) SETTINGS.displayStatusBar = display;
   }
   if (!SETTINGS.saveToFile()) {
     LOG_ERR("WEB", "Failed to save status bar configuration");
@@ -2559,6 +2592,10 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_WRITE: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       if (!fontUpload.valid) break;
 
       // Validate the complete file after closing it; multipart chunks may
@@ -2600,6 +2637,10 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_END: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
         const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
@@ -2624,14 +2665,7 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_ABORTED: {
-      if (fontUpload.file) {
-        fontUpload.file.close();
-      }
-      if (!fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
-      fontUpload.valid = false;
-      LOG_DBG("WEB", "Font upload aborted");
+      abortFontUpload();
       break;
     }
   }
