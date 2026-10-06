@@ -241,6 +241,10 @@ class EpubReaderActivity final : public Activity {
   // Set once the user accepts the "Move to Archive Folder?" prompt (see requestArchiveMove()).
   // Consumed in onExit() to relocate the finished book into /Archive/.
   bool pendingArchiveMove = false;
+  // Mirrors pendingArchiveMove for the independent, unprompted "move finished books to /Read
+  // folder" setting -- armed automatically whenever finishing (or already-finished state is
+  // confirmed) applies, consumed in onExit() alongside pendingArchiveMove.
+  bool pendingReadFolderMove = false;
   // The prompt is asked once per finish: queued when a finish would move the book, shown from loop(),
   // and re-armed when the book is paged back into or marked unfinished.
   bool archivePromptQueued = false;

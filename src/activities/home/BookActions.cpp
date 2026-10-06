@@ -354,6 +354,19 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
     }
+  } else if (allowMove && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
+            !BookMoveUtils::isInArchiveFolder(fullPath) && fullPath.rfind("/Read/", 0) != 0) {
+    const std::string dstPath = BookMoveUtils::buildReadFolderDestination(fullPath);
+    LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());
+    if (!Storage.rename(fullPath.c_str(), dstPath.c_str())) {
+      LOG_ERR("BookActions", "Failed to move book to 'Read' folder");
+      snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+               tr(STR_MOVE_TO_READ_FAILED_TITLE));
+      snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
+               displayName.c_str());
+      APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+      APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    }
   }
 
   return true;

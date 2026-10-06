@@ -1262,6 +1262,29 @@ void archiveFinishedBook(const std::string& srcPath, const std::string& title) {
   }
 }
 
+constexpr char READ_FOLDER[] = "/Read";
+bool isInReadFolder(const std::string& path) {
+  constexpr size_t n = sizeof(READ_FOLDER) - 1;
+  return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
+}
+
+void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string& dstPath,
+                                  const std::string& oldCachePath, const std::string& title,
+                                  const std::string& author) {
+  LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
+  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
+    LOG_ERR("ERS", "Failed to move finished book to '/Read' folder");
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
+             title.c_str());
+    APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+    APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    return;
+  }
+  BookMoveUtils::migrateMovedEpubState(srcPath, dstPath, oldCachePath, title, author,
+                                       !SETTINGS.removeReadBooksFromRecents);
+}
+
 }  // namespace
 
 EpubReaderActivity::BookReaderSettingsData EpubReaderActivity::readBookReaderSettings(const Epub& epub) {
@@ -1707,6 +1730,11 @@ void EpubReaderActivity::applyBookStatsEditsFromDisk() {
 void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
+  if (stats.isCompleted && SETTINGS.moveFinishedToReadFolder && epub && !isInReadFolder(epub->getPath())) {
+    pendingReadFolderMove = true;
+  } else if (!stats.isCompleted) {
+    pendingReadFolderMove = false;
+  }
   if (stats.isCompleted) {
     restorePromptQueued = false;
     restorePromptShown = false;
@@ -2435,6 +2463,14 @@ void EpubReaderActivity::onExit() {
     const std::string title = epub->getTitle();
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
     archiveFinishedBook(srcPath, title);
+  } else if (pendingReadFolderMove && epub) {
+    const std::string srcPath = epub->getPath();
+    const std::string oldCachePath = epub->getCachePath();
+    const std::string title = epub->getTitle();
+    const std::string author = epub->getAuthor();
+    const std::string dstPath = BookMoveUtils::buildReadFolderDestination(srcPath);
+    epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
+    moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath, title, author);
   } else if (pendingManualArchiveAction != PendingManualArchiveAction::None && epub) {
     const std::string path = epub->getPath();
     const std::string title = epub->getTitle();
@@ -3054,6 +3090,15 @@ void EpubReaderActivity::loop() {
     pendingArchiveMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
+  }
+
+  // Arm the move here so any exit path relocates the book into /Read/.
+  // setBookCompleted() also arms this when the user marks a book finished before
+  // the End-of-Book screen.
+  if (atEndOfBook) {
+    pendingReadFolderMove = SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath());
+  } else if (!stats.isCompleted) {
+    pendingReadFolderMove = false;
   }
 
   // The suggestion menu owns Confirm/Back/navigation before automatic page
@@ -5136,6 +5181,7 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   sessionPaceSampleSeconds = 0;
   sessionPaceSampleCount = 0;
   pendingArchiveMove = false;
+  pendingReadFolderMove = false;
   archivePromptQueued = false;
   archivePromptShown = false;
   restorePromptQueued = false;
@@ -5811,6 +5857,9 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (pendingManualArchiveAction == PendingManualArchiveAction::Restore) {
       pendingManualArchiveAction = PendingManualArchiveAction::None;
     }
+    if (SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath())) {
+      pendingReadFolderMove = true;
+    }
     requestArchiveMove();
   } else {
     if (SETTINGS.removeReadBooksFromRecents) {
@@ -5818,6 +5867,7 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     }
     recentsEntryRemoved = false;
     pendingArchiveMove = false;
+    pendingReadFolderMove = false;
     archivePromptQueued = false;
     archivePromptShown = false;
     requestArchiveRestore();

@@ -879,6 +879,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_ARCHIVE, &CrossPointSettings::moveFinishedToArchiveFolder,
                             "moveFinishedToArchiveFolder", StrId::STR_CAT_SYSTEM));
+    add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
+                            "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_AUTO_BACKUP_STATS, &CrossPointSettings::autoBackupStats, "autoBackupStats",
                             StrId::STR_CAT_SYSTEM));
     // Persisted and available to the web settings API, but category-less because
