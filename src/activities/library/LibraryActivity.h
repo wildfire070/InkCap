@@ -2,11 +2,13 @@
 
 #include <FreeInkApp.h>
 #include <FreeInkUIGfxRenderer.h>
+#include <LibraryBuilder.h>
 #include <LibraryIndexFile.h>
 
 #include <memory>
 #include <string>
 
+#include "LibraryInputBuffer.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -20,6 +22,21 @@ class LibraryActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool blocksGlobalInput() const override { return actionPopup.isActive(); }
+
+#ifdef SIMULATOR
+  size_t simulatorPendingInputs() const { return pendingInput.size(); }
+  int simulatorSelection() const { return selection; }
+  int simulatorRowCount() const { return rowCount(); }
+  bool simulatorReadBook(int row, RecentBook& book) { return readBook(row, book); }
+  void simulatorSetView(uint8_t method, bool reverse, const std::string& search = "") {
+    sort = static_cast<Sort>(method);
+    descending = reverse;
+    query = search;
+    refreshIndexIfNeeded();
+    resetViewport();
+  }
+  void simulatorRefresh() { refreshLibrary(); }
+#endif
 
  private:
   enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead, Series, Genre };
@@ -46,16 +63,40 @@ class LibraryActivity final : public Activity {
   float gridProgress = -1.0f;
   bool uiReady = false;
   bool initialScanPending = false;
-  bool longPressFired = false;
+  bool confirmLongPressCaptured = false;
   bool ignoreConfirmRelease = false;
+  // Set when the Back press that cancelled a scan is still held.
+  bool ignoreBackRelease = false;
+  // Back held when a scan starts belongs to whatever opened Library (a reader
+  // long-press shortcut, say); only a fresh press after its release cancels.
+  bool scanBackHeldAtStart = false;
+  // A cancelled scan stays cancelled for this visit: sort changes and book
+  // actions show the previous index instead of starting the scan again.
+  bool scanCancelledThisVisit = false;
+  // These fields belong only to the input task, including during rendering.
+  LibraryInputBuffer pendingInput;
+  bool inputOverflow = false;
+  bool touchTracking = false;
+  int touchStartX = 0;
+  int touchStartY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
   bool scanFailed = false;
+  StrId scanFailureText = StrId::STR_LIBRARY_SCAN_FAILED;
   bool filterFailed = false;
   bool pendingCacheDeletedFeedback = false;
   unsigned long cacheDeletedFeedbackShowTime = 0;
   std::string query;
-  // Searches and file-type filters allocate one u16 per visible source book, fallibly.
-  std::unique_ptr<uint16_t[]> filtered;
+  // Searches and filters keep one bit per indexed book plus a running count per
+  // 256-book block: about 4 KiB at the format ceiling, where a u16 per match
+  // would need 64 KiB of contiguous C3 heap. Bits are positions in filterOrder.
+  static constexpr uint16_t FILTER_BLOCK_ROWS = 256;
+  std::unique_ptr<uint8_t[]> filterBits;
+  std::unique_ptr<uint16_t[]> filterRanks;
+  library::SortOrder filterOrder = library::SortOrder::TitleAsc;
+  uint16_t filterSourceCount = 0;
   uint16_t filteredCount = 0;
+  // Indices into the bounded recent-books history, independent of the Library index.
   uint16_t recentRows[RecentBooksStore::MAX_RECENT_BOOKS]{};
   size_t recentCount = 0;
   // SDK rowProvider consumes the strings before asking for the next row.
@@ -84,13 +125,22 @@ class LibraryActivity final : public Activity {
   library::SortOrder indexOrder() const;
   int rowCount() const;
   uint16_t ordinalForRow(int row);
+  uint16_t filteredSourceRow(uint16_t row) const;
   bool readBook(int row, RecentBook& book, bool fullPath = true);
   uint32_t groupForRow(int row);
   uint16_t dateGroupForRow(int row);
   bool metadataGroupForRow(int row, std::string& out);
   bool hasActiveFilter() const;
-  void refreshIndexIfNeeded();
+  void latchInput();
+  void queueInput(LibraryInputBuffer::Type type, int x = -1, int y = -1);
+  void handleInput(const LibraryInputBuffer::Event& input);
+  void refreshIndexIfNeeded(bool showScanning = false);
   bool rebuildIndex(bool showScanning);
+  void drawScanScreen(const char* message) const;
+  bool scanTouchEnabled() const;
+  static bool scanCancelRequested(void* context);
+  static void onScanProgress(void* context, const library::BuildProgress& progress);
+  void readRecentBook(size_t historyRow, RecentBook& book) const;
   void resolveRecents();
   void applyFilter();
   void resetViewport();

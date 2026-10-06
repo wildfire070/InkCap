@@ -33,14 +33,17 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v79: TextBlocks persist hrSectDivider (the FanFicFare ".hr-sect" divider flag
 // addLineToPage() uses to draw its flanking lines).
 // v80: Ordered lists, marker suppression, and list-container insets affect page layout.
-// v82: Character spacing joins the header (cache validation); TextBlocks persist it per line.
 // v81 (upstream): Inline CSS padding affects dialogue and other styled text positions.
+// v82: Character spacing joins the header (cache validation); TextBlocks persist it per line.
 // v83 (upstream): Hangul word boundaries and line-end splits change cached page positions.
-constexpr uint8_t SECTION_FILE_VERSION = 83;
+// v84 (upstream): Small EPUB images can share text lines; HTML/body text indents inherit into
+// descendant blocks; scalable headings and blocks serialize point size and line height; nested
+// blocks inherit bold and italic styles -- all four change cached page positions or glyphs.
+constexpr uint8_t SECTION_FILE_VERSION = 84;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFC;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE;
 constexpr uint32_t HEADER_SIZE =
     sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(bool) +
     sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) +
@@ -146,7 +149,7 @@ uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
   // Scan the page before serializing it so image-only and mixed pages can be
   // protected from the later XHTML byte-density projection without changing
   // the serialized page payload.
-  const uint16_t imageUnits = page->imageEstimateUnits(imageEstimateViewportHeight_);
+  const uint16_t imageUnits = page->imageEstimateUnits(imageEstimateViewportWidth_, imageEstimateViewportHeight_);
   if (!page->serialize(file)) {
     LOG_ERR("SCT", "Failed to serialize page %d", builtPageCount_);
     return 0;
@@ -441,6 +444,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   pageCount = 0;
   builtPageCount_ = 0;
   imageEstimateViewportHeight_ = viewportHeight;
+  imageEstimateViewportWidth_ = viewportWidth;
   protectedImageUnits_ = 0;
   if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = false;
   if (buildOptions.cancellationObserved) *buildOptions.cancellationObserved = false;
@@ -802,6 +806,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   const auto tmpSectionPath = binTmpPath();
   builtPageCount_ = 0;
   imageEstimateViewportHeight_ = viewportHeight;
+  imageEstimateViewportWidth_ = viewportWidth;
   protectedImageUnits_ = 0;
   pageCount = partial_ ? partialPageCount_ : 0;
   buildComplete_ = false;
@@ -1742,18 +1747,33 @@ std::optional<uint16_t> Section::getPageForVisibleTextOffset(const uint32_t offs
       lutOffset + static_cast<uint32_t>(count) * sizeof(uint32_t) > fileSize) {
     return std::nullopt;
   }
+  if (!f.seek(lutOffset)) return std::nullopt;
   uint16_t result = 0;
   uint32_t last = 0;
-  for (uint16_t i = 0; i < count; i++) {
-    uint32_t start = 0;
-    if (!f.seek(lutOffset + static_cast<uint32_t>(i) * sizeof(uint32_t)) || !serialization::tryReadPod(f, start)) {
+  // Read a bounded batch instead of seeking and reading four bytes per page.
+  // Keep the original first-match order, including repeated offsets on image/table pages.
+  uint32_t starts[32];  // 128 bytes; no heap allocation on the restore/reflow path.
+  for (uint32_t base = 0; base < count; base += 32) {
+    const uint32_t batch = std::min<uint32_t>(32, count - base);
+    const size_t bytes = batch * sizeof(uint32_t);
+    if (f.read(starts, bytes) != static_cast<int>(bytes)) {
+      f.close();
       return std::nullopt;
     }
-    last = start;
-    if (start > offset) break;
-    result = i;
-    if (preferFirstAtOffset && start == offset) break;
+    for (uint32_t i = 0; i < batch; ++i) {
+      last = starts[i];
+      if (last > offset) {
+        f.close();
+        return result;
+      }
+      result = static_cast<uint16_t>(base + i);
+      if (preferFirstAtOffset && last == offset) {
+        f.close();
+        return result;
+      }
+    }
   }
+  f.close();
   if (version == SECTION_FILE_PARTIAL_VERSION && offset > last) return std::nullopt;
   return result;
 }

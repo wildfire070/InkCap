@@ -16,6 +16,25 @@
 #include "Epub/BookMetadataCache.h"
 
 namespace {
+// Expat expands namespace prefixes to URIs, so optimizer-generated prefixes
+// such as ns0 are equivalent to opf or the default OPF namespace.
+constexpr char OPF_NAMESPACE[] = "http://www.idpf.org/2007/opf|";
+constexpr char DC_NAMESPACE[] = "http://purl.org/dc/elements/1.1/|";
+
+bool isOpfElement(const char* name, const char* localName) {
+  constexpr size_t prefixLength = sizeof(OPF_NAMESPACE) - 1;
+  if (strncmp(name, OPF_NAMESPACE, prefixLength) == 0) {
+    return strcmp(name + prefixLength, localName) == 0;
+  }
+  // Keep support for older packages without a declared OPF namespace.
+  return strcmp(name, localName) == 0;
+}
+
+bool isDcElement(const char* name, const char* localName) {
+  constexpr size_t prefixLength = sizeof(DC_NAMESPACE) - 1;
+  return strncmp(name, DC_NAMESPACE, prefixLength) == 0 && strcmp(name + prefixLength, localName) == 0;
+}
+
 constexpr char MEDIA_TYPE_NCX[] = "application/x-dtbncx+xml";
 constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char MEDIA_TYPE_IMAGE_PREFIX[] = "image/";
@@ -296,7 +315,7 @@ bool ContentOpfParser::setup() {
     return false;
   }
 
-  parser = XML_ParserCreate(nullptr);
+  parser = XML_ParserCreateNS(nullptr, '|');
   if (!parser) {
     LOG_DBG("COF", "Couldn't allocate memory for parser");
     lowMemoryFailure = true;
@@ -390,23 +409,22 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   // but a malformed package that jumps straight to the manifest must not open
   // the item-cache file just to have this same check discard it a level down.
   if (self->metadataOnly &&
-      (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0 || strcmp(name, "spine") == 0 ||
-       strcmp(name, "opf:spine") == 0 || strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
+      (isOpfElement(name, "manifest") || isOpfElement(name, "spine") || isOpfElement(name, "guide"))) {
     self->metadataComplete = true;
     return;
   }
 
-  if (self->state == START && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
+  if (self->state == START && isOpfElement(name, "package")) {
     self->state = IN_PACKAGE;
     return;
   }
 
-  if (self->state == IN_PACKAGE && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
+  if (self->state == IN_PACKAGE && isOpfElement(name, "metadata")) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:title") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "title")) {
     // Only capture the first dc:title element; subsequent ones are subtitles
     if (self->title.empty()) {
       self->state = IN_BOOK_TITLE;
@@ -415,7 +433,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:creator") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "creator")) {
     // Once per <dc:creator> element, not per characterData() chunk -- expat
     // can deliver one author's text across multiple chunks (buffer-boundary
     // splits, entity references), and checking "is author non-empty" in
@@ -430,22 +448,21 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:language") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "language")) {
     self->state = IN_BOOK_LANGUAGE;
     self->metadataSpacePending = false;
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:subject") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "subject")) {
     self->state = IN_DC_SUBJECT;
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:identifier") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "identifier")) {
     self->identifierIsBookFusion = false;
     for (int i = 0; atts && atts[i]; i += 2) {
-      if ((strcmp(atts[i], "opf:scheme") == 0 || strcmp(atts[i], "scheme") == 0) && atts[i + 1] &&
-          strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
+      if (isOpfElement(atts[i], "scheme") && atts[i + 1] && strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
         self->identifierIsBookFusion = true;
       }
     }
@@ -453,12 +470,12 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_METADATA && strcmp(name, "dc:source") == 0) {
+  if (self->state == IN_METADATA && isDcElement(name, "source")) {
     self->state = IN_DC_SOURCE;
     return;
   }
 
-  if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
+  if (self->state == IN_PACKAGE && isOpfElement(name, "manifest")) {
     self->state = IN_MANIFEST;
     if (!Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for writing. This is probably going to be a fatal error.");
@@ -466,7 +483,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_PACKAGE && (strcmp(name, "spine") == 0 || strcmp(name, "opf:spine") == 0)) {
+  if (self->state == IN_PACKAGE && isOpfElement(name, "spine")) {
     self->state = IN_SPINE;
     if (!Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for reading. This is probably going to be a fatal error.");
@@ -479,7 +496,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_PACKAGE && (strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
+  if (self->state == IN_PACKAGE && isOpfElement(name, "guide")) {
     self->state = IN_GUIDE;
     // TODO Remove print
     if (!Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
@@ -488,7 +505,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
+  if (self->state == IN_METADATA && isOpfElement(name, "meta")) {
     bool isCover = false;
     std::string coverItemId;
     const char* nameAttr = nullptr;
@@ -588,7 +605,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_MANIFEST && (strcmp(name, "item") == 0 || strcmp(name, "opf:item") == 0)) {
+  if (self->state == IN_MANIFEST && isOpfElement(name, "item")) {
     std::string itemId;
     std::string href;
     std::string mediaType;
@@ -681,7 +698,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   // NOTE: This relies on spine appearing after item manifest (which is pretty safe as it's part of the EPUB spec)
   // Only run the spine parsing if there's a cache to add it to
   if (self->cache) {
-    if (self->state == IN_SPINE && (strcmp(name, "itemref") == 0 || strcmp(name, "opf:itemref") == 0)) {
+    if (self->state == IN_SPINE && isOpfElement(name, "itemref")) {
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "idref") == 0) {
           const std::string idref = atts[i + 1];
@@ -695,7 +712,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     }
   }
   // parse the guide
-  if (self->state == IN_GUIDE && (strcmp(name, "reference") == 0 || strcmp(name, "opf:reference") == 0)) {
+  if (self->state == IN_GUIDE && isOpfElement(name, "reference")) {
     std::string type;
     std::string guideHref;
     for (int i = 0; atts[i]; i += 2) {
@@ -795,35 +812,35 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  if (self->state == IN_SPINE && (strcmp(name, "spine") == 0 || strcmp(name, "opf:spine") == 0)) {
+  if (self->state == IN_SPINE && isOpfElement(name, "spine")) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_GUIDE && (strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
+  if (self->state == IN_GUIDE && isOpfElement(name, "guide")) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_MANIFEST && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
+  if (self->state == IN_MANIFEST && isOpfElement(name, "manifest")) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_BOOK_TITLE && strcmp(name, "dc:title") == 0) {
+  if (self->state == IN_BOOK_TITLE && isDcElement(name, "title")) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_BOOK_AUTHOR && strcmp(name, "dc:creator") == 0) {
+  if (self->state == IN_BOOK_AUTHOR && isDcElement(name, "creator")) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_DC_SUBJECT && strcmp(name, "dc:subject") == 0) {
+  if (self->state == IN_DC_SUBJECT && isDcElement(name, "subject")) {
     if (!self->subjectBuffer.empty()) {
       if (!self->tags.empty()) self->tags += ", ";
       self->tags += self->subjectBuffer;
@@ -847,7 +864,7 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  if (self->state == IN_DC_IDENTIFIER && strcmp(name, "dc:identifier") == 0) {
+  if (self->state == IN_DC_IDENTIFIER && isDcElement(name, "identifier")) {
     if (self->identifierIsBookFusion) {
       const uint32_t bookFusionId = BookIds::parseBookFusionId(self->identifierBuffer);
       if (bookFusionId != 0) self->bookFusionId = bookFusionId;
@@ -861,7 +878,7 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  if (self->state == IN_DC_SOURCE && strcmp(name, "dc:source") == 0) {
+  if (self->state == IN_DC_SOURCE && isDcElement(name, "source")) {
     const std::string workId = extractAo3WorkId(self->identifierBuffer);
     if (!workId.empty()) self->ao3WorkId = workId;
     self->identifierBuffer.clear();
@@ -869,18 +886,18 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  if (self->state == IN_BOOK_LANGUAGE && strcmp(name, "dc:language") == 0) {
+  if (self->state == IN_BOOK_LANGUAGE && isDcElement(name, "language")) {
     self->state = IN_METADATA;
     return;
   }
   if ((self->state == IN_BOOK_COLLECTION || self->state == IN_BOOK_COLLECTION_TYPE ||
        self->state == IN_BOOK_COLLECTION_POSITION) &&
-      (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
+      isOpfElement(name, "meta")) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_METADATA && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
+  if (self->state == IN_METADATA && isOpfElement(name, "metadata")) {
     if (self->series.empty() && self->collectionType == "series") {
       self->series = std::move(self->collectionName);
       self->seriesIndex = std::move(self->collectionPosition);
@@ -892,7 +909,7 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  if (self->state == IN_PACKAGE && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
+  if (self->state == IN_PACKAGE && isOpfElement(name, "package")) {
     self->state = START;
     return;
   }
