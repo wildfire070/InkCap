@@ -3,6 +3,7 @@
 #include "SimulatorSmokeTest.h"
 
 #include <Epub.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <LibraryBuilder.h>
 #include <LibraryIndexFile.h>
@@ -320,13 +321,16 @@ class SimulatorSmokeTest {
   static void verifyStatusBarSettings() {
     JsonDocument original;
     SETTINGS.toJson(original);
+    const bool clockAvailable = halClock.isAvailable();
     for (const int clock : {0, 1}) {
       JsonDocument legacy;
       legacy.set(original);
       legacy.remove("displayStatusBar");
       legacy["showClockOutsideReader"] = clock;
       SETTINGS.fromJson(legacy.as<JsonVariantConst>());
-      if (SETTINGS.displayStatusBar.slots[1] != (clock ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty) ||
+      const auto expectedSlot1 =
+          (clock && clockAvailable) ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty;
+      if (SETTINGS.displayStatusBar.slots[1] != expectedSlot1 ||
           SETTINGS.displayStatusBar.slots[2] != ReaderStatusBarItem::Battery)
         fail("Display clock migration failed");
     }
@@ -337,8 +341,8 @@ class SimulatorSmokeTest {
     if (!saved["showClockOutsideReader"].isNull()) fail("Obsolete clock setting was saved");
     SETTINGS.displayStatusBar = DisplayStatusBarConfig{};
     SETTINGS.fromJson(saved.as<JsonVariantConst>());
-    if (SETTINGS.displayStatusBar.slots[0] != ReaderStatusBarItem::Date ||
-        SETTINGS.displayStatusBar.slots[1] != ReaderStatusBarItem::Clock ||
+    if (SETTINGS.displayStatusBar.slots[0] != (clockAvailable ? ReaderStatusBarItem::Date : ReaderStatusBarItem::Empty) ||
+        SETTINGS.displayStatusBar.slots[1] != (clockAvailable ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty) ||
         SETTINGS.displayStatusBar.slots[2] != ReaderStatusBarItem::Empty)
       fail("Display slots did not survive reload");
     const auto display = buildGroupedDisplaySettingsList(getSettingsList());
