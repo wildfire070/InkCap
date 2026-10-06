@@ -14,7 +14,8 @@ struct CssArenaBackingTest : testing::Test {
   }
   void createCache() {
     const std::string text =
-        "p { text-align: center; margin-top: 12px; } .em { font-weight: bold; } div p { font-style: italic; } "
+        "p { text-align: center; margin-top: 12px; font-size: 150%; } .em { font-weight: bold; } div p { font-style: "
+        "italic; } "
         ".plain { list-style-type: none; }";
     Storage.put("input.css", {text.begin(), text.end()});
     FsFile file;
@@ -33,6 +34,9 @@ struct CssArenaBackingTest : testing::Test {
     EXPECT_TRUE(style.hasTextAlign());
     EXPECT_TRUE(style.hasMarginTop());
     EXPECT_EQ(style.marginTop.value, 12);
+    ASSERT_TRUE(style.hasFontSize());
+    EXPECT_EQ(style.fontSize.value, 150);
+    EXPECT_EQ(style.fontSize.unit, CssUnit::Percent);
     EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
     EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
     EXPECT_EQ(style.textAlign, CssTextAlign::Center);
@@ -172,37 +176,37 @@ TEST(CssBorderPropertyTest, StyleOnlyValueWithoutExplicitWidthIsPresent) {
 TEST(CssFontSizePropertyTest, EmValueSetsExactMultiplier) {
   // Mirrors the real ".fff_titlepage .title h1 { font-size: 1.75em; }" case.
   const auto style = CssParser::parseInlineStyle("font-size: 1.75em");
-  ASSERT_TRUE(style.hasFontSize());
+  ASSERT_TRUE(style.hasFontSizeMultiplier());
   EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.75f);
 }
 
 TEST(CssFontSizePropertyTest, PercentValueDividesBy100) {
   const auto style = CssParser::parseInlineStyle("font-size: 125%");
-  ASSERT_TRUE(style.hasFontSize());
+  ASSERT_TRUE(style.hasFontSizeMultiplier());
   EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.25f);
 }
 
 TEST(CssFontSizePropertyTest, PxValueDividesBy16) {
   const auto style = CssParser::parseInlineStyle("font-size: 20px");
-  ASSERT_TRUE(style.hasFontSize());
+  ASSERT_TRUE(style.hasFontSizeMultiplier());
   EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.25f);
 }
 
 TEST(CssFontSizePropertyTest, SmallerKeywordFoldsOntoSmall) {
   const auto style = CssParser::parseInlineStyle("font-size: smaller");
-  ASSERT_TRUE(style.hasFontSize());
+  ASSERT_TRUE(style.hasFontSizeMultiplier());
   EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 0.8f);
 }
 
 TEST(CssFontSizePropertyTest, LargerKeywordFoldsOntoLarge) {
   const auto style = CssParser::parseInlineStyle("font-size: larger");
-  ASSERT_TRUE(style.hasFontSize());
+  ASSERT_TRUE(style.hasFontSizeMultiplier());
   EXPECT_FLOAT_EQ(style.fontSizeMultiplier, 1.2f);
 }
 
 TEST(CssFontSizePropertyTest, InvalidKeywordIsNotSet) {
   const auto style = CssParser::parseInlineStyle("font-size: inherit");
-  EXPECT_FALSE(style.hasFontSize());
+  EXPECT_FALSE(style.hasFontSizeMultiplier());
 }
 
 TEST_F(CssDescendantDepthTest, FivePlusPartSelectorIsRejectedNotMismatched) {

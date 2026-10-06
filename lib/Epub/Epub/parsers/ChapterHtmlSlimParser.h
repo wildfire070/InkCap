@@ -97,6 +97,9 @@ class ChapterHtmlSlimParser {
   uint32_t currentPageReferenceOffset = 0;
   bool currentPageVisibleOffsetSet = false;
   int fontId;
+  uint16_t rootFontScale = 256;
+  int currentTextFontId() const;
+  void applyBlockFontSize(const CssStyle& cssStyle, const char* tag, BlockStyle& style);
   float lineCompression;
   bool extraParagraphSpacing;
   bool forceParagraphIndents;
@@ -357,6 +360,7 @@ class ChapterHtmlSlimParser {
   bool isLightMode() const { return renderMode == EpubRenderMode::Light; }
   bool honorsPublisherDecorations() const { return renderMode != EpubRenderMode::Light; }
   void pushCssAncestor(int depth, const char* tag, std::string_view classAttr);
+  void pushBlockFontStyle(const CssStyle& cssStyle);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);

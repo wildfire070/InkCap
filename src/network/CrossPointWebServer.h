@@ -89,6 +89,13 @@ class CrossPointWebServer {
   // every completed .epub upload is added to the pending-review list. Cleared by stop().
   void enableAo3Receive(const std::string& folder);
 
+  // Borrowed callback/context, owned by the activity that owns this server.
+  using UploadCancelCheck = bool (*)(void*);
+  void setUploadCancelCheck(UploadCancelCheck check, void* context) {
+    uploadCancelCheck = check;
+    uploadCancelContext = context;
+  }
+
   // Get the port number
   uint16_t getPort() const { return port; }
 
@@ -101,6 +108,11 @@ class CrossPointWebServer {
   uint16_t wsPort = 81;  // WebSocket port
   NetworkUDP udp;
   bool udpActive = false;
+  UploadCancelCheck uploadCancelCheck = nullptr;
+  void* uploadCancelContext = nullptr;
+  bool dropUploadIfCancelled() const;
+  void abortUpload(UploadState& state) const;
+  void abortFontUpload();
 
   // WebSocket upload state
   void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);

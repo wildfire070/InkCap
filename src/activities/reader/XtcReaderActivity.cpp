@@ -366,6 +366,7 @@ void XtcReaderActivity::loop() {
         case CrossPointSettings::SIDE_NEXT_CHAPTER: {
           // Fixed-page books keep the established ten-page chapter-skip step.
           const bool next = side.action == CrossPointSettings::SIDE_NEXT_CHAPTER;
+          if (!next && currentPage == 0) break;
           bool goHome = false;
           {
             RenderLock lock(*this);
@@ -479,7 +480,7 @@ void XtcReaderActivity::loop() {
             currentPage = pageCount > 0 ? pageCount - 1 : 0;
             needsUpdate = true;
           }
-        } else {
+        } else if (!(prevLongPressed && currentPage == 0)) {
           uint32_t forwardReadSeconds = 0;
           const bool shouldRecordForwardRead =
               nextLongPressed && forwardPageReadElapsed(forwardReadSeconds, "front_long_press");
@@ -565,7 +566,7 @@ void XtcReaderActivity::loop() {
         currentPage = pageCount > 0 ? pageCount - 1 : 0;
         needsUpdate = true;
       }
-    } else if (prevTriggered) {
+    } else if (prevTriggered && currentPage > 0) {
       recordCurrentPageReadingTime("page_back");
       if (currentPage >= static_cast<uint32_t>(skipAmount)) {
         currentPage -= skipAmount;
@@ -1050,6 +1051,7 @@ bool XtcReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
     case CrossPointSettings::SHORT_PWRBTN::LIBRARY:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
+    case CrossPointSettings::SHORT_PWRBTN::HOME_READER:
       return true;
     default:
       return false;
@@ -1068,12 +1070,15 @@ bool XtcReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SH
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CALIBRE_WIRELESS:
+      saveProgressBeforeRestart();
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::JOIN_NETWORK:
+      saveProgressBeforeRestart();
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CREATE_HOTSPOT:
+      saveProgressBeforeRestart();
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::SHORT_PWRBTN::AO3_RECEIVE:
@@ -1109,12 +1114,15 @@ bool XtcReaderActivity::executeLongPressBackAction() {
       activityManager.goToFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CALIBRE_WIRELESS:
+      saveProgressBeforeRestart();
       activityManager.goToCalibreWireless(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_JOIN_NETWORK:
+      saveProgressBeforeRestart();
       activityManager.goToJoinNetworkFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_CREATE_HOTSPOT:
+      saveProgressBeforeRestart();
       activityManager.goToHotspotFileTransfer(xtc ? xtc->getPath() : "");
       return true;
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_AO3_RECEIVE:
@@ -1136,6 +1144,7 @@ bool XtcReaderActivity::executeLongPressBackAction() {
 }
 
 bool XtcReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER) return dispatchShortcutAction(action);
   if (action == CrossPointSettings::SHORT_PWRBTN::QUICK_ACTIONS) {
     QuickActions::showConfiguredPopup(
         quickActionsPopup, [this] { requestUpdate(); },
@@ -1543,4 +1552,12 @@ ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
     info.currentPage = currentPage + 1;
   }
   return info;
+}
+
+void XtcReaderActivity::saveProgressBeforeRestart() {
+  // Silent network-mode restarts skip onExit(); coordinate with the render task.
+  RenderLock lock(*this);
+  if (!(flushQueuedProgress())) {
+    LOG_ERR("READER", "Failed to save progress before restart");
+  }
 }

@@ -7,8 +7,6 @@
 #include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
-#include <LibraryBuilder.h>
-#include <LibraryIndexFile.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
 #include <Serialization.h>
@@ -294,7 +292,11 @@ HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasAo3Library, bool
 HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, bool hasBookFusion,
                                       bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
-  items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
+  if (SETTINGS.isLibraryFileBrowserSwapped()) {
+    items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
+  } else {
+    items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
+  }
 
   if (hasOpdsServers) {
     items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
@@ -616,57 +618,6 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
 
     ensureReusableCoverPath(book);
     recentBooks.push_back(book);
-  }
-}
-
-void HomeActivity::fillCoverGridFromLibrary() {
-  if (recentBooks.size() >= CoverGridHomeUi::MAX_BOOKS) return;
-
-  struct LibraryReader {
-    library::LibraryIndexFile index;
-    library::ClixRecord record;
-  };
-  auto reader = makeUniqueNoThrow<LibraryReader>();
-  if (!reader) {
-    LOG_ERR("HOME", "Cannot allocate library index reader for cover grid");
-    return;
-  }
-  auto& index = reader->index;
-  const bool indexOpen = index.open(library::libraryIndexPath());
-  const bool needsRefresh = library::libraryIndexNeedsRefresh() || !indexOpen ||
-                            index.header().metadataEnabled != static_cast<uint8_t>(SETTINGS.libraryUseMetadata != 0);
-  if (needsRefresh) {
-    index.close();
-    // Home has not painted yet. Give the same visible scan feedback as Library
-    // before rebuilding an index for a large SD card.
-    {
-      RenderLock lock;
-      renderer.clearScreen();
-      GUI.drawPopup(renderer, tr(STR_LIBRARY_SCANNING));
-      renderer.displayBuffer(initialRefreshMode);
-      initialRefreshMode = HalDisplay::FAST_REFRESH;
-    }
-    library::BuildStats stats;
-    if (!library::buildLibraryIndex("/", stats, SETTINGS.libraryUseMetadata != 0) ||
-        !index.open(library::libraryIndexPath())) {
-      LOG_ERR("HOME", "Cannot populate cover grid from library index");
-      return;
-    }
-  }
-
-  for (uint16_t row = 0; row < index.bookCount() && recentBooks.size() < CoverGridHomeUi::MAX_BOOKS; ++row) {
-    RecentBook book;
-    const uint16_t ordinal = index.ordinalForRow(library::SortOrder::RecentDesc, row);
-    if (ordinal == 0xffff || !index.readRecord(ordinal, reader->record) || !index.readPath(reader->record, book.path)) {
-      continue;
-    }
-    if (std::any_of(recentBooks.begin(), recentBooks.end(),
-                    [&book](const RecentBook& existing) { return existing.path == book.path; }) ||
-        RecentBooksStore::isMissing(book)) {
-      continue;
-    }
-    if (!index.readDisplayText(reader->record, book.title, book.author)) continue;
-    recentBooks.push_back(std::move(book));
   }
 }
 
@@ -1047,7 +998,6 @@ void HomeActivity::onEnter() {
   RECENT_BOOKS.ensureLoaded();
   loadRecentBooks(recentBooksToLoad);
   gridHasContinueReading = !recentBooks.empty();
-  if (coverGridUi) fillCoverGridFromLibrary();
 
   const auto selectInitialBook = [this, &metrics](const std::string& path) {
     if (path.empty()) {
@@ -2109,7 +2059,7 @@ void HomeActivity::loop() {
         return;
       case MappedInputManager::SwipeDir::Right:
         minimalHomeNavIndex = 1;
-        onFileBrowserOpen();
+        onMinimalBrowseOpen();
         return;
       case MappedInputManager::SwipeDir::Up:
         minimalHomeNavIndex = 0;
@@ -2165,7 +2115,7 @@ void HomeActivity::loop() {
           requestUpdate();
           break;
         case 1:
-          onFileBrowserOpen();
+          onMinimalBrowseOpen();
           break;
         case 2:
           onSettingsOpen();
@@ -2734,8 +2684,9 @@ void HomeActivity::render(RenderLock&&) {
     }
     if (showMinimalHomeButtonHints(mappedInput)) {
       MinimalTheme::setHomeButtonHintSelection(minimalHomeNavIndex);
-      GUI.drawButtonHints(renderer, tr(STR_MENU), tr(STR_BROWSE), tr(STR_SETTINGS_SHORT),
-                          recentBooks.empty() ? "" : tr(STR_READ));
+      GUI.drawButtonHints(renderer, tr(STR_MENU),
+                          SETTINGS.isLibraryFileBrowserSwapped() ? tr(STR_LIBRARY) : tr(STR_BROWSE),
+                          tr(STR_SETTINGS_SHORT), recentBooks.empty() ? "" : tr(STR_READ));
     }
 
     displayHomeBuffer();
@@ -2950,6 +2901,14 @@ void HomeActivity::onSelectBook(const std::string& path) {
     Storage.remove(CAROUSEL_CACHE_TMP_PATH);
   }
   activityManager.goToReader(path);
+}
+
+void HomeActivity::onMinimalBrowseOpen() {
+  if (SETTINGS.isLibraryFileBrowserSwapped()) {
+    onLibraryOpen();
+  } else {
+    onFileBrowserOpen();
+  }
 }
 
 void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }

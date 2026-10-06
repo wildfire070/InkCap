@@ -34,7 +34,6 @@ constexpr int kTabHorizontalInset = 2;
 constexpr int kTitleFontId = UI_12_FONT_ID;     // Requested main title size: 12px
 constexpr int kSubtitleFontId = SMALL_FONT_ID;  // Requested subtitle size: 8px
 constexpr int kGuideFontId = SMALL_FONT_ID;     // Closest available to requested 6px
-constexpr int kHeaderClockYOffset = 3;
 
 // Adaptive cover width for the home "continue reading" tile, set on each
 // fresh load in drawRecentBookCover() and reused across draws of the same
@@ -67,8 +66,7 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
                                   const bool readerContext, const bool showStatus) const {
   // Home screen header is custom-rendered in drawRecentBookCover.
   if (title == nullptr) {
-    const int clockYOffset = readerContext ? 0 : kHeaderClockYOffset;
-    if (showStatus) drawTopStatusBarClock(renderer, rect.y, nullptr, readerContext, clockYOffset);
+    if (showStatus) drawDisplayStatusBar(renderer, rect.y);
     return;
   }
   BaseTheme::drawHeader(renderer, rect, title, subtitle, readerContext, showStatus);

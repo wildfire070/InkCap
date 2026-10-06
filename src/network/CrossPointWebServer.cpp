@@ -32,6 +32,7 @@
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
+#include "components/HeaderDate.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
@@ -164,7 +165,6 @@ bool isWebSettingAvailable(const SettingInfo& setting) {
   if (!halClock.isAvailable()) {
     switch (setting.nameId) {
       case StrId::STR_HIDE_CLOCK:
-      case StrId::STR_CLOCK_OUTSIDE_READER:
       case StrId::STR_AUTO_BACKUP_STATS:
       case StrId::STR_CLOCK_UTC_OFFSET:
       case StrId::STR_CLOCK_FORMAT:
@@ -476,6 +476,34 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
 }
 
+bool CrossPointWebServer::dropUploadIfCancelled() const {
+  if (!uploadCancelCheck || !uploadCancelCheck(uploadCancelContext)) return false;
+  server->client().stop();
+  return true;
+}
+
+void CrossPointWebServer::abortUpload(UploadState& state) const {
+  state.success = false;
+  state.bufferPos = 0;
+  if (state.file) {
+    state.file.close();
+    String filePath = state.path;
+    if (!filePath.endsWith("/")) filePath += "/";
+    filePath += state.fileName;
+    Storage.remove(filePath.c_str());
+  }
+  state.error = "Upload aborted";
+  LOG_DBG("WEB", "Upload aborted");
+}
+
+void CrossPointWebServer::abortFontUpload() {
+  fontUpload.bufferPos = 0;
+  if (fontUpload.file) fontUpload.file.close();
+  if (!fontUpload.filePath.empty()) Storage.remove(fontUpload.filePath.c_str());
+  fontUpload.valid = false;
+  LOG_DBG("WEB", "Font upload aborted");
+}
+
 void CrossPointWebServer::abortWsUpload(const char* tag, const char* reason) {
   // Record against the batch before clearing wsUploadFileName below.
   wsBatchFailed.push_back(wsUploadFileName + ": " + reason);
@@ -675,7 +703,7 @@ void CrossPointWebServer::handleStatus() const {
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
 
   JsonDocument doc;
-  doc["version"] = CROSSINK_VERSION;
+  doc["version"] = AppVersion::version();
   doc["ip"] = ipAddr;
   doc["mode"] = apMode ? "AP" : "STA";
   doc["rssi"] = apMode ? 0 : WiFi.RSSI();
@@ -1079,6 +1107,10 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
 
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
       // This reduces SD card write operations and improves throughput
@@ -1115,6 +1147,11 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       state.size += upload.currentSize;
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    // The final body chunk can produce END even after cancellation.
+    if (dropUploadIfCancelled()) {
+      abortUpload(state);
+      return;
+    }
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -1155,17 +1192,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
-    state.bufferPos = 0;  // Discard buffered data
-    if (state.file) {
-      state.file.close();
-      // Try to delete the incomplete file
-      String filePath = state.path;
-      if (!filePath.endsWith("/")) filePath += "/";
-      filePath += state.fileName;
-      Storage.remove(filePath.c_str());
-    }
-    state.error = "Upload aborted";
-    LOG_DBG("WEB", "Upload aborted");
+    abortUpload(state);
   }
 }
 
@@ -1612,8 +1639,11 @@ void CrossPointWebServer::handleGetStatusBars() const {
   writeReaderStatusBarJson(doc["bottom"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom));
   doc["xtcMode"] = SETTINGS.xtcStatusBarMode;
   doc["clockAvailable"] = halClock.isAvailable();
+  JsonArray displaySlots = doc["display"].to<JsonArray>();
+  for (const auto item : SETTINGS.displayStatusBar.slots) displaySlots.add(static_cast<uint8_t>(item));
 
   JsonObject labels = doc["labels"].to<JsonObject>();
+  labels["display"] = tr(STR_STATUS_BAR);
   labels["top"] = tr(STR_TOP_STATUS_BAR);
   labels["bottom"] = tr(STR_BOTTOM_STATUS_BAR);
   labels["left"] = tr(STR_STATUS_BAR_LEFT);
@@ -1632,6 +1662,9 @@ void CrossPointWebServer::handleGetStatusBars() const {
     option["label"] = label;
   };
   addOption(ReaderStatusBarItem::Clock, tr(STR_STATUS_BAR_CLOCK));
+  addOption(ReaderStatusBarItem::Date, tr(STR_DATE));
+  char dateText[32];
+  doc["datePreview"] = formatHeaderDateText(dateText, sizeof(dateText)) ? dateText : "";
   addOption(ReaderStatusBarItem::Battery, tr(STR_BATTERY));
   const auto combined = [](const char* first, const char* second) { return std::string(first) + " (" + second + ")"; };
   addOption(ReaderStatusBarItem::TimeLeftBook, combined(tr(STR_TIME_LEFT), tr(STR_BOOK)).c_str());
@@ -1670,7 +1703,9 @@ void CrossPointWebServer::handlePostStatusBars() {
     return;
   }
   ReaderStatusBarsPayload bars;
-  if (!CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
+  DisplayStatusBarConfig display;
+  if ((!doc["display"].isNull() && !readDisplayStatusBarJson(doc["display"], display, halClock.isAvailable())) ||
+      !CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
     server->send(400, "text/plain", "Invalid status bar configuration");
     return;
   }
@@ -1686,6 +1721,7 @@ void CrossPointWebServer::handlePostStatusBars() {
     SETTINGS.topReaderStatusBar = bars.top;
     SETTINGS.bottomReaderStatusBar = bars.bottom;
     SETTINGS.xtcStatusBarMode = bars.xtcMode;
+    if (!doc["display"].isNull()) SETTINGS.displayStatusBar = display;
   }
   if (!SETTINGS.saveToFile()) {
     LOG_ERR("WEB", "Failed to save status bar configuration");
@@ -2554,6 +2590,10 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_WRITE: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       if (!fontUpload.valid) break;
 
       // Validate the complete file after closing it; multipart chunks may
@@ -2595,6 +2635,10 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_END: {
+      if (dropUploadIfCancelled()) {
+        abortFontUpload();
+        break;
+      }
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
         const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
@@ -2619,14 +2663,7 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_ABORTED: {
-      if (fontUpload.file) {
-        fontUpload.file.close();
-      }
-      if (!fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
-      fontUpload.valid = false;
-      LOG_DBG("WEB", "Font upload aborted");
+      abortFontUpload();
       break;
     }
   }

@@ -674,7 +674,7 @@ In **Page Overlay** mode, white BMP pixels and transparent PNG pixels let the cu
 > [!TIP]
 > For best results:
 >
-> - Use uncompressed BMP files with 24-bit color depth
+> - Use uncompressed BMP files, preferably with 4-bit or 8-bit indexed BMP.
 > - X4: Use a resolution of 480x800 pixels to match the device's screen resolution.
 > - X3: Use a resolution of 528x792 pixels to match the device's screen resolution.
 
@@ -869,7 +869,7 @@ choose one and **Confirm** to open it, or tap the reference. Links without a
 visible target use a list instead. Press **Back** to return to your original
 reading position.
 
-If the device goes to sleep or you close the book while viewing a footnote, the book reopens to your original reading position, not the footnote.
+After following an in-book link to a full chapter, sleeping or closing the book reopens on the last page read. Back retains the three most recent link origins across reopening and KOReader sync. If you close a transient footnote preview, the book resumes on the page that opened that preview, with any earlier link origins still available through Back.
 
 ### System Navigation
 
@@ -895,13 +895,13 @@ Press **Confirm** while reading to open the Reader Menu. From here you can acces
 
 EPUB books use the same five icon tabs on touch and button devices:
 
-| Tab (icon) | Main options |
-| --- | --- |
-| **Font** (letters) | Reader Font, Dictionary Font, Line/Word Spacing, text anti-aliasing, Focus Reading, Guide Dots |
-| **Layout** (text lines) | Margins, Orientation, Alignment, Images, Hyphenation, Publisher Page Numbers, paragraph spacing and publisher styling |
-| **More** (three dots) | Word lookup, Select Chapter, Go to %, Go to Stable Page when available, Auto Page Turn, Footnotes; Reading Stats on button devices when tracking is enabled |
-| **Bookmarks** (bookmark) | Add/remove and view bookmarks, create/view clippings, screenshot, position QR; Sync Progress, Nearby Position Sync, and Send Nearby Book on button devices |
-| **Settings** (gear) | Status Bars, Controls, Book Dictionary, EPUB Render Mode, Indexing Method, finished status, Track Reading Stats, cache/stats resets, Reset Book Reader Settings |
+| Tab (icon)               | Main options                                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Font** (letters)       | Reader Font, Dictionary Font, Line/Word Spacing, text anti-aliasing, Focus Reading, Guide Dots                                                                  |
+| **Layout** (text lines)  | Margins, Orientation, Alignment, Images, Hyphenation, Publisher Page Numbers, paragraph spacing and publisher styling                                           |
+| **More** (three dots)    | Word lookup, Select Chapter, Go to %, Go to Stable Page when available, Auto Page Turn, Footnotes; Reading Stats on button devices when tracking is enabled     |
+| **Bookmarks** (bookmark) | Add/remove and view bookmarks, create/view clippings, screenshot, position QR; Sync Progress, Nearby Position Sync, and Send Nearby Book on button devices      |
+| **Settings** (gear)      | Status Bars, Controls, Book Dictionary, EPUB Render Mode, Indexing Method, finished status, Track Reading Stats, cache/stats resets, Reset Book Reader Settings |
 
 Some actions appear only when the book or device supports them. On touch
 screens, tap a tab and then an option. On button devices, **Left/Right** switch

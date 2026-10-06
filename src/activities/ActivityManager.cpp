@@ -114,6 +114,12 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
 
   const FrontlightBookSource source = chooseFrontlightBookSource(false, false, lastValid && !context.activeReaderBook);
 
+  // Transfer actions use the last EPUB even when reading stats are disabled.
+  if (source == FrontlightBookSource::LastBook) {
+    context.bookPath = APP_STATE.openEpubPath;
+    context.bookTitle = fileNameFromPath(context.bookPath);
+  }
+
   if (!SETTINGS.shouldTrackReadingStats()) return context;
   const GlobalReadingStats global = GlobalReadingStats::load();
   std::string cachePath;
@@ -121,8 +127,6 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
   BookReadingStats bookStats;
   float progress = -1.0f;
   if (source == FrontlightBookSource::LastBook) {
-    context.bookPath = APP_STATE.openEpubPath;
-    context.bookTitle = fileNameFromPath(context.bookPath);
     statsTitle = context.bookTitle;
     cachePath = Epub::cachePathForFilePath(context.bookPath, "/.crosspoint");
     if (BookStatsTracking::isBookEnabled(cachePath))
@@ -621,6 +625,10 @@ void ActivityManager::loop() {
           handler(pendingResult);
         }
 
+        // Continue an explicit Home/Reader unwind through each child using
+        // normal cancellation results. This lets every parent restore state.
+        if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
+
         // Queue an update to ensure the popped activity gets re-rendered. A
         // partial-screen overlay first restores the full-screen activity below
         // it now that the result handler has finished reconciling settings.
@@ -651,6 +659,7 @@ void ActivityManager::loop() {
       RenderLock lock;
 
       if (pendingAction == PendingAction::Replace) {
+        pendingHomeReaderTarget = nullptr;
         // Destroy the current activity
         exitActivity(lock);
         // Clear the stack
@@ -711,6 +720,9 @@ void ActivityManager::loop() {
           APP_STATE.consumePendingOverlayResume(consumed);
         }
       }
+
+      // Resume a targeted reader unwind only after onEnter has completed.
+      if (pendingAction == PendingAction::None) continueHomeReaderUnwind();
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -1173,7 +1185,59 @@ bool ActivityManager::requestManualReaderRefresh() {
   return true;
 }
 
+bool ActivityManager::handleHomeReaderShortcut() {
+  // Consume repeated presses while a pop or replacement is already queued.
+  if (pendingAction != PendingAction::None || pendingHomeReaderTarget) return true;
+  if (!currentActivity || currentActivity->isHomeActivity()) return true;
+
+  if (currentActivity->isBookReaderActivity()) {
+    goHome();
+    return true;
+  }
+
+  const auto reader = std::find_if(stackActivities.rbegin(), stackActivities.rend(),
+                                   [](const auto& activity) { return activity && activity->isBookReaderActivity(); });
+  if (reader == stackActivities.rend()) {
+    goHome();
+    return true;
+  }
+
+  pendingHomeReaderTarget = reader->get();
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
+bool ActivityManager::continueHomeReaderUnwind() {
+  if (!pendingHomeReaderTarget) return false;
+  if (!currentActivity) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (currentActivity.get() == pendingHomeReaderTarget) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+  if (pendingAction != PendingAction::None) return false;
+
+  const auto target = std::find_if(stackActivities.begin(), stackActivities.end(),
+                                   [this](const auto& activity) { return activity.get() == pendingHomeReaderTarget; });
+  if (target == stackActivities.end()) {
+    pendingHomeReaderTarget = nullptr;
+    return false;
+  }
+
+  ActivityResult result;
+  result.isCancelled = true;
+  currentActivity->setResult(std::move(result));
+  popActivity();
+  return true;
+}
+
 bool ActivityManager::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER) return handleHomeReaderShortcut();
   return currentActivity && (currentActivity->isReaderActivity() || currentActivity->isHomeActivity()) &&
          currentActivity->handleShortcutAction(action);
 }

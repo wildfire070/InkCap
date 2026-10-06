@@ -125,6 +125,7 @@ class HomeActivity final : public Activity {
   void drawCompanionColumn(Rect region, const char* label, const char* sub, const char* quote) const;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
+  void onMinimalBrowseOpen();
   void onContinueReading();
   void onLibraryOpen();
   void onSettingsOpen();
@@ -156,7 +157,6 @@ class HomeActivity final : public Activity {
   void showNextRecentBookOnHome();
   void updateHighlightedBookContext(bool allowChapterTitleRead = true);
   void loadRecentBooks(int maxBooks);
-  void fillCoverGridFromLibrary();
   void loadCoverGridThumbnails();
   void activateCoverGridSelection();
   void loadAllBookStats();
