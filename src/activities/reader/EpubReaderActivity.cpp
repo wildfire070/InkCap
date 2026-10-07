@@ -1726,7 +1726,8 @@ void EpubReaderActivity::applyBookStatsEditsFromDisk() {
 void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
   applyBookStatsEditsFromDisk();
   completionPromptShown = stats.isCompleted;
-  if (stats.isCompleted && SETTINGS.moveFinishedToReadFolder && epub && !isInReadFolder(epub->getPath())) {
+  if (stats.isCompleted && SETTINGS.moveFinishedToReadFolder && epub && !epub->hasAo3Info() &&
+      !isInReadFolder(epub->getPath())) {
     pendingReadFolderMove = true;
   } else if (!stats.isCompleted) {
     pendingReadFolderMove = false;
@@ -1825,9 +1826,16 @@ bool EpubReaderActivity::isAtOrPastCompletionTrigger() const {
 }
 
 bool EpubReaderActivity::shouldQueueCompletionPromptOnChapterExit() const {
+  // AO3 fics use their own end-of-book flow (handleAo3EndOfBookInput(), Cycle
+  // Status via Ao3ArchiveUtils) instead of this plain "Mark as Finished?"
+  // prompt -- letting it fire here would route an AO3 fic's completion
+  // through setBookCompleted()/requestArchiveMove()'s plain BookMoveUtils
+  // mover, bypassing Ao3ArchiveUtils and corrupting the AO3 index, the same
+  // bug class already guarded against in BookActions.cpp/the Library menu.
   if (completionPromptShown || completionPromptQueued || stats.isCompleted || activeFootnotePreview ||
-      !pendingFootnotePreviewAnchor.empty() || !completionTriggerCrossed || !epub || !section ||
-      section->pageCount == 0 || completionTriggerSpineIndex < 0 || section->isBuilding() || section->isPartial()) {
+      !pendingFootnotePreviewAnchor.empty() || !completionTriggerCrossed || !epub || epub->hasAo3Info() ||
+      !section || section->pageCount == 0 || completionTriggerSpineIndex < 0 || section->isBuilding() ||
+      section->isPartial()) {
     return false;
   }
 
@@ -3026,9 +3034,12 @@ void EpubReaderActivity::loop() {
 
   // Arm the move here so any exit path relocates the book into /Read/.
   // setBookCompleted() also arms this when the user marks a book finished before
-  // the End-of-Book screen.
+  // the End-of-Book screen. Excluded for AO3 fics: this raw rename bypasses
+  // Ao3ArchiveUtils, which the AO3 index depends on to track a fic's path --
+  // same corruption risk the Archive-folder feature already guards against.
   if (atEndOfBook) {
-    pendingReadFolderMove = SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath());
+    pendingReadFolderMove =
+        SETTINGS.moveFinishedToReadFolder && !epub->hasAo3Info() && !isInReadFolder(epub->getPath());
   } else if (!stats.isCompleted) {
     pendingReadFolderMove = false;
   }
@@ -5136,9 +5147,17 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       onReaderMenuConfirm(EpubReaderMenuAction::SYNC);
       break;
     case CrossPointSettings::LONG_MENU_MARK_FINISHED: {
-      const bool newCompleted = !stats.isCompleted;
-      setBookCompleted(newCompleted);
-      showCompletedFeedback(newCompleted);
+      // AO3 fics don't use plain Mark Finished (the reader menu already swaps this
+      // for Cycle Status on them) -- route the shortcut there too instead of calling
+      // setBookCompleted() directly, which would bypass Ao3ArchiveUtils and corrupt
+      // the AO3 index the same way the menu/BookActions.cpp guards already prevent.
+      if (epub && epub->hasAo3Info()) {
+        onReaderMenuConfirm(EpubReaderMenuAction::CYCLE_STATUS);
+      } else {
+        const bool newCompleted = !stats.isCompleted;
+        setBookCompleted(newCompleted);
+        showCompletedFeedback(newCompleted);
+      }
     }
       requestUpdate();
       break;
@@ -5773,7 +5792,7 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
     if (pendingManualArchiveAction == PendingManualArchiveAction::Restore) {
       pendingManualArchiveAction = PendingManualArchiveAction::None;
     }
-    if (SETTINGS.moveFinishedToReadFolder && !isInReadFolder(epub->getPath())) {
+    if (SETTINGS.moveFinishedToReadFolder && !epub->hasAo3Info() && !isInReadFolder(epub->getPath())) {
       pendingReadFolderMove = true;
     }
     requestArchiveMove();
