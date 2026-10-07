@@ -20,11 +20,11 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                           {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
                           StrId::STR_CAT_DISPLAY));
-    add(SettingInfo::Enum(StrId::STR_HIDE_CLOCK, &CrossPointSettings::hideClock,
-                          {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideClock",
-                          StrId::STR_CAT_DISPLAY)
-            .withEnumRawValues({CrossPointSettings::HIDE_CLOCK_NEVER, CrossPointSettings::HIDE_CLOCK_IN_READER,
-                                CrossPointSettings::HIDE_CLOCK_ALWAYS}));
+    // "Hide Clock" (hideClock) is intentionally not registered here -- the newer
+    // per-slot displayStatusBar config supersedes it. The field itself and its
+    // one-time legacy-JSON migration read stay in CrossPointSettings.{h,cpp} so
+    // old save files still migrate correctly; only the dead Settings UI entry
+    // is removed.
     add(SettingInfo::Enum(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
                           {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15,
                            StrId::STR_PAGES_30, StrId::STR_NEVER},
