@@ -5857,7 +5857,17 @@ void EpubReaderActivity::suppressPowerShortcutRelease() {
 // With "Move Finished Books to Archive Folder" on, a finished book is only moved after the user accepts a separate
 // prompt. Asked once per finish; a book already in /Archive/ is never offered.
 void EpubReaderActivity::requestArchiveMove() {
-  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || BookMoveUtils::isInArchiveFolder(epub->getPath())) return;
+  // AO3 fics archive exclusively through Ao3ArchiveUtils (see the CYCLE_STATUS
+  // handler), never through this plain-book path -- without this guard, an
+  // AO3 fic completed via the Book Stats screen's manual isCompleted edit
+  // (BookStatsActivity::applyCompletedState(), which has no AO3 awareness)
+  // would reach handleBookStatsReturn() -> here -> the plain BookMoveUtils
+  // mover on confirm, corrupting the AO3 index the same way the other three
+  // guarded call sites in this file already prevent.
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || epub->hasAo3Info() ||
+      BookMoveUtils::isInArchiveFolder(epub->getPath())) {
+    return;
+  }
   if (archivePromptQueued || archivePromptShown) return;
   archivePromptQueued = true;
 }
@@ -5865,7 +5875,12 @@ void EpubReaderActivity::requestArchiveMove() {
 // Symmetric counterpart to requestArchiveMove(): with "Move Finished Books to Archive Folder" on, un-finishing
 // an already-archived book offers to restore it. Asked once per un-finish.
 void EpubReaderActivity::requestArchiveRestore() {
-  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || !BookMoveUtils::isInArchiveFolder(epub->getPath())) return;
+  // Same AO3 exclusion as requestArchiveMove(): AO3 fics restore exclusively
+  // through Ao3ArchiveUtils, never the plain BookMoveUtils path.
+  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || epub->hasAo3Info() ||
+      !BookMoveUtils::isInArchiveFolder(epub->getPath())) {
+    return;
+  }
   if (restorePromptQueued || restorePromptShown) return;
   restorePromptQueued = true;
 }
