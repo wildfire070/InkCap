@@ -332,6 +332,9 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
   // index-aware Archive Fic/Restore, or the reader's Cycle Status), but this guards against some future
   // caller reaching toggleBookCompleted() directly on an AO3 path, which would otherwise silently leave a
   // stale AO3 index record behind a move BookMoveUtils doesn't know how to keep that index in sync with.
+  // The upstream moveFinishedToReadFolder branch below carries the identical guard for the identical
+  // reason -- it's a separate, independently-toggleable feature, not a fallback of this one, and an
+  // AO3 fic failing this branch's !isAo3IndexedFic check must not fall through into that one unguarded.
   if (allowMove && isEpub && SETTINGS.moveFinishedToArchiveFolder && !isAo3IndexedFic(fullPath)) {
     if (completed && !BookMoveUtils::isInArchiveFolder(fullPath)) {
       LOG_INF("BookActions", "Moving completed epub: %s", fullPath.c_str());
@@ -354,7 +357,7 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
     }
-  } else if (allowMove && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
+  } else if (allowMove && isEpub && completed && SETTINGS.moveFinishedToReadFolder && !isAo3IndexedFic(fullPath) &&
             !BookMoveUtils::isInArchiveFolder(fullPath) && fullPath.rfind("/Read/", 0) != 0) {
     const std::string dstPath = BookMoveUtils::buildReadFolderDestination(fullPath);
     LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());
