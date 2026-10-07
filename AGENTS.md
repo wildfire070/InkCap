@@ -81,16 +81,15 @@ These are cross-session workflow rules, not code facts — they're here, not onl
 - Read `.claude/CONTEXT.md` at session start for durable repo-specific gotchas.
 - Keep `.claude/CONTEXT.md` short. Add only reusable findings, not turn-by-turn history.
 
-## InkCap Divergence Policy
+## Capy Divergence Policy
 
-InkCap's default posture is zero drift from `uxjulia/CrossInk`'s `development` branch — sync early, resolve conflicts in upstream's favor, and don't add InkCap-only config/build changes without asking first.
-
-Two deliberate feature additions are sanctioned exceptions to that rule:
+Capy's lineage is `InkCap` → `InkCapO3` (+ AO3) → `Capy` (+ Reading Companion). Its default posture is zero drift from `uxjulia/CrossInk`'s `development` branch beyond these three deliberate feature additions, sanctioned exceptions to that rule:
 
 - **BookFusion cloud sync** — owns `lib/BookFusionSync/*`, `BookFusion*Activity.*`, and their wiring points.
 - **AO3 library** — ported from [`wildfire070/xAO3`](https://github.com/wildfire070/xAO3) (a sibling CrossPoint Reader fork focused on an Archive of Our Own library/reader). Owns `src/Ao3*`, `src/activities/home/Ao3*Activity.*`, `src/activities/network/AO3SyncActivity.*`, plus wiring touches in `HomeActivity`, `FileBrowserActivity`, `EpubReaderActivity`/`EpubReaderMenuActivity`, `RecentBooksStore`, `CrossPointSettings`, and theme files — including new status-icon rendering for the `minimal`/`dashboard` themes, which have no xAO3 equivalent to port from.
+- **Reading Companion** — merged in from [`JoshuaMillerCode/crosspoint-reader-companion`](https://github.com/JoshuaMillerCode/crosspoint-reader-companion). Owns the `companionEnabled`/`companionOnHome` settings and `buildCompanionCharacterSetting()` in `SettingsList.{h,cpp}`, plus the Minimal/Dashboard home-screen companion placement (`HomeCompanionLayout`/`HomeCompanionContext` in `BaseTheme.{h,cpp}`, consumed by `HomeActivity`) — this placement code is new, not ported from the companion source repo.
 
-Any other InkCap-only change (CI config, build environments, feature flags) should be flagged and confirmed before merging, not assumed.
+InkCap, InkCapO3, and InxAO3 each carry a different subset of these three — see their own `AGENTS.md` for their specific policy; this branch has all three. Any other Capy-only change (CI config, build environments, feature flags) should be flagged and confirmed before merging, not assumed.
 
 ## Repo Skills
 
