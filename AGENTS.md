@@ -83,12 +83,13 @@ These are cross-session workflow rules, not code facts — they're here, not onl
 
 ## InkCap Divergence Policy
 
-InkCap's default posture is zero drift from `uxjulia/CrossInk`'s `development` branch — sync early, resolve conflicts in upstream's favor, and don't add InkCap-only config/build changes without asking first.
+InkCap's default posture is zero drift from `uxjulia/CrossInk`'s `development` branch — sync early, resolve conflicts in upstream's favor, and don't add InkCap-only config/build changes without asking first. InkCap is the base branch all others are derived from.
 
-Two deliberate feature additions are sanctioned exceptions to that rule:
+One deliberate feature addition is the sanctioned exception to that rule:
 
 - **BookFusion cloud sync** — owns `lib/BookFusionSync/*`, `BookFusion*Activity.*`, and their wiring points.
-- **AO3 library** — ported from [`wildfire070/xAO3`](https://github.com/wildfire070/xAO3) (a sibling CrossPoint Reader fork focused on an Archive of Our Own library/reader). Owns `src/Ao3*`, `src/activities/home/Ao3*Activity.*`, `src/activities/network/AO3SyncActivity.*`, plus wiring touches in `HomeActivity`, `FileBrowserActivity`, `EpubReaderActivity`/`EpubReaderMenuActivity`, `RecentBooksStore`, `CrossPointSettings`, and theme files — including new status-icon rendering for the `minimal`/`dashboard` themes, which have no xAO3 equivalent to port from.
+
+**InkCap does NOT carry the AO3 library or the Reading Companion feature.** Those were added later, each as its own derived branch: `InkCapO3` (InkCap + AO3, ported from `wildfire070/xAO3`) and `InxAO3` (CrossInk + AO3 only, no BookFusion); `Capy` (InkCapO3 + Reading Companion, from JoshuaMillerCode/crosspoint-reader-companion). Do not port AO3 or Companion code into InkCap wholesale, and do not merge `InkCapO3`/`InxAO3`/`Capy` into InkCap (that would pull AO3/Companion in). The one exception: if work done on the AO3 branches produces an improvement to BookFusion itself, or to shared infrastructure that helps BookFusion specifically, that narrow piece can be synthesized/ported back into InkCap on its own merits — not the AO3 feature as a whole.
 
 Any other InkCap-only change (CI config, build environments, feature flags) should be flagged and confirmed before merging, not assumed.
 
