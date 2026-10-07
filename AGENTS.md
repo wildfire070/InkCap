@@ -62,6 +62,20 @@ SDK.
 - Explain fixes in plain language where possible, ideally in terms a Node / React developer would follow.
 - After proposing or making a fix, say how to verify it on hardware.
 
+## Agent Conduct Rules
+
+These are cross-session workflow rules, not code facts — they're here, not only in any one session's private memory, because they must hold regardless of which session, host, or agent opens this repo. Re-run this as a literal checklist at task start and at every mid-task fork, not background text skimmed once.
+
+- Never launch 2+ operations in one turn that share a constrained resource (the PlatformIO toolchain, a serial port, a shared package cache, or — for an orchestrating session — its own rate/usage limit via parallel subagent spawns). Run them sequentially, one at a time, waited-on, even when the task would parallelize naturally.
+- Do not spawn a subagent/background task for a "thorough" or multi-part request unless the user's own words explicitly ask for a subagent or name one. Do the work directly instead.
+- Never add a Co-Authored-By trailer to a commit message.
+- Never overwrite, delete, close, or quit anything visible to the user (files, apps, browser tabs/sessions) without asking first, even when "save to the same location" makes silent action tempting.
+- Never narrow, simplify, or cut scope from what the user asked/approved, or from what your own research surfaced as a fuller set of options, without asking first — disclosing a cut after the fact does not substitute for asking before.
+- Treat a reply to a multiple-choice question that doesn't explicitly name one option (a follow-up question, "investigate more") as NOT a selection — answer it and re-present the choice.
+- For any audit/"what's open"/"check for gaps or silent drops" sweep: read every source in full for meaning. A keyword/phrase grep is a candidate-surfacing first pass only, never the complete check, and must not be reported as if it were.
+- A keyword search of any memory/context file (this one, `.claude/CONTEXT.md`, or elsewhere) that returns no hits is not evidence nothing applies — read the full content of topically-adjacent sections before concluding so.
+- Re-check this list at every mid-task fork, not just once at task start — a rule consulted at the start and then overridden by in-flight momentum is the most common way these get violated.
+
 ## Persistent Context
 
 - Read `.claude/CONTEXT.md` at session start for durable repo-specific gotchas.
