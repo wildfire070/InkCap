@@ -62,6 +62,7 @@
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "QuickActions.h"
+#include "ReaderAo3MoveGuards.h"
 #include "ReaderFontLoading.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
@@ -1740,7 +1741,8 @@ void EpubReaderActivity::handleBookStatsReturn(const bool returnToReaderMenu) {
     restorePromptQueued = false;
     restorePromptShown = false;
     requestArchiveMove();
-    if (SETTINGS.moveFinishedToReadFolder && epub && !epub->hasAo3Info() && !isInReadFolder(epub->getPath())) {
+    if (epub && ReaderAo3MoveGuards::shouldArmReadFolderMove(SETTINGS.moveFinishedToReadFolder, epub->hasAo3Info(),
+                                                            isInReadFolder(epub->getPath()))) {
       pendingReadFolderMove = true;
     }
   } else {
@@ -1840,10 +1842,12 @@ bool EpubReaderActivity::shouldQueueCompletionPromptOnChapterExit() const {
   // through setBookCompleted()/requestArchiveMove()'s plain BookMoveUtils
   // mover, bypassing Ao3ArchiveUtils and corrupting the AO3 index, the same
   // bug class already guarded against in BookActions.cpp/the Library menu.
-  if (completionPromptShown || completionPromptQueued || stats.isCompleted || activeFootnotePreview ||
-      !pendingFootnotePreviewAnchor.empty() || !completionTriggerCrossed || !epub || epub->hasAo3Info() ||
-      !section || section->pageCount == 0 || completionTriggerSpineIndex < 0 || section->isBuilding() ||
-      section->isPartial()) {
+  if (!epub || !section) return false;
+  if (ReaderAo3MoveGuards::completionPromptShouldSkip(
+          completionPromptShown, completionPromptQueued, stats.isCompleted, activeFootnotePreview,
+          !pendingFootnotePreviewAnchor.empty(), completionTriggerCrossed, /*hasEpub=*/true, epub->hasAo3Info(),
+          /*hasSection=*/true, section->pageCount, completionTriggerSpineIndex, section->isBuilding(),
+          section->isPartial())) {
     return false;
   }
 
@@ -3107,8 +3111,8 @@ void EpubReaderActivity::loop() {
   // Ao3ArchiveUtils, which the AO3 index depends on to track a fic's path --
   // same corruption risk the Archive-folder feature already guards against.
   if (atEndOfBook) {
-    pendingReadFolderMove =
-        SETTINGS.moveFinishedToReadFolder && !epub->hasAo3Info() && !isInReadFolder(epub->getPath());
+    pendingReadFolderMove = ReaderAo3MoveGuards::shouldArmReadFolderMove(
+        SETTINGS.moveFinishedToReadFolder, epub->hasAo3Info(), isInReadFolder(epub->getPath()));
   } else if (!stats.isCompleted) {
     pendingReadFolderMove = false;
   }
@@ -5252,7 +5256,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       // for Cycle Status on them) -- route the shortcut there too instead of calling
       // setBookCompleted() directly, which would bypass Ao3ArchiveUtils and corrupt
       // the AO3 index the same way the menu/BookActions.cpp guards already prevent.
-      if (epub && epub->hasAo3Info()) {
+      if (epub && ReaderAo3MoveGuards::shouldRouteMarkFinishedToCycleStatus(/*hasEpub=*/true, epub->hasAo3Info())) {
         onReaderMenuConfirm(EpubReaderMenuAction::CYCLE_STATUS);
       } else {
         const bool newCompleted = !stats.isCompleted;
@@ -5864,8 +5868,10 @@ void EpubReaderActivity::requestArchiveMove() {
   // would reach handleBookStatsReturn() -> here -> the plain BookMoveUtils
   // mover on confirm, corrupting the AO3 index the same way the other three
   // guarded call sites in this file already prevent.
-  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || epub->hasAo3Info() ||
-      BookMoveUtils::isInArchiveFolder(epub->getPath())) {
+  if (!epub) return;
+  if (!ReaderAo3MoveGuards::shouldQueueArchiveMovePrompt(SETTINGS.moveFinishedToArchiveFolder, /*hasEpub=*/true,
+                                                         epub->hasAo3Info(),
+                                                         BookMoveUtils::isInArchiveFolder(epub->getPath()))) {
     return;
   }
   if (archivePromptQueued || archivePromptShown) return;
@@ -5877,8 +5883,10 @@ void EpubReaderActivity::requestArchiveMove() {
 void EpubReaderActivity::requestArchiveRestore() {
   // Same AO3 exclusion as requestArchiveMove(): AO3 fics restore exclusively
   // through Ao3ArchiveUtils, never the plain BookMoveUtils path.
-  if (!SETTINGS.moveFinishedToArchiveFolder || !epub || epub->hasAo3Info() ||
-      !BookMoveUtils::isInArchiveFolder(epub->getPath())) {
+  if (!epub) return;
+  if (!ReaderAo3MoveGuards::shouldQueueArchiveRestorePrompt(SETTINGS.moveFinishedToArchiveFolder, /*hasEpub=*/true,
+                                                            epub->hasAo3Info(),
+                                                            BookMoveUtils::isInArchiveFolder(epub->getPath()))) {
     return;
   }
   if (restorePromptQueued || restorePromptShown) return;
@@ -5909,7 +5917,8 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
       pendingManualArchiveAction = PendingManualArchiveAction::None;
     }
     requestArchiveMove();
-    if (SETTINGS.moveFinishedToReadFolder && !epub->hasAo3Info() && !isInReadFolder(epub->getPath())) {
+    if (ReaderAo3MoveGuards::shouldArmReadFolderMove(SETTINGS.moveFinishedToReadFolder, epub->hasAo3Info(),
+                                                     isInReadFolder(epub->getPath()))) {
       pendingReadFolderMove = true;
     }
   } else {
