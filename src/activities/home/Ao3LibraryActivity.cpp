@@ -19,7 +19,6 @@
 #include "../../Ao3Librarian.h"
 #include "../../Ao3MarkedForLaterStore.h"
 #include "../../Ao3NewChaptersStore.h"
-#include "../../Ao3StoreMaintenance.h"
 #include "../../CrossPointState.h"
 #include "../../MappedInputManager.h"
 #include "../../RecentBooksStore.h"
@@ -95,7 +94,12 @@ void Ao3LibraryActivity::onEnter() {
   skipNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
   autoIndexLaunched_ = false;
   receivedReviewLaunched_ = false;
-  selfHealAo3PathStores();
+  // Self-heal path-keyed entries left stale by something this firmware couldn't
+  // observe directly (USB Mass Storage deletion from a host computer, Calibre
+  // wireless removal, editing the SD card on another device) -- same pattern as
+  // RECENT_BOOKS.pruneMissing() in LibraryActivity::onEnter().
+  if (AO3_MARKED_FOR_LATER_STORE.pruneMissing()) AO3_MARKED_FOR_LATER_STORE.saveToFile();
+  if (AO3_NEW_CHAPTERS_STORE.pruneMissing()) AO3_NEW_CHAPTERS_STORE.saveToFile();
   loadSettings();
   loadSortFilterState();
   requestUpdate();
