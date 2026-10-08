@@ -29,6 +29,9 @@
 #include <memory>
 #include <vector>
 
+#include "Ao3LibraryMetadata.h"
+#include "Ao3MarkedForLaterStore.h"
+#include "Ao3NewChaptersStore.h"
 #include "CrossPointSettings.h"
 #include "DeviceCapabilities.h"
 #include "MappedInputManager.h"
@@ -57,6 +60,7 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "simulator/SimulatorHomeKeyInput.h"
+#include "util/BookMetadataUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/ButtonShortcutController.h"
 #include "util/ScreenshotUtil.h"
@@ -1054,6 +1058,96 @@ class SimulatorSmokeTest {
     }
     Storage.remove(dupPath.c_str());
     Storage.removeDir(dupDir.c_str());
+
+    // AO3 guard contract (gaps found/fixed 2026-10-07): an AO3 fic must never reach the plain
+    // BookMoveUtils mover. The Archive-folder branch above already excludes AO3 fics with
+    // !isAo3IndexedFic(); the upstream Read-folder branch is an `else if` sibling that used to have
+    // no such guard, so an AO3 fic (always failing the Archive branch's condition) fell straight
+    // through into an unguarded raw rename into /Read/. Temporarily mark the shared fixture as an
+    // AO3 fic to exercise this, then revert it before any later step reuses the fixture as a plain book.
+    {
+      const bool originalArchiveSetting = SETTINGS.moveFinishedToArchiveFolder;
+      const bool originalReadSetting = SETTINGS.moveFinishedToReadFolder;
+      SETTINGS.moveFinishedToArchiveFolder = false;  // isolate the Read-folder branch specifically
+      SETTINGS.moveFinishedToReadFolder = true;
+
+      Epub ao3Epub(originalPath, "/.crosspoint");
+      ao3Epub.saveAo3Info("smoke-test-work-id", "2026-01-01", /*completed=*/false);
+      if (!ao3Epub.hasAo3Info()) {
+        fail("AO3 guard contract: saveAo3Info() did not mark the fixture as an AO3 fic");
+      }
+      // toggleBookCompleted()'s guards check isAo3IndexedFic() (Ao3Librarian::getLibraryInfo()),
+      // a DIFFERENT sidecar (ao3_library_info, the full scan record) than hasAo3Info()'s lightweight
+      // ao3-info.bin -- real indexing writes both together (Ao3Librarian.cpp calls saveAo3Info() as
+      // part of writing ao3_library_info), so the test fixture must too or this guard never engages.
+      {
+        Ao3LibraryMetadata meta;
+        strncpy(meta.filepath, originalPath.c_str(), sizeof(meta.filepath) - 1);
+        strncpy(meta.title, "Smoke Test Book", sizeof(meta.title) - 1);
+        strncpy(meta.author, "Author", sizeof(meta.author) - 1);
+        HalFile f;
+        if (!Storage.openFileForWrite("AO3L", ao3Epub.getCachePath() + "/ao3_library_info", f)) {
+          fail("AO3 guard contract: could not stage the ao3_library_info fixture");
+        }
+        f.write(reinterpret_cast<const uint8_t*>(&meta), sizeof(meta));
+        f.close();
+      }
+
+      bool ao3Completed = false;
+      if (!BookActions::toggleBookCompleted(originalPath, "Smoke Test Book", ao3Completed, /*allowMove=*/true)) {
+        fail("AO3 guard contract: toggleBookCompleted() failed for an AO3 fic");
+      }
+      if (!ao3Completed) fail("AO3 guard contract: toggleBookCompleted() did not mark the AO3 fic completed");
+      if (!Storage.exists(originalPath.c_str())) {
+        fail(
+            "AO3 guard contract: an AO3 fic was moved out of its original path by the plain Read-folder "
+            "branch -- guard regression");
+      }
+      const std::string wouldBeReadPath = std::string("/Read/") + filename;
+      if (Storage.exists(wouldBeReadPath.c_str())) {
+        fail("AO3 guard contract: AO3 fic ended up in /Read/ via the plain mover -- guard regression");
+      }
+      if (!BookActions::setBookCompletedOnDisk(originalPath, false)) {
+        fail("AO3 guard contract: could not reset Finished status on the AO3 fixture");
+      }
+
+      // clearFileMetadata() must clean up both path-keyed AO3 side stores (Marked-for-Later, New
+      // Chapters), not just the main Ao3Librarian index -- otherwise a marked/new-chapter fic
+      // deleted elsewhere leaves a permanent ghost entry pointing at a now-gone file.
+      AO3_MARKED_FOR_LATER_STORE.addBook(originalPath, "Smoke Test Book", "Author");
+      AO3_NEW_CHAPTERS_STORE.addBook(originalPath, "Smoke Test Book", "Author");
+      const auto containsPath = [&](const auto& entries) {
+        return std::any_of(entries.begin(), entries.end(),
+                            [&](const auto& e) { return e.path == originalPath; });
+      };
+      if (!containsPath(AO3_MARKED_FOR_LATER_STORE.getEntries())) {
+        fail("AO3 guard contract: could not stage a Marked-for-Later entry for the delete-cleanup test");
+      }
+      if (!containsPath(AO3_NEW_CHAPTERS_STORE.getEntries())) {
+        fail("AO3 guard contract: could not stage a New-Chapters entry for the delete-cleanup test");
+      }
+
+      // Mirrors the real delete flow: clearFileMetadata() is called before the file itself is
+      // removed by every delete path (File Browser, /delete, WebDAV) -- this also reverts the
+      // fixture's AO3 marking via its own Epub::clearCache() call, so no separate revert is needed.
+      BookMetadataUtils::clearFileMetadata(originalPath);
+      if (containsPath(AO3_MARKED_FOR_LATER_STORE.getEntries())) {
+        fail("AO3 guard contract: clearFileMetadata() left a stale Marked-for-Later entry -- guard regression");
+      }
+      if (containsPath(AO3_NEW_CHAPTERS_STORE.getEntries())) {
+        fail("AO3 guard contract: clearFileMetadata() left a stale New-Chapters entry -- guard regression");
+      }
+
+      Epub revert(originalPath, "/.crosspoint");
+      revert.setupCacheDir();
+      if (revert.hasAo3Info()) {
+        fail("AO3 guard contract: fixture still marked as an AO3 fic after cleanup -- later steps would break");
+      }
+
+      SETTINGS.moveFinishedToArchiveFolder = originalArchiveSetting;
+      SETTINGS.moveFinishedToReadFolder = originalReadSetting;
+    }
+    LOG_INF("SMOKE", "AO3 guard contract passed");
 
     SETTINGS.moveFinishedToArchiveFolder = originalMoveSetting;
     LOG_INF("SMOKE", "Archive/Restore move contract passed");
