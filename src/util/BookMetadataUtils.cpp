@@ -6,6 +6,8 @@
 #include <Logging.h>
 
 #include "../Ao3Librarian.h"
+#include "../Ao3MarkedForLaterStore.h"
+#include "../Ao3NewChaptersStore.h"
 #include "../BookmarkStore.h"
 #include "../ClippingStore.h"
 
@@ -44,6 +46,13 @@ void clearFileMetadata(const std::string& fullPath) {
     // ever runs Ao3Librarian::sanitizeIndex() automatically. A no-op for a
     // non-AO3 epub (no matching hash) or on a branch with no AO3 index file.
     Ao3Librarian::tombstoneRecord(fullPath);
+    // Same reasoning for the two path-keyed AO3 queues: rename calls
+    // updatePath() on both everywhere a file can be renamed (on-device,
+    // web, WebDAV), but nothing ever called their pruneMissing()/
+    // removeByPath() on delete, so a marked-for-later or new-chapter fic
+    // deleted here left a permanent ghost entry pointing at a gone file.
+    AO3_MARKED_FOR_LATER_STORE.removeByPath(fullPath);
+    AO3_NEW_CHAPTERS_STORE.removeByPath(fullPath);
     Epub(fullPath, "/.crosspoint").clearCache();
     BookmarkStore::deleteForFilePath(fullPath, "epub");
     ClippingStore::deleteForFilePath(fullPath, "epub");
