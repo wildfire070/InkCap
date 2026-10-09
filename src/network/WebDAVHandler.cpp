@@ -19,6 +19,33 @@
 #include "util/BookMoveUtils.h"
 
 namespace {
+// FAT cannot replace atomically. Keep the previous file until publication succeeds.
+// Refuse an occupied backup path: it may contain a file preserved by an earlier
+// failed rollback, or an unrelated user file.
+bool replaceFile(const String& source, const String& destination) {
+  const bool replacing = Storage.exists(destination.c_str());
+  const String backup = destination + ".davold";
+  if (Storage.exists(backup.c_str())) {
+    LOG_ERR("DAV", "Replacement blocked by existing backup: %s", backup.c_str());
+    return false;
+  }
+  if (replacing && !Storage.rename(destination.c_str(), backup.c_str())) {
+    LOG_ERR("DAV", "Could not preserve destination: %s", destination.c_str());
+    return false;
+  }
+  if (!Storage.rename(source.c_str(), destination.c_str())) {
+    LOG_ERR("DAV", "Could not publish replacement: %s", destination.c_str());
+    if (replacing && !Storage.rename(backup.c_str(), destination.c_str())) {
+      LOG_ERR("DAV", "Previous file preserved at: %s", backup.c_str());
+    }
+    return false;
+  }
+  if (replacing && !Storage.remove(backup.c_str())) {
+    LOG_ERR("DAV", "Replacement saved; previous file remains at: %s", backup.c_str());
+  }
+  return true;
+}
+
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr size_t HIDDEN_ITEM_COUNT = sizeof(HIDDEN_ITEMS) / sizeof(HIDDEN_ITEMS[0]);
 
@@ -130,18 +157,15 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
     }
 
   } else if (raw.status == RAW_END) {
-    if (_putFile) _putFile.close();
+    if (_putFile) {
+      _putOk = _putFile.sync() && _putOk;
+      _putOk = _putFile.close() && _putOk;
+      if (!_putOk) LOG_ERR("DAV", "Failed to finish PUT: %s", _putPath.c_str());
+    }
     if (_putOk) {
       String tempPath = _putPath + ".davtmp";
       sdFontSystem.markRegistryDirtyForPath(_putPath.c_str());
-      if (_putExisted) Storage.remove(_putPath.c_str());
-      HalFile tmp = Storage.open(tempPath.c_str());
-      if (tmp) {
-        _putOk = tmp.rename(_putPath.c_str());
-        tmp.close();
-      } else {
-        _putOk = false;
-      }
+      _putOk = replaceFile(tempPath, _putPath);
       if (!_putOk) Storage.remove(tempPath.c_str());
     }
     LOG_DBG("DAV", "PUT END: %u bytes, ok=%d", raw.totalSize, _putOk);
@@ -369,12 +393,30 @@ void WebDAVHandler::handleGet(WebServer& s) {
   }
 
   String contentType = getMimeType(path);
-  s.setContentLength(file.size());
+  const size_t fileSize = file.size();
+  file.close();  // The storage helper opens its own reader.
+  s.setContentLength(fileSize);
   s.send(200, contentType.c_str(), "");
 
+  // HalFile is a Print, not a Stream: client.write(file) converts it to bool
+  // and sends 0x01. The helper handles partial writes and watchdog yielding.
+  // NetworkClient itself isn't a Print (unlike the real ESP32 WiFiClient this
+  // mirrors), so forward through a tiny local adapter instead.
+  class NetworkClientPrint : public Print {
+   public:
+    explicit NetworkClientPrint(NetworkClient& client) : client_(client) {}
+    size_t write(const uint8_t value) override { return client_.write(value); }
+    size_t write(const uint8_t* buffer, const size_t size) override { return client_.write(buffer, size); }
+
+   private:
+    NetworkClient& client_;
+  };
   NetworkClient client = s.client();
-  client.write(file);
-  file.close();
+  NetworkClientPrint clientPrint(client);
+  if (!Storage.readFileToStream(path.c_str(), clientPrint)) {
+    LOG_ERR("DAV", "GET %s: failed to stream file", path.c_str());
+    client.stop();  // Headers are already sent; terminate the incomplete body.
+  }
 }
 
 // ── HEAD ─────────────────────────────────────────────────────────────────────
@@ -615,6 +657,18 @@ void WebDAVHandler::handleMove(WebServer& s) {
     file.close();
     s.send(412, "text/plain", "Destination exists and Overwrite is F");
     return;
+  }
+
+  // Directory replacement needs recursive WebDAV semantics; never park an
+  // existing directory as a file backup that cannot be removed afterward.
+  if (dstExists) {
+    HalFile destination = Storage.open(dstPath.c_str());
+    const bool isFile = destination && !destination.isDirectory();
+    if (destination) destination.close();
+    if (!isFile) {
+      s.send(409, "text/plain", "Cannot replace destination directory");
+      return;
+    }
   }
 
   // Rename the existing destination aside rather than deleting it outright:

@@ -5,6 +5,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
@@ -25,10 +27,17 @@ enum BarItem {
   SLOT_RIGHT_1,
   SLOT_RIGHT_2,
   SLOT_RIGHT_3,
+  BATTERY_STYLE,
   PERCENTAGE_FORMAT,
   PROGRESS_BAR,
   PROGRESS_BAR_THICKNESS,
+  HIDE_BAR,
 };
+
+// The display (UI header) bar has three slots, then its own option rows.
+constexpr int DISPLAY_BATTERY_ROW = 3;
+constexpr int DISPLAY_TEXT_SIZE_ROW = 4;
+constexpr int ROOT_TEXT_SIZE_ROW = 3;
 
 constexpr ReaderStatusBarItem pickerItems[] = {
     ReaderStatusBarItem::Clock,
@@ -106,6 +115,18 @@ const char* thicknessLabel(const uint8_t thickness) {
   }
 }
 
+constexpr StrId textSizeNames[] = {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE};
+constexpr StrId rootLabels[] = {StrId::STR_TOP_STATUS_BAR, StrId::STR_BOTTOM_STATUS_BAR, StrId::STR_XTC_STATUS_BAR,
+                                StrId::STR_STATUS_BAR_TEXT_SIZE};
+
+constexpr StrId batteryStyleNames[] = {StrId::STR_BATTERY_ICON_AND_PERCENT, StrId::STR_BATTERY_ICON_ONLY,
+                                       StrId::STR_BATTERY_PERCENT_ONLY};
+
+const char* batteryStyleLabel(const ReaderStatusBarBatteryStyle style) {
+  const auto index = static_cast<size_t>(style);
+  return I18N.get(batteryStyleNames[index < std::size(batteryStyleNames) ? index : 0]);
+}
+
 const StrId percentageFormatNames[] = {StrId::STR_PERCENTAGE_FORMAT_WHOLE, StrId::STR_PERCENTAGE_FORMAT_ONE_DECIMAL,
                                        StrId::STR_PERCENTAGE_FORMAT_TWO_DECIMALS};
 }  // namespace
@@ -150,16 +171,18 @@ ReaderStatusBarPosition StatusBarSettingsActivity::selectedPosition() const {
 }
 
 void StatusBarSettingsActivity::refreshItemCount() {
-  visibleItemCount = displayContext || view == View::Root ? 3 : PROGRESS_BAR_THICKNESS + 1;
+  visibleItemCount = displayContext       ? DISPLAY_TEXT_SIZE_ROW + 1
+                     : view == View::Root ? ROOT_TEXT_SIZE_ROW + 1
+                                          : HIDE_BAR + 1;
   selectedIndex = std::clamp(selectedIndex, 0, visibleItemCount - 1);
 }
 
 int StatusBarSettingsActivity::previewHeight() const {
-  if (view == View::Root) return 0;
+  if (view == View::Root || (!displayContext && SETTINGS.readerStatusBar(selectedPosition()).hidden)) return 0;
   const auto& metrics = UITheme::getInstance().getMetrics();
   return renderer.getLineHeight(UI_10_FONT_ID) + 18 +
-         (displayContext ? metrics.statusBarVerticalMargin + ReaderStatusBarConfig::TOP_TEXT_INSET
-                         : UITheme::getReaderStatusBarHeight(selectedPosition())) +
+         (displayContext ? UITheme::getDisplayStatusBarTextHeight(renderer) + ReaderStatusBarConfig::TOP_TEXT_INSET
+                         : UITheme::getReaderStatusBarHeight(selectedPosition(), renderer)) +
          metrics.verticalSpacing;
 }
 
@@ -236,7 +259,7 @@ void StatusBarSettingsActivity::loop() {
 }
 
 void StatusBarSettingsActivity::handleSelection() {
-  if (view == View::Root && selectedIndex < 2) {
+  if (!displayContext && view == View::Root && selectedIndex < 2) {
     view = selectedIndex == 0 ? View::Top : View::Bottom;
     selectedIndex = 0;
     topIndex = 0;
@@ -249,6 +272,22 @@ void StatusBarSettingsActivity::handleSelection() {
 }
 
 void StatusBarSettingsActivity::openOptionPicker() {
+  if ((displayContext && selectedIndex == DISPLAY_TEXT_SIZE_ROW) ||
+      (!displayContext && view == View::Root && selectedIndex == ROOT_TEXT_SIZE_ROW)) {
+    optionPopup.show(StrId::STR_STATUS_BAR_TEXT_SIZE, textSizeNames, 3,
+                     displayContext ? SETTINGS.displayStatusBarTextSize : SETTINGS.statusBarTextSize,
+                     [this](const int selected) {
+                       if (displayContext)
+                         SETTINGS.displayStatusBarTextSize = static_cast<uint8_t>(selected);
+                       else
+                         SETTINGS.statusBarTextSize = static_cast<uint8_t>(selected);
+                       SETTINGS.saveToFile();
+                       listNav.requestSelection(selectedIndex);
+                       requestUpdate();
+                     });
+    requestUpdate();
+    return;
+  }
   if (view == View::Root) {
     const std::vector<std::string> options = {tr(STR_HIDE), tr(STR_BOTTOM), tr(STR_TOP), tr(STR_STATUS_BAR_BOTH)};
     optionPopup.show(StrId::STR_XTC_STATUS_BAR, options, SETTINGS.xtcStatusBarMode, [this](const int selected) {
@@ -264,6 +303,39 @@ void StatusBarSettingsActivity::openOptionPicker() {
   const auto position = selectedPosition();
   const int item = selectedIndex;
   const auto config = SETTINGS.readerStatusBar(position);
+  if (displayContext ? item == DISPLAY_BATTERY_ROW : item == BATTERY_STYLE) {
+    const auto current = displayContext ? SETTINGS.displayStatusBar.batteryStyle : config.batteryStyle;
+    optionPopup.show(StrId::STR_BATTERY, batteryStyleNames, static_cast<int>(std::size(batteryStyleNames)),
+                     static_cast<int>(current), [this, position](const int selected) {
+                       if (selected < 0 || selected >= static_cast<int>(ReaderStatusBarBatteryStyle::Count)) return;
+                       const auto style = static_cast<ReaderStatusBarBatteryStyle>(selected);
+                       if (displayContext) {
+                         SETTINGS.displayStatusBar.batteryStyle = style;
+                       } else {
+                         auto updated = SETTINGS.readerStatusBar(position);
+                         updated.batteryStyle = style;
+                         SETTINGS.setReaderStatusBar(position, updated);
+                       }
+                       SETTINGS.saveToFile();
+                       listNav.requestSelection(selectedIndex);
+                       requestUpdate();
+                     });
+    requestUpdate();
+    return;
+  }
+  if (!displayContext && item == HIDE_BAR) {
+    constexpr StrId toggleNames[] = {StrId::STR_OFF, StrId::STR_ON};
+    optionPopup.show(StrId::STR_HIDE, toggleNames, 2, config.hidden ? 1 : 0, [this, position](const int selected) {
+      auto updated = SETTINGS.readerStatusBar(position);
+      updated.hidden = selected != 0;
+      SETTINGS.setReaderStatusBar(position, updated);
+      SETTINGS.saveToFile();
+      listNav.requestSelection(selectedIndex);
+      requestUpdate();
+    });
+    requestUpdate();
+    return;
+  }
   const auto currentItem = displayContext ? SETTINGS.displayStatusBar.slots[item]
                                           : config.slots[std::min(item, static_cast<int>(SLOT_RIGHT_3))];
   std::vector<std::string> options;
@@ -324,6 +396,7 @@ void StatusBarSettingsActivity::openOptionPicker() {
     SETTINGS.setReaderStatusBar(position, updated);
     SETTINGS.saveToFile();
     refreshItemCount();
+    listNav.requestSelection(selectedIndex);
     requestUpdate();
   });
   requestUpdate();
@@ -348,15 +421,16 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   const auto orientation = renderer.getOrientation();
   const bool landscape = orientation == GfxRenderer::Orientation::LandscapeClockwise ||
                          orientation == GfxRenderer::Orientation::LandscapeCounterClockwise;
-  const int hintGutterWidth = landscape ? metrics.buttonHintsHeight : 0;
+  const int hintGutterWidth = landscape ? UITheme::getButtonHintsReserve(renderer) : 0;
   const int contentX = orientation == GfxRenderer::Orientation::LandscapeClockwise ? hintGutterWidth : 0;
   const int contentWidth = pageWidth - hintGutterWidth;
   const Rect header = settingsHeaderRect();
   const int contentTop = header.y + header.height + metrics.verticalSpacing;
   const int bottomPreviewHeight = view == View::Bottom ? previewHeight() : 0;
-  const int contentHeight =
-      pageHeight - contentTop - metrics.buttonHintsHeight - bottomPreviewHeight - metrics.verticalSpacing * 2;
-  screen.setContentMargin(
+  const int contentHeight = pageHeight - contentTop - UITheme::getButtonHintsReserve(renderer) - bottomPreviewHeight -
+                            metrics.verticalSpacing * 2;
+  setUiContentMargin(
+      screen, renderer,
       fui::Insets{static_cast<int16_t>(contentTop), static_cast<int16_t>(pageWidth - (contentX + contentWidth)),
                   static_cast<int16_t>(pageHeight - (contentTop + contentHeight)), static_cast<int16_t>(contentX)});
 
@@ -368,35 +442,49 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   for (int i = 0; i < visibleItemCount; ++i) {
     fui::ListItem row;
     row.actionValue = static_cast<int16_t>(i);
-    if (displayContext) {
-      row.label = i == 0 ? tr(STR_STATUS_BAR_LEFT) : i == 1 ? tr(STR_CENTER) : tr(STR_STATUS_BAR_RIGHT);
+    if (displayContext && i == DISPLAY_TEXT_SIZE_ROW) {
+      row.label = tr(STR_STATUS_BAR_TEXT_SIZE);
+      row.value = I18N.get(textSizeNames[std::min<uint8_t>(SETTINGS.displayStatusBarTextSize, 2)]);
+    } else if (displayContext && i == DISPLAY_BATTERY_ROW) {
+      row.label = tr(STR_BATTERY);
+      row.value = batteryStyleLabel(SETTINGS.displayStatusBar.batteryStyle);
+    } else if (displayContext) {
+      row.label = i == 0 ? tr(STR_DIR_LEFT) : i == 1 ? tr(STR_CENTER) : tr(STR_DIR_RIGHT);
       values[i] = itemLabel(SETTINGS.displayStatusBar.slots[i]);
       row.value = values[i].c_str();
     } else if (view == View::Root) {
-      row.label = i == 0 ? tr(STR_TOP_STATUS_BAR) : i == 1 ? tr(STR_BOTTOM_STATUS_BAR) : tr(STR_XTC_STATUS_BAR);
-      row.value = i == 2 ? xtcModeLabel(SETTINGS.xtcStatusBarMode) : ">";
+      row.label = I18N.get(rootLabels[i]);
+      row.value = i == 2   ? xtcModeLabel(SETTINGS.xtcStatusBarMode)
+                  : i == 3 ? I18N.get(textSizeNames[std::min<uint8_t>(SETTINGS.statusBarTextSize, 2)])
+                           : ">";
     } else {
       const int item = i;
       if (item <= SLOT_RIGHT_3) {
         values[i] = itemLabel(config.slots[item]);
         if (item <= SLOT_LEFT_3) {
-          labels[i] = std::string(tr(STR_STATUS_BAR_LEFT)) + " " + std::to_string(item + 1);
+          labels[i] = std::string(tr(STR_DIR_LEFT)) + " " + std::to_string(item + 1);
         } else if (item == SLOT_CENTER) {
           labels[i] = tr(STR_CENTER);
         } else {
-          labels[i] = std::string(tr(STR_STATUS_BAR_RIGHT)) + " " + std::to_string(item - SLOT_RIGHT_1 + 1);
+          labels[i] = std::string(tr(STR_DIR_RIGHT)) + " " + std::to_string(item - SLOT_RIGHT_1 + 1);
         }
         row.label = labels[i].c_str();
         row.value = values[i].c_str();
-        if (item == SLOT_LEFT_1) row.sectionHeading = tr(STR_STATUS_BAR_LEFT);
+        if (item == SLOT_LEFT_1) row.sectionHeading = tr(STR_DIR_LEFT);
         if (item == SLOT_CENTER) row.sectionHeading = tr(STR_CENTER);
-        if (item == SLOT_RIGHT_1) row.sectionHeading = tr(STR_STATUS_BAR_RIGHT);
+        if (item == SLOT_RIGHT_1) row.sectionHeading = tr(STR_DIR_RIGHT);
+      } else if (item == BATTERY_STYLE) {
+        row.label = tr(STR_BATTERY);
+        row.value = batteryStyleLabel(config.batteryStyle);
       } else if (item == PERCENTAGE_FORMAT) {
         row.label = tr(STR_PERCENTAGE_FORMAT);
         row.value = I18N.get(percentageFormatNames[config.percentageFormat]);
       } else if (item == PROGRESS_BAR) {
         row.label = tr(STR_PROGRESS_BAR);
         row.value = progressModeLabel(config.progressBar);
+      } else if (item == HIDE_BAR) {
+        row.label = tr(STR_HIDE);
+        row.value = config.hidden ? tr(STR_ON) : tr(STR_OFF);
       } else {
         row.label = tr(STR_PROGRESS_BAR_THICKNESS);
         row.value = thicknessLabel(config.progressBarThickness);
@@ -420,20 +508,21 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   visibleRows = listNav.trusts(visibleItemCount) ? listNav.pageRowsFor(visibleItemCount) : std::max<int>(rows, 1);
   topIndex = scrollListBy(topIndex, 0, visibleRows, visibleItemCount);
   props.topIndex = static_cast<uint16_t>(topIndex);
-  if (displayContext || view == View::Root) {
-    props.nav = &listNav;
-    screen.list(props);
-    visibleRows = listNav.pageRowsFor(visibleItemCount);
-    topIndex = listNav.top;
-    return;
-  }
-
   const auto renderScrollingList = [&] {
-    props.nav = &listNav;
+    if (listNav.selected.load() != selectedIndex) listNav.requestSelection(selectedIndex);
+    listNav.top = topIndex;
+    screen.syncListViewport(listNav, props, visibleItemCount);
     screen.list(props);
+#ifdef SIMULATOR
+    simulatorSelectedRowVisible = selectedIndex >= listNav.top && selectedIndex < listNav.top + listNav.drawnRows;
+#endif
     visibleRows = listNav.pageRowsFor(visibleItemCount);
     topIndex = listNav.top;
   };
+  if (displayContext || view == View::Root) {
+    renderScrollingList();
+    return;
+  }
 
   // Keep the separator aligned with FreeInkUI's variable-height rows when the list scrolls or wraps.
   const auto resolvedProps = screen.resolveListProps(props);
@@ -482,7 +571,6 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     // On compact screens, keep every option in one scrollable list instead of
     // splitting off a segment that cannot fit its first row.
     renderScrollingList();
-    screen.target().fill(fui::Rect{body.x, dividerY, body.width, 1}, fui::Paint::solid(fui::Color::Black));
     return;
   }
   const int16_t dividerMargin = std::min(layoutProps.sectionGap, maxDividerMargin);
@@ -511,6 +599,9 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
       selectedIndex > dividerIndex ? static_cast<int16_t>(selectedIndex - dividerIndex - 1) : -1;
   afterDivider.scrollIndicator = false;
   screen.list(afterDivider);
+#ifdef SIMULATOR
+  simulatorSelectedRowVisible = selectedIndex >= topIndex;
+#endif
 
   // The split sections share one scroll position, so keep one indicator for the full list.
   if (resolvedProps.scrollIndicator) {
@@ -523,15 +614,15 @@ void StatusBarSettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
 
 void StatusBarSettingsActivity::render(RenderLock&&) {
   if (optionPopup.processRender(renderer, mappedInput)) return;
-  renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const auto orientation = renderer.getOrientation();
   const bool landscape = orientation == GfxRenderer::Orientation::LandscapeClockwise ||
                          orientation == GfxRenderer::Orientation::LandscapeCounterClockwise;
-  const int contentX = orientation == GfxRenderer::Orientation::LandscapeClockwise ? metrics.buttonHintsHeight : 0;
-  const int contentWidth = pageWidth - (landscape ? metrics.buttonHintsHeight : 0);
+  const int contentX =
+      orientation == GfxRenderer::Orientation::LandscapeClockwise ? UITheme::getButtonHintsReserve(renderer) : 0;
+  const int contentWidth = pageWidth - (landscape ? UITheme::getButtonHintsReserve(renderer) : 0);
   const char* headerTitle = displayContext       ? tr(STR_STATUS_BAR)
                             : view == View::Root ? tr(STR_STATUS_BARS)
                             : view == View::Top  ? tr(STR_TOP_STATUS_BAR)
@@ -540,24 +631,33 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
       mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   const Rect header = settingsHeaderRect();
   const bool showHeaderStatus = view == View::Root;
-  if (mappedInput.hasTouchHardware()) {
-    TouchHeaderBackButton::draw(renderer, uiTarget, header, headerTitle, readerContext, 0, nullptr,
-                                TouchHeaderBackButton::TITLE_VERTICAL_OFFSET, showHeaderStatus);
-  } else {
-    GUI.drawHeader(renderer, Rect{contentX, header.y, contentWidth, header.height}, headerTitle, nullptr, readerContext,
-                   showHeaderStatus);
-  }
   uiReady = false;
-  app.render();
+  // Wrapped rows and section headings can make the measured page shorter than
+  // its estimate. Finish following the selection before displaying the frame,
+  // including the last Hide row on compact or translated screens.
+  for (int pass = 0; pass < 8; ++pass) {
+    renderer.clearScreen();
+    if (mappedInput.hasTouchHardware()) {
+      TouchHeaderBackButton::draw(renderer, uiTarget, header, headerTitle, readerContext, 0, nullptr,
+                                  TouchHeaderBackButton::TITLE_VERTICAL_OFFSET, showHeaderStatus);
+    } else {
+      GUI.drawHeader(renderer, Rect{contentX, header.y, contentWidth, header.height}, headerTitle, nullptr,
+                     readerContext, showHeaderStatus);
+    }
+    renderUiApp(app, uiTarget);
+    if (!listNav.consumeRebuildNeeded()) break;
+    if (pass == 7) LOG_DBG("SBS", "Status bar list did not settle after 8 passes");
+  }
   uiReady = true;
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, true);
-  if (view != View::Root) {
+  if (view != View::Root && (displayContext || !SETTINGS.readerStatusBar(selectedPosition()).hidden)) {
     const auto position = selectedPosition();
-    const int barHeight = displayContext ? metrics.statusBarVerticalMargin + ReaderStatusBarConfig::TOP_TEXT_INSET
-                                         : UITheme::getReaderStatusBarHeight(position);
-    const int previewOriginY = view == View::Top
-                                   ? topPreviewOriginY()
-                                   : pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - barHeight;
+    const int barHeight = displayContext
+                              ? UITheme::getDisplayStatusBarTextHeight(renderer) + ReaderStatusBarConfig::TOP_TEXT_INSET
+                              : UITheme::getReaderStatusBarHeight(position, renderer);
+    const int previewOriginY =
+        view == View::Top ? topPreviewOriginY()
+                          : pageHeight - UITheme::getButtonHintsReserve(renderer) - metrics.verticalSpacing - barHeight;
     const int labelY = view == View::Top ? previewOriginY + barHeight + 9
                                          : previewOriginY - renderer.getLineHeight(UI_10_FONT_ID) - 18;
     renderer.drawText(UI_10_FONT_ID, contentX + metrics.contentSidePadding, labelY, tr(STR_PREVIEW));

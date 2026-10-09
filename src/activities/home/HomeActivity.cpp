@@ -30,6 +30,7 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "FilenameFontSystem.h"
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
@@ -431,9 +432,18 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
 void buildCarouselCacheKey(const std::vector<RecentBook>& recentBooks, std::string& key, uint64_t& keyHash) {
   key.clear();
   key.reserve(512);
+  key += SETTINGS.filenameFallbackFont;
+  key += '\0';
+  key += std::to_string(filenameFontSystem.fingerprint());
+  key += '\0';
   // Artwork includes Dark Mode's image-polarity correction. Progress, stats,
   // headers and menus are drawn live, so reading cannot invalidate this cache.
   key += SETTINGS.screenInverted ? "dark:1" : "dark:0";
+  // Artwork positions follow the global header's reserved space.
+  if (SETTINGS.displayStatusBarTextSize != 0) {
+    key += "status-size:";
+    key += static_cast<char>('0' + SETTINGS.displayStatusBarTextSize);
+  }
   key += '\0';
   for (const auto& book : recentBooks) {
     appendCarouselCoverStateToKey(key, book);
@@ -601,9 +611,10 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
   }
 }
 
-void HomeActivity::loadCoverGridThumbnails() {
+bool HomeActivity::loadCoverGridThumbnails() {
   recentsLoading = true;
   bool showingLoading = false;
+  bool pathsChanged = false;
   Rect popupRect;
   for (size_t i = 0; i < recentBooks.size(); ++i) {
     auto& book = recentBooks[i];
@@ -618,6 +629,7 @@ void HomeActivity::loadCoverGridThumbnails() {
         auto xtc = makeUniqueNoThrow<Xtc>(book.path, "/.crosspoint");
         if (xtc) book.coverBmpPath = xtc->getThumbBmpPath();
       }
+      pathsChanged = pathsChanged || !book.coverBmpPath.empty();
     }
     const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, width, height, false);
     if (thumbPath.empty()) continue;
@@ -631,10 +643,10 @@ void HomeActivity::loadCoverGridThumbnails() {
     }
     if (!showingLoading) {
       showingLoading = true;
-      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING));
     }
+    // fillPopupProgress() refreshes the panel itself.
     GUI.fillPopupProgress(renderer, popupRect, static_cast<int>(100 * i / std::max<size_t>(1, recentBooks.size())));
-    renderer.displayBuffer();
     if (FsHelpers::hasEpubExtension(book.path)) {
       auto epub = makeUniqueNoThrow<Epub>(book.path, "/.crosspoint");
       if (!epub) {
@@ -655,6 +667,8 @@ void HomeActivity::loadCoverGridThumbnails() {
   }
   recentsLoaded = true;
   recentsLoading = false;
+  // The loading popup or newly resolved artwork must be replaced by a repaint.
+  return showingLoading || pathsChanged;
 }
 
 void HomeActivity::loadAllBookStats() {
@@ -669,16 +683,10 @@ void HomeActivity::loadAllBookStats() {
 }
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
-  // Thumbnail generation may need a 32 KB contiguous inflate buffer. The Home
-  // cover snapshot is only a redraw cache, so release it before ZIP work.
-  if (coverBuffer) {
-    freeCoverBuffer();
-    coverRendered = false;
-  }
-
   recentsLoading = true;
   bool showingLoading = false;
   Rect popupRect;
+  // Every thumbnail generation path shows progress before its ZIP/image work.
   auto showLoadingProgress = [&](const int value) {
     // These draw directly to the shared renderer outside of render()/
     // RenderLock. An ambient requestUpdate() (e.g. main.cpp's USB-plug or
@@ -689,10 +697,17 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     RenderLock lock(*this);
     if (!showingLoading) {
       showingLoading = true;
-      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      // Thumbnail generation may need a 32 KB contiguous inflate buffer. The
+      // Home cover snapshot is only a redraw cache, so release it before ZIP
+      // work. Keep it when every thumbnail already exists: navigation can then
+      // restore the cover from RAM instead of decoding it from SD again.
+      if (coverBuffer) {
+        freeCoverBuffer();
+        coverRendered = false;
+      }
+      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING));
     }
-    GUI.fillPopupProgress(renderer, popupRect, std::clamp(value, 0, 100));
-    renderer.displayBuffer();
+    GUI.fillPopupProgress(renderer, popupRect, std::clamp(value, 0, 100));  // refreshes the panel itself
   };
 
   const bool isCarouselTheme =
@@ -912,6 +927,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 }
 
 void HomeActivity::onEnter() {
+  {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
+
   Activity::onEnter();
 
   hasOpdsServers = OPDS_STORE.hasServers();
@@ -1107,14 +1127,20 @@ std::unique_ptr<Activity> HomeActivity::createFrontlightReadingStatsActivity() {
 }
 
 void HomeActivity::onFrontlightPanelOpened() {
+  insetsBeforeFrontlightPanel = renderer.getViewableInsets();
   themeBeforeFrontlightPanel = SETTINGS.uiTheme;
   scaleBeforeFrontlightPanel = SETTINGS.uiScale;
+  filenameFontBeforeFrontlightPanel = filenameFontSystem.fingerprint();
+  statusSizeBeforeFrontlightPanel = SETTINGS.displayStatusBarTextSize;
   // Save the selection before changed theme metrics can reinterpret its index.
   initialBookPath = getCurrentBookPath();
 }
 
 void HomeActivity::onFrontlightPanelClosed() {
-  if (themeBeforeFrontlightPanel != SETTINGS.uiTheme || scaleBeforeFrontlightPanel != SETTINGS.uiScale) {
+  if (themeBeforeFrontlightPanel != SETTINGS.uiTheme || scaleBeforeFrontlightPanel != SETTINGS.uiScale ||
+      filenameFontBeforeFrontlightPanel != filenameFontSystem.fingerprint() ||
+      statusSizeBeforeFrontlightPanel != SETTINGS.displayStatusBarTextSize ||
+      insetsBeforeFrontlightPanel != renderer.getViewableInsets()) {
     // Drawer Settings keeps Home alive. Recreate its theme-specific controls,
     // cover snapshots and thumbnail loading state through the normal lifecycle.
     // ActivityManager owns the replacement; its heavy caches allocate onEnter,
@@ -1125,7 +1151,7 @@ void HomeActivity::onFrontlightPanelClosed() {
       activityManager.replaceActivity(std::move(home));
       return;
     }
-    LOG_ERR("HOME", "Cannot rebuild Home after theme or UI scale change");
+    LOG_ERR("HOME", "Cannot rebuild Home after layout change");
   }
   globalStats = GlobalReadingStats::load();
   showAllDevicesStats = GlobalReadingStats::hasSyncedStats();
@@ -1330,14 +1356,16 @@ bool HomeActivity::allocateCarouselFrameSlots(int targetFrameCount) {
 
 void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  bool coverRendered = false, coverBufferStored = false, bufferRestored = false;
+  // Frame snapshots are independent of the live Home cover state in the members.
+  bool frameCoverRendered = false, frameCoverStored = false, frameBufferRestored = false;
   LyraCarouselTheme::setPreRenderIndex(bookIdx);
   renderer.clearScreen();
   // Snapshot the expensive artwork only. Fresh progress/stats and controls are
   // added after restoring it, without rereading or repainting the covers.
-  GUI.drawRecentBookCover(
-      renderer, Rect{0, metrics.homeTopPadding, renderer.getScreenWidth(), metrics.homeCoverTileHeight}, recentBooks,
-      static_cast<int>(recentBooks.size()), coverRendered, coverBufferStored, bufferRestored, []() { return true; });
+  GUI.drawRecentBookCover(renderer,
+                          Rect{0, metrics.homeTopPadding, renderer.getScreenWidth(), metrics.homeCoverTileHeight},
+                          recentBooks, static_cast<int>(recentBooks.size()), frameCoverRendered, frameCoverStored,
+                          frameBufferRestored, []() { return true; });
 }
 
 bool HomeActivity::saveCarouselFrameToDisk(uint64_t cacheKeyHash, int bookCount, int bookIdx, int slotIdx) {
@@ -2225,15 +2253,12 @@ void HomeActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     displayHomeBuffer();
 
-    if (coverGridUi->takeThumbHeightsChanged()) {
-      coverGridUi->refreshCoverPaths();
-      recentsLoaded = false;
-    }
-    if (!firstRenderDone) {
-      firstRenderDone = true;
-      requestUpdate();
-    } else if (!recentsLoaded && !recentsLoading) {
-      loadCoverGridThumbnails();
+    // Layout records each slot's thumbnail size, and its cover path, before
+    // painting it. New sizes only mean the thumbnails must be checked.
+    if (coverGridUi->takeThumbHeightsChanged()) recentsLoaded = false;
+    // The panel already shows Home; repaint only for new artwork or to clear
+    // the progress popup, rather than repeating an identical frame.
+    if (!recentsLoaded && !recentsLoading && loadCoverGridThumbnails()) {
       coverGridUi->refreshCoverPaths();
       requestUpdate();
     }
@@ -2287,12 +2312,6 @@ void HomeActivity::render(RenderLock&&) {
 
     displayHomeBuffer();
 
-    if (!firstRenderDone) {
-      firstRenderDone = true;
-      requestUpdate();
-      return;
-    }
-
     if (!recentsLoaded && !recentsLoading) {
       recentsLoading = true;
       loadRecentCovers(metrics.homeCoverHeight);
@@ -2345,12 +2364,8 @@ void HomeActivity::render(RenderLock&&) {
 
       displayHomeBuffer();
       if (saveViewedFrame) saveCarouselFrameToDisk(gCarouselCache.keyHash, bookCount, centerIdx, slotIdx);
-      // Mirror the slow-path trigger: generate missing thumbnails on the second
-      // render so the E-ink is already showing something before the SD work starts.
-      if (!firstRenderDone) {
-        firstRenderDone = true;
-        requestUpdate();
-      } else if (!recentsLoaded && !recentsLoading) {
+      // Mirror the slow path: Home is already on the panel before SD work starts.
+      if (!recentsLoaded && !recentsLoading) {
         recentsLoading = true;
         loadRecentCovers(metrics.homeCoverHeight);
       }
@@ -2370,13 +2385,14 @@ void HomeActivity::render(RenderLock&&) {
     const int menuRows = std::min(4, static_cast<int>(menuItems.size()));
     const int requiredMenuHeight =
         metrics.verticalSpacing + menuRows * metrics.menuRowHeight + std::max(0, menuRows - 1) * metrics.menuSpacing;
-    const int maxCoverHeight = pageHeight - metrics.buttonHintsHeight - metrics.homeTopPadding -
+    const int maxCoverHeight = pageHeight - UITheme::getButtonHintsReserve(renderer) - metrics.homeTopPadding -
                                metrics.homeMenuTopOffset - requiredMenuHeight;
     homeCoverTileHeight = std::clamp(maxCoverHeight, 0, metrics.homeCoverTileHeight);
   }
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
-                 metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
+                 metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr,
+                 nullptr, false, true, true);
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
@@ -2392,7 +2408,7 @@ void HomeActivity::render(RenderLock&&) {
                           hasAnyBookStats(currentBookStats) ? &currentBookStats : nullptr, currentBookProgressPercent);
 
   const int menuStartY = metrics.homeTopPadding + homeCoverTileHeight + metrics.homeMenuTopOffset;
-  const int menuEndY = pageHeight - metrics.buttonHintsHeight;
+  const int menuEndY = pageHeight - UITheme::getButtonHintsReserve(renderer);
   const int menuHeight = std::max(0, menuEndY - menuStartY);
 
   const bool isCarouselTheme =
@@ -2424,12 +2440,9 @@ void HomeActivity::render(RenderLock&&) {
     displayHomeBuffer();
   }
 
-  if (!firstRenderDone) {
-    firstRenderDone = true;
-    requestUpdate();
-    return;
-  }
-
+  // The panel already shows Home, so missing-thumbnail work can start now.
+  // loadRecentCovers() requests its own repaint only when artwork changes;
+  // repainting the identical first frame cost a full panel refresh.
   if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
     loadRecentCovers(metrics.homeCoverHeight);

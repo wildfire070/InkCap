@@ -99,12 +99,21 @@ struct WordResult {
   std::string word;
 };
 
+struct ProgressSyncResult {
+  bool success = false;
+  bool progressSucceeded = false;
+  bool statsUploaded = false;
+  bool clippingsUploaded = false;
+  bool statsFailed = false;
+  bool clippingsFailed = false;
+  bool skipped = false;  // Bulk sync: the user chose Skip book for this one.
+};
+
 struct ReadingStatsResult {
   bool changed = false;
 };
 
 struct TtfRenderOptionsResult {
-  bool changed = false;
   bool activeFamilyChanged = false;
 };
 
@@ -164,8 +173,8 @@ using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
                  OptionSelectionResult, PageResult, NetworkModeResult, FootnoteResult,
                  BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
-                 ClippingResult, TtfRenderOptionsResult, DictionaryClippingRequest, ClippingJumpResult, FolderPickerResult,
-                 FrontlightPanelResult, BookDetailsNavResult>;
+                 ProgressSyncResult, ClippingResult, TtfRenderOptionsResult, DictionaryClippingRequest,
+                 ClippingJumpResult, FolderPickerResult, FrontlightPanelResult, BookDetailsNavResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

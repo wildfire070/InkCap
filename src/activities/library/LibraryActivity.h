@@ -11,6 +11,7 @@
 #include "LibraryInputBuffer.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "activities/home/FinishedBookCache.h"
 #include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
@@ -21,12 +22,22 @@ class LibraryActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  void onFrontlightPanelClosed() override;
   bool blocksGlobalInput() const override { return actionPopup.isActive(); }
 
 #ifdef SIMULATOR
   size_t simulatorPendingInputs() const { return pendingInput.size(); }
   int simulatorSelection() const { return selection; }
   int simulatorRowCount() const { return rowCount(); }
+  int simulatorTopIndex() const { return topIndex; }
+  const std::string& simulatorQuery() const { return query; }
+  uint8_t simulatorSort() const { return static_cast<uint8_t>(sort); }
+  bool simulatorDescending() const { return descending; }
+  void simulatorSelectRow(int row) {
+    selection = CONTROL_COUNT + row;
+    reloadAfterBookAction();
+  }
+  void simulatorOpenContextMenu() { showBookActionMenu(selection - CONTROL_COUNT); }
   bool simulatorReadBook(int row, RecentBook& book) { return readBook(row, book); }
   void simulatorSetView(uint8_t method, bool reverse, const std::string& search = "") {
     sort = static_cast<Sort>(method);
@@ -57,6 +68,7 @@ class LibraryActivity final : public Activity {
   int gridPageStart = 0;
   int loadedGridPageStart = -1;
   int nextGridCoverRow = -1;
+  bool gridCoverAdded = false;
   int16_t gridCoverWidth = 0;
   int16_t gridCoverHeight = 0;
   int gridProgressRow = -1;
@@ -109,6 +121,12 @@ class LibraryActivity final : public Activity {
   std::string seriesScratch;
   std::string genreScratch;
   std::string subtitleScratch;
+  // Finished state for recently drawn rows, keyed by a path hash so sort,
+  // filter and search changes cannot mislabel a row. Index rows use the stored
+  // path hash, so cache hits do not read the full path. Any dialog or the
+  // frontlight panel clears it because they can change a book's status.
+  FinishedBookCache finishedCache;
+  bool isFinishedRow(int row);
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);

@@ -64,13 +64,13 @@ void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pa
 }  // namespace
 
 void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
-                                  const bool readerContext, const bool showStatus) const {
+                                  const bool readerContext, const bool showStatus, const bool filenameTitle) const {
   // Home screen header is custom-rendered in drawRecentBookCover.
   if (title == nullptr) {
     if (showStatus) drawDisplayStatusBar(renderer, rect.y);
     return;
   }
-  BaseTheme::drawHeader(renderer, rect, title, subtitle, readerContext, showStatus);
+  BaseTheme::drawHeader(renderer, rect, title, subtitle, readerContext, showStatus, filenameTitle);
 }
 
 void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
@@ -454,9 +454,12 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
 
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int sidePadding = 20;
+  const int sidePadding = renderer.hasCustomViewableInsets()
+                              ? std::max(20, static_cast<int>(std::max(renderer.getViewableInsets().edges[1],
+                                                                       renderer.getViewableInsets().edges[3])))
+                              : 20;
   const int groupGap = 10;
-  const int bottomMargin = 10;
+  const int bottomMargin = 10 + UITheme::getButtonHintsBottomInset(renderer);
   const int hintHeight = RoundedRaffMetrics::values.buttonHintsHeight - 10;  // 30px total guide height
   const int groupWidth = (pageWidth - sidePadding * 2 - groupGap) / 2;
   const int outlineY = pageHeight - hintHeight - bottomMargin;

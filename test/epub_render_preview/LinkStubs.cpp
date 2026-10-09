@@ -20,8 +20,8 @@ PreviewBlockLocator::~PreviewBlockLocator() = default;
 bool PreviewBlockLocator::feed(const char*, int, bool) { return false; }
 
 CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, int, uint16_t, uint16_t, uint16_t, uint8_t,
-                                       BlockStyle tableStyle)
-    : renderer_(renderer), tableStyle_(tableStyle) {}
+                                       BlockStyle tableStyle, int8_t characterSpacing)
+    : renderer_(renderer), tableStyle_(tableStyle), characterSpacing_(characterSpacing) {}
 bool CompactTableLayout::beginRow() { return true; }
 bool CompactTableLayout::beginCell(bool, uint8_t, uint32_t, const BlockStyle&) { return true; }
 bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t) { return true; }

@@ -180,8 +180,7 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
 
   renderer.clearScreen();
-  const Rect header{screen.x, screen.y + metrics.topPadding, screen.width,
-                    TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, screen);
   if (mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, header, tr(STR_NEARBY_POSITION_SYNC), true);
   } else {
@@ -199,7 +198,7 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
   std::string detailSecondary;
   switch (state_) {
     case State::STARTING:
-      primary = tr(STR_LOADING_POPUP);
+      primary = tr(STR_LOADING);
       break;
     case State::READY:
       primary = tr(STR_NEARBY_POSITION_READY);
@@ -371,7 +370,7 @@ void NearbyBookPositionSyncActivity::renderReady(const std::string& primary, con
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const Rect textArea{screen.x + metrics.contentSidePadding, screen.y, screen.width - metrics.contentSidePadding * 2,
                       screen.height};
-  int y = screen.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + 70;
+  int y = TouchHeaderBackButton::contentTop(renderer, mappedInput, screen.y) + 70;
 
   y += UITheme::drawCenteredWrappedText(renderer, textArea, UI_10_FONT_ID, y, primary.c_str(), 2, true,
                                         EpdFontFamily::BOLD) +
@@ -391,8 +390,7 @@ void NearbyBookPositionSyncActivity::renderReady(const std::string& primary, con
 void NearbyBookPositionSyncActivity::renderComparison() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  int top =
-      screen.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + metrics.verticalSpacing;
+  int top = TouchHeaderBackButton::contentTop(renderer, mappedInput, screen.y) + metrics.verticalSpacing;
 
   renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEARBY_POSITION_FOUND), true, EpdFontFamily::BOLD);
 
@@ -461,7 +459,9 @@ void NearbyBookPositionSyncActivity::renderComparison() const {
 #include <string>
 
 #include "CrossPointSettings.h"
+#include "Epub/EpubRenderMode.h"
 #include "Epub/Section.h"
+#include "EpubReaderActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderDocumentId.h"
@@ -1187,7 +1187,8 @@ bool NearbyBookPositionSyncActivity::mapPeerPosition() {
   }
 
   if (peerCrossPoint_.hasLiIndex || peerCrossPoint_.xpathAnchorId[0] != '\0' || peerCrossPoint_.hasParagraphIndex) {
-    Section tempSection(epub_, peerCrossPoint_.spineIndex, renderer);
+    const auto renderMode = static_cast<EpubRenderMode>(EpubReaderActivity::loadBookRenderMode(*epub_));
+    Section tempSection(epub_, peerCrossPoint_.spineIndex, renderer, sectionCacheSuffixForRenderMode(renderMode));
     bool refined = false;
     if (peerCrossPoint_.hasLiIndex) {
       const auto liPage = tempSection.getPageForListItemIndex(peerCrossPoint_.liIndex);
@@ -1291,8 +1292,7 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header{screen.x, screen.y + metrics.topPadding, screen.width,
-                    TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, screen);
   if (mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, header, tr(STR_NEARBY_POSITION_SYNC), true);
   } else {
@@ -1310,7 +1310,7 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
   std::string detailSecondary;
   switch (state_) {
     case State::STARTING:
-      primary = tr(STR_LOADING_POPUP);
+      primary = tr(STR_LOADING);
       break;
     case State::READY:
       primary = tr(STR_NEARBY_POSITION_READY);
@@ -1372,7 +1372,7 @@ void NearbyBookPositionSyncActivity::renderReady(const std::string& primary, con
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const Rect textArea{screen.x + metrics.contentSidePadding, screen.y, screen.width - metrics.contentSidePadding * 2,
                       screen.height};
-  int y = screen.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + 70;
+  int y = TouchHeaderBackButton::contentTop(renderer, mappedInput, screen.y) + 70;
 
   y += UITheme::drawCenteredWrappedText(renderer, textArea, UI_10_FONT_ID, y, primary.c_str(), 2, true,
                                         EpdFontFamily::BOLD) +
@@ -1393,8 +1393,7 @@ void NearbyBookPositionSyncActivity::renderReady(const std::string& primary, con
 void NearbyBookPositionSyncActivity::renderComparison() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  int top =
-      screen.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + metrics.verticalSpacing;
+  int top = TouchHeaderBackButton::contentTop(renderer, mappedInput, screen.y) + metrics.verticalSpacing;
 
   renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEARBY_POSITION_FOUND), true, EpdFontFamily::BOLD);
 

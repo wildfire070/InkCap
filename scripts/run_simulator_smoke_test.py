@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -40,7 +44,8 @@ THEMES = {
 
 
 def program_path(env_name: str) -> Path:
-    return ROOT / ".pio" / "build" / env_name / "program"
+    build_dir = Path(os.environ.get("PLATFORMIO_BUILD_DIR", ROOT / ".pio" / "build"))
+    return build_dir / env_name / "program"
 
 
 def build_simulator(env_name: str) -> None:
@@ -81,6 +86,80 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        if args.language_file:
+            language_path = temp_root / "fs_" / ".crosspoint" / "languages" / "smoke.yaml"
+            language_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(args.language_file), language_path)
+            env["CROSSINK_LANGUAGE_FLASH"] = str(temp_root / "language-flash.bin")
+            installer_env = dict(env, CROSSINK_TEST_SD=str(temp_root / "fs_"))
+            installed = subprocess.run(
+                [str(Path(args.language_installer).resolve()), "install", "EN", "0",
+                 "/.crosspoint/languages/smoke.yaml"],
+                cwd=temp_root, env=installer_env, text=True, capture_output=True, check=True, timeout=30,
+            )
+            code, generation = installed.stdout.strip().split("|")
+            (temp_root / "fs_" / ".crosspoint" / "crossink-settings.json").write_text(
+                json.dumps({"language": code, "languageCacheGeneration": int(generation)})
+            )
+        if args.hyphenation:
+            from package_hyphenation import pack_bytes
+            # Only the disposable fixture changes: exercise the reader's book
+            # language independently of the selected interface language.
+            target = temp_root / "fs_" / simulator_book_path.lstrip("/")
+            updated = target.with_suffix(".hyphenation.epub")
+            languages = 0
+            with zipfile.ZipFile(target) as source, zipfile.ZipFile(updated, "w") as destination:
+                for entry in source.infolist():
+                    data = source.read(entry)
+                    if entry.filename.endswith(".opf"):
+                        data, found = re.subn(rb"(<dc:language[^>]*>).*?(</dc:language>)",
+                                             rb"\g<1>de-DE\g<2>", data, flags=re.S)
+                        languages += found
+                    destination.writestr(entry, data)
+            if not languages:
+                raise ValueError("Hyphenation smoke fixture needs dc:language metadata")
+            updated.replace(target)
+            packs = temp_root / "fs_" / ".crosspoint" / "hyphenation"
+            packs.mkdir(parents=True, exist_ok=True)
+            data = pack_bytes("de")
+            (packs / "hyph-de.cphyph").write_bytes(data)
+            (packs / "hyph-fr.cphyph").write_bytes(data)  # mismatched header identity
+            env["CROSSINK_SIMULATOR_SMOKE_HYPHENATION"] = "1"
+            env["CROSSINK_HYPHENATION_SMOKE_UI"] = code if args.language_file else "EN"
+        if args.hyphenation_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.hyphenation_captures).resolve())
+        if args.filename_font_dir:
+            shutil.copytree(Path(args.filename_font_dir), temp_root / "fs_" / ".crosspoint" / "languages" / "fonts", dirs_exist_ok=True)
+        if args.filename_font_family:
+            env["CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT"] = args.filename_font_family
+        if args.filename_font_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.filename_font_captures).resolve())
+        if args.screen_calibration:
+            env["CROSSINK_SIMULATOR_SMOKE_CALIBRATION"] = "1"
+            env["CROSSINK_CALIBRATION_PATH"] = str(temp_root / "device-calibration.nvs")
+        if args.status_bar_lifecycle:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_LIFECYCLE"] = "1"
+        if args.status_bar_feature:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_FEATURE"] = "1"
+        if args.status_bar_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.status_bar_captures).resolve())
+        if args.dictionary:
+            dictionary = temp_root / "fs_" / "dictionary-smoke"
+            dictionary.mkdir()
+            words = sorted(["accord", "aime", "après", "d'accord", "est", "histoire", "inspecteur", "école"])
+            index = bytearray()
+            definitions = bytearray()
+            for word in words:
+                definition = f"Definition of {word}".encode()
+                index.extend(word.encode() + b"\0" + struct.pack(">II", len(definitions), len(definition)))
+                definitions.extend(definition)
+            (dictionary / "dict.idx").write_bytes(index)
+            (dictionary / "dict.dict").write_bytes(definitions)
+            (dictionary / "dict.ifo").write_text(
+                "StarDict's dict ifo file\nversion=2.4.2\nbookname=French smoke\n"
+                f"wordcount={len(words)}\nidxfilesize={len(index)}\nsametypesequence=m\n"
+            )
+            env["CROSSINK_SIMULATOR_SMOKE_DICTIONARY"] = "1"
         if args.font_dir and args.font_family:
             env["CROSSINK_SIMULATOR_SMOKE_ISOLATED_FONTS"] = "1"
         if args.font_family:
@@ -88,6 +167,11 @@ def run_smoke(args: argparse.Namespace) -> int:
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_BOOK"] = simulator_book_path
         env["CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS"] = str(args.page_turns)
+        if args.context_menu_sync_return:
+            env["CROSSINK_SIMULATOR_SMOKE_CONTEXT_MENU_SYNC_RETURN"] = args.context_menu_sync_return
+            env["CROSSINK_SIMULATOR_SMOKE_FILE_BROWSER_SYNC_RETURN"] = "1"
+        if args.file_browser_sync_return:
+            env["CROSSINK_SIMULATOR_SMOKE_FILE_BROWSER_SYNC_RETURN"] = "1"
         if args.frontlight_sync:
             env["CROSSINK_SIMULATOR_SMOKE_FRONTLIGHT_SYNC"] = "1"
         if args.frontlight_layout:
@@ -96,6 +180,17 @@ def run_smoke(args: argparse.Namespace) -> int:
             capture_dir = Path(args.frontlight_captures).resolve()
             capture_dir.mkdir(parents=True, exist_ok=True)
             env["CROSSINK_SIMULATOR_SMOKE_FRONTLIGHT_CAPTURES"] = str(capture_dir)
+        if args.opds_catalog:
+            env["CROSSINK_SIMULATOR_SMOKE_OPDS_CATALOG"] = "1"
+        if args.support_export:
+            env["CROSSINK_SIMULATOR_SMOKE_SUPPORT_EXPORT"] = "1"
+        if args.about:
+            env["CROSSINK_SIMULATOR_SMOKE_ABOUT"] = "1"
+        if args.about_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.about_captures).resolve())
+        if args.sync_server_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sync_server_captures).resolve())
+            env["CROSSINK_SIMULATOR_SMOKE_SYNC_SERVER_CAPTURES"] = "1"
         if args.home_themes:
             env["CROSSINK_SIMULATOR_SMOKE_HOME_THEMES"] = "1"
         if args.theme:
@@ -113,7 +208,7 @@ def run_smoke(args: argparse.Namespace) -> int:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=args.timeout if args.timeout is not None else (180 if args.frontlight_layout else 45),
+            timeout=args.timeout if args.timeout is not None else (180 if args.frontlight_layout or args.about or args.support_export or args.filename_font_family else 120),
         )
 
         if args.screenshot_out:
@@ -130,6 +225,10 @@ def run_smoke(args: argparse.Namespace) -> int:
     if proc.returncode != 0:
         print(f"Simulator smoke test failed with exit code {proc.returncode}", file=sys.stderr)
         return proc.returncode
+
+    if args.language_file and f"Mapped {code} " not in proc.stdout:
+        print(f"Simulator did not boot with cached language {code}", file=sys.stderr)
+        return 2
 
     for pattern in CRASH_PATTERNS:
         if pattern in proc.stdout:
@@ -155,22 +254,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
+    parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")
+    parser.add_argument("--status-bar-feature", action="store_true", help="Check status bar visibility, independent sizes, disk reload and rendered theme/orientation matrix")
+    parser.add_argument("--screen-calibration", action="store_true", help="Check screen calibration button/touch editing, save, cancel, reset and rotations")
+    parser.add_argument("--status-bar-captures", help="Directory for status bar feature framebuffer captures (PGM)")
+    parser.add_argument("--language-file", help="SD language YAML installed before boot for localized smoke checks")
+    parser.add_argument("--language-installer", help="Native I18nIntegrationTool built from the same source (required with --language-file)")
+    parser.add_argument("--hyphenation", action="store_true", help="Check SD pack management, pinned flash banks, restart activation and deletion")
+    parser.add_argument("--hyphenation-captures", help="Directory for hyphenation manager framebuffer captures (PGM)")
+    parser.add_argument("--dictionary", action="store_true", help="Check French contractions and exact dictionary matches")
     parser.add_argument("--font-dir", help="Font fixtures copied into isolated /fonts")
+    parser.add_argument("--filename-font-dir", help="TTF family fixtures copied into /.crosspoint/languages/fonts")
+    parser.add_argument("--filename-font-family", help="Check filename font picker, mixed glyphs and storage lifecycle (S3)")
+    parser.add_argument("--filename-font-captures", help="Directory for filename font framebuffer captures (PGM)")
     parser.add_argument("--font-family", help="Exercise custom-font size and dictionary lifecycle")
-    parser.add_argument("--timeout", type=int, help="Seconds before the simulator run is treated as hung (default: 45, or 180 for frontlight layout)")
+    parser.add_argument("--timeout", type=int, help="Seconds before the simulator run is treated as hung (default: 120, or 180 for frontlight layout, about, support export, or filename font checks)")
     parser.add_argument("--page-turns", type=int, default=2, help="Number of EPUB page-forward taps to run")
     parser.add_argument("--theme", choices=sorted(THEMES), help="UI theme to use during the smoke test")
     parser.add_argument("--calibre-batch", action="store_true",
                         help="Run the Calibre batch summary screenshot test instead of the normal smoke sequence")
     parser.add_argument("--screenshot-out", help="Copy any screenshots taken during the run into this directory before cleanup")
+    parser.add_argument("--context-menu-sync-return", choices=["file-browser", "library"], help="Check context-menu sync return across network reboots")
+    parser.add_argument("--file-browser-sync-return", action="store_true", help="Check browser sync return across network reboots")
     parser.add_argument("--frontlight-sync", action="store_true", help="Check frontlight sync outside the reader with stats enabled and disabled (X4 Pro)")
     parser.add_argument("--frontlight-layout", action="store_true", help="Check frontlight drawer bounds and handle taps across scales, orientations and themes (X4 Pro)")
     parser.add_argument("--frontlight-captures", help="Directory for frontlight layout framebuffer captures (PGM)")
+    parser.add_argument("--opds-catalog", action="store_true", help="Check OPDS catalog release and download return flows")
+    parser.add_argument("--support-export", action="store_true", help="Check support export privacy, scopes, cancellation and failure preservation")
+    parser.add_argument("--about", action="store_true", help="Check About navigation, paging and read-only snapshots across scales/orientations")
+    parser.add_argument("--about-captures", help="Directory for About framebuffer captures (PGM)")
+    parser.add_argument("--sync-server-captures", help="Directory for Sync Server settings captures (PGM)")
     parser.add_argument("--home-themes", action="store_true", help="Compare drawer theme changes with fresh Home renders (X4 Pro)")
     parser.add_argument("--no-build", dest="build", action="store_false", help="Run the existing simulator binary")
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.language_file and not args.language_installer:
+        parser.error("--language-file requires --language-installer")
+    return args
 
 
 def main() -> int:

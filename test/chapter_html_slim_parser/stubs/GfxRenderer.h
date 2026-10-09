@@ -13,11 +13,40 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 
 class GfxRenderer {
  public:
+  inline static bool loanActive = false;
+  inline static bool fileProbeHadLoan = false;
+  uint32_t loans = 0;
+  bool hasFrameBuffer() const { return !loanActive; }
+  uint32_t frameBufferLoanCount() const { return loans; }
+  class FrameBufferLoan {
+   public:
+    explicit FrameBufferLoan(GfxRenderer& renderer) : active_(!loanActive) {
+      if (active_) {
+        loanActive = true;
+        ++renderer.loans;
+      }
+    }
+    ~FrameBufferLoan() { end(); }
+    void end() {
+      if (active_) {
+        loanActive = false;
+        active_ = false;
+      }
+    }
+
+   private:
+    bool active_;
+  };
   int textAdvancePerChar = 0;
   uint8_t scalableBaseSize = 0;
   uint8_t getFontPointSize(int id) const { return scalableBaseSize ? (id ? id : scalableBaseSize) : 0; }
   int getFontIdForSize(int id, uint8_t size) const { return scalableBaseSize && size ? size : id; }
   int getFontAscenderSize(int id) const { return scalableBaseSize ? getFontPointSize(id) : 12; }
+  bool getCodepointMetrics(int id, uint32_t, EpdFontFamily::Style, int32_t& advance, int& top) const {
+    advance = std::max(1, textAdvancePerChar) * 16;
+    top = getFontAscenderSize(id);
+    return true;
+  }
   int getLineHeight(int id) const { return scalableBaseSize ? getFontPointSize(id) * 2 : 16; }
   int getTextWidth(int, const char*, EpdFontFamily::Style = EpdFontFamily::REGULAR) const { return 0; }
   int getTextAdvanceX(int id, const char* text, EpdFontFamily::Style, uint32_t = 0, int8_t = 0) const {

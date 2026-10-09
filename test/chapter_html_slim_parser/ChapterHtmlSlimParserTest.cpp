@@ -13,6 +13,7 @@
 #undef class
 
 #include <Epub.h>
+#include <MemoryBudget.h>
 
 namespace {
 
@@ -37,6 +38,9 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
   std::array<BlockStyle, ChapterHtmlSlimParser::MAX_BLOCK_STYLE_DEPTH> blockStyles{};
 
   void SetUp() override {
+    GfxRenderer::loanActive = false;
+    GfxRenderer::fileProbeHadLoan = false;
+    MemoryBudget::imageAllowed = true;
     parser.currentTextBlock = std::make_unique<ParsedText>(false);
     parser.inlineStyleBuf_ = inlineStyles.data();
     parser.blockStyleBuf_ = blockStyles.data();
@@ -421,6 +425,91 @@ TEST_F(ChapterHtmlSlimParserTest, PreservesEmptyInlinePaddingBeforeDialogueText)
   EXPECT_EQ(renderedLine->wordXpos(1), 24);
 }
 
+// SOF header of a 800 x 200 JPEG. The real streaming dimension parser is linked.
+static const std::vector<uint8_t> jpegHeader = {0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 200, 3, 32};
+
+TEST_F(ChapterHtmlSlimParserTest, OrdinaryImageHeaderDoesNotLoanWhenHeapProbeSucceeds) {
+  epub.probeBytes = jpegHeader;
+  const XML_Char* attributes[] = {"src", "wide.jpg", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+  EXPECT_EQ(epub.streamReadCount, 1u);
+  EXPECT_EQ(epub.extractCount, 0u);
+  EXPECT_EQ(renderer.loans, 0u);
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, RetriesImageHeaderWithLoanAndKeepsLazySource) {
+  epub.probeBytes = jpegHeader;
+  epub.requireLoan = true;
+  const XML_Char* attributes[] = {"src", "wide.jpg", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+  EXPECT_EQ(epub.streamReadCount, 2u);
+  EXPECT_EQ(epub.extractCount, 0u);
+  EXPECT_EQ(renderer.loans, 1u);
+  EXPECT_TRUE(renderer.hasFrameBuffer());
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  const auto& image = static_cast<const PageImage&>(*parser.currentPage->elements.front()).getImageBlock();
+  EXPECT_EQ(image.getWidth(), 480);
+  EXPECT_EQ(image.getHeight(), 120);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FailedOrMalformedProbeLoansExtractionAndReturnsBuffer) {
+  for (const bool streamFails : {false, true}) {
+    epub.probeBytes = streamFails ? jpegHeader : std::vector<uint8_t>{0xff, 0xd8, 0x00};
+    epub.streamFails = streamFails;
+    epub.streamReadCount = epub.extractCount = 0;
+    renderer.loans = 0;
+    const XML_Char* attributes[] = {"src", "broken.jpg", nullptr};
+    ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+    EXPECT_EQ(epub.streamReadCount, 2u);
+    EXPECT_EQ(epub.extractCount, 1u);
+    EXPECT_TRUE(epub.extractHadLoan);
+    EXPECT_EQ(renderer.loans, 2u);
+    EXPECT_TRUE(renderer.hasFrameBuffer());
+    EXPECT_TRUE(!parser.currentPage || parser.currentPage->elements.empty());
+    ChapterHtmlSlimParser::endElement(&parser, "img");
+  }
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FullFileFallbackReturnsLoanBeforeDecoder) {
+  epub.probeBytes = {0xff, 0xd8, 0};
+  epub.extractSucceeds = true;
+  const XML_Char* attributes[] = {"src", "unusual.jpg", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+  EXPECT_EQ(epub.extractCount, 1u);
+  EXPECT_TRUE(epub.extractHadLoan);
+  EXPECT_FALSE(GfxRenderer::fileProbeHadLoan);
+  EXPECT_TRUE(renderer.hasFrameBuffer());
+  ASSERT_NE(parser.currentPage, nullptr);
+  EXPECT_EQ(parser.currentPage->elements.size(), 1u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ImageAdmissionStillRejectsBeforeAnyProbeOrLoan) {
+  MemoryBudget::imageAllowed = false;
+  epub.probeBytes = jpegHeader;
+  epub.requireLoan = true;
+  const XML_Char* attributes[] = {"src", "wide.jpg", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+  EXPECT_EQ(epub.streamReadCount, 0u);
+  EXPECT_EQ(epub.extractCount, 0u);
+  EXPECT_EQ(renderer.loans, 0u);
+  EXPECT_TRUE(parser.lowMemoryImageFallback);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, NestedProbeLoanDoesNotReturnOuterStorage) {
+  epub.probeBytes = {0xff, 0xd8, 0};
+  const XML_Char* attributes[] = {"src", "broken.jpg", nullptr};
+  {
+    GfxRenderer::FrameBufferLoan outer(renderer);
+    ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
+    EXPECT_FALSE(renderer.hasFrameBuffer());
+    EXPECT_EQ(renderer.loans, 1u);
+  }
+  EXPECT_TRUE(renderer.hasFrameBuffer());
+}
+
 TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheCompressedImage) {
   epub.optimizerImageAvailable = true;
   epub.optimizerImageWidth = 800;
@@ -430,6 +519,7 @@ TEST_F(ChapterHtmlSlimParserTest, UsesOptimizerImageDimensionsWithoutReadingTheC
   ChapterHtmlSlimParser::startElement(&parser, "img", attributes);
 
   EXPECT_EQ(epub.streamReadCount, 0u);
+  EXPECT_EQ(renderer.loans, 0u);
   ASSERT_NE(parser.currentPage, nullptr);
   ASSERT_EQ(parser.currentPage->elements.size(), 1u);
   ASSERT_EQ(parser.currentPage->elements.front()->getTag(), TAG_PageImage);
@@ -1335,3 +1425,512 @@ TEST(CssFontSizeTest, StrictValuesAndCascade) {
   EXPECT_FLOAT_EQ(style.fontSize.value, 150);
 }
 }  // namespace
+
+TEST(CssBorderTest, SuppressionAndDeclarationOrder) {
+  for (const char* declarations :
+       {"border: none", "border: HIDDEN !important", "border: 0", "border: solid 0px black", "border-style: none",
+        "border-width: 0rem", "border-width: 0 0px 0em 0pt", "border-style: none hidden",
+        "border: solid; border-style: none", "border-width: 0; border-style: solid",
+        "border: none; border-style: solid; border-width: 0",
+        "border-top: none; border-right: 0; border-bottom: hidden; border-left-width: 0"}) {
+    SCOPED_TRACE(declarations);
+    const auto style = CssParser::parseInlineStyle(declarations);
+    EXPECT_TRUE(style.defined.border);
+    EXPECT_TRUE(style.suppressesHorizontalRule());
+  }
+  for (const char* declarations :
+       {"", "border: solid", "border-style: dashed", "border-width: thin", "border-top: none",
+        "border: none; border: 1px solid black", "border: none; border-top-style: solid", "border-width: 0 1px",
+        "border: 0; border-width: 2px; border-style: solid", "border-style: none; border-style: solid"}) {
+    EXPECT_FALSE(CssParser::parseInlineStyle(declarations).suppressesHorizontalRule()) << declarations;
+  }
+}
+
+TEST(CssBorderTest, InvalidLonghandsDoNotOverrideSuppression) {
+  for (const char* value : {"-1px", "1badpx", "nanpx", "2%", "2", "nonsense", "1px 1px 1px 1px 1px"}) {
+    const auto style = CssParser::parseInlineStyle(std::string("border-width: 0; border-width: ") + value);
+    EXPECT_TRUE(style.suppressesHorizontalRule()) << value;
+  }
+  EXPECT_TRUE(CssParser::parseInlineStyle("border-style: none; border-style: nonsense").suppressesHorizontalRule());
+}
+
+TEST(CssBorderTest, CascadeRestoresEdgesWithoutLosingZeroWidths) {
+  auto style = CssParser::parseInlineStyle("border: none");
+  style.applyOver(CssParser::parseInlineStyle("border-top-style: solid"));
+  EXPECT_FALSE(style.suppressesHorizontalRule());
+  style.applyOver(CssParser::parseInlineStyle("border-top-width: 0"));
+  EXPECT_TRUE(style.suppressesHorizontalRule());
+  style.applyOver(CssParser::parseInlineStyle("border-top-width: medium"));
+  EXPECT_FALSE(style.suppressesHorizontalRule());
+  style.reset();
+  EXPECT_FALSE(style.defined.border);
+  EXPECT_FALSE(style.suppressesHorizontalRule());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CackleTransitionKeepsOnlyPublisherOrnament) {
+  cssParser.rulesBySelector_["hr.transition"] = CssParser::parseInlineStyle("display: block; border: none; margin: 0");
+  cssParser.rulesBySelector_["div.ornament"] = CssParser::parseInlineStyle("text-align: center; margin: 0");
+  const XML_Char* hrAttrs[] = {"class", "transition", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "hr", hrAttrs);
+  ChapterHtmlSlimParser::endElement(&parser, "hr");
+  EXPECT_EQ(parser.currentPageNextY, 0);
+  const XML_Char* ornamentAttrs[] = {"class", "ornament", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", ornamentAttrs);
+  ChapterHtmlSlimParser::characterData(&parser, "—", 3);
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  // Starting the following paragraph seals the ornament's text block.
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  EXPECT_EQ(parser.currentPage->elements.front()->getTag(), TAG_PageLine);
+  EXPECT_EQ(parser.depth, 1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SuppressedRuleRetainsExplicitSpacing) {
+  const XML_Char* attrs[] = {"style", "border: none; margin: 7px 0 9px; padding: 2px 0 3px", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "hr", attrs);
+  ChapterHtmlSlimParser::endElement(&parser, "hr");
+  ASSERT_NE(parser.currentPage, nullptr);
+  EXPECT_TRUE(parser.currentPage->elements.empty());
+  EXPECT_EQ(parser.currentPageNextY, 21);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PlainAndExplicitlyVisibleRulesStillRender) {
+  ChapterHtmlSlimParser::startElement(&parser, "hr", nullptr);
+  ChapterHtmlSlimParser::endElement(&parser, "hr");
+  const XML_Char* attrs[] = {"style", "border: none; border-top: 1px solid black", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "hr", attrs);
+  ChapterHtmlSlimParser::endElement(&parser, "hr");
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 2u);
+  for (const auto& element : parser.currentPage->elements) EXPECT_EQ(element->getTag(), TAG_PageHorizontalRule);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ParentBorderDoesNotHideChildRule) {
+  const XML_Char* attrs[] = {"style", "border: none", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attrs);
+  ChapterHtmlSlimParser::startElement(&parser, "hr", nullptr);
+  ChapterHtmlSlimParser::endElement(&parser, "hr");
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  EXPECT_EQ(parser.currentPage->elements.front()->getTag(), TAG_PageHorizontalRule);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SoftFlushAppliesTopSpacingOnFirstEmittedLineOnly) {
+  renderer.textAdvancePerChar = 4;
+  parser.viewportWidth = 40;
+  BlockStyle style;
+  style.marginTop = 7;
+  style.paddingTop = 5;
+  style.marginBottom = 9;
+  style.paddingBottom = 3;
+  style.textIndent = 8;
+  style.textIndentDefined = true;
+  parser.currentTextBlock->setBlockStyle(style);
+  parser.currentTextBlock->addWord("one", EpdFontFamily::REGULAR);
+  parser.flushLongTextRunIfNeeded(true);
+  EXPECT_EQ(parser.wordsExtractedInBlock, 0);
+  EXPECT_EQ(parser.currentPageNextY, 0);
+  EXPECT_FALSE(parser.currentTextBlock->isContinuation());
+  for (int i = 0; i < 8; ++i) parser.currentTextBlock->addWord("one", EpdFontFamily::REGULAR);
+  parser.flushLongTextRunIfNeeded(true);
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_GT(parser.currentPage->elements.size(), 0u);
+  EXPECT_EQ(parser.currentPage->elements.front()->yPos, 12);
+  const int emitted = parser.currentPage->elements.size();
+  EXPECT_EQ(parser.currentPageNextY, 12 + emitted * 16);
+  EXPECT_TRUE(parser.currentTextBlock->isContinuation());
+  parser.makePages();
+  EXPECT_EQ(parser.currentPageNextY, 24 + int(parser.currentPage->elements.size()) * 16);
+  for (size_t i = 0; i < parser.currentPage->elements.size(); ++i) {
+    EXPECT_EQ(parser.currentPage->elements[i]->yPos, 12 + int(i) * 16);
+  }
+}
+
+TEST_F(ChapterHtmlSlimParserTest, EmptyFinalFlushDoesNotConsumeTopSpacing) {
+  BlockStyle style;
+  style.marginTop = 7;
+  style.paddingTop = 5;
+  parser.currentTextBlock->setBlockStyle(style);
+  parser.makePages();
+  EXPECT_EQ(parser.currentPageNextY, 0);
+  parser.currentTextBlock->addWord("one", EpdFontFamily::REGULAR);
+  parser.makePages();
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  EXPECT_EQ(parser.currentPage->elements.front()->yPos, 12);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FullyFlushedParagraphResetsSpacingForReusedBlock) {
+  BlockStyle style;
+  style.marginTop = 7;
+  style.paddingTop = 5;
+  parser.currentTextBlock->setBlockStyle(style);
+  parser.currentTextBlock->addWord("one", EpdFontFamily::REGULAR);
+  parser.flushLongTextRunIfNeeded(true, true);
+  EXPECT_EQ(parser.currentPageNextY, 28);
+  parser.currentTextBlock->addWord("two", EpdFontFamily::REGULAR);
+  parser.flushLongTextRunIfNeeded(true, true);
+  EXPECT_EQ(parser.currentPageNextY, 44);
+  parser.startNewTextBlock(style);
+  parser.currentTextBlock->addWord("three", EpdFontFamily::REGULAR);
+  parser.makePages();
+  ASSERT_EQ(parser.currentPage->elements.size(), 3u);
+  EXPECT_EQ(parser.currentPage->elements.back()->yPos, 56);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FragmentAppendChecksBoundBeforeCallbackEnds) {
+  renderer.textAdvancePerChar = 4;
+  for (size_t i = 0; i < parser.bufferedWordsBeforeLayoutLimit() + 1; ++i) {
+    std::strcpy(parser.partWordBuffer, "word");
+    parser.partWordBufferIndex = 4;
+    parser.flushPartWordBuffer();
+  }
+  EXPECT_GT(parser.wordsExtractedInBlock, 0);
+  EXPECT_LE(parser.currentTextBlock->size(), parser.bufferedWordsBeforeLayoutLimit());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, HugeCjkCallbackDoesNotRetainWholeRunCapacity) {
+  renderer.textAdvancePerChar = 4;
+  std::string text;
+  for (int i = 0; i < 6000; ++i) text += "\xE4\xB8\xAD";
+  parser.completePageFn = [](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t, uint32_t) {};
+  ChapterHtmlSlimParser::characterData(&parser, text.data(), text.size());
+  parser.flushPartWordBuffer();
+  EXPECT_FALSE(parser.lowMemoryAbort);
+  EXPECT_GT(parser.wordsExtractedInBlock, 5000);
+  EXPECT_LT(parser.currentTextBlock->wordStyles.capacity(), 1024u);
+  EXPECT_EQ(parser.visibleTextOffset, 6000u);
+  EXPECT_EQ(parser.wordsExtractedInBlock + parser.currentTextBlock->size(), 6000u);
+  if (!parser.currentTextBlock->isEmpty()) {
+    EXPECT_EQ(parser.currentTextBlock->visibleOffsetAt(0), uint32_t(parser.wordsExtractedInBlock));
+  }
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FragmentFlushKeepsRubyGroupBuffered) {
+  renderer.textAdvancePerChar = 4;
+  parser.inRuby = true;
+  for (size_t i = 0; i < parser.bufferedWordsBeforeLayoutLimit() + 1; ++i) {
+    std::strcpy(parser.partWordBuffer, "word");
+    parser.partWordBufferIndex = 4;
+    parser.flushPartWordBuffer();
+  }
+  EXPECT_EQ(parser.wordsExtractedInBlock, 0);
+  EXPECT_EQ(parser.currentTextBlock->size(), parser.bufferedWordsBeforeLayoutLimit() + 1);
+  parser.inRuby = false;
+  parser.flushLongTextRunIfNeeded();
+  EXPECT_GT(parser.wordsExtractedInBlock, 0);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FragmentFlushKeepsBufferedTableCellIntact) {
+  renderer.textAdvancePerChar = 4;
+  ChapterHtmlSlimParser::startElement(&parser, "table", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "tr", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "td", nullptr);
+  ASSERT_NE(parser.currentTableBuffer, nullptr);
+  for (size_t i = 0; i < parser.bufferedWordsBeforeLayoutLimit() + 1; ++i) {
+    std::strcpy(parser.partWordBuffer, "word");
+    parser.partWordBufferIndex = 4;
+    parser.flushPartWordBuffer();
+  }
+  EXPECT_EQ(parser.wordsExtractedInBlock, 0);
+  EXPECT_EQ(parser.currentTextBlock->size(), parser.bufferedWordsBeforeLayoutLimit() + 1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SingleHugeCallbackHonorsPreviewPageLimit) {
+  renderer.textAdvancePerChar = 4;
+  parser.viewportHeight = 48;
+  parser.previewAnchor = "note";
+  parser.previewMaxPages = 1;
+  parser.previewAnchorFound = true;
+  int pages = 0;
+  parser.completePageFn = [&](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t, uint32_t) { ++pages; };
+  std::string text;
+  for (int i = 0; i < 2000; ++i) text += "word ";
+  ChapterHtmlSlimParser::characterData(&parser, text.data(), text.size());
+  EXPECT_TRUE(parser.previewStopRequested);
+  EXPECT_EQ(pages, 1);
+  EXPECT_EQ(parser.completedPageCount, 1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SoftFlushLeavesTrailingFootnotesForFinalization) {
+  renderer.textAdvancePerChar = 4;
+  parser.viewportWidth = 40;
+  for (int i = 0; i < 8; ++i) parser.currentTextBlock->addWord("word", EpdFontFamily::REGULAR);
+  FootnoteEntry note{};
+  std::strcpy(note.number, "1");
+  std::strcpy(note.href, "#note");
+  note.linkId = 1;
+  parser.pendingFootnotes.push_back({8, note});
+  parser.flushLongTextRunIfNeeded(true);
+  EXPECT_EQ(parser.pendingFootnotes.size(), 1u);
+  parser.makePages();
+  EXPECT_TRUE(parser.pendingFootnotes.empty());
+  ASSERT_EQ(parser.currentPage->footnotes.size(), 1u);
+  EXPECT_STREQ(parser.currentPage->footnotes[0].href, "#note");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FragmentFlushKeepsActiveLinkOnEveryEmittedPage) {
+  renderer.textAdvancePerChar = 4;
+  parser.viewportHeight = 64;
+  int linkedPages = 0;
+  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
+    ASSERT_EQ(page->footnotes.size(), 1u);
+    EXPECT_STREQ(page->footnotes[0].href, "#note");
+    ++linkedPages;
+  };
+  const XML_Char* attrs[] = {"href", "#note", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "a", attrs);
+  std::string text;
+  for (int i = 0; i < 1000; ++i) text += "linked ";
+  ChapterHtmlSlimParser::characterData(&parser, text.data(), text.size());
+  EXPECT_GT(linkedPages, 0);
+  ChapterHtmlSlimParser::endElement(&parser, "a");
+  parser.makePages();
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->footnotes.size(), 1u);
+  EXPECT_STREQ(parser.currentPage->footnotes[0].href, "#note");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PageBreakBeforeDoesNotRepeatPreviousBottomSpacing) {
+  BlockStyle previous;
+  previous.marginBottom = 11;
+  previous.paddingBottom = 7;
+  parser.currentTextBlock->setBlockStyle(previous);
+  parser.extraParagraphSpacing = true;
+  parser.currentTextBlock->addWord("previous", EpdFontFamily::REGULAR);
+  int pages = 0;
+  parser.completePageFn = [&](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t, uint32_t) { ++pages; };
+  const XML_Char* attrs[] = {"style", "page-break-before: always", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "next", 4);
+  parser.flushPartWordBuffer();
+  parser.makePages();
+  EXPECT_EQ(pages, 1);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  EXPECT_EQ(parser.currentPage->elements[0]->yPos, 0);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CallbackChunkingPreservesVisibleAndReferencePageOffsets) {
+  renderer.textAdvancePerChar = 4;
+  const std::string fragment = "word \xE4\xB8\xAD\xF0\x9F\x98\x80 text ";
+  std::string text;
+  for (int i = 0; i < 600; ++i) text += fragment;
+  auto layout = [&](size_t chunkSize) {
+    parser.currentTextBlock = std::make_unique<ParsedText>(false, false, false, false, false, 0, BlockStyle{}, true);
+    parser.trackReferenceCharacters = true;
+    parser.currentPage.reset();
+    parser.currentPageNextY = 0;
+    parser.completedPageCount = 0;
+    parser.wordsExtractedInBlock = 0;
+    parser.visibleTextOffset = 0;
+    parser.referenceTextOffset = 0;
+    parser.referenceTextStarted = false;
+    parser.referenceWhitespacePending = false;
+    parser.currentTextRunBytes = 0;
+    parser.partWordBufferIndex = 0;
+    parser.nextWordContinues = false;
+    std::vector<std::array<uint32_t, 3>> pages;
+    parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t visible, uint32_t reference) {
+      pages.push_back({visible, reference, uint32_t(page->elements.size())});
+    };
+    for (size_t offset = 0; offset < text.size(); offset += chunkSize) {
+      ChapterHtmlSlimParser::characterData(&parser, text.data() + offset, std::min(chunkSize, text.size() - offset));
+    }
+    parser.flushPartWordBuffer();
+    parser.makePages();
+    if (parser.currentPage && !parser.currentPage->elements.empty()) parser.completeCurrentPage();
+    EXPECT_FALSE(parser.lowMemoryAbort);
+    return pages;
+  };
+  const auto oneCallback = layout(text.size());
+  const auto splitCallbacks = layout(fragment.size());
+  EXPECT_GT(oneCallback.size(), 1u);
+  EXPECT_EQ(oneCallback, splitCallbacks);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ContextSelectorsMatchIdsClassesAndDirectChildren) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("section.chapter > p.note.wide",
+                                                  CssParser::parseInlineStyle("font-style: italic")));
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("#intro", CssParser::parseInlineStyle("font-weight: bold")));
+  std::vector<CssAncestorEntry> ancestors{{0, "section", "chapter", ""}};
+  auto style = cssParser.resolveStyle("p", "wide note", ancestors, "intro");
+  EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  ancestors.push_back({1, "div", "", ""});
+  EXPECT_FALSE(cssParser.resolveStyle("p", "wide note", ancestors).hasFontStyle());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FirstLetterRulesDoNotStyleWholeParagraph) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("p.opening::first-letter",
+                                                  CssParser::parseInlineStyle("initial-letter: 3; font-weight: bold")));
+  EXPECT_FALSE(cssParser.resolveStyle("p", "opening").hasFontWeight());
+  const auto first = cssParser.resolveStyle("p", "opening", {}, {}, true);
+  EXPECT_EQ(first.initialLetter, 3);
+  const XML_Char* attrs[] = {"class", "opening", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "Hello world", 11);
+  parser.flushPartWordBuffer();
+  EXPECT_STREQ(parser.dropCap.text, "H");
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 2u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "ello");
+  parser.makePages();
+  ASSERT_TRUE(parser.currentPage);
+  auto cap = std::find_if(parser.currentPage->elements.begin(), parser.currentPage->elements.end(),
+                          [](const auto& item) { return item->getTag() == TAG_PageDropCap; });
+  ASSERT_NE(cap, parser.currentPage->elements.end());
+  EXPECT_STREQ(static_cast<PageDropCap*>(cap->get())->getText(), "H");
+  EXPECT_EQ(parser.visibleTextOffset, 11u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, OversizedDropCapSpanFallsBackWithoutLosingLetters) {
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  const XML_Char* attrs[] = {"style", "float: left; font-size: 3em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "span", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "Hello", 5);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  parser.flushPartWordBuffer();
+  EXPECT_EQ(parser.dropCap.length, 0);
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "Hello");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PreservedWhitespaceKeepsSpacesAndLineBreaks) {
+  const XML_Char* attrs[] = {"style", "white-space: pre-wrap", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "A  B", 4);
+  parser.flushPartWordBuffer();
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 4u);
+  EXPECT_EQ(parser.currentTextBlock->words[1], " ");
+  EXPECT_EQ(parser.currentTextBlock->words[2], " ");
+  EXPECT_TRUE(parser.currentTextBlock->wordNoSpaceBefore.back());
+  ChapterHtmlSlimParser::characterData(&parser, "\nC", 2);
+  parser.flushPartWordBuffer();
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "C");
+  EXPECT_EQ(parser.visibleTextOffset, 6u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, WhitespaceOverrideRestoresParentStyle) {
+  const XML_Char* pre[] = {"style", "white-space: pre-wrap", nullptr};
+  const XML_Char* normal[] = {"style", "white-space: normal", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", pre);
+  EXPECT_TRUE(parser.effectivePreserveWhitespace);
+  ChapterHtmlSlimParser::startElement(&parser, "span", normal);
+  EXPECT_FALSE(parser.effectivePreserveWhitespace);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  EXPECT_TRUE(parser.effectivePreserveWhitespace);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BorderLonghandsPreserveOtherSidesAndWidth) {
+  auto style = CssParser::parseInlineStyle("border: 2px dashed; border-left-style: none; border-top-width: 4px");
+  EXPECT_TRUE(style.hasVisibleBorder());
+  EXPECT_EQ(style.borders[0].width, 4);
+  EXPECT_EQ(style.borders[1].style, CssBorderStyle::Dashed);
+  EXPECT_FALSE(style.borders[3].visible());
+  style.applyOver(CssParser::parseInlineStyle("border-left-style: solid"));
+  EXPECT_EQ(style.borders[3].width, 2);
+  EXPECT_EQ(style.borders[3].style, CssBorderStyle::Solid);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BorderedParagraphAddsABoxAfterItsText) {
+  const XML_Char* attrs[] = {"style", "border: 2px solid; background-color: silver", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attrs);
+  EXPECT_EQ(parser.boxScopeCount, 1u);
+  ChapterHtmlSlimParser::characterData(&parser, "Framed text", 11);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  EXPECT_EQ(parser.boxScopeCount, 0u);
+  ASSERT_TRUE(parser.currentPage);
+  EXPECT_EQ(std::count_if(parser.currentPage->elements.begin(), parser.currentPage->elements.end(),
+                          [](const auto& item) { return item->getTag() == TAG_PageBorderBox; }),
+            1);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, InlineFontSizesMeasureAndRestoreWithinOneLine) {
+  renderer.scalableBaseSize = 12;
+  renderer.textAdvancePerChar = 6;
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Body ", 5);
+  const XML_Char* attrs[] = {"style", "font-size: 2em", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "span", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "Large", 5);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  ChapterHtmlSlimParser::characterData(&parser, " tail", 5);
+  parser.flushPartWordBuffer();
+  ASSERT_EQ(parser.currentTextBlock->wordFontSizes.size(), 3u);
+  EXPECT_EQ(parser.currentTextBlock->wordFontSizes[0], 0);
+  EXPECT_EQ(parser.currentTextBlock->wordFontSizes[1], 24);
+  EXPECT_EQ(parser.currentTextBlock->wordFontSizes[2], 0);
+  parser.makePages();
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  const auto& line = static_cast<PageLine&>(*parser.currentPage->elements[0]);
+  EXPECT_EQ(line.getBlock()->wordFontSize(1), 24);
+  EXPECT_EQ(line.getBlock()->getBlockStyle().lineHeight, 48);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, NestedInlineSizesUseParentAndRestore) {
+  renderer.scalableBaseSize = 12;
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  const XML_Char* big[] = {"style", "font-size: 2em", nullptr};
+  const XML_Char* small[] = {"style", "font-size: 50%", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "span", big);
+  EXPECT_EQ(parser.effectiveInlineFontSize, 24);
+  ChapterHtmlSlimParser::startElement(&parser, "span", small);
+  EXPECT_EQ(parser.effectiveInlineFontSize, 12);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  EXPECT_EQ(parser.effectiveInlineFontSize, 24);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  EXPECT_EQ(parser.effectiveInlineFontSize, 0);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CssHiddenIdsDoNotBecomeAnchorsOrPageMarkers) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("#hidden-chapter", CssParser::parseInlineStyle("display: none")));
+  parser.tocAnchors.push_back("hidden-chapter");
+  const XML_Char* attrs[] = {"id", "hidden-chapter", "role", "doc-pagebreak", "title", "42", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "h1", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "Hidden", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "h1");
+  EXPECT_TRUE(parser.pendingAnchorId.empty());
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  EXPECT_TRUE(parser.anchorData.empty());
+  EXPECT_EQ(parser.completedPageCount, 0);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BorderedParagraphKeepsClosingPaddingAndMargin) {
+  const XML_Char* attrs[] = {"style", "border:2px solid;padding-bottom:20px;margin-bottom:20px", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attrs);
+  ChapterHtmlSlimParser::characterData(&parser, "A", 1);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  ASSERT_TRUE(parser.currentPage);
+  int textBottom = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() == TAG_PageLine) textBottom = element->yPos + renderer.getLineHeight(0);
+  }
+  EXPECT_GE(parser.currentPageNextY, textBottom + 42);
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "B", 1);
+  parser.flushPartWordBuffer();
+  parser.makePages();
+  const auto& last = parser.currentPage->elements.back();
+  ASSERT_EQ(last->getTag(), TAG_PageLine);
+  EXPECT_GE(last->yPos, textBottom + 42);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ChildSelectorKeepsAlternativeAncestorMatches) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("section > div p", CssParser::parseInlineStyle("font-weight:bold")));
+  const std::vector<CssAncestorEntry> ancestors{{0, "section", "", ""}, {1, "div", "", ""}, {2, "div", "", ""}};
+  EXPECT_EQ(cssParser.resolveStyle("p", "", ancestors).fontWeight, CssFontWeight::Bold);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, StandaloneInitialLetterPreservesWordBoundary) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("p::first-letter", CssParser::parseInlineStyle("initial-letter:3")));
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "I", 1);
+  ChapterHtmlSlimParser::characterData(&parser, " am here", 8);
+  parser.flushPartWordBuffer();
+  EXPECT_EQ(parser.dropCap.length, 0);
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 3u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "I");
+  EXPECT_EQ(parser.currentTextBlock->words[1], "am");
+  EXPECT_EQ(parser.currentTextBlock->words[2], "here");
+}

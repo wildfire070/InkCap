@@ -1,5 +1,6 @@
 #include <Epub.h>
 #include <GfxRenderer.h>
+#include <PrintSerialization.h>
 #include <Serialization.h>
 
 #include "Epub/Page.h"
@@ -19,6 +20,9 @@ int Epub::getTocItemsCount() const { return 0; }
 int Epub::getTocIndexForSpineIndex(int) const { return -1; }
 bool Epub::readItemContentsToStream(const std::string&, Print&, size_t, bool) const { return false; }
 
+uint32_t testHyphenationIdentity = 1;
+uint32_t Hyphenator::patternIdentity(const std::string&) { return testHyphenationIdentity; }
+
 void Hyphenator::setPreferredLanguage(const std::string&) {}
 
 ChapterHtmlSlimParser::~ChapterHtmlSlimParser() = default;
@@ -28,7 +32,7 @@ bool ChapterHtmlSlimParser::finishParse() { return true; }
 void ChapterHtmlSlimParser::abortParse() {}
 void ChapterHtmlSlimParser::releaseInputFile() {}
 
-bool Page::serialize(FsFile& file) const {
+bool Page::serialize(Print& file) const {
   constexpr uint32_t marker = 0x50414745;
   return serialization::tryWritePod(file, marker);
 }

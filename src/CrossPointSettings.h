@@ -1,6 +1,7 @@
 #pragma once
 #include <ArduinoJson.h>
 #include <Epub/ReaderRenderSpec.h>
+#include <Epub/WordSpacing.h>
 #include <HalStorage.h>
 #include <PersistableStore.h>
 
@@ -121,6 +122,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Front button layout options (legacy)
   // Default: Back, Confirm, Left, Right
   // Swapped: Left, Right, Back, Confirm
+  enum MENU_NAVIGATION : uint8_t { MENU_NAV_DIRECTIONAL = 0, MENU_NAV_CLASSIC = 1 };
+
   enum FRONT_BUTTON_LAYOUT {
     BACK_CONFIRM_LEFT_RIGHT = 0,
     LEFT_RIGHT_BACK_CONFIRM = 1,
@@ -165,6 +168,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     TWO_FINGER_SWIPE_PREVIOUS_CHAPTER,
     TWO_FINGER_SWIPE_INCREASE_FONT_SIZE,
     TWO_FINGER_SWIPE_DECREASE_FONT_SIZE,
+    TWO_FINGER_SWIPE_BACK_HOME,
+    TWO_FINGER_SWIPE_HOME_READER,
+    TWO_FINGER_SWIPE_SELECT_CHAPTER,
     TWO_FINGER_SWIPE_ACTION_COUNT,
   };
 
@@ -283,6 +289,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SLEEP_ONLY = 34,
     WAKE_ONLY = 35,
     HOME_READER = 36,
+    BACK_HOME = 37,
+    SELECT_CHAPTER = 38,
     SHORT_PWRBTN_COUNT
   };
 
@@ -323,6 +331,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CHORD_NEARBY_POSITION_SYNC = 30,
     CHORD_LIBRARY = 31,
     CHORD_HOME_READER = 32,
+    CHORD_BACK_HOME = 33,
+    CHORD_SELECT_CHAPTER = 34,
     POWER_CHORD_ACTION_COUNT
   };
 
@@ -337,7 +347,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   static constexpr uint8_t QUICK_ACTION_SLOT_ACTION_COUNT = 23;
 
-  // Hide battery percentage
+  // Legacy Hide Battery % values (migration only)
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
   // Page turn button long press behavior
@@ -414,6 +424,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_MENU_QUICK_ACTIONS = 22,
     LONG_MENU_QUICK_LOCK = 23,
     LONG_MENU_LIBRARY = 24,
+    LONG_MENU_HOME_READER = 25,
+    LONG_MENU_BACK_HOME = 26,
+    LONG_MENU_SELECT_CHAPTER = 27,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
@@ -467,6 +480,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t statusBarTimeLeft = TIME_LEFT_HIDE;
   uint8_t statusBarBattery = 1;
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
+  uint8_t displayStatusBarTextSize = 0;  // Global header status strip, independent of reader text.
+  uint8_t statusBarTextSize = 0;         // Small (Inter 8), Medium (Inter 10), Large (Inter 12).
   ReaderStatusBarConfig topReaderStatusBar{};
   ReaderStatusBarConfig bottomReaderStatusBar = [] {
     ReaderStatusBarConfig config;
@@ -551,6 +566,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontButtonLayout = BACK_CONFIRM_LEFT_RIGHT;
   uint8_t sideButtonLayout = PREV_NEXT;
   uint8_t frontButtonOrientationAware = FRONT_ORIENTATION_AWARE_OFF;
+  uint8_t menuNavigation = MENU_NAV_DIRECTIONAL;
   uint8_t sideButtonOrientationAware = 0;
   // Legacy shared side-button long action, retained for migration only.
   uint8_t sideButtonLongPress = SIDE_LONG_CHAPTER_SKIP;
@@ -584,14 +600,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t lineSpacing = NORMAL;  // migration only; new saves use lineHeightPercent
   uint8_t lineHeightPercent = 100;
   uint8_t wordSpacing = 0;
-  // Letter-spacing between adjacent non-space glyphs. Stored as a picker index 0..4 that maps to
-  // -2..+2 px (default 2 = 0 px), so it persists like the other enum settings.
-  static constexpr uint8_t CHARACTER_SPACING_OFFSET = 2;
-  static constexpr uint8_t MAX_CHARACTER_SPACING = 4;
-  uint8_t characterSpacing = CHARACTER_SPACING_OFFSET;
-  int8_t getCharacterSpacingPx() const {
-    return static_cast<int8_t>(std::min<uint8_t>(characterSpacing, MAX_CHARACTER_SPACING) - CHARACTER_SPACING_OFFSET);
-  }
+  uint8_t characterSpacing = 5;  // 0..10 represents -5..+5; each step is half a pixel.
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
@@ -618,7 +627,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char bookFusionDownloadFolder[64] = "BookFusion";
   // Nearby file receive destination (empty = SD root).
   char nearbyReceiveFolder[64] = "";
-  // Hide battery percentage
+  // Legacy Hide Battery % choice, read only to migrate into per-bar battery styles.
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
   uint8_t longPressButtonBehavior = OFF;
@@ -683,6 +692,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t readingIdleTimeThresholdUnits = 30;
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
+  uint8_t imageGrayscale = 1;
   // Long-press Confirm (menu button) quick action in reader (0 = off)
   uint8_t longPressMenuAction = LONG_MENU_OFF;
   // Long-press Back quick action in reader (defaults to the historical file browser shortcut)
@@ -711,7 +721,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint16_t frontlightScheduleStart = 0xFFFF;
   uint16_t frontlightScheduleEnd = 0xFFFF;
   // Language setting (Language enum index, default 0 = EN)
-  uint8_t language = 0;
+  char filenameFallbackFont[64] = "";  // Folder name under /.crosspoint/languages/fonts; empty disables fallback.
+  char languageCode[32] = "EN";        // Preferred identity survives temporary English fallback.
+  uint64_t languageCacheGeneration = 0;
   // Enabled keyboard layouts. Zero derives a default from the UI language;
   // non-zero bits follow KeyboardLayoutSet::ALL table order.
   uint16_t keyboardLayouts = 0;
@@ -774,7 +786,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t MAX_SCREEN_MARGIN = 150;
   static constexpr uint8_t SCREEN_MARGIN_SMALL_STEP = 1;
   static constexpr uint8_t SCREEN_MARGIN_LARGE_STEP = 5;
-  static constexpr uint8_t MAX_WORD_SPACING = 4;
+  static constexpr uint8_t MAX_WORD_SPACING = WordSpacing::MAX_VALUE;
+  static void formatWordSpacingSlider(int value, char* buffer, size_t length);
+  static constexpr uint8_t MAX_CHARACTER_SPACING = 10;
+  static int8_t characterSpacingLevel(uint8_t value) {
+    return static_cast<int8_t>(std::min<uint8_t>(value, MAX_CHARACTER_SPACING)) - 5;
+  }
+  static void formatCharacterSpacing(int value, char* buffer, size_t length);
   static constexpr uint16_t DEFAULT_READING_IDLE_TIME_THRESHOLD_SECONDS = 5 * 60;
   static constexpr uint16_t MIN_READING_IDLE_TIME_THRESHOLD_SECONDS = 30;
   static constexpr uint16_t MAX_READING_IDLE_TIME_THRESHOLD_SECONDS = 10 * 60;

@@ -5,7 +5,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
     std::vector<SettingInfo> v;
     // Reserve the maximum final size. Growing this process-lifetime vector
     // would otherwise leave it holding roughly twice the memory it needs.
-    v.reserve(BASE_SETTINGS_CAPACITY);
+    v.reserve(getBaseSettingsCapacity());
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
 
     // --- Display ---
@@ -32,7 +32,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
             .withEnumRawValues({CrossPointSettings::REFRESH_1, CrossPointSettings::REFRESH_5,
                                 CrossPointSettings::REFRESH_10, CrossPointSettings::REFRESH_15,
                                 CrossPointSettings::REFRESH_30, CrossPointSettings::REFRESH_NEVER}));
-    add(SettingInfo::Toggle(StrId::STR_NIGHT_MODE, &CrossPointSettings::screenInverted, "screenInverted",
+    add(SettingInfo::Toggle(StrId::STR_READER_DARK_MODE, &CrossPointSettings::screenInverted, "screenInverted",
                             StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_MINIMAL, StrId::STR_THEME_DASHBOARD,
@@ -84,10 +84,9 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                            "lineHeightPercent", StrId::STR_CAT_READER));
     add(SettingInfo::Value(StrId::STR_WORD_SPACING, &CrossPointSettings::wordSpacing,
                            {0, CrossPointSettings::MAX_WORD_SPACING, 1}, "wordSpacing", StrId::STR_CAT_READER));
-    add(SettingInfo::Enum(StrId::STR_CHARACTER_SPACING, &CrossPointSettings::characterSpacing,
-                          {StrId::STR_SPACING_MINUS_2, StrId::STR_SPACING_MINUS_1, StrId::STR_SPACING_ZERO,
-                           StrId::STR_SPACING_PLUS_1, StrId::STR_SPACING_PLUS_2},
-                          "characterSpacing", StrId::STR_CAT_READER));
+    add(SettingInfo::Value(StrId::STR_CHARACTER_SPACING, &CrossPointSettings::characterSpacing,
+                           {0, CrossPointSettings::MAX_CHARACTER_SPACING, 1}, "characterSpacing",
+                           StrId::STR_CAT_READER));
     add(SettingInfo::Enum(
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_LANDSCAPE_CCW, StrId::STR_ORIENTATION_INVERTED},
@@ -107,7 +106,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                             "publisherPageNumbers", StrId::STR_CAT_READER));
     add(SettingInfo::Enum(
         StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
-        {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE},
+        {StrId::STR_JUSTIFY, StrId::STR_DIR_LEFT, StrId::STR_CENTER, StrId::STR_DIR_RIGHT, StrId::STR_BOOK_S_STYLE},
         "paragraphAlignment", StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                             StrId::STR_CAT_READER));
@@ -118,6 +117,8 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                           {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
                           "imageRendering", StrId::STR_CAT_READER));
+    add(SettingInfo::Toggle(StrId::STR_IMAGE_GRAYSCALE, &CrossPointSettings::imageGrayscale, "imageGrayscale",
+                            StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_TOUCH_READER_CONTROLS, &CrossPointSettings::touchReaderControls,
                             "touchReaderControls", StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_DISABLE_TOUCHSCREEN, &CrossPointSettings::disableReaderTouchscreen,
@@ -143,6 +144,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
         StrId::STR_NOT_SET,          StrId::STR_INCREASE_BRIGHTNESS, StrId::STR_DECREASE_BRIGHTNESS,
         StrId::STR_INCREASE_WARMTH,  StrId::STR_DECREASE_WARMTH,     StrId::STR_NEXT_CHAPTER,
         StrId::STR_PREVIOUS_CHAPTER, StrId::STR_INCREASE_FONT_SIZE,  StrId::STR_DECREASE_FONT_SIZE,
+        StrId::STR_BACK_HOME,        StrId::STR_HOME_READER,         StrId::STR_SELECT_CHAPTER,
     };
     const std::vector<uint8_t> twoFingerSwipeActionValues = {
         CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET,
@@ -154,6 +156,9 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
         CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER,
         CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE,
         CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE,
+        CrossPointSettings::TWO_FINGER_SWIPE_BACK_HOME,
+        CrossPointSettings::TWO_FINGER_SWIPE_HOME_READER,
+        CrossPointSettings::TWO_FINGER_SWIPE_SELECT_CHAPTER,
     };
     add(SettingInfo::Enum(StrId::STR_TWO_FINGER_SWIPE_UP, &CrossPointSettings::twoFingerSwipeUp, twoFingerSwipeActions,
                           "twoFingerSwipeUp", StrId::STR_CAT_CONTROLS)
@@ -195,8 +200,8 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                           {StrId::STR_NO, StrId::STR_NAV_BUTTONS, StrId::STR_ALL_BUTTONS},
                           "frontButtonOrientationAware", StrId::STR_CAT_CONTROLS));
     add(SettingInfo::Enum(StrId::STR_LONG_PRESS_ACTION, &CrossPointSettings::longPressButtonBehavior,
-                          {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                           StrId::STR_CHANGE_FONT_SIZE, StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
+                          {StrId::STR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP, StrId::STR_CHANGE_FONT_SIZE,
+                           StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
                           "longPressButtonBehavior", StrId::STR_CAT_CONTROLS)
             .withEnumRawValues({CrossPointSettings::OFF, CrossPointSettings::CHAPTER_SKIP,
                                 CrossPointSettings::FONT_SIZE_CHANGE, CrossPointSettings::ORIENTATION_CHANGE}));
@@ -234,6 +239,10 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                           "previousPageGesture", StrId::STR_CAT_CONTROLS));
     add(SettingInfo::Toggle(StrId::STR_TAP_HIDE_STATUS_BAR, &CrossPointSettings::tapToHideStatusBar,
                             "tapToHideStatusBar", StrId::STR_CAT_CONTROLS));
+
+    add(SettingInfo::Enum(StrId::STR_MENU_NAVIGATION, &CrossPointSettings::menuNavigation,
+                          {StrId::STR_MENU_DIRECTIONAL, StrId::STR_MENU_CLASSIC}, "menuNavigation",
+                          StrId::STR_CAT_CONTROLS));
 
     // --- System ---
     add(SettingInfo::String(StrId::STR_DEVICE_NAME, SETTINGS.deviceName, sizeof(SETTINGS.deviceName), "deviceName",
@@ -290,21 +299,21 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
           KOREADER_STORE.setCredentials(v, KOREADER_STORE.getPassword());
           KOREADER_STORE.saveToFile();
         },
-        "koUsername", StrId::STR_KOREADER_SYNC));
+        "koUsername", StrId::STR_SYNC_SERVER));
     add(SettingInfo::DynamicString(
         StrId::STR_KOREADER_PASSWORD, [] { return KOREADER_STORE.getPassword(); },
         [](const std::string& v) {
           KOREADER_STORE.setCredentials(KOREADER_STORE.getUsername(), v);
           KOREADER_STORE.saveToFile();
         },
-        "koPassword", StrId::STR_KOREADER_SYNC));
+        "koPassword", StrId::STR_SYNC_SERVER));
     add(SettingInfo::DynamicString(
         StrId::STR_SYNC_SERVER_URL, [] { return KOREADER_STORE.getServerUrl(); },
         [](const std::string& v) {
           KOREADER_STORE.setServerUrl(v);
           KOREADER_STORE.saveToFile();
         },
-        "koServerUrl", StrId::STR_KOREADER_SYNC));
+        "koServerUrl", StrId::STR_SYNC_SERVER));
     add(SettingInfo::DynamicEnum(
         StrId::STR_DOCUMENT_MATCHING, {StrId::STR_FILENAME, StrId::STR_BINARY},
         [] { return static_cast<uint8_t>(KOREADER_STORE.getMatchMethod()); },
@@ -312,15 +321,15 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
           KOREADER_STORE.setMatchMethod(static_cast<DocumentMatchMethod>(v));
           KOREADER_STORE.saveToFile();
         },
-        "koMatchMethod", StrId::STR_KOREADER_SYNC));
+        "koMatchMethod", StrId::STR_SYNC_SERVER));
     add(SettingInfo::DynamicEnum(
-        StrId::STR_SEND_METADATA, {StrId::STR_STATE_OFF, StrId::STR_STATE_ON},
+        StrId::STR_SEND_METADATA, {StrId::STR_OFF, StrId::STR_ON},
         [] { return static_cast<uint8_t>(KOREADER_STORE.getSendMetadata()); },
         [](uint8_t v) {
           KOREADER_STORE.setSendMetadata(v != 0);
           KOREADER_STORE.saveToFile();
         },
-        "koSendMetadata", StrId::STR_KOREADER_SYNC));
+        "koSendMetadata", StrId::STR_SYNC_SERVER));
 
     add(SettingInfo::DynamicEnum(
         StrId::STR_SYNC_BEHAVIOR, {StrId::STR_ASK_EVERY_TIME, StrId::STR_SMART_SYNC},
@@ -329,7 +338,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
           KOREADER_STORE.setSyncBehavior(static_cast<KOReaderSyncBehavior>(v));
           KOREADER_STORE.saveToFile();
         },
-        "koSyncBehavior", StrId::STR_KOREADER_SYNC));
+        "koSyncBehavior", StrId::STR_SYNC_SERVER));
 
     // Legacy fields stay in JSON for one-time status bar migration; the web
     // editor uses /api/status-bars instead of exposing these controls.
@@ -364,6 +373,12 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::Enum(StrId::STR_XTC_STATUS_BAR, &CrossPointSettings::xtcStatusBarMode,
                           {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP, StrId::STR_STATUS_BAR_BOTH},
                           "xtcStatusBarMode", StrId::STR_STATUS_BARS));
+    add(SettingInfo::Enum(StrId::STR_STATUS_BAR_TEXT_SIZE, &CrossPointSettings::statusBarTextSize,
+                          {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE}, "statusBarTextSize",
+                          StrId::STR_STATUS_BARS));
+    add(SettingInfo::Enum(StrId::STR_STATUS_BAR_TEXT_SIZE, &CrossPointSettings::displayStatusBarTextSize,
+                          {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE}, "displayStatusBarTextSize",
+                          StrId::STR_CAT_DISPLAY));
     // Clock detail entries live under System > Device in the device UI.
     // Range 0..104 = quarter-hour steps from UTC-12:00 to UTC+14:00, biased by 48.
     add(SettingInfo::Value(StrId::STR_CLOCK_UTC_OFFSET, &CrossPointSettings::clockUtcOffsetQ, {0, 104, 1},
