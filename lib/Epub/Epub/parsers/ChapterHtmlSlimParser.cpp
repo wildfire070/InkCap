@@ -1240,7 +1240,7 @@ void ChapterHtmlSlimParser::pushCssAncestor(const int depth, const char* tag, co
   if (ancestorStack_.size() >= MAX_CSS_ANCESTOR_DEPTH) {
     return;
   }
-  ancestorStack_.push_back({depth, std::string(tag), std::string(classAttr)});
+  ancestorStack_.push_back({depth, std::string(tag), std::string(classAttr), std::string(idAttr)});
 }
 
 void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
