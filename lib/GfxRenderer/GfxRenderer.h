@@ -23,6 +23,7 @@ class SdCardFont;
 #include <string>
 #include <vector>
 
+#include "../ScreenCalibration/ScreenInsets.h"
 #include "Bitmap.h"
 
 namespace glyphBitmap {
@@ -46,6 +47,7 @@ class GfxRenderer {
   };
 
  private:
+  ScreenInsets viewableInsets;
   static constexpr size_t BW_BUFFER_CHUNK_SIZE = 8000;  // 8KB chunks to allow for non-contiguous memory
 
   HalDisplay& display;
@@ -54,6 +56,7 @@ class GfxRenderer {
   Orientation orientation;
   bool fadingFix;
   uint8_t* frameBuffer = nullptr;
+  uint32_t frameBufferLoans = 0;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
   uint16_t panelWidthBytes = HalDisplay::DISPLAY_WIDTH_BYTES;
@@ -118,19 +121,9 @@ class GfxRenderer {
   // as before, concentrated in a single pointer instead of four fields.
   mutable FontCacheManager* fontCacheManager_ = nullptr;
 
-  // CJK UI font fallback map: primary (built-in, Latin-only) UI font id -> a
-  // size-matched SD-card font id that carries CJK glyphs. When a string drawn
-  // or measured with a mapped primary font contains a CJK codepoint the primary
-  // cannot render, the whole string is routed to the mapped fallback so it
-  // appears at the same point size as the surrounding UI text. Populated by the
-  // app-level SD font setup when an SD family is loaded. See resolveTextFontId().
-  std::map<int, int> fallbackFontMap_;
+  // Explicit filename-only font ids, with built-in glyphs as the primary face.
+  std::map<int, int> filenameFontMap_;
 
-  // If `text` contains a CJK codepoint that `fontId` cannot render and `fontId`
-  // has a registered fallback, returns the fallback id; otherwise returns
-  // fontId unchanged. The whole string is routed as a unit so each draw/measure
-  // call stays single-font (consistent bit depth, metrics, wrapping).
-  int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   void freeBwBufferChunks();
@@ -168,10 +161,10 @@ class GfxRenderer {
     freeBitmapScratchBuffers();
   }
 
-  static constexpr int VIEWABLE_MARGIN_TOP = 9;
-  static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
-  static constexpr int VIEWABLE_MARGIN_BOTTOM = 3;
-  static constexpr int VIEWABLE_MARGIN_LEFT = 3;
+  static constexpr int VIEWABLE_MARGIN_TOP = ScreenInsets{}.edges[0];
+  static constexpr int VIEWABLE_MARGIN_RIGHT = ScreenInsets{}.edges[1];
+  static constexpr int VIEWABLE_MARGIN_BOTTOM = ScreenInsets{}.edges[2];
+  static constexpr int VIEWABLE_MARGIN_LEFT = ScreenInsets{}.edges[3];
 
   // Setup
   void begin();  // must be called right after display.begin()
@@ -192,10 +185,10 @@ class GfxRenderer {
   void clearSdCardFonts() { sdCardFonts_.clear(); }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
-  // Register/clear size-matched CJK UI fallbacks (see fallbackFontMap_).
-  // setFallbackFont maps a primary UI font id to an SD font id of the same size.
-  void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
-  void clearFallbackFonts() { fallbackFontMap_.clear(); }
+  // Only filename/book metadata surfaces opt into these composite UI fonts.
+  int filenameFontId(int primaryFontId) const;
+  bool setFilenameFallback(int primaryFontId, int compositeFontId, const EpdFont* regular, const EpdFont* bold);
+  void clearFilenameFallbacks();
   // Ensure SD card font glyph data is loaded for the given text. Called from layout code
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
   // styleMask: bitmask of styles to prepare (bit 0=regular, 1=bold, 2=italic, 3=bold-italic).
@@ -242,6 +235,11 @@ class GfxRenderer {
   void invertRect(int x, int y, int width, int height) const;
   void clearScreen(uint8_t color = 0xFF) const;
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
+  const ScreenInsets& getViewableInsets() const { return viewableInsets; }
+  bool hasCustomViewableInsets() const { return viewableInsets != ScreenInsets{}; }
+  void setViewableInsets(const ScreenInsets& insets) {
+    if (insets.valid()) viewableInsets = insets;
+  }
 
   void beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const;
   void endStripTarget() const;
@@ -283,6 +281,7 @@ class GfxRenderer {
   // Counter-invert content images in the logical framebuffer so output-level
   // Dark Mode leaves their original polarity unchanged.
   void preserveImagePolarity(int x, int y, int width, int height) const;
+  bool isDisplayInverted() const { return display.isInverted(); }
   // Trapezoidal blit used by Flow/iPod-style carousels. Fits the bitmap into a
   // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y).
   void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
@@ -303,7 +302,7 @@ class GfxRenderer {
   // Visible regular-text glyph bounds relative to the y coordinate passed to drawText().
   TextVerticalBounds getTextVerticalBounds(int fontId, const char* text) const;
   int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
-                   BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const;
+                   BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t characterSpacing = 0) const;
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
                         EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                         BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
@@ -313,7 +312,7 @@ class GfxRenderer {
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                 BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, float scale = 1.0f,
-                int8_t tracking = 0) const;
+                int8_t characterSpacing = 0) const;
   // Like drawText(), but resamples each glyph's bitmap to `scale` instead of
   // drawing it at native size. Fallback path for a block-level CSS font-size
   // that FontSizeLadder couldn't map onto a real pre-rendered font resource --
@@ -325,7 +324,8 @@ class GfxRenderer {
   // a block-level custom font-size does not occur in practice (FanFicFare
   // title-page headings and `pre` blocks are plain text).
   void drawTextScaled(int fontId, int x, int y, const char* text, bool black, EpdFontFamily::Style style, float scale,
-                      BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const;
+                      BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO,
+                      int8_t characterSpacing = 0) const;
   // Guard text/background pixels while a table cell is rendered. The guard is
   // intentionally single-level and scoped by the caller; nested use is a
   // programming error caught in debug builds.
@@ -336,13 +336,17 @@ class GfxRenderer {
   /// Using a single snap avoids the +/-1 px rounding error that arises when space advance and kern are
   /// snapped separately and then added as integers.
   int getSpaceAdvance(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
-  /// Returns the kerning adjustment between two adjacent codepoints, plus optional tracking.
-  int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style, int8_t tracking = 0) const;
+  /// Returns the kerning adjustment between two adjacent codepoints.
+  int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style,
+                 int8_t characterSpacing = 0) const;
   /// Returns the rendered advance of \p text. When \p followingCp is supplied,
   /// includes its kerning with the final glyph in the same fixed-point rounding
   /// step that drawText() uses, without drawing or consuming that codepoint.
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style, uint32_t followingCp = 0,
-                      int8_t tracking = 0) const;
+                      int8_t characterSpacing = 0) const;
+  bool getCodepointMetrics(int fontId, uint32_t cp, EpdFontFamily::Style style, int32_t& advanceFP, int& top) const;
+  int drawScaledCodepoint(int fontId, uint32_t cp, EpdFontFamily::Style style, int x, int baselineY, int scale256,
+                          bool pixelState = true) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   // Zero means bitmap font: EPUB content sizing stays disabled.
@@ -413,9 +417,9 @@ class GfxRenderer {
   SemaphoreHandle_t frameBufferMutexHandle() const { return frameBufferMutex_; }
 
   // Plain RAII form of the pair above, for callers with no buffer to loan --
-  // e.g. mutating fontMap/sdCardFonts_/fallbackFontMap_ (SdCardFontManager's
-  // unload/load), which render() reads unlocked on the render task's side
-  // too. Nesting-safe like every lock/loan on this mutex.
+  // e.g. mutating fontMap/sdCardFonts_ (SdCardFontManager's unload/load),
+  // which render() reads unlocked on the render task's side too. Nesting-safe
+  // like every lock/loan on this mutex.
   class MutexGuard {
    public:
     explicit MutexGuard(const GfxRenderer& renderer) : renderer_(renderer) { renderer_.lockFrameBufferMutex(); }
@@ -437,6 +441,9 @@ class GfxRenderer {
   void releaseFrameBufferForBuild();
   bool restoreFrameBufferAfterBuild();
   bool hasFrameBuffer() const { return frameBuffer != nullptr; }
+  // RenderLock protects the counter. Every loan returns blank storage, so
+  // incremental callers compare it to detect destruction of the visible page.
+  uint32_t frameBufferLoanCount() const { return frameBufferLoans; }
 
   // RAII form of the loan above, for blocking build regions with early-return
   // error paths: restores on scope exit (or explicitly via end()). Display the

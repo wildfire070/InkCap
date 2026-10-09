@@ -4,6 +4,7 @@ add_executable(Ao3StoreMaintenanceTest
   ${REPO_ROOT}/src/Ao3MarkedForLaterStore.cpp
   ${REPO_ROOT}/src/Ao3NewChaptersStore.cpp
   ${REPO_ROOT}/lib/Serialization/PersistableStore.cpp
+  ${REPO_ROOT}/lib/Serialization/AtomicFile.cpp
 )
 
 target_include_directories(Ao3StoreMaintenanceTest PRIVATE

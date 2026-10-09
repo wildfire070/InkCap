@@ -25,6 +25,9 @@ struct GlobalReadingStats {
   // stats if the file is missing or the version byte does not match.
   static GlobalReadingStats load();
 
+  // Checked local export, never includes nearby-device snapshots.
+  static bool loadForUpload(GlobalReadingStats& stats);
+
   // Returns true when the optional synced stats directory exists.
   static bool hasSyncedStats();
 
@@ -43,6 +46,10 @@ struct GlobalReadingStats {
   // Replaces /.crosspoint/global_stats.bin with a fresh empty file without
   // rotating or deleting any backup files.
   static bool resetLocal();
+  // Advances after each successful resetLocal(), so an open reader knows its
+  // in-memory copy was replaced on disk. Any new path that replaces the file
+  // while a reader may be open must advance it too.
+  static uint32_t localResetRevision();
 
   void recordReadingSpan(const ReadingStatsDateTime& localStart, uint32_t seconds);
   uint16_t currentReadingStreak(const ReadingStatsDate* today) const;

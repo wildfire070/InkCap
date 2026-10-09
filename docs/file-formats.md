@@ -5,6 +5,63 @@ All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8 unless a format notes a
 fixed-size char buffer.
 
+## Settings: menu navigation
+
+`menuNavigation` in `/.crosspoint/crossink-settings.json` selects Directional
+(`0`, the default) or Classic (`1`) button navigation in global Settings and
+the EPUB reader menu. This is a global preference, shared with the in-reader
+Controls screen. Missing or invalid values retain the current value, which is
+Directional on startup. The setting uses the existing JSON export/import and
+support-preference paths; no binary cache change or cache reset is required.
+
+## Settings: status bar visibility and text size
+
+`statusBarTextSize` in the settings JSON selects Small (`0`, Inter 8), Medium
+(`1`, Inter 10), or Large (`2`, Inter 12) for both reader status bars. Missing
+values retain Small; invalid values fall back to the default. Larger sizes
+reserve additional reading space through the existing layout dimensions, so
+EPUB layout caches rebuild automatically when those dimensions change. No
+binary cache format change or manual cache reset is required.
+
+`displayStatusBarTextSize` uses the same three values independently for the
+global header status lane, configured under Settings > Status Bar. Missing or
+invalid values default to Small. Global header height and available menu space
+follow this size; reader pagination is unaffected.
+
+`readerStatusBars.top.hidden` and `readerStatusBars.bottom.hidden` are optional
+booleans. Missing values default to `false`. Hiding a bar preserves all of its
+slots and options, removes its text and progress lane from reader geometry, and
+reflows EPUB/TXT around the saved text position. XTC preserves its fixed-layout
+page and clears the displayed status strip. These fields round-trip through
+settings export/import and the web status-bar editor.
+
+`readerStatusBars.top.battery`, `readerStatusBars.bottom.battery`, and the root
+`displayBatteryStyle` select how a Battery slot renders in that bar: Icon + %
+(`0`), Icon Only (`1`), or % Only (`2`). Invalid values fall back to Icon + %.
+When a key is missing, it is migrated once from the legacy
+`hideBatteryPercentage` value (Never, In Reader, Always): Never keeps Icon + %
+everywhere, In Reader uses Icon Only for reader bars only, and Always uses Icon
+Only everywhere. `hideBatteryPercentage` is no longer written.
+
+Word Spacing preserves saved values `0..4`. Values `5..8` encode levels `-1..-4`; sliders display levels `-4..4`. Negative levels reduce the natural word gap by 20% per step, retaining at least one pixel. Positive levels retain their existing 10-pixel increments. The byte layout and cache identity are unchanged.
+
+## TXT `index.bin`
+
+Version 5 adds signed `characterSpacing` (-5..5) after the source file size in the index header. A changed spacing value or older version rebuilds pagination around the stored text position.
+
+## TXT `progress.bin`
+
+Each TXT cache stores a six-byte progress record: a little-endian `u16` page
+number followed by a little-endian `u32` source-file byte offset. The format is
+unchanged. A save during font reindexing writes `0xFFFFFFFF` for an unknown
+offset, retaining the page number and compatibility with older readers.
+
+Reopening prefers an in-range offset to preserve text position when the status
+bar geometry changed while the book was closed. Offset zero is valid only for
+page zero; a zero offset with a later page, an out-of-range offset, or a legacy
+short record falls back to the saved page number. The loader tolerates existing
+two- and four-byte page records. The stored page is clamped to the rebuilt index.
+
 ## `epub_<hash>/links.bin`
 
 The EPUB reader writes followed-link Back history on clean exit (Home, sleep,
@@ -94,6 +151,13 @@ struct ImageFolderIndexRecord {
 ```
 
 ## `/.crosspoint/library.idx`
+
+### Version 7
+
+Version 7 preserves the version 6 layout but invalidates extracted metadata to
+resolve EPUB3 series refinements by collection ID. The next Library scan reparses
+EPUB metadata when enabled, preserving first-seen history during reconciliation.
+The persistent metadata cache is also invalidated, so it cannot restore stale series.
 
 ### Version 6
 
@@ -232,6 +296,18 @@ display author, title, the pre-spelling-harmonisation source author, series,
 and genre. Version 6 appends the four-byte series position.
 
 ## `/.crosspoint/library.meta` and `/.crosspoint/library.metd`
+
+### Version 2
+
+Version 2 keeps the binary layout unchanged and rejects version 1 extraction
+results so library scans rebuild series data using ID-based EPUB3 resolution.
+
+Collection resolution accepts up to eight exact IDs in a shared 2048-byte arena;
+oversized IDs and candidates exceeding the budget are ignored rather than joined
+to the wrong title or position. Text fields retain the 512-byte UTF-8-safe limit,
+Calibre series metadata takes precedence, and parser indexes remain strings.
+The reader's `book.bin` version is unchanged: it stores no series fields, and
+`Epub::loadMetadata` already bypasses it when series metadata is requested.
 
 ### Version 1
 
@@ -385,7 +461,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 10
+### Version 12
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -406,6 +482,12 @@ display setting. Version 10 appends a field mask so a book overrides only the
 reader settings that differ from its current global defaults. Version 2-9
 records with the custom-settings flag keep their full snapshot as an override
 when migrated; they cannot distinguish past manual edits from automatic ones.
+Version 11 appends the image-grayscale toggle after the mask and moves the SD-font
+mask bit from 18 to 19. Older records retain their existing overrides and inherit
+the global image-grayscale setting. This drawing-only setting does not invalidate
+EPUB layout or image caches.
+Version 12 appends `u8 characterSpacing` (0–10 encodes -5–+5, default 5), with override bit 20. Existing field bits, including the SD font at bit 19, stay unchanged. Older records inherit global character spacing. Each displayed step adjusts inter-character gaps by half a pixel; spaces keep their word-spacing behavior.
+
 The file can preserve an auto-page-turn interval without forcing custom
 font/layout settings for the book. It also stores a per-book EPUB render mode override,
 which can be changed from book action menus before opening the book so a
@@ -416,7 +498,7 @@ fallback successfully opens a difficult book.
 
 ```c++
 struct ReaderSettingsBin {
-    u8 version; // 10
+    u8 version; // 12
     u8 flags;   // bit 0 = at least one custom reader field, bit 1 = custom auto-page-turn interval, bit 2 = render mode override, bit 3 = dictionary font override, bit 4 = Safe Mode override
     u16 autoPageTurnSeconds;
     u8 renderMode; // 0 = CrossInk Default, 1 = Balanced, 2 = Light
@@ -424,7 +506,7 @@ struct ReaderSettingsBin {
     u8 fontFamily;
     u8 readerFontPointSize; // physical point size; versions 2-5 stored a size slot
     u8 lineHeightPercent;
-    u8 wordSpacing; // 0 = natural font spacing; 1-4 widen each gap by ~75% per level
+    u8 wordSpacing; // 0 = natural; 1-4 add 10px per level; 5-8 encode -1..-4 (20% tighter per level)
     u8 orientation;
     u8 screenMarginVertical;
     u8 screenMarginHorizontal;
@@ -443,7 +525,9 @@ struct ReaderSettingsBin {
     char sdFontFamilyName[64];
     char dictionarySdFontFamilyName[64]; // meaningful only when flag bit 3 is set
     u8 dictionaryFontPointSize; // 0 = follow reader size
-    u32 readerSettingsOverrideMask; // bits 0-17 correspond to snapshot fields above, excluding snapshotRenderMode; bit 18 = sdFontFamilyName
+    u32 readerSettingsOverrideMask; // bits 0-17 = snapshot fields excluding snapshotRenderMode; bit 18 = imageGrayscale; bit 19 = sdFontFamilyName
+    u8 imageGrayscale; // 0 = BW only, 1 = grayscale (default)
+    u8 characterSpacing; // 0..10 encodes -5..+5; override bit 20
 };
 ```
 
@@ -554,6 +638,51 @@ Binary layout:
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
 ## `section.bin`
+
+### Version 88
+
+This branch's own version 82 (character spacing joining the header and
+per-line TextBlock storage) is retired here in favor of upstream's native
+character spacing implementation, which lands at this same number alongside
+several other upstream features bundled into one bump: suppressed CSS
+`<hr>` borders no longer draw a horizontal rule; an external hyphenation
+pack's identity joins the header as a little-endian `u32` (zero when
+disabled/unavailable, one for built-in English, otherwise a fingerprint of
+the pack's language/rules/offsets/CRC) immediately after `hyphenationEnabled`;
+publisher decorations, preserved whitespace, contextual (descendant) CSS
+selectors and per-word inline font sizes change layout; and the signed
+`characterSpacing` byte (-5..5) is carried in the header immediately after
+`wordSpacing`, with the same signed byte in each TextBlock immediately before
+`initialLetterBytes`, so cached drawing retains the exact spacing used for
+layout. No additional per-word allocation is needed for character spacing.
+
+TextBlock also adds one-byte `wordSizesPresent` and `initialLetterBytes`
+fields immediately before `textBytes`. The initial-letter prefix (0–12 bytes)
+stays in the first logical word for dictionary lookup and clippings; ordinary
+text rendering skips those bytes because the drop cap draws them separately.
+When `wordSizesPresent` is set, the arena stores one point-size byte per word
+after the whitespace bitset and before UTF-8 text; zero uses the block font.
+The flag is zero for ordinary lines, so they require no extra per-word
+storage. Sizes use the existing scalable font family and share the tallest
+word's baseline and line height.
+
+Page tags `5` and `6` are drop caps and border boxes. Drop caps contain x/y
+(int16 each), source font point size (uint8, zero means the reader font), Q8
+scale (uint16), style (uint8), UTF-8 byte length (uint8, 1–12), then text bytes.
+Border boxes contain x/y (int16 each), width/height (uint16 each), four pairs of
+width/style bytes in top/right/bottom/left order, and a shaded byte. Styles are
+none/solid/double/dotted/dashed (0–4), and border widths are capped at 8 pixels.
+
+CSS cache revision `23` grows the fixed style payload to 92 bytes: whitespace
+byte after the four existing border masks, eight border width/style bytes,
+then shaded/float-left/initial-letter bytes, followed by the existing uint32
+defined flags. New flag bits 25–28 identify whitespace, shading, float and
+initial-letter declarations. Context-rule records retain the two-string
+format; the first string is the ancestor chain (`@` means no constraint), and
+the second is the subject compound, optionally ending in `::first-letter`.
+
+Complete caches use `88`; suspended partial caches use `0xC9`. Both rebuild
+older caches automatically.
 
 ### Version 87
 
@@ -764,7 +893,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 79
+#define EXPECTED_VERSION 86
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -958,6 +1087,7 @@ struct ParagraphLut {
 };
 
 struct SectionBin {
+    u32 magic; // 0x535843FF (bytes: FF, "CXS")
     u8 version;
     if (version != EXPECTED_VERSION) {
         std::error(std::format("Unsupported version: {} (expected {})", version, EXPECTED_VERSION));
@@ -971,6 +1101,7 @@ struct SectionBin {
     u16 viewportWidth;
     u16 viewportHeight;
     bool hyphenationEnabled;
+    u32 hyphenationPatternIdentity;
     bool embeddedStyle;
     u8 imageRendering;
     bool focusReadingEnabled;
@@ -984,6 +1115,7 @@ struct SectionBin {
     u32 anchorMapOffset;
     u32 paragraphLutOffset;
     u32 listItemLutOffset;
+    u32 visibleTextLutOffset;
 
     Page pages[pageCount];
 
@@ -1163,3 +1295,118 @@ the card to the host. Manage Fonts performs a full rescan; alternatively remove
 this cache to force reinspection after external same-length font changes.
 
 EPUB layout cache versions and identities are unchanged by this catalog.
+
+### Daily reading counters (v1)
+
+Device-local counters live in `/.crosspoint/daily_reading/NNNNN.bin`, where NNNNN
+is the zero-padded day index since 2000-01-01 (2000–2099). Each file is 13 bytes:
+version byte 1; uint32 LE cumulative seconds at offset 1; uint32 LE acknowledged
+seconds at offset 5; uint32 LE FNV-1a checksum at offset 9. The checksum starts at
+`2166136261 XOR day_index` and covers bytes 0–8. Saves write and sync a `.tmp`,
+rotate the previous `.bin` to `.bin.bak`, then publish the temp file. Recovery
+keeps the maximum verified seconds and acknowledgment from all three files.
+Unknown newer formats and unrecoverable corruption are preserved and rejected.
+
+Only accepted page intervals in the existing EPUB/XTC stats paths contribute.
+Idle intervals over the configured threshold are rejected in full; menus,
+dictionary, input lock, overlays, and reader exit use the existing timer boundaries.
+The existing ten-second session minimum applies. Durations remain whole seconds,
+with the existing timer's per-interval millisecond remainder discarded. Each
+accepted interval captures a fresh wall clock and the configured fixed UTC offset
+at its start/end; midnight splits actual intervals, rather than placing accumulated
+active time at session start. Missing/invalid time, changed offsets, or wall time
+changes exceeding two seconds leave that interval undated. RTC readings are
+uncached and reject oscillator-stop/I2C failures. RTC-less devices use valid system
+UTC after NTP; this does not add background NTP or correct deep-sleep clock drift.
+No historical duration is inferred from global totals, buckets, or history bits.
+
+RAM is bounded: two day counters plus at most nine seconds of pending short-session
+intervals per reader. Saves are debounced to 60 accepted seconds, and flushed at
+existing global-stat save/exit boundaries and before sync. A sudden power loss can
+lose uncheckpointed accepted seconds (normally under 60), plus the current page
+interval that has not yet been accepted. Normal sleep commits through reader exit.
+Daily counters survive book/global-total resets and book moves/merges; they are
+monotonic device history for sync, independent of those resettable totals. Deleting
+this directory manually destroys that history; it cannot be reconstructed.
+
+Stats sync extends `PUT /api/v1/stats/global` with an optional `daily` array:
+`[{"date":"2026-10-01","seconds":61}]`. Dates are local calendar dates, not UTC
+timestamps. Firmware streams one changed day per request in the existing 1536-byte
+buffer; it marks that counter uploaded only after `accepted_daily: 1`. Old servers
+can still accept aggregate stats, but cannot silently discard daily history and
+acknowledge it. Failed requests remain eligible for retry, including recovered
+`.tmp`/`.bak` records. Nearby-device snapshots are never uploaded as local history.
+
+## Internal language cache (v1)
+
+The last 128 KiB of the existing `spiffs` data partition contains two 64 KiB
+slots. No application partition or partition-table entry changes. All integer
+fields are explicitly serialized little-endian; no packed C++ structs are cast
+onto flash bytes.
+
+A slot begins with a 256-byte header: a 16-byte `CILANG` v1 ownership marker,
+commit word at offset 16, 64-bit generation at 20, total used bytes at 28,
+16-bit record count at 32, RTL flag at 34, and CRC32 at 36. Fixed NUL-terminated
+UTF-8/ASCII metadata fields are code[32] at 40, name[96] at 72, and keyboard[32]
+at 168. Reserved header bytes are zero. CRC32 covers bytes 20 through the end
+of used data with the checksum field treated as zero. The commit word is
+written last. The marker identifies language-cache contents; permission to use
+the region comes from its firmware data-partition role. Applying a language may
+replace previous filesystem contents in the target slot. Other partition bytes
+and the pinned language slot remain unchanged. Interrupted initial provisioning
+can be retried without needing an intact prior ownership marker.
+
+Records follow sequentially: 64-bit FNV-1a key identity, 64-bit FNV-1a English
+reference signature, 16-bit string length including NUL, then the UTF-8 string.
+Only translated entries known at installation are stored. Firmware matches
+stable identities/signatures at startup and builds a uint16_t offset per current
+StrId; 0xffff means English fallback. Numeric StrId order is not an on-flash ABI.
+Checksums, lengths, UTF-8, metadata, and current-key duplicates are validated
+before a mapping is exposed. The mapping remains pinned until restart.
+
+Settings keep the preferred code in the existing `language` JSON key and the
+selected generation in `languageCacheGeneration`. A zero generation permits a
+legacy preference to find the newest matching valid slot. Normal saves use a
+synced `.tmp` and recoverable `.bak`; a remaining backup denotes an unfinished
+publication and is restored before settings are loaded or saved.
+
+## SD hyphenation packs and flash banks
+
+SD path: `/.crosspoint/hyphenation/hyph-<code>.cphyph`. The upstream CPHY v1
+header is 24 bytes, with all multibyte integers little-endian:
+
+- 0: magic `CPHY` (4 bytes)
+- 4: version `1` (u8)
+- 5: primary language code (2 lowercase ASCII bytes)
+- 7, 8: minimum prefix/suffix characters (u8 each; currently 2/2)
+- 9: flags (u8; currently zero)
+- 10: reserved (u16; zero)
+- 12: root offset into payload (u32)
+- 16: payload size (u32)
+- 20: payload CRC32 (u32, IEEE/zlib)
+
+The payload is the existing Hypher trie with its original four-byte root prefix
+removed, unchanged from the firmware table. The root offset excludes that prefix.
+The header language must match the filename chosen by the manager.
+
+CrossInk bank format is independent of upstream's internal flash bank format.
+Two 64 KiB-aligned banks occupy the partition before the UI-language slots.
+For the current 0x360000-byte partition they begin at 0 and 0x1a0000 and each
+hold 0x1a0000 bytes. Only the inactive bank is erased/written; language slots at
+0x340000 and 0x350000 are never touched.
+
+Each bank starts with a 256-byte header. Bytes 0-7 are `CIHP`, version byte 1,
+and three zero bytes. Little-endian u32 fields at offsets 8, 12, 16 and 20 hold
+generation, entry count, used size and header CRC32. Offset 24 is the commit
+marker `0x50485950`, written last. Offset 28 is reserved zero. The header CRC
+covers bytes 0-23 (checksum field treated as zero) and 28-255; it excludes the
+commit marker. Unused header bytes are zero.
+
+Up to ten 20-byte entries begin at offset 32: language code (2 bytes), prefix
+and suffix (one byte each), bank-relative payload offset, payload size, root
+offset and payload CRC32 (four u32 values). Payloads start at offset 4096 and
+are packed in entry order with four-byte alignment. Duplicate/unsupported
+languages, invalid bounds, uncommitted banks and bad header/payload checksums
+are rejected. Boot selects the highest fully valid generation. Generations do
+not wrap; exhausting u32 rejects a further update. A successful update requires
+a restart before another operation or activation of its new mapping.

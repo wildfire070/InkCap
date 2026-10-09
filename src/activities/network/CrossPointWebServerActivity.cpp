@@ -161,7 +161,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   } else if (mode == NetworkMode::AO3_RECEIVE) {
     modeName = "AO3 Receive";
   } else if (mode == NetworkMode::NEARBY_STATS_SYNC) {
-    modeName = "Sync Stats";
+    modeName = "Nearby Stats Sync";
   } else if (mode == NetworkMode::NEARBY_BOOK_RECEIVE) {
     modeName = "Receive File";
   }
@@ -564,7 +564,7 @@ void CrossPointWebServerActivity::renderServerRunning() const {
   const auto pageWidth = renderer.getScreenWidth();
 
   renderHeader();
-  const int subHeaderTop = CompactHeader::contentTop(metrics);
+  const int subHeaderTop = CompactHeader::contentTop(renderer);
   GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
 
   if (!isApMode) {

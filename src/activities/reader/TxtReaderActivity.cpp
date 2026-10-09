@@ -29,13 +29,14 @@ constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
 constexpr unsigned long LONG_PRESS_MENU_MS = 600;
 // Cache file magic and version
 constexpr uint32_t CACHE_MAGIC = 0x54585449;  // "TXTI"
-constexpr uint8_t CACHE_VERSION = 4;          // Increment when cache format changes
+constexpr uint8_t CACHE_VERSION = 5;          // Increment when cache format changes
 constexpr uint32_t MAX_CACHE_PAGES = 65535;   // Sanity cap to prevent unbounded reserve()
 
 // Parses and word-wraps lines from a file chunk into outLines.
 // Returns the number of bytes consumed from the start of buffer.
 size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOffset, size_t fileSize, int linesPerPage,
-                         GfxRenderer& renderer, int fontId, int vw, std::vector<std::string>& outLines) {
+                         GfxRenderer& renderer, int fontId, int vw, std::vector<std::string>& outLines,
+                         int8_t characterSpacing) {
   size_t pos = 0;
   while (pos < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
     size_t lineEnd = pos;
@@ -55,7 +56,9 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
         break;
       }
 
-      const int fullLineWidth = renderer.getTextWidth(fontId, line.c_str());
+      const int fullLineWidth =
+          renderer.getTextWidth(fontId, line.c_str(), EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO,
+                                characterSpacing);
       if (fullLineWidth <= vw) {
         outLines.push_back(line);
         lineBytePos = displayLen;
@@ -80,7 +83,8 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
           while (breakPos > 0 && (line[breakPos] & 0xC0) == 0x80) breakPos--;
         }
       }
-      while (breakPos > 0 && renderer.getTextWidth(fontId, line.substr(0, breakPos).c_str()) > vw) {
+      while (breakPos > 0 && renderer.getTextWidth(fontId, line.substr(0, breakPos).c_str(), EpdFontFamily::REGULAR,
+                                                   BidiUtils::BidiBaseDir::AUTO, characterSpacing) > vw) {
         size_t spacePos = line.rfind(' ', breakPos - 1);
         if (spacePos != std::string::npos && spacePos > 0) {
           breakPos = spacePos;
@@ -222,9 +226,9 @@ void TxtReaderActivity::loop() {
 #endif
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
   if (touch.tapped &&
-      (ReaderUtils::isBottomStatusBarTap(renderer, touch.y, UITheme::getInstance().getStatusBarHeight()) ||
+      (ReaderUtils::isBottomStatusBarTap(renderer, touch.y, UITheme::getInstance().getStatusBarHeight(renderer)) ||
        ReaderUtils::isTopStatusBarTap(renderer, touch.y,
-                                      UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top)))) {
+                                      UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top, renderer)))) {
     if (SETTINGS.tapToHideStatusBar) {
       statusBarVisible = !statusBarVisible;
       requestUpdate();
@@ -238,9 +242,9 @@ void TxtReaderActivity::loop() {
     return;
   }
 
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   if (longPressMenuHandled) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmReleased || !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
       longPressMenuHandled = false;
     }
     return;
@@ -253,17 +257,17 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  if (SETTINGS.longPressMenuAction == CrossPointSettings::LONG_MENU_LIBRARY &&
+  if ((SETTINGS.longPressMenuAction == CrossPointSettings::LONG_MENU_LIBRARY ||
+       ReaderUtils::isNavigationLongPressAction(SETTINGS.longPressMenuAction)) &&
       mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS &&
-      (mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
-       mappedInput.wasReleased(MappedInputManager::Button::Confirm))) {
+      (mappedInput.isPressed(MappedInputManager::Button::Confirm) || confirmReleased)) {
     longPressMenuHandled = mappedInput.isPressed(MappedInputManager::Button::Confirm);
     mappedInput.suppressNextConfirmRelease();
-    activityManager.goToLibrary();
+    if (!ReaderUtils::dispatchNavigationLongPressAction(SETTINGS.longPressMenuAction)) activityManager.goToLibrary();
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (confirmReleased) {
     openReaderMenu();
     return;
   }
@@ -409,6 +413,8 @@ void TxtReaderActivity::rebuildTextLayout() {
     RenderLock lock(*this);
     pageOffsets.clear();
     currentPageLines.clear();
+    statusBarRelayoutOffset.reset();
+    statusBarRelayoutPage = -1;
     initialized = false;
   }
   requestUpdate();
@@ -517,6 +523,7 @@ bool TxtReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
     case CrossPointSettings::SHORT_PWRBTN::LIBRARY:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_FRONTLIGHT:
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
+    case CrossPointSettings::SHORT_PWRBTN::BACK_HOME:
     case CrossPointSettings::SHORT_PWRBTN::HOME_READER:
       return true;
     default:
@@ -607,6 +614,7 @@ void TxtReaderActivity::toggleHomeButtonInReader() {
 }
 
 bool TxtReaderActivity::executeLongPressBackAction() {
+  if (ReaderUtils::dispatchNavigationLongPressAction(SETTINGS.longPressBackAction)) return true;
   switch (static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressBackAction)) {
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_SLEEP:
       enterDeepSleep();
@@ -657,7 +665,8 @@ bool TxtReaderActivity::handleShortcutAction(const uint8_t action) {
 }
 
 bool TxtReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
-  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER) return dispatchShortcutAction(action);
+  if (action == CrossPointSettings::SHORT_PWRBTN::HOME_READER || action == CrossPointSettings::SHORT_PWRBTN::BACK_HOME)
+    return dispatchShortcutAction(action);
   if (action == CrossPointSettings::SHORT_PWRBTN::QUICK_ACTIONS) {
     QuickActions::showConfiguredPopup(
         quickActionsPopup, [this] { requestUpdate(); },
@@ -682,11 +691,13 @@ void TxtReaderActivity::initializeReader() {
 
   // Store current settings for cache validation
   cachedFontId = SETTINGS.getReaderFontId();
+  cachedCharacterSpacing = SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing);
   cachedVerticalMargin = SETTINGS.screenMarginVertical;
   cachedHorizontalMargin = SETTINGS.screenMarginHorizontal;
   cachedParagraphAlignment = SETTINGS.paragraphAlignment;
   cachedTopStatusBarHeight = ReaderUtils::getTopStatusBarReservedHeight(renderer);
-  cachedBottomStatusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  cachedFooterReservedHeight = ReaderUtils::getReaderFooterReservedHeight(renderer, false);
+  cachedViewableInsets = renderer.getViewableInsets();
 
   // Calculate viewport dimensions
   renderer.getOrientedViewableTRBL(&cachedOrientedMarginTop, &cachedOrientedMarginRight, &cachedOrientedMarginBottom,
@@ -700,8 +711,7 @@ void TxtReaderActivity::initializeReader() {
   } else {
     cachedOrientedMarginTop += cachedVerticalMargin;
   }
-  cachedOrientedMarginBottom += std::max(
-      cachedVerticalMargin, static_cast<uint8_t>(cachedBottomStatusBarHeight + ReaderUtils::STATUS_BAR_TEXT_PADDING));
+  cachedOrientedMarginBottom += cachedFooterReservedHeight;
 
   viewportWidth = renderer.getScreenWidth() - cachedOrientedMarginLeft - cachedOrientedMarginRight;
   const int viewportHeight = renderer.getScreenHeight() - cachedOrientedMarginTop - cachedOrientedMarginBottom;
@@ -790,7 +800,7 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
   }
 
   size_t pos = parseAndWrapLines(buffer, chunkSize, offset, fileSize, linesPerPage, renderer, cachedFontId,
-                                 viewportWidth, outLines);
+                                 viewportWidth, outLines, SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing));
   nextOffset = offset + pos;
   if (nextOffset > fileSize) {
     nextOffset = fileSize;
@@ -811,10 +821,13 @@ void TxtReaderActivity::render(RenderLock&&) {
 
   bool relayout = false;
   size_t readingOffset = 0;
-  if (initialized && (cachedTopStatusBarHeight != ReaderUtils::getTopStatusBarReservedHeight(renderer) ||
-                      cachedBottomStatusBarHeight != UITheme::getInstance().getStatusBarHeight())) {
+  if (initialized && currentPage != statusBarRelayoutPage) statusBarRelayoutOffset.reset();
+  if (initialized && (cachedViewableInsets != renderer.getViewableInsets() ||
+                      cachedTopStatusBarHeight != ReaderUtils::getTopStatusBarReservedHeight(renderer) ||
+                      cachedFooterReservedHeight != ReaderUtils::getReaderFooterReservedHeight(renderer, false))) {
     if (currentPage >= 0 && currentPage < static_cast<int>(pageOffsets.size())) {
-      readingOffset = pageOffsets[currentPage];
+      if (!statusBarRelayoutOffset) statusBarRelayoutOffset = pageOffsets[currentPage];
+      readingOffset = *statusBarRelayoutOffset;
       relayout = true;
     }
     if (!flushQueuedProgress()) LOG_ERR("TRS", "Failed to save progress before status bar relayout");
@@ -827,6 +840,7 @@ void TxtReaderActivity::render(RenderLock&&) {
     if (relayout && !pageOffsets.empty()) {
       const auto nextPage = std::upper_bound(pageOffsets.begin(), pageOffsets.end(), readingOffset);
       currentPage = std::max(0, static_cast<int>(nextPage - pageOffsets.begin()) - 1);
+      statusBarRelayoutPage = currentPage;
       if (!saveProgress(currentPage)) LOG_ERR("TRS", "Failed to save progress after status bar relayout");
     }
   }
@@ -873,7 +887,8 @@ void TxtReaderActivity::renderPage() {
                           effectiveAlignment == CrossPointSettings::JUSTIFIED)) {
           effectiveAlignment = CrossPointSettings::RIGHT_ALIGN;
         }
-        const int textWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR);
+        const int textWidth =
+            renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR, 0, cachedCharacterSpacing);
 
         // Apply text alignment
         switch (effectiveAlignment) {
@@ -895,7 +910,9 @@ void TxtReaderActivity::renderPage() {
             break;
         }
 
-        renderer.drawText(cachedFontId, x, y, line.c_str(), ReaderUtils::readerForegroundBlack());
+        renderer.drawText(cachedFontId, x, y, line.c_str(), ReaderUtils::readerForegroundBlack(),
+                          EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO,
+                          SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing));
       }
       y += lineHeight;
     }
@@ -972,7 +989,8 @@ bool TxtReaderActivity::saveProgress(const int page) {
   }
   // 6-byte format: page(2 bytes LE) + file offset(4 bytes LE)
   // The offset lets drawCurrentPageToBuffer render without requiring index.bin.
-  const size_t offset = (page >= 0 && page < static_cast<int>(pageOffsets.size())) ? pageOffsets[page] : 0;
+  const bool offsetKnown = page >= 0 && page < static_cast<int>(pageOffsets.size());
+  const size_t offset = offsetKnown ? pageOffsets[page] : UINT32_MAX;
   uint8_t data[6];
   data[0] = page & 0xFF;
   data[1] = (page >> 8) & 0xFF;
@@ -980,6 +998,8 @@ bool TxtReaderActivity::saveProgress(const int page) {
   data[3] = (offset >> 8) & 0xFF;
   data[4] = (offset >> 16) & 0xFF;
   data[5] = (offset >> 24) & 0xFF;
+  // Retain the existing six-byte format even while a font rebuild leaves only
+  // the page known. An out-of-range offset lets old and new readers use that page.
   const bool written = f.write(data, sizeof(data)) == sizeof(data);
   f.close();
   if (!written) {
@@ -1005,9 +1025,20 @@ bool TxtReaderActivity::flushQueuedProgress() {
 void TxtReaderActivity::loadProgress() {
   HalFile f;
   if (Storage.openFileForRead("TRS", txt->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[4];
-    if (f.read(data, 4) == 4) {
+    uint8_t data[6]{};
+    const int bytes = f.read(data, sizeof(data));
+    if (bytes >= 2) {
       currentPage = data[0] + (data[1] << 8);
+      // Page numbers change when status bars change while the book is closed.
+      // Prefer the existing saved byte offset; retain legacy short records.
+      if (bytes == 6 && !pageOffsets.empty()) {
+        const uint32_t offset = static_cast<uint32_t>(data[2]) | (static_cast<uint32_t>(data[3]) << 8) |
+                                (static_cast<uint32_t>(data[4]) << 16) | (static_cast<uint32_t>(data[5]) << 24);
+        if (offset < txt->getFileSize() && (offset != 0 || currentPage == 0)) {
+          const auto nextPage = std::upper_bound(pageOffsets.begin(), pageOffsets.end(), offset);
+          currentPage = std::max(0, static_cast<int>(nextPage - pageOffsets.begin()) - 1);
+        }
+      }
       if (currentPage >= totalPages) {
         currentPage = totalPages - 1;
       }
@@ -1074,6 +1105,11 @@ bool TxtReaderActivity::loadPageIndexCache() {
     return false;
   }
 
+  int8_t spacing;
+  if (!serialization::tryReadPod(f, spacing) || spacing != cachedCharacterSpacing) {
+    f.close();
+    return false;
+  }
   int32_t cachedWidth;
   if (!serialization::tryReadPod(f, cachedWidth)) {
     LOG_DBG("TRS", "Cache truncated reading viewport width, rebuilding");
@@ -1171,6 +1207,7 @@ void TxtReaderActivity::savePageIndexCache() const {
   ok &= serialization::tryWritePod(f, CACHE_MAGIC);
   ok &= serialization::tryWritePod(f, CACHE_VERSION);
   ok &= serialization::tryWritePod(f, static_cast<uint32_t>(txt->getFileSize()));
+  ok &= serialization::tryWritePod(f, cachedCharacterSpacing);
   ok &= serialization::tryWritePod(f, static_cast<int32_t>(viewportWidth));
   ok &= serialization::tryWritePod(f, static_cast<int32_t>(linesPerPage));
   ok &= serialization::tryWritePod(f, static_cast<int32_t>(cachedFontId));
@@ -1233,8 +1270,7 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
   } else {
     marginTop += verticalMargin;
   }
-  marginBottom += std::max(verticalMargin, static_cast<uint8_t>(UITheme::getInstance().getStatusBarHeight() +
-                                                                ReaderUtils::STATUS_BAR_TEXT_PADDING));
+  marginBottom += ReaderUtils::getReaderFooterReservedHeight(renderer, false);
 
   const int vw = renderer.getScreenWidth() - marginLeft - marginRight;
   const int vh = renderer.getScreenHeight() - marginTop - marginBottom;
@@ -1279,6 +1315,8 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
       serialization::readPod(cacheFile, version);
       uint32_t cachedFileSize;
       serialization::readPod(cacheFile, cachedFileSize);
+      int8_t cachedSpacing = 0;
+      if (version == CACHE_VERSION) serialization::readPod(cacheFile, cachedSpacing);
       int32_t cachedVw, cachedLpp, cachedFontId, cachedVerticalMargin, cachedHorizontalMargin;
       serialization::readPod(cacheFile, cachedVw);
       serialization::readPod(cacheFile, cachedLpp);
@@ -1292,7 +1330,8 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
 
       if (magic == CACHE_MAGIC && version == CACHE_VERSION && cachedFileSize == txt.getFileSize() && cachedVw == vw &&
           cachedLpp == linesPerPage && cachedFontId == fontId && cachedVerticalMargin == verticalMargin &&
-          cachedHorizontalMargin == horizontalMargin && cachedAlignment == paragraphAlignment && numPages > 0 &&
+          cachedHorizontalMargin == horizontalMargin && cachedAlignment == paragraphAlignment &&
+          cachedSpacing == SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing) && numPages > 0 &&
           numPages <= MAX_CACHE_PAGES) {
         if (savedPage < 0 || savedPage >= static_cast<int>(numPages)) savedPage = 0;
         for (uint32_t i = 0; i < numPages; i++) {
@@ -1340,7 +1379,8 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
   }
   buffer[chunkSize] = '\0';
 
-  parseAndWrapLines(buffer, chunkSize, offset, fileSize, linesPerPage, renderer, fontId, vw, pageLines);
+  parseAndWrapLines(buffer, chunkSize, offset, fileSize, linesPerPage, renderer, fontId, vw, pageLines,
+                    SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing));
   free(buffer);
 
   if (pageLines.empty()) return false;
@@ -1353,15 +1393,21 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
       int x = marginLeft;
       switch (paragraphAlignment) {
         case CrossPointSettings::CENTER_ALIGN:
-          x = marginLeft + (vw - renderer.getTextWidth(fontId, line.c_str())) / 2;
+          x = marginLeft +
+              (vw - renderer.getTextWidth(fontId, line.c_str(), EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO,
+                                          SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing))) /
+                  2;
           break;
         case CrossPointSettings::RIGHT_ALIGN:
-          x = marginLeft + vw - renderer.getTextWidth(fontId, line.c_str());
+          x = marginLeft + vw -
+              renderer.getTextWidth(fontId, line.c_str(), EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO,
+                                    SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing));
           break;
         default:
           break;
       }
-      renderer.drawText(fontId, x, y, line.c_str(), ReaderUtils::readerForegroundBlack());
+      renderer.drawText(fontId, x, y, line.c_str(), ReaderUtils::readerForegroundBlack(), EpdFontFamily::REGULAR,
+                        BidiUtils::BidiBaseDir::AUTO, SETTINGS.characterSpacingLevel(SETTINGS.characterSpacing));
     }
     y += lineHeight;
   }

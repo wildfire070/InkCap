@@ -89,6 +89,42 @@ TEST(CompactTableLayoutTest, VisitsWrappedCellsInVisualReadingOrder) {
   EXPECT_EQ(visited, expected);
 }
 
+TEST(CompactTableLayoutTest, CharacterSpacingCrossesAttachedStyleBoundaries) {
+  for (bool rtl : {false, true}) {
+    for (int8_t spacing : {-2, 2}) {
+      GfxRenderer renderer;
+      auto style = leftStyle();
+      style.isRtl = rtl;
+      CompactTableLayout layout(renderer, 0, 80, 200, 10, 2, style, spacing);
+      ASSERT_TRUE(layout.beginRow());
+      ASSERT_TRUE(layout.beginCell(false, 1, 0, style));
+      ASSERT_TRUE(layout.appendWord("AB", EpdFontFamily::REGULAR, false, false, 0));
+      ASSERT_TRUE(layout.appendWord("CD", EpdFontFamily::BOLD, true, false, 0));
+      ASSERT_TRUE(layout.endCell({}));
+      TableFragmentRow row;
+      std::vector<std::shared_ptr<TextBlock>> flattened;
+      std::vector<FootnoteEntry> notes;
+      uint32_t offset = 0;
+      ASSERT_EQ(layout.finishRow(row, flattened, notes, offset), CompactTableLayout::RowResult::Ok);
+      ASSERT_EQ(row.cells.size(), 1u);
+      ASSERT_EQ(row.cells[0].lines.size(), 1u);
+      const auto& positions = row.cells[0].lines[0]->xPositions;
+      ASSERT_EQ(positions.size(), 2u);
+      // "AB"/"CD" each measure as 2 (one glyph-pixel each) plus `spacing` for their one
+      // internal glyph gap (GfxRenderer stub's getTextAdvanceX), and gapBefore() adds the
+      // stub's getKerning(spacing) - getKerning(0) = ((spacing+1)>>1) at the attached-style
+      // boundary between them. LTR accumulates from x=0 and clamps to 0 (an EPD coordinate
+      // can't go negative), which only bites when spacing is negative enough to swing the
+      // running total below zero; RTL accumulates from the right edge, which this cell's
+      // width keeps comfortably positive, so it never hits that floor.
+      const int wordWidth = 2 + spacing;
+      const int gap = (spacing + 1) >> 1;
+      const int expected = rtl ? wordWidth + gap : std::max(0, wordWidth + gap);
+      EXPECT_EQ(rtl ? positions[0] - positions[1] : positions[1] - positions[0], expected);
+    }
+  }
+}
+
 TEST(CompactTableLayoutTest, CompactLayoutUsesWideLeadingColumnForEightCellRows) {
   GfxRenderer renderer;
   renderer.codepointWidth = 10;
@@ -163,20 +199,17 @@ TEST(CompactTableLayoutTest, BreaksUtf8AndOversizedCodepointsWithoutAbort) {
   EXPECT_EQ(row.cells.front().lines.front()->words.size(), 1u);
 }
 
-BlockStyle leftStyleWithSpacing(const int8_t spacing) {
-  BlockStyle style = leftStyle();
-  style.characterSpacing = spacing;
-  return style;
-}
-
 // A single-column cell containing two five-letter words separated by a space.
 // At 0 tracking both words fit on one line; widened per-glyph tracking must be
 // reflected in measure()'s width so the same content now wraps to a second
 // line -- proving layout (not just draw) accounts for character spacing.
+// characterSpacing is a whole-table constant fixed at construction (mirroring
+// ChapterHtmlSlimParser's own self->characterSpacing at table-start), not a
+// per-cell BlockStyle field -- CompactTableLayout never reads the latter.
 int lineCountForCharacterSpacing(const int8_t spacing) {
   GfxRenderer renderer;
-  CompactTableLayout layout(renderer, 0, 20, 200, 10, 0, leftStyle());
-  const BlockStyle cellStyle = leftStyleWithSpacing(spacing);
+  CompactTableLayout layout(renderer, 0, 20, 200, 10, 0, leftStyle(), spacing);
+  const BlockStyle cellStyle = leftStyle();
   if (!layout.beginRow()) return -1;
   if (!layout.beginCell(false, 1, 0, cellStyle)) return -1;
   if (!layout.appendWord("ABCDE", EpdFontFamily::REGULAR, false, false, 0)) return -1;

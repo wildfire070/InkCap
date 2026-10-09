@@ -14,6 +14,7 @@
 #include "DeviceCapabilities.h"
 #include "MappedInputManager.h"
 #include "StablePageSelectionModel.h"
+#include "components/ReaderSliderHints.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -61,6 +62,7 @@ EpubReaderPercentSelectionActivity::EpubReaderPercentSelectionActivity(GfxRender
 
 void EpubReaderPercentSelectionActivity::onEnter() {
   Activity::onEnter();
+  ReaderSliderHints::bindFont(uiTarget);
   uiReady = false;
   applySharedUiTheme(app, uiTarget);
   app.on(ACTION_KEYPAD_KEY, &EpubReaderPercentSelectionActivity::onKeypadKeyEvent, this);
@@ -284,8 +286,7 @@ void EpubReaderPercentSelectionActivity::loop() {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header{screen.x, screen.y + metrics.topPadding, screen.width,
-                    TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, screen);
   if (TouchHeaderBackButton::wasTapped(mappedInput, header)) {
     cancel();
     return;
@@ -377,11 +378,12 @@ void EpubReaderPercentSelectionActivity::buildPercentScreen(UiApp::ScreenType& s
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   // Start below CrossInk's shared back header; its touch-device height differs from
   // the legacy theme header height.
-  screen.setContentMargin(fui::Insets{
-      static_cast<int16_t>(safe.y + metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) +
-                           metrics.verticalSpacing * 4),
-      static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
-      static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
+  setUiContentMargin(screen, renderer,
+                     fui::Insets{static_cast<int16_t>(TouchHeaderBackButton::contentTop(renderer, mappedInput, safe.y) +
+                                                      metrics.verticalSpacing * 4),
+                                 static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
+                                 static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)),
+                                 static_cast<int16_t>(safe.x)});
 
   char line[64];
 
@@ -416,20 +418,20 @@ void EpubReaderPercentSelectionActivity::buildPercentScreen(UiApp::ScreenType& s
 
   // Two-line step hint built from separate label + value strings (front buttons = fine step, side
   // buttons = coarse step), so the layout doesn't depend on a separator hidden in translated text.
-  fui::TextStyle hint = theme.smallText;
-  hint.align = fui::TextAlign::Center;
+  fui::TextStyle hint = ReaderSliderHints::style(theme);
   const int16_t hintLh = screen.target().lineHeight(hint.font);
-  snprintf(line, sizeof(line), mode == Mode::StablePage ? "%s %d" : "%s %d%%", I18N.get(StrId::STR_STEP_HINT_FRONT),
+  snprintf(line, sizeof(line), mode == Mode::StablePage ? "%s: %d" : "%s: %d%%", I18N.get(StrId::STR_FRONT_BUTTONS),
            kSmallStep);
   screen.target().text(screen.takeTop(hintLh, theme.spaceSm), line, hint);
-  snprintf(line, sizeof(line), mode == Mode::StablePage ? "%s %d" : "%s %d%%", I18N.get(StrId::STR_STEP_HINT_SIDE),
+  snprintf(line, sizeof(line), mode == Mode::StablePage ? "%s: %d" : "%s: %d%%", I18N.get(StrId::STR_SIDE_BUTTONS),
            kLargeStep);
   screen.target().text(screen.takeTop(hintLh, theme.spaceSm), line, hint);
 
   // Discoverability for the keypad escape hatch: names the actual on-screen label for
   // Confirm on this screen (STR_SELECT), so the hint always matches what's shown below.
   snprintf(line, sizeof(line), I18N.get(StrId::STR_HOLD_FOR_KEYBOARD), tr(STR_SELECT));
-  screen.target().text(screen.takeTop(hintLh), line, hint);
+  hint.font = theme.smallText.font;
+  screen.target().text(screen.takeTop(screen.target().lineHeight(hint.font)), line, hint);
 }
 
 void EpubReaderPercentSelectionActivity::buildKeypadScreen(UiApp::ScreenType& screen, char* line, size_t lineSize) {
@@ -520,8 +522,7 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
   auto metrics = theme.getMetrics();
   Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
-  const Rect header{screen.x, screen.y + metrics.topPadding, screen.width,
-                    TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, screen);
   if (mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, header,
                                 mode == Mode::StablePage ? tr(STR_GO_TO_STABLE_PAGE) : tr(STR_GO_TO_PERCENT), true);
@@ -532,8 +533,7 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
 
   // Percent/page readout, keypad or slider, and step controls render through the app.
   uiReady = false;
-  app.setDevice(uiTarget.deviceContext());
-  app.render();
+  renderUiApp(app, uiTarget);
   uiReady = true;
 
   // Button hints follow the current front button layout and auto-hide on touch devices.
