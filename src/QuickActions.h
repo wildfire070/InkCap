@@ -110,8 +110,7 @@ inline bool isActionAvailable(const uint8_t action) {
   if (action == CrossPointSettings::TOGGLE_FRONTLIGHT) return Frontlight.present();
   if (action == CrossPointSettings::TOGGLE_TOUCHSCREEN) return gpio.hasTouch();
   if (action == CrossPointSettings::AO3_RECEIVE) return true;
-  if (action == CrossPointSettings::HOME_READER) return !gpio.hasTouch();
-  if (action == CrossPointSettings::BACK_HOME) return true;
+  if (action == CrossPointSettings::HOME_READER || action == CrossPointSettings::BACK_HOME) return true;
   if (action < CrossPointSettings::QUICK_ACTION_SLOT_ACTION_COUNT) {
     return action != CrossPointSettings::TOGGLE_TILT_PAGE_TURN || supportsTiltPageTurn();
   }
