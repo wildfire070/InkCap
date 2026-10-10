@@ -747,9 +747,7 @@ bool ChapterHtmlSlimParser::layoutText(const bool includeLastLine) {
   // short and almost always flush through here. A block with no real
   // headingFontId but a residual scale (BlockStyle::fontSizeResidualScale) is
   // laid out against a narrowed virtual width budget; see layoutWidthForBlock.
-  const int horizontalInset = style.totalHorizontalInset();
-  const uint16_t effectiveWidth =
-      (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  const uint16_t effectiveWidth = static_cast<uint16_t>(std::max(1, int(viewportWidth) - style.totalHorizontalInset()));
   const uint16_t width = layoutWidthForBlock(style, effectiveWidth);
   const auto emitLine = [this](std::shared_ptr<TextBlock> line, uint32_t visible, uint32_t reference) {
     addLineToPage(std::move(line), visible, reference);

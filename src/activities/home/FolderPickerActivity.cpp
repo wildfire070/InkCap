@@ -130,6 +130,9 @@ void FolderPickerActivity::loop() {
 
       if (tapNavigateInto || (!tapSelect && mappedInput.getHeldTime() >= 1000)) {
         // Hold Confirm -> Navigate into
+        // currentPath/directories are read by render() on the render task
+        // with no lock of its own on that side either -- guard the mutation.
+        RenderLock lock(*this);
         currentPath = fullPath;
         loadDirectories();
         selectorIndex = 0;
@@ -156,7 +159,9 @@ void FolderPickerActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (mode == PickerMode::SINGLE) {
       if (currentPath != "/") {
-        // Go up one directory level
+        // Go up one directory level. See the navigate-into branch above for
+        // why this needs a RenderLock.
+        RenderLock lock(*this);
         size_t lastSlash = currentPath.find_last_of('/');
         if (lastSlash == 0) {
           currentPath = "/";
