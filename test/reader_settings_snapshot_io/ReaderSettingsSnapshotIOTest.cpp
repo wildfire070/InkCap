@@ -9,7 +9,9 @@
 using ReaderSettingsIO::ALL_READER_SETTING_OVERRIDES;
 using ReaderSettingsIO::BookReaderSettingsData;
 using ReaderSettingsIO::CHARACTER_SPACING_OVERRIDE;
+using ReaderSettingsIO::IMAGE_GRAYSCALE_OVERRIDE;
 using ReaderSettingsIO::ReaderSettingsSnapshot;
+using ReaderSettingsIO::SD_FONT_FAMILY_OVERRIDE;
 
 namespace {
 
@@ -67,15 +69,16 @@ void appendV10PlusSnapshotBody(RawWriter& w) {
 
 ReaderSettingsSnapshot testDefaults() {
   ReaderSettingsSnapshot defaults;
-  defaults.characterSpacing = 3;  // Distinctive: != the struct's own default-member value (2) and
+  defaults.characterSpacing = 3;  // Distinctive: != the struct's own default-member value (5) and
                                    // != anything a fixture below writes, so a test that observes 3
                                    // in the result can only have gotten it via inheritance.
+  defaults.imageGrayscale = 0;  // Distinctive: != the struct's own default-member value (1).
   return defaults;
 }
 
 }  // namespace
 
-TEST(ReaderSettingsSnapshotIOTest, V11RoundTripPreservesEveryField) {
+TEST(ReaderSettingsSnapshotIOTest, CurrentVersionRoundTripPreservesEveryField) {
   BookReaderSettingsData written;
   written.hasAutoPageTurnInterval = true;
   written.autoPageTurnSeconds = 45;
@@ -89,6 +92,7 @@ TEST(ReaderSettingsSnapshotIOTest, V11RoundTripPreservesEveryField) {
   written.readerSettings.readerFontPointSize = 18;
   written.readerSettings.wordSpacing = 3;
   written.readerSettings.characterSpacing = 4;
+  written.readerSettings.imageGrayscale = 0;
   written.readerSettings.screenMarginVertical = 20;
   written.readerSettings.screenMarginHorizontal = 25;
   std::strncpy(written.readerSettings.sdFontFamilyName, "ReaderFont", sizeof(written.readerSettings.sdFontFamilyName) - 1);
@@ -117,6 +121,7 @@ TEST(ReaderSettingsSnapshotIOTest, V11RoundTripPreservesEveryField) {
   EXPECT_EQ(result.readerSettings.readerFontPointSize, 18);
   EXPECT_EQ(result.readerSettings.wordSpacing, 3);
   EXPECT_EQ(result.readerSettings.characterSpacing, 4);
+  EXPECT_EQ(result.readerSettings.imageGrayscale, 0);
   EXPECT_EQ(result.readerSettings.screenMarginVertical, 20);
   EXPECT_EQ(result.readerSettings.screenMarginHorizontal, 25);
   EXPECT_STREQ(result.readerSettings.sdFontFamilyName, "ReaderFont");
@@ -159,6 +164,46 @@ TEST(ReaderSettingsSnapshotIOTest, PreV11FileInheritsGlobalCharacterSpacingEvenW
   EXPECT_EQ(result.readerSettings.characterSpacing, 3);
   // A regular field's override DID apply -- proves this isn't "overrides broken entirely."
   EXPECT_EQ(result.readerSettings.fontFamily, 3);
+}
+
+// v11 predates Image Grayscale: its mask used bit 18 for the SD font override and bit 19 for
+// Character Spacing (v12 inserted Image Grayscale at bit 18, pushing both up by one -- to 19 and
+// 20). A v11 file must have those two bits remapped onto their current positions so the
+// overrides it legitimately recorded still apply, while Image Grayscale (which the file never
+// had a bit or byte for at all) is left at the caller-supplied default.
+TEST(ReaderSettingsSnapshotIOTest, PreV12FileRemapsSdFontAndCharacterSpacingOverrideBits) {
+  RawWriter w;
+  w.u8(ReaderSettingsIO::PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION);  // version = 11
+  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                      // flags
+  w.u16(0);                                                                 // autoPageTurnSeconds (unused)
+  w.u8(0);                                                                  // renderMode (unused)
+  appendV10PlusSnapshotBody(w);
+  w.fixed("LegacySdFont", 64);  // dictionarySdFontFamilyName
+  w.u8(0);                      // dictionaryFontPointSize
+  // Old (pre-v12) bit layout: bit 18 = SD font override, bit 19 = Character Spacing override.
+  w.u32((1u << 18) | (1u << 19));
+  w.u8(9);  // trailing characterSpacing byte (present from v11 on)
+  // No trailing imageGrayscale byte: that's what makes this a v11 file, not v12.
+
+  Storage.reset();
+  const std::string path = "/book/reader_settings.bin";
+  Storage.put(path, w.bytes);
+
+  HalFile file;
+  ASSERT_TRUE(Storage.openFileForRead("T", path, file));
+  const ReaderSettingsSnapshot defaults = testDefaults();
+  const BookReaderSettingsData result = ReaderSettingsIO::parseBookReaderSettingsFile(file, defaults, "", 0);
+
+  EXPECT_TRUE(result.hasCustomReaderSettings);
+  // The SD font and Character Spacing overrides must have moved to their current bits...
+  EXPECT_NE(result.readerSettingsOverrideMask & SD_FONT_FAMILY_OVERRIDE, 0u);
+  EXPECT_NE(result.readerSettingsOverrideMask & CHARACTER_SPACING_OVERRIDE, 0u);
+  // ...while nothing lands on the now-reassigned Image Grayscale bit, which this old file never set.
+  EXPECT_EQ(result.readerSettingsOverrideMask & IMAGE_GRAYSCALE_OVERRIDE, 0u);
+  // The overridden Character Spacing value the file actually carried still applies.
+  EXPECT_EQ(result.readerSettings.characterSpacing, 9);
+  // A v11 file has no concept of Image Grayscale at all: it must inherit the global default.
+  EXPECT_EQ(result.readerSettings.imageGrayscale, defaults.imageGrayscale);
 }
 
 // Version 1 predates every per-book snapshot field entirely -- only an auto-page-turn interval.
