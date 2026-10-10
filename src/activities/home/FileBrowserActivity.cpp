@@ -1124,6 +1124,19 @@ void FileBrowserActivity::renameFile(const std::string& oldPath, const std::stri
     LOG_ERR("FileBrowser", "Rename kept new path after incomplete state rollback: %s", newPath.c_str());
   }
 
+  bool appStateChanged = false;
+  if (APP_STATE.favoriteSleepImagePath == oldPath) {
+    APP_STATE.favoriteSleepImagePath = newPath;
+    appStateChanged = true;
+  }
+  if (APP_STATE.favoriteBootImagePath == oldPath) {
+    APP_STATE.favoriteBootImagePath = newPath;
+    appStateChanged = true;
+  }
+  if (appStateChanged && !APP_STATE.saveToFile()) {
+    LOG_ERR("FileBrowser", "Failed to save renamed favorite image path");
+  }
+
   library::invalidateLibraryIndex();
   ImageFolderIndex::invalidateForPath(oldPath.c_str());
   ImageFolderIndex::invalidateForPath(newPath.c_str());
