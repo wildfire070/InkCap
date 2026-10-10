@@ -6,8 +6,6 @@
 #include <algorithm>
 #include <cstring>
 
-#include "CrossPointSettings.h"
-
 namespace DictionaryWordMeasure {
 
 namespace {
@@ -39,30 +37,28 @@ const char* withoutSoftHyphens(const char* word, const size_t length, char* scra
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, char* scratch, const size_t scratchCapacity) {
+                            const EpdFontFamily::Style style, const int8_t tracking, char* scratch,
+                            const size_t scratchCapacity) {
   const char* measured = withoutSoftHyphens(word, length, scratch, scratchCapacity);
-  return static_cast<int16_t>(renderer.getTextAdvanceX(
-      fontId, measured, style, 0, CrossPointSettings::characterSpacingLevel(SETTINGS.characterSpacing)));
+  return static_cast<int16_t>(renderer.getTextAdvanceX(fontId, measured, style, 0, tracking));
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, const uint8_t focusBoundary, const uint16_t focusSuffixX,
-                            char* scratch, const size_t scratchCapacity) {
+                            const EpdFontFamily::Style style, const int8_t tracking, const uint8_t focusBoundary,
+                            const uint16_t focusSuffixX, char* scratch, const size_t scratchCapacity) {
   if (focusBoundary == 0 || focusSuffixX == 0) {
-    return measureWordAdvanceX(renderer, fontId, word, length, style, scratch, scratchCapacity);
+    return measureWordAdvanceX(renderer, fontId, word, length, style, tracking, scratch, scratchCapacity);
   }
   const size_t suffixStart = std::min<size_t>(focusBoundary, length);
-  return static_cast<int16_t>(
-      focusSuffixX + renderer.getTextAdvanceX(fontId, word + suffixStart, style, 0,
-                                              CrossPointSettings::characterSpacingLevel(SETTINGS.characterSpacing)));
+  return static_cast<int16_t>(focusSuffixX + renderer.getTextAdvanceX(fontId, word + suffixStart, style, 0, tracking));
 }
 
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const char* word, const size_t length,
-                            const EpdFontFamily::Style style, const uint8_t focusBoundary,
+                            const EpdFontFamily::Style style, const int8_t tracking, const uint8_t focusBoundary,
                             const uint16_t focusRunOffset, const bool wordIsRtl, char* scratch,
                             const size_t scratchCapacity) {
   if (!wordIsRtl || focusBoundary == 0 || focusRunOffset == 0) {
-    return measureWordAdvanceX(renderer, fontId, word, length, style, focusBoundary, focusRunOffset, scratch,
+    return measureWordAdvanceX(renderer, fontId, word, length, style, tracking, focusBoundary, focusRunOffset, scratch,
                                scratchCapacity);
   }
 
@@ -75,9 +71,7 @@ int16_t measureWordAdvanceX(const GfxRenderer& renderer, const int fontId, const
   boldLen = static_cast<size_t>(utf8SafeTruncateBuffer(word, static_cast<int>(boldLen)));
   memcpy(boldBuf, word, boldLen);
   boldBuf[boldLen] = '\0';
-  return static_cast<int16_t>(
-      focusRunOffset + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle, 0,
-                                                CrossPointSettings::characterSpacingLevel(SETTINGS.characterSpacing)));
+  return static_cast<int16_t>(focusRunOffset + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle, 0, tracking));
 }
 
 }  // namespace DictionaryWordMeasure

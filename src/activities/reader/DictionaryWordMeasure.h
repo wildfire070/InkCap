@@ -21,24 +21,23 @@ namespace DictionaryWordMeasure {
 // are caller-owned working memory; returns `word` itself unchanged when no soft hyphen is present.
 const char* withoutSoftHyphens(const char* word, size_t length, char* scratch, size_t scratchCapacity);
 
-// Plain measurement: the word's rendered advance, reading the current global
-// character-spacing level (CrossPointSettings::characterSpacingLevel) internally.
+// Plain measurement: the word's rendered advance, tracking-aware.
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, int fontId, const char* word, size_t length,
-                            EpdFontFamily::Style style, char* scratch, size_t scratchCapacity);
+                            EpdFontFamily::Style style, int8_t tracking, char* scratch, size_t scratchCapacity);
 
 // Focus-reading overload: for a word with a bold/plain split at `focusBoundary`, measures only
 // the un-highlighted suffix past `focusSuffixX` (the highlighted prefix's width is already known
 // and passed in), falling back to the plain overload when there is no focus split.
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, int fontId, const char* word, size_t length,
-                            EpdFontFamily::Style style, uint8_t focusBoundary, uint16_t focusSuffixX, char* scratch,
-                            size_t scratchCapacity);
+                            EpdFontFamily::Style style, int8_t tracking, uint8_t focusBoundary, uint16_t focusSuffixX,
+                            char* scratch, size_t scratchCapacity);
 
 // RTL focus-reading overload: an RTL word's bold prefix is measured as an actual bold run
 // (RTL glyph shaping is direction-dependent, so the LTR "prefix width, then add the rest"
 // shortcut the other overload uses does not hold) via a bounded local stack buffer, truncated to
 // the last complete UTF-8 codepoint.
 int16_t measureWordAdvanceX(const GfxRenderer& renderer, int fontId, const char* word, size_t length,
-                            EpdFontFamily::Style style, uint8_t focusBoundary, uint16_t focusRunOffset, bool wordIsRtl,
-                            char* scratch, size_t scratchCapacity);
+                            EpdFontFamily::Style style, int8_t tracking, uint8_t focusBoundary, uint16_t focusRunOffset,
+                            bool wordIsRtl, char* scratch, size_t scratchCapacity);
 
 }  // namespace DictionaryWordMeasure
