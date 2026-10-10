@@ -97,7 +97,12 @@ struct CssDescendantDepthTest : testing::Test {
   // (CssParser is non-copyable and non-movable, so this takes an out-param
   // rather than returning by value).
   void buildAndRoundTripThroughCache(CssParser& out) {
-    Storage.put("input.css", {std::string(kCss).begin(), std::string(kCss).end()});
+    // Must be one named object: two separate std::string(kCss) temporaries would
+    // hand the vector<uint8_t> iterator-range constructor begin()/end() from two
+    // unrelated objects, which is undefined behavior (observed: a garbage size
+    // computed from the temporaries' address difference, reading past either).
+    const std::string cssText(kCss);
+    Storage.put("input.css", {cssText.begin(), cssText.end()});
     FsFile file;
     ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
     CssParser writer("book");

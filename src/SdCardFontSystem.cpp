@@ -153,6 +153,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   if (wantedFamily[0] == '\0') {
     if (!currentFamily.empty()) {
+      LOG_INF("SDFS", "No SD font wanted; unloading resident family: %s", currentFamily.c_str());
       manager_.unloadAll(renderer);
       loadedFontPointSize_ = 0;
     }
@@ -201,7 +202,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   bool familyMatches = (currentFamily == wantedFamily);
   if (familyMatches) {
     if (!family) {
-      LOG_DBG("SDFS", "SD font family disappeared: %s (clearing)", wantedFamily);
+      LOG_ERR("SDFS", "SD font family disappeared: %s (clearing, falling back to built-in)", wantedFamily);
       manager_.unloadAll(renderer);
       SETTINGS.sdFontFamilyName[0] = '\0';
       persistSettingsChange();
@@ -242,7 +243,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 #endif
     }
   } else {
-    LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
+    LOG_ERR("SDFS", "SD font family not found: %s (clearing, falling back to built-in)", wantedFamily);
     SETTINGS.sdFontFamilyName[0] = '\0';
     persistSettingsChange();
 #if CROSSINK_SCALABLE_FONTS

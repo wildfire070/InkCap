@@ -1234,6 +1234,9 @@ void ChapterHtmlSlimParser::pushCssAncestor(const int depth, const char* tag, co
   if (usesSimpleCssLookup() || ancestorStack_.size() >= MAX_BLOCK_STYLE_DEPTH) {
     return;
   }
+  if (ancestorStack_.size() >= MAX_CSS_ANCESTOR_DEPTH) {
+    return;
+  }
   ancestorStack_.push_back({depth, std::string(tag), std::string(classAttr), std::string(idAttr)});
 }
 
@@ -2419,7 +2422,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     const char* idValue = attrValue;
     const bool isTocAnchor =
         std::find(self->tocAnchors.begin(), self->tocAnchors.end(), idValue) != self->tocAnchors.end();
-    if (isTocAnchor || (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
+    // The size cap applies unconditionally -- isTocAnchor only bypasses the
+    // non-navigable-inline-element filter below, not the cap itself. A
+    // chapter can legally repeat an id (HTML doesn't require uniqueness),
+    // and pendingAnchorFromInlineA is forced false for TOC anchors (see
+    // below), so duplicate elements sharing a real TOC target's id would
+    // otherwise each push into anchorData with no bound.
+    if (self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER && (isTocAnchor || !isNonNavigableInlineElement(name))) {
       // Flush displaced block anchors before overwriting. Keep dense inline <a id>
       // runs coalesced so converter-generated anchors do not churn heap in link-heavy chapters.
       const bool previousAnchorShouldBeRecorded = !self->pendingAnchorFromInlineA;
