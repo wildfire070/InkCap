@@ -146,7 +146,7 @@ class MappedInputManager {
     suppressNextTouchTap();
     gpio.suppressTouchContact();
 #ifdef SIMULATOR
-    suppressSimulatedTouchContact = true;
+    suppressSimulatedTouchContact = simulatorTouch.pressed || simulatorTouch.releasedThisFrame;
 #endif
   }
   bool wasItemTapped(int& id) const;

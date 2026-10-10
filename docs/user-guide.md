@@ -28,7 +28,7 @@ This guide covers day-to-day device use. For focused reference material, see [Re
       - [3.6.4 System](#364-system)
       - [3.6.5 OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries)
       - [3.6.6 Web Settings (Wi-Fi + OPDS)](#366-web-settings-wi-fi--opds)
-      - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
+      - [3.6.7 Sync Server Quick Setup](#367-sync-server-quick-setup)
         - [Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)](#option-a-crosspoint-sync-server-synccrosspointreadercom-default)
         - [Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)](#option-b-legacy-public-koreader-server-synckoreaderrocks)
         - [Option C: Self-Hosted Server (Docker Compose)](#option-c-self-hosted-server-docker-compose)
@@ -232,10 +232,10 @@ device model and build.
 
 - **Quick Resume on Timeout**: Whether to enable the "Quick Resume" sleep screen when the device goes to sleep due to inactivity (System > Time to Sleep). This is useful for quickly resuming reading without waiting for the device to fully wake up and load the book. This overwrites the Sleep Screen Cover Mode when enabled.
 
-- **Hide Battery %**: Configure where to suppress the battery percentage display in the status bar; the battery icon will still be shown:
-  - "Never" (default) - Always show battery percentage
-  - "In Reader" - Show battery percentage everywhere except in reading mode
-  - "Always" - Always hide battery percentage
+- **Status Bar**: Choose the items shown in the status bar above menus and
+  library screens. **Battery** sets how a Battery item appears: "Icon + %"
+  (default), "Icon Only", or "% Only". Reader bars have their own **Battery**
+  choice under **Status Bars**.
 
 - **Hide Clock**: On devices with a real-time clock, choose whether the clock is
   shown everywhere, hidden only in the reader, or always hidden.
@@ -363,7 +363,8 @@ individual global changes. **Delete Book Cache** does not reset these choices.
   - Progress Bar Thickness - Set the thickness of the progress bar
   - Title - Display the chapter or book title
   - Time Left - Display the estimated reading time left for the book or chapter
-  - Battery - Show/Hide the battery indicator
+  - Battery - Show/Hide the battery indicator. The bar's **Battery** option, above
+    Percentage Format, shows it as "Icon + %" (default), "Icon Only", or "% Only".
   - XTC Status Bar - Show/Hide a status bar for XTC files
 
 On touchscreen readers, when **Tap to Hide Status Bar** is enabled (the default
@@ -398,7 +399,7 @@ which status-bar items are shown.
   - "Sleep" - Put the awake device to sleep without enabling short-press wake
   - "Wake" - When selected as **Short-press Action**, allow a short press to wake the device; does nothing while the device is awake
   - "Next Page" - Turn to the next page while reading
-  - "Toggle Bookmark", "Reading Stats", "Mark Finished", "Refresh", "Change Font", "Guide Dots", "Focus Reading", "Auto Page Turn", "Sync Progress", "File Transfer", "Calibre Wireless", "Join a Network", "Create Hotspot", "Screenshot", "Dark Mode", "Browse Files", "Library", or "Save Clipping" - Run the matching action
+  - "Toggle Bookmark", "Reading Stats", "Mark Finished", "Refresh", "Change Font", "Guide Dots", "Focus Reading", "Auto Page Turn", "Sync Book", "File Transfer", "Calibre Wireless", "Join a Network", "Create Hotspot", "Screenshot", "Dark Mode", "Browse Files", "Library", or "Save Clipping" - Run the matching action
   - "Footnotes" - Select a footnote reference on the current page, with a list
     fallback when needed; see [Footnote Navigation](#footnote-navigation).
 
@@ -439,6 +440,16 @@ which status-bar items are shown.
 - **Device**: Set the device name and time-to-sleep timeout. Devices with a
   real-time clock also expose clock format, UTC offset, and a sync action.
 
+- **About**: Open **Settings → System → About** for the detected device profile,
+  firmware/source revision, chip and display details, available input/sensors,
+  SD transport/capacity, and memory diagnostics. Buttons or swipes scroll the
+  pages; Back returns to Settings. Runtime figures are captured when the screen
+  opens; reopen it for a new snapshot. See [Troubleshooting](./troubleshooting.md#device-information).
+  You can also choose **Export support info**,
+  select device/global settings alone or include the last opened EPUB's anonymous
+  overrides, then confirm saving `/crossink-support.json` to the SD card. Nothing
+  is uploaded. See [export coverage and privacy](./troubleshooting.md#export-support-information).
+
 - **Files & Cache**: Configure hidden files, file extensions, file-browser view,
   finished-book behavior, and clear the reading cache.
 
@@ -454,7 +465,7 @@ which status-bar items are shown.
 
 - **Wi-Fi Networks**: Connect to Wi-Fi networks for file transfers and firmware updates.
 
-- **KOReader Sync**: Options for setting up KOReader for syncing book progress. **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation.
+- **Sync Server**: Account and options for syncing book progress with CrossPoint Sync or a KOReader-compatible server, plus reading stats and clippings on CrossPoint Sync (see [Reading Stats Sync](reading-stats-sync.md)). **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation.
 
 - **OPDS Servers**: Manage one or more OPDS [(Open Publication Distribution System)](https://en.wikipedia.org/wiki/Open_Publication_Distribution_System) libraries for browsing and downloading books. See [OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries) below.
 
@@ -512,7 +523,7 @@ Behavior notes:
 - Leaving Password blank while editing keeps the existing saved password unchanged.
 - The web UI can save hidden-network SSIDs, but connecting to hidden networks still depends on the device-side Wi-Fi connection flow.
 
-#### 3.6.7 KOReader Sync Quick Setup
+#### 3.6.7 Sync Server Quick Setup
 
 CrossInk can sync reading progress with KOReader-compatible sync servers.
 It also interoperates with KOReader apps/devices when they use the same server and credentials.
@@ -522,7 +533,7 @@ It also interoperates with KOReader apps/devices when they use the same server a
 When **Sync Server URL** is left empty, CrossInk uses the free CrossPoint sync server at `https://sync.crosspointreader.com`. It speaks the standard KOReader sync protocol (so KOReader apps can use it too) and additionally stores an exact spine/page position for lossless CrossInk-to-CrossInk sync.
 
 1. On each CrossInk device:
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> Sync Server**.
 
    - Set **Username** and **Password** (enter the plain password; CrossInk computes MD5 internally, and use the same values on all devices).
 
@@ -537,7 +548,7 @@ Accounts are per server. Existing `sync.koreader.rocks` credentials do not exist
 Use this if you already sync KOReader devices against the official public server.
 
 1. On each CrossInk device:
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> Sync Server**.
 
    - Set **Sync Server URL** to `https://sync.koreader.rocks` (required; an empty URL now points at the CrossPoint server instead).
 
@@ -622,7 +633,7 @@ curl -i "http://<server-ip>:17200/users/create" \
 If this returns `HTTP 402` with `{"code":2002,"message":"Username is already registered."}`, the account already exists.
 
 4. On each device:
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> Sync Server**.
 
    - Set **Username** and **Password** (enter the plain password; CrossInk computes MD5 internally, and use the same values on all devices).
 
@@ -634,7 +645,7 @@ If you use the HTTPS listener, use `https://<server-ip>:7200` (`curl -k` only fo
 
 ##### Syncing While Reading
 
-Once any of the options above is set up, press **Confirm** while reading to open the reader menu, then select **Sync Progress**. Alternatively, set **Settings -> Controls -> Long-press Menu** to **KOSync** and hold Confirm to launch sync directly.
+Once any of the options above is set up, press **Confirm** while reading to open the reader menu, then select **Sync Book**. Alternatively, set **Settings -> Controls -> Long-press Menu** to **KOSync** and hold Confirm to launch sync directly.
 
 - With **Sync Behavior** set to **Ask every time**, choose **Apply Remote** to jump to remote progress or **Upload Local** to push current progress.
 - With **Sync Behavior** set to **Smart sync**, CrossInk auto-resolves simple cases: upload when no remote progress exists, confirm and leave both unchanged when local and remote progress are already synchronized, upload when local progress is further ahead, or apply remote when remote progress is further ahead.
@@ -838,12 +849,12 @@ swipes from **Settings > Controls > Taps & Gestures > Two-finger Swipe**. Set an
 action for **Swipe Up**, **Swipe Down**, **Swipe Left**, or **Swipe Right**, then
 move two fingers together in that direction while reading. Available actions
 are **Not Set**, **Increase Brightness**, **Decrease Brightness**, **Increase
-Warmth**, **Decrease Warmth**, **Next Chapter**, **Previous Chapter**, **Increase
+Warmth**, **Decrease Warmth**, **Select Chapter**, **Next Chapter**, **Previous Chapter**, **Increase
 Font Size**, and **Decrease Font Size**. Brightness and warmth options appear
-only when the hardware supports them; chapter options apply to EPUBs, and font
+only when the hardware supports them; Select Chapter opens the chapter list in EPUB and XTC books, Next/Previous Chapter apply to EPUBs, and font
 size options apply to EPUB and TXT books. Each direction starts as **Not Set**,
 and each action can be assigned to only one direction; choosing it again moves
-it to the new direction. On image-based XTC books, chapter and font-size actions
+it to the new direction. On image-based XTC books, Next/Previous Chapter and font-size actions
 are consumed but cannot change the pre-rendered pages. See [Two-finger Swipe
 Actions](./controls.md#two-finger-swipe-actions) for the complete list and
 reader-specific limitations.
@@ -900,7 +911,7 @@ EPUB books use the same five icon tabs on touch and button devices:
 | **Font** (letters)       | Reader Font, Dictionary Font, Line/Word Spacing, text anti-aliasing, Focus Reading, Guide Dots                                                                  |
 | **Layout** (text lines)  | Margins, Orientation, Alignment, Images, Hyphenation, Publisher Page Numbers, paragraph spacing and publisher styling                                           |
 | **More** (three dots)    | Word lookup, Select Chapter, Go to %, Go to Stable Page when available, Auto Page Turn, Footnotes; Reading Stats on button devices when tracking is enabled     |
-| **Bookmarks** (bookmark) | Add/remove and view bookmarks, create/view clippings, screenshot, position QR; Sync Progress, Nearby Position Sync, and Send Nearby Book on button devices      |
+| **Bookmarks** (bookmark) | Add/remove and view bookmarks, create/view clippings, screenshot, position QR; Sync Book, Nearby Position Sync, and Send Nearby Book on button devices      |
 | **Settings** (gear)      | Status Bars, Controls, Book Dictionary, EPUB Render Mode, Indexing Method, finished status, Track Reading Stats, cache/stats resets, Reset Book Reader Settings |
 
 Some actions appear only when the book or device supports them. On touch

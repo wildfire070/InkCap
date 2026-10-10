@@ -33,8 +33,8 @@ class ImageBlock final : public Block {
   BlockType getType() override { return IMAGE_BLOCK; }
   bool isEmpty() override { return false; }
 
-  void render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack);
-  bool serialize(FsFile& file);
+  void render(GfxRenderer& renderer, const int x, const int y, const bool foregroundBlack, bool imageGrayscale = true);
+  bool serialize(Print& file);
   static std::unique_ptr<ImageBlock> deserialize(FsFile& file);
 
  private:

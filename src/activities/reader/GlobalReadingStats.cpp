@@ -9,6 +9,7 @@
 #include <limits>
 #include <string>
 
+#include "DailyReadingStats.h"
 #include "util/FileContentEquals.h"
 
 namespace {
@@ -283,6 +284,15 @@ static StatsLoadOutcome loadFromFile(const char* path, GlobalReadingStats& out) 
   return outcome;
 }
 
+bool GlobalReadingStats::loadForUpload(GlobalReadingStats& stats) {
+  stats = {};
+  const auto primary = loadFromFile(GLOBAL_STATS_PATH, stats);
+  if (primary.result == StatsLoadResult::Ok) return true;
+  if (primary.result == StatsLoadResult::NewerFormat) return false;
+  const auto backup = loadFromFile(GLOBAL_STATS_BAK_PATH, stats);
+  return backup.result == StatsLoadResult::Ok;
+}
+
 GlobalReadingStats GlobalReadingStats::load() {
   GlobalReadingStats stats;
   const StatsLoadOutcome primary = loadFromFile(GLOBAL_STATS_PATH, stats);
@@ -369,6 +379,7 @@ GlobalReadingStats GlobalReadingStats::loadAggregated(const GlobalReadingStats& 
 }
 
 void GlobalReadingStats::save() const {
+  if (!DailyReadingStats::flush()) LOG_ERR("GSTATS", "Failed to flush daily reading counters");
   if (s_blockDestructiveSave) {
     LOG_ERR("GSTATS", "Refusing to overwrite on-disk stats after newer-format file was detected");
     return;
@@ -376,7 +387,15 @@ void GlobalReadingStats::save() const {
   saveToFile(*this, GLOBAL_STATS_PATH, GLOBAL_STATS_BAK_PATH);
 }
 
-bool GlobalReadingStats::resetLocal() { return saveToFile(GlobalReadingStats{}, GLOBAL_STATS_PATH, nullptr); }
+static uint32_t s_localResetRevision = 0;
+
+bool GlobalReadingStats::resetLocal() {
+  if (!saveToFile(GlobalReadingStats{}, GLOBAL_STATS_PATH, nullptr)) return false;
+  s_localResetRevision++;
+  return true;
+}
+
+uint32_t GlobalReadingStats::localResetRevision() { return s_localResetRevision; }
 
 void GlobalReadingStats::recordReadingSpan(const ReadingStatsDateTime& localStart, const uint32_t seconds) {
   recordReadingSpanIntoBuckets(timeOfDaySeconds, dayOfWeekSeconds, localStart, seconds);

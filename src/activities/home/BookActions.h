@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "FileBrowserActionActivity.h"
+#include "PendingOverlayResume.h"
 
 class GfxRenderer;
 class MappedInputManager;
@@ -14,6 +15,9 @@ namespace BookActions {
 
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       bool includeRemoveFromRecents);
+// EPUB: reboot into progress sync for this book. XTC: send its stats in place.
+void syncProgress(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& fullPath,
+                  PendingOverlayResume returnResume);
 bool hasClearableBookCache(const std::string& path);
 bool canSendNearby(const std::string& path);
 void clearFileMetadata(const std::string& fullPath);
@@ -34,6 +38,9 @@ bool completingWouldArchive(const std::string& fullPath);
 // /Archive (the move setting is on, the book is an epub that is finished and currently archived). Callers ask
 // before doing that, the same way they ask before completingWouldArchive's move.
 bool uncompletingWouldRestore(const std::string& fullPath);
+// Read-only, log-quiet variant for list rows: never migrates cache folders or
+// stats files, and skips books that have no cache folder.
+bool isBookCompletedForList(const std::string& fullPath);
 bool isBookStatsTrackingEnabled(const std::string& fullPath);
 bool toggleBookStatsTracking(const std::string& fullPath, bool& enabled);
 // Sets a book's Finished status directly (not a toggle) given only its path, with no archive-move side effect --

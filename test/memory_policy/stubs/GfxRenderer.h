@@ -1,5 +1,5 @@
 #pragma once
-
+#include <BidiUtils.h>
 #include <EpdFontFamily.h>
 
 #include <deque>
@@ -12,7 +12,9 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 
 class GfxRenderer {
  public:
-  int getFontIdForSize(int id, uint8_t) const { return id; }
+  bool getCodepointMetrics(int, uint32_t, EpdFontFamily::Style, int32_t&, int&) const { return false; }
+  bool scalable = false;
+  int getFontIdForSize(int id, uint8_t size) const { return scalable && size ? size : id; }
   int getFontAscenderSize(int id) const { return 12 + id; }
   int getLineHeight(int id) const { return 16 + id; }
   static int characters(const char* text) {
@@ -21,17 +23,20 @@ class GfxRenderer {
       if ((static_cast<unsigned char>(*text) & 0xC0) != 0x80) ++n;
     return n;
   }
-  // Models letter-spacing the way the real renderer does for space-free text: `tracking` px between glyphs.
+  // Models letter-spacing the way the real renderer does for space-free text: `characterSpacing` px between glyphs.
   int getTextWidth(int id, const char* text, EpdFontFamily::Style = EpdFontFamily::REGULAR,
-                   BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const {
+                   BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO, int8_t characterSpacing = 0) const {
     const int n = characters(text);
-    return n * (6 + id) + (n > 1 ? (n - 1) * tracking : 0);
+    return n * (6 + id) + (n > 1 ? (n - 1) * characterSpacing : 0);
   }
-  int getTextAdvanceX(int id, const char* text, EpdFontFamily::Style style, uint32_t = 0, int8_t tracking = 0) const {
-    return getTextWidth(id, text, style, BidiUtils::BidiBaseDir::AUTO, tracking);
+  int getTextAdvanceX(int id, const char* text, EpdFontFamily::Style style, uint32_t = 0,
+                      int8_t characterSpacing = 0) const {
+    return getTextWidth(id, text, style, BidiUtils::BidiBaseDir::AUTO, characterSpacing);
   }
   int getSpaceWidth(int id, EpdFontFamily::Style) const { return 3 + id; }
-  int getKerning(int, uint32_t, uint32_t, EpdFontFamily::Style, int8_t tracking = 0) const { return tracking; }
+  int getKerning(int, uint32_t, uint32_t, EpdFontFamily::Style, int8_t characterSpacing = 0) const {
+    return characterSpacing;
+  }
   int getSpaceAdvance(int id, uint32_t, uint32_t, EpdFontFamily::Style) const { return 3 + id; }
   bool isFontCacheScanning() const { return false; }
   template <class... Args>

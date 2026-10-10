@@ -150,14 +150,12 @@ int SdCardFontManager::loadFamilyExtraFile(const char* path, const char* familyN
 }
 
 void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
-  // render() reads fontMap/sdCardFonts_/fallbackFontMap_ unlocked on the
-  // render task's side (it always holds this same mutex for its whole call);
-  // without this, erasing map entries -- and freeing the SdCardFont/glyph
-  // data they point to -- can run concurrently with a lookup mid-render,
-  // which is undefined behavior on std::map, not just a stale read.
+  // render() reads fontMap/sdCardFonts_ unlocked on the render task's side
+  // (it always holds this same mutex for its whole call); without this,
+  // erasing map entries -- and freeing the SdCardFont/glyph data they point
+  // to -- can run concurrently with a lookup mid-render, which is undefined
+  // behavior on std::map, not just a stale read.
   GfxRenderer::MutexGuard guard(renderer);
-  // Drop UI CJK fallbacks before the SD fonts they point at are freed.
-  renderer.clearFallbackFonts();
   renderer.clearSdCardFonts();
   for (auto& lf : loaded_) {
     renderer.removeFont(lf.fontId);
@@ -223,7 +221,6 @@ bool SdCardFontManager::setScalableRenderOptions(GfxRenderer& renderer,
                                                  const freeink::font::FtFont::RenderOptions& renderOptions) {
   if (!scalable_[0] || loadedFamilyName_.empty() || loadedPointSize_ == 0) return false;
 
-  renderer.clearFallbackFonts();
   renderer.clearSdCardFonts();
   for (auto& loaded : loaded_) renderer.removeFont(loaded.fontId);
   loaded_.clear();

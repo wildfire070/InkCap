@@ -1,4 +1,81 @@
-## [v1.6.1] - 2026-09-30
+## [Unreleased]
+
+### Added
+
+- Assign Select Chapter to shortcuts, Quick Actions, or touch gestures to open the chapter list directly in EPUB and XTC books.
+- Track active reading seconds by local day, sync daily reading time to CrossPoint Sync, and show today's total and 7-day average on the This Device reading stats page.
+- Preview OPDS book descriptions before downloading, with scrollable text on touch and button devices. Long descriptions show a bounded excerpt.
+- Sync a selected EPUB’s progress or an XTC book’s reading stats from its Library or File Browser context menu; Sync Folder and Sync All Books include XTC stats too.
+- Use server filenames for OPDS downloads to match reading progress across devices; missing or unsafe names fall back to Author - Title.
+- View device hardware, firmware/build identity, storage, and memory diagnostics in Settings → System → About without exposing network or device identifiers. Export allowlisted diagnostics and global preferences as local support JSON after confirming the scope; optional EPUB overrides are anonymous, and network/device identifiers, credentials, and reading history are excluded.
+- Turn image grayscale on or off globally or for individual EPUB books, independently of text anti-aliasing.
+- Use Home/Reader shortcuts on touch devices.
+- Customize reader and global status bars: choose Small, Medium, or Large text for each reader bar, set a separate global text size, choose battery display (Icon + %, Icon Only, or % Only) independently for the top, bottom, and global bars, and hide either reader bar without clearing its assigned slots.
+- Finished EPUB and XTC books show a checkmarked book icon in the File Browser and Library list.
+- Calibrate each screen edge in Settings → Display → Screen Calibration to keep text and status bars clear of the bezel. Calibration stays on the device when changing SD cards.
+- Choose Directional or Legacy menu navigation in Controls to restore the previous button behavior in Settings and the reader menu.
+- Sync All Books from Settings → System → Sync Server or the Reading Stats This Device page to sync progress, reading stats, and clippings for every Library book in one pass.
+- Render publisher drop caps, bordered and shaded blocks, preserved whitespace, and more CSS selectors in EPUBs; scalable fonts also support mixed sizes within a line (CrossPoint #3891).
+- Install and edit interface languages from SD files, including community languages, with English fallback for missing translations. Browser translation editors and release downloads use an automatically generated, versioned English template and compatibility catalog.
+- Choose a Filename Fallback Font on ESP32-S3 devices to display missing characters in book titles and filenames while retaining the built-in font for supported text.
+- Install, update, and remove EPUB hyphenation packs from SD; English remains built in, and book layouts refresh when their packs change.
+- Show the current chapter title under the book title in the reader menu on button devices and in the X4 Pro pull-down drawer; the drawer tightens its spacing to keep the handle on screen in landscape.
+- Tighten or widen Word Spacing with a -4 to +4 slider and live preview.
+- Adjust Character Spacing from -5 to +5 with a live preview in Reader settings and the in-book Reader Font menu.
+
+### Fixed
+
+- Reduce SD-font cache allocations while preserving kerning and dictionary ligatures, including failed kerning loads (adapted from serialx, CrossPoint #3831 and #3838).
+- Resolve EPUB3 series refinements by collection ID even when interleaved or declared out of order, and refresh stale book/library metadata (series parser adapted from jadehawk, CrossPoint #3804).
+- Keep button-keyboard tips steady when text becomes empty or non-empty, and hide tips when they cannot fit above the keys (CrossPoint #3863).
+- Preserve initial publisher spacing on long EPUB paragraphs without repeating it during incremental layout (CrossPoint #3875).
+- Improve low-memory EPUB layout and image handling: limit temporary memory for long text runs, retry image sizing with a lower-memory fallback, and refresh the reader when background image checks finish (YACP 4bfcfb4).
+- Make large and interrupted downloads more reliable: complete large WebDAV files, safely resume or restart interrupted book and font downloads, and reduce memory use for large HTTPS transfers. On X3/X4, free OPDS catalog memory during book downloads and restore the same browsing position when finished or cancelled, keeping slow-download cancellation stable under low memory.
+- Hide EPUB section-break rules when the publisher suppresses their borders, avoiding duplicate ornaments.
+- Translate reading statistics, stats tracking controls, and the Minimal Stats theme label into Polish.
+- Dictionary lookup now recognizes French words with contracted prefixes, such as l’histoire and qu’après.
+- Page-turn shortcuts no longer crash at the end of an EPUB or while a chapter is loading.
+- Preserve EPUB image colors and gray detail in Dark Mode, including repeated page redraws.
+- Hide the Cover Grid theme from web settings on devices without PSRAM, matching the device settings menu.
+- Apply KOReader or Nearby progress using each book’s render-mode cache, and return to the same File Browser or Library view after context-menu sync.
+- Prevent redraw races during screen setup, Calibre upload naming, and OPDS catalog navigation; settings popups with short notes no longer freeze the screen.
+- Prevent a suppressed TXT menu-button release from opening the menu again.
+- Capture serial screenshots consistently and preserve pre-crash logs while restarting.
+- Keep transfer workflows responsive: USB waits yield to background tasks, and Nearby transfers and firmware downloads avoid full-card free-space scans while incomplete writes still fail safely.
+- Remove incomplete File Transfer uploads after SD write failures so they can be retried.
+- Preserve the previous file when a WebDAV replacement fails, and report settings-save failures in the web portal.
+- Keep daily, manual, and clockless reading-stat backups separately, and prune numbered backups in the correct order after 999.
+- KOReader-only sync servers no longer end every sync with "extra upload failed"; stats and clippings show "Requires CrossPoint Sync" instead.
+- Show full-width Forget and Cancel buttons after a saved Wi-Fi network fails to connect on button devices, with Cancel selected by default below Forget.
+- Keep the Auto Page Turn interval in the bottom reader status bar, preserving book and chapter titles in the top bar.
+- Keep side-button hints inside calibrated screen edges in landscape.
+- Fix ESP32 firmware builds failing to compile hyphenation pack installation and updates.
+- On button devices in landscape, the reader menu's font, font size, alignment, spacing, and screen margin controls now show the live text preview in a full-height column beside the controls instead of a strip too short to show any text.
+- Give touch-device line/word spacing and screen margin previews more room with labels beside the sliders and shorter drawers.
+- Give the reader spacing and screen-margin sliders more breathing room above the button hints.
+- Measure the top margin in global screen-margin previews from the bottom of the header bar, removing the extra gap.
+- Display the "Sleeping..." toast on sleep.
+
+### Changed
+
+- SD fonts containing both BMP and supplementary Unicode ranges use less resident lookup-table memory, and TTF fonts validate faster while preserving font integrity checks.
+- English is the only built-in interface language. Other languages are included in a separate release download and installed through Language settings.
+- Display → Hide Battery % is replaced by the Battery option in each status bar's settings; existing choices carry over.
+- Home appears faster after waking, closing a book, or leaving a menu by reducing the number of screen refreshes.
+- Dictionary lookups and cover thumbnail generation respond sooner.
+- Index, open, and resume large EPUBs faster with larger SD writes, quicker SD font preparation (especially for CJK books), and faster chapter, image, and stylesheet discovery. Percentage jumps no longer scan every preceding chapter.
+- Monochrome covers and sleep images decode faster while preserving image quality. Large custom sleep and boot images skip rows that are not shown, and oversized boot images are dithered at screen size, matching sleep images.
+- Avoid writing reading-percentage caches while browsing Home, Library, or sleep screens.
+- Refresh Library cover grids once after missing covers are prepared, keeping input checks between covers.
+- Skip text anti-aliasing on EPUB pages without text and avoid copying optimized images twice when they already match the display size.
+- Settings → System → KOReader Sync is now Sync Server, grouped into account, What to Sync, and Sync Options sections.
+- Reading Stats and Clippings sync stay off until you turn them on under What to Sync. Servers that cannot receive them are detected when you authenticate.
+- Rename sync actions to Sync Book and Sync Folder to reflect stats and clippings support, and File Transfer → Sync Stats to Nearby Stats Sync. Upload Stats becomes Sync All Books and follows your What to Sync choices.
+- Every sync result, including a successful single-book sync, lists overall stats, reading stats, and clippings as Done, OFF, or Not supported.
+- Sync All Books from Reading Stats inside a book returns to that book afterwards instead of Home.
+- Use consistent labels for cover options, date/time syncing, shortcuts, and status messages, including "Loading..." across loading screens.
+
+## [v1.6.1] - 2026-10-03
 
 ### Added
 
@@ -16,6 +93,8 @@
 - View chapter pages and book progress in the X4 Pro frontlight drawer while reading.
 - Add a Cover Grid Home theme on devices with PSRAM, showing the current book and six recently opened books.
 - Show small EPUB images within the surrounding text line instead of separating them from the paragraph.
+- Sort web portal files by name or size, browse folder images from the preview, and control file dialogs with Enter and Escape.
+- OPDS catalogs show category book counts and clearer folder names.
 - EPUB headings and whole text blocks can use different font sizes with built-in scalable fonts and TTF fonts on ESP32-S3 devices.
 - Add a Display toggle to swap Library and File Browser on the Minimal and Dashboard home screens.
 - Choose Clock, Date, Battery, or Empty for the left, center, and right of the Display status bar; dates are also available in reader status bars and follow the selected date format.
@@ -25,7 +104,7 @@
 - Set Power short-press and long-press to Sleep, Wake, or Sleep/Wake separately; holding Power can always wake the device. Chord shortcuts and the home button can also now sleep the device.
 - Brightness and warmth gestures now respond while you drag, with longer swipes allowing finer one-point adjustments.
 - Text drawing resolves clipping and screen rotation once per glyph, reducing work when painting menus and book pages.
-- Library reuses its index on return visits and refreshes after file changes, instead of scanning the card every time.
+- Library reuses its index on return visits and after waking from sleep, and refreshes after file changes instead of scanning the card every time.
 - Home reads saved EPUB progress and chapter metadata without opening or indexing the book, and stops saved-item checks after the first file.
 - Optional EPUB background work yields immediately when rendering is busy, keeping input polling responsive.
 - SD-card fonts share identical character lookup tables across styles, reducing memory use and repeated card reads.
@@ -33,15 +112,14 @@
 - The on-screen keyboard now uses wider outlined keys with clearer spacing on touch and button devices.
 - Long status titles shorten faster when they do not fit the screen.
 - Leaving an EPUB or TXT reader releases rebuildable font buffers for other screens.
+- Global reader spacing and margin controls now show a live text preview on touch and button devices; the font preview also includes the Latin sample text.
+- Font previews now separate the sample text from the font name with a horizontal line.
 - Menu buttons now follow the device layout: Left/Right switch tabs and Up/Down select rows in reader menus and global settings.
 - The KOReader Sync progress choice now shows remote and local progress as clear cards with large percentages, progress bars, and an "Ahead" marker on the further position.
-- Saving unchanged reading statistics avoids unnecessary SD card writes.
-- Large TLS downloads reuse the receive buffer until the connection closes, reducing repeated allocations.
-- Normal firmware builds omit wolfSSL debug tracing; explicit TLS debug builds retain it.
-- Changing the Git revision rebuilds only the firmware identity source instead of recompiling unrelated code.
+- Saving unchanged reading statistics and session state avoids unnecessary SD card writes.
+- Large secure downloads reuse their receive buffer to reduce repeated allocations.
 - The web portal uses less firmware space when the pinned esbuild minifier is available.
 - Built-in fonts use less firmware space while preserving their supported characters, ligatures, kerning, and rendered appearance.
-
 - SD-card reads keep filesystem metadata cached separately from book and font data to reduce repeated card access.
 - Repeated EPUB progress saves avoid rewriting identical positions and Home percentages.
 - Restoring a position in a long EPUB chapter reads its page lookup table in small batches.
@@ -51,6 +129,7 @@
 
 ### Fixed
 
+- Touch keyboards keep up with faster typing by polling during screen updates and avoiding extra key-highlight redraws.
 - File Transfer choices no longer appear preselected when opened on a touch device.
 - EPUB paragraphs now inherit first-line indentation from HTML and body styles while retaining paragraph-level overrides.
 - Saved clipping lists now show a scrollbar when more clippings are available below the visible rows.
@@ -76,8 +155,14 @@
 - Changing global font or page layout settings from the pull-down panel on touch devices now updates the open book when it inherits those settings.
 - KOReader authentication now rejects unexpectedly large server responses to avoid crashes.
 - EPUBs rewritten with alternate XML namespace prefixes now open normally instead of jumping straight to End of Book.
+- Global font previews load all letters and punctuation in the Latin sample instead of showing missing-character diamonds.
+- Touch keyboard key hit-testing no longer waits for a screen refresh on devices with TTF support.
+- Touch keyboards show consistent brief key feedback while keeping fast typing responsive.
+- Server connection errors during manual stats uploads no longer appear as Wi-Fi failures.
+- Folder progress sync follows the global Smart or Ask setting and rebuilds missing book metadata instead of silently skipping saved progress.
+- Skip a failed book during folder sync and continue with the remaining books, with failed books counted in the summary.
 - Carousel Home screen reuses cached cover artwork after reading and prepares other positions only when viewed, while keeping progress, reading time, and menu choices current.
-- Sleep entry skips unnecessary pauses and repeated session-state writes. PSRAM devices show independent sleep screens before saving reader progress, and Direct grayscale images skip an unused decode.
+- Sleep entry skips unnecessary pauses. PSRAM devices show independent sleep screens before saving reader progress, and Direct grayscale images skip an unused decode.
 - Renaming books in the web portal preserves reading progress, stats, bookmarks, clippings, reader settings, and cached content.
 - Side-button Orientation Aware, optional keyboard layouts, and the XTC reader's touchscreen and reading stats settings now show toggle switches instead of Yes/No or On/Off labels.
 - In-book setting choices now open with the current value highlighted and visible, including fonts and font sizes.
@@ -90,16 +175,31 @@
 - Touch gestures remain responsive while File Transfer is serving requests.
 - Closing a settings submenu restores its row and scroll position.
 - The image viewer redraws correctly after menus and the frontlight panel close.
-- Settings initialization uses one shared implementation across the firmware.
 - Previous-page and chapter shortcuts do nothing when already at the beginning of an EPUB or XTC book.
 - Reader shortcuts and the frontlight panel save the current reading position before flows that can restart the device.
 - Short upscaled images are cached after decoding instead of being repeatedly decoded on refresh.
 - OPDS asks before replacing books, validates completed downloads, checks available space, and preserves the old book if a transfer or replacement fails.
 - Holding Power to wake from sleep no longer also opens Quick Actions or runs a reader shortcut.
+- Recently opened Library books appear without waiting for a full scan, and books with saved history remain in the recent list.
+- USB Drive restarts preserve the frontlight state.
+- German date-setting labels are translated.
+- EPUB metadata indexing uses bounded scratch memory for books with very large chapter counts.
+- OPDS pagination returns to the parent catalog correctly, and rename dialogs keep file extensions outside the initial selection.
 - Correct X3 battery capacity calibration when the fuel gauge still uses its factory default or an oversized learned capacity.
 - Reopen EPUBs on the last page read after following in-book links, and retain the three most recent Back destinations across closing, sleep, and KOReader sync. Transient footnote previews still return to their immediate reading page.
 - On X4 Pro and Sticky, Library indexes up to 32,767 books instead of failing on cards with more than 4,096.
 - On X3 and X4, Library also indexes up to 32,767 books. Sorting uses the SD card once a library outgrows a fixed memory buffer, so a large library uses no more memory than a small one.
+- Keep EPUB text visible after changing TTF rendering options through the frontlight drawer settings.
+- Preserve reading time already accumulated when turning off EPUB or XTC reading stats.
+- Editing reading stats dates from the frontlight drawer or the XTC reader menu no longer counts the current session's reading time twice, and closing the drawer keeps this session's page turns and reading pace.
+- EPUB text re-lays out after changing TTF rendering options from the frontlight drawer even when leaving with the Home/Reader shortcut.
+- Support the second X4 Classic display panel variant.
+- The frontlight drawer stays within the screen at large UI scales.
+- Nested EPUB paragraphs and blocks keep inherited bold and italic styles.
+- Sync Progress from the File Browser shows one loading notice and returns to the same folder and selection.
+- Keep saved clock and date status-bar positions when the clock is temporarily unavailable at startup.
+- Stay in Settings if there is not enough memory to open TTF Rendering.
+- Translate month names in Library date headings and device dates.
 
 ### Security
 

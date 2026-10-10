@@ -83,6 +83,7 @@ bool isWebEnumOptionAvailable(const SettingInfo& setting, size_t optionIndex) {
   if (optionIndex >= setting.enumValues.size()) return true;
 
   const StrId option = setting.enumValues[optionIndex];
+  if (option == StrId::STR_THEME_COVER_GRID && !UITheme::supportsCoverGrid()) return false;
   if (!SETTINGS.shouldTrackReadingStats()) {
     if (option == StrId::STR_READING_STATS) return false;
     if (setting.valuePtr == &CrossPointSettings::sleepScreen && optionIndex < setting.enumRawValues.size()) {
@@ -121,10 +122,15 @@ uint8_t enumDisplayIndexForWeb(const SettingInfo& setting, uint8_t rawValue) {
 }
 
 bool isWebSettingAvailable(const SettingInfo& setting) {
-  if (setting.category == StrId::STR_STATUS_BARS || setting.nameId == StrId::STR_HIDE_CLOCK) {
+  if (setting.category == StrId::STR_STATUS_BARS || setting.nameId == StrId::STR_HIDE_CLOCK ||
+      settingKeyIs(setting, "displayStatusBarTextSize")) {
     return false;
   }
   if (setting.nameId == StrId::STR_SIDE_BUTTON_CHORD && !deviceSupportsSideButtonChord(gpio)) {
+    return false;
+  }
+
+  if (setting.nameId == StrId::STR_MENU_NAVIGATION && !deviceHasFrontButtons()) {
     return false;
   }
 
@@ -482,7 +488,7 @@ bool CrossPointWebServer::dropUploadIfCancelled() const {
   return true;
 }
 
-void CrossPointWebServer::abortUpload(UploadState& state) const {
+void CrossPointWebServer::abortUpload(UploadState& state, const char* error) const {
   state.success = false;
   state.bufferPos = 0;
   if (state.file) {
@@ -490,10 +496,12 @@ void CrossPointWebServer::abortUpload(UploadState& state) const {
     String filePath = state.path;
     if (!filePath.endsWith("/")) filePath += "/";
     filePath += state.fileName;
-    Storage.remove(filePath.c_str());
+    if (!Storage.remove(filePath.c_str())) {
+      LOG_ERR("WEB", "Could not remove incomplete upload: %s", filePath.c_str());
+    }
   }
-  state.error = "Upload aborted";
-  LOG_DBG("WEB", "Upload aborted");
+  state.error = error;
+  LOG_DBG("WEB", "%s", error);
 }
 
 void CrossPointWebServer::abortFontUpload() {
@@ -1130,16 +1138,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         // Flush buffer when full
         if (state.bufferPos >= UploadState::UPLOAD_BUFFER_SIZE) {
           if (!flushUploadBuffer(state)) {
-            state.error = "Failed to write to SD card - disk may be full";
-            state.file.close();
-            // Don't leave a truncated file at the real target filename -- a
-            // retry of the same upload would otherwise hit the "File
-            // already exists" collision check above and be stuck until the
-            // user manually deletes it via the file browser.
-            String filePath = state.path;
-            if (!filePath.endsWith("/")) filePath += "/";
-            filePath += state.fileName;
-            Storage.remove(filePath.c_str());
+            LOG_ERR("WEB", "Failed to flush upload buffer");
+            abortUpload(state, "Failed to write to SD card - disk may be full");
             return;
           }
         }
@@ -1155,10 +1155,22 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
     if (state.file) {
       // Flush any remaining buffered data
-      if (!flushUploadBuffer(state)) {
-        state.error = "Failed to write final data to SD card";
+      if (!flushUploadBuffer(state) || !state.file.sync()) {
+        LOG_ERR("WEB", "Failed to finish upload");
+        abortUpload(state, "Failed to write final data to SD card");
+        return;
       }
-      state.file.close();
+      if (!state.file.close()) {
+        state.error = "Failed to close file on SD card";
+        String filePath = state.path;
+        if (!filePath.endsWith("/")) filePath += "/";
+        filePath += state.fileName;
+        if (!Storage.remove(filePath.c_str())) {
+          LOG_ERR("WEB", "Could not remove incomplete upload: %s", filePath.c_str());
+        }
+        LOG_ERR("WEB", "%s", state.error.c_str());
+        return;
+      }
 
       if (state.error.isEmpty()) {
         state.success = true;
@@ -1640,20 +1652,25 @@ void CrossPointWebServer::handleGetStatusBars() const {
   writeReaderStatusBarJson(doc["top"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Top));
   writeReaderStatusBarJson(doc["bottom"].to<JsonObject>(), SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom));
   doc["xtcMode"] = SETTINGS.xtcStatusBarMode;
+  doc["displayTextSize"] = SETTINGS.displayStatusBarTextSize;
   doc["clockAvailable"] = halClock.isAvailable();
   JsonArray displaySlots = doc["display"].to<JsonArray>();
   for (const auto item : SETTINGS.displayStatusBar.slots) displaySlots.add(static_cast<uint8_t>(item));
+  doc["displayBatteryStyle"] = static_cast<uint8_t>(SETTINGS.displayStatusBar.batteryStyle);
 
   JsonObject labels = doc["labels"].to<JsonObject>();
   labels["display"] = tr(STR_STATUS_BAR);
   labels["top"] = tr(STR_TOP_STATUS_BAR);
   labels["bottom"] = tr(STR_BOTTOM_STATUS_BAR);
-  labels["left"] = tr(STR_STATUS_BAR_LEFT);
+  labels["left"] = tr(STR_DIR_LEFT);
   labels["center"] = tr(STR_CENTER);
-  labels["right"] = tr(STR_STATUS_BAR_RIGHT);
+  labels["right"] = tr(STR_DIR_RIGHT);
+  labels["battery"] = tr(STR_BATTERY);
   labels["percentageFormat"] = tr(STR_PERCENTAGE_FORMAT);
   labels["progressBar"] = tr(STR_PROGRESS_BAR);
   labels["thickness"] = tr(STR_PROGRESS_BAR_THICKNESS);
+  labels["hidden"] = tr(STR_HIDE);
+  labels["textSize"] = tr(STR_STATUS_BAR_TEXT_SIZE);
   labels["xtcMode"] = tr(STR_XTC_STATUS_BAR);
   labels["preview"] = tr(STR_PREVIEW);
 
@@ -1682,11 +1699,15 @@ void CrossPointWebServer::handleGetStatusBars() const {
     JsonArray labels = doc[name].to<JsonArray>();
     for (const StrId id : ids) labels.add(I18N.get(id));
   };
+  addLabels("batteryStyles",
+            {StrId::STR_BATTERY_ICON_AND_PERCENT, StrId::STR_BATTERY_ICON_ONLY, StrId::STR_BATTERY_PERCENT_ONLY});
   addLabels("percentageFormats", {StrId::STR_PERCENTAGE_FORMAT_WHOLE, StrId::STR_PERCENTAGE_FORMAT_ONE_DECIMAL,
                                   StrId::STR_PERCENTAGE_FORMAT_TWO_DECIMALS});
   addLabels("progressModes", {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE});
   addLabels("thicknesses",
             {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK});
+  addLabels("hideOptions", {StrId::STR_OFF, StrId::STR_ON});
+  addLabels("textSizes", {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE});
   addLabels("xtcModes", {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP, StrId::STR_STATUS_BAR_BOTH});
 
   String payload;
@@ -1704,9 +1725,19 @@ void CrossPointWebServer::handlePostStatusBars() {
     server->send(400, "text/plain", "Invalid JSON");
     return;
   }
+  const auto textSize = doc["displayTextSize"];
+  if (!textSize.isUnbound() && (!textSize.is<int>() || textSize.as<int>() < 0 || textSize.as<int>() > 2)) {
+    server->send(400, "text/plain", "Invalid status bar text size");
+    return;
+  }
   ReaderStatusBarsPayload bars;
   DisplayStatusBarConfig display;
+  {
+    std::lock_guard<std::mutex> lock(SETTINGS.getMutex());
+    display = SETTINGS.displayStatusBar;
+  }
   if ((!doc["display"].isNull() && !readDisplayStatusBarJson(doc["display"], display, halClock.isAvailable())) ||
+      !readReaderStatusBarBatteryStyle(doc["displayBatteryStyle"], display.batteryStyle) ||
       !CrossPointSettings::parseReaderStatusBars(doc.as<JsonVariantConst>(), bars)) {
     server->send(400, "text/plain", "Invalid status bar configuration");
     return;
@@ -1717,13 +1748,20 @@ void CrossPointWebServer::handlePostStatusBars() {
     if (previousTop.slots != bars.top.slots || previousTop.percentageFormat != bars.top.percentageFormat ||
         previousTop.progressBar != bars.top.progressBar ||
         previousTop.progressBarThickness != bars.top.progressBarThickness ||
+        (!doc["top"]["battery"].isUnbound() && previousTop.batteryStyle != bars.top.batteryStyle) ||
         SETTINGS.xtcStatusBarMode != bars.xtcMode) {
       SETTINGS.legacyXtcTopUsesBottom = 0;
     }
+    // Older clients have no Hide field; editing slots must retain visibility.
+    if (doc["top"]["hidden"].isUnbound()) bars.top.hidden = previousTop.hidden;
+    if (doc["bottom"]["hidden"].isUnbound()) bars.bottom.hidden = SETTINGS.bottomReaderStatusBar.hidden;
+    if (doc["top"]["battery"].isUnbound()) bars.top.batteryStyle = previousTop.batteryStyle;
+    if (doc["bottom"]["battery"].isUnbound()) bars.bottom.batteryStyle = SETTINGS.bottomReaderStatusBar.batteryStyle;
     SETTINGS.topReaderStatusBar = bars.top;
     SETTINGS.bottomReaderStatusBar = bars.bottom;
     SETTINGS.xtcStatusBarMode = bars.xtcMode;
-    if (!doc["display"].isNull()) SETTINGS.displayStatusBar = display;
+    if (!doc["display"].isNull() || !doc["displayBatteryStyle"].isUnbound()) SETTINGS.displayStatusBar = display;
+    if (!textSize.isUnbound()) SETTINGS.displayStatusBarTextSize = textSize.as<uint8_t>();
   }
   if (!SETTINGS.saveToFile()) {
     LOG_ERR("WEB", "Failed to save status bar configuration");
@@ -1898,6 +1936,7 @@ void CrossPointWebServer::handlePostSettings() {
   int applied = 0;
   uint8_t CrossPointSettings::* twoFingerSwipeEdited = nullptr;
 
+  std::unique_lock<std::mutex> settingsLock(SETTINGS.getMutex());
   for (const auto& s : settings) {
     if (!s.key || !isWebSettingAvailable(s)) continue;
     if (!doc[s.key].is<JsonVariant>()) continue;
@@ -1968,7 +2007,13 @@ void CrossPointWebServer::handlePostSettings() {
   if (twoFingerSwipeEdited != nullptr) {
     CrossPointSettings::normalizeTwoFingerSwipeActions(SETTINGS, twoFingerSwipeEdited);
   }
-  SETTINGS.saveToFile();
+  settingsLock.unlock();  // saveToFile acquires the settings mutex itself.
+  if (!SETTINGS.saveToFile()) {
+    LOG_ERR("WEB", "Failed to save settings");
+    server->send(500, "text/plain", "Failed to save settings");
+    sdFontSystem.releaseRegistry();
+    return;
+  }
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");

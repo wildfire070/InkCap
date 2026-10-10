@@ -209,23 +209,23 @@ TEST(CssFontSizePropertyTest, InvalidKeywordIsNotSet) {
   EXPECT_FALSE(style.hasFontSizeMultiplier());
 }
 
-TEST_F(CssDescendantDepthTest, FivePlusPartSelectorIsRejectedNotMismatched) {
-  // A 5-part selector (4 context parts + subject) exceeds MAX_DESCENDANT_CONTEXT_PARTS's
-  // "4 context parts" budget only when it has 5 context parts (6 total) -- but a selector
-  // with exactly 5 total parts (4 context + 1 subject) IS the supported boundary. Confirm a
-  // 6-total-part selector (5 context parts) is silently dropped rather than partially matched.
-  const std::string css6Parts =
-      "a b c d e f { font-weight: bold; }";  // 5 context parts + subject "f"
+TEST_F(CssDescendantDepthTest, SixPartSelectorMatchesArbitrarilyDeepAncestorChains) {
+  // contextMatches() walks its ancestor-selector prefix iteratively rather than against a
+  // fixed-size parts array, so a 6-part selector (5 context parts + subject) is not a special
+  // case -- it matches exactly like the 3- and 4-part selectors above, with all 5 ancestors
+  // present and in order.
+  const std::string css6Parts = "a b c d e f { font-weight: bold; }";  // 5 context parts + subject "f"
   Storage.put("six.css", {css6Parts.begin(), css6Parts.end()});
   FsFile file;
   ASSERT_TRUE(Storage.openFileForRead("test", "six.css", file));
   CssParser parser("book6");
   ASSERT_TRUE(parser.loadFromStream(file));
   file.close();
-  EXPECT_TRUE(parser.empty());
+  EXPECT_FALSE(parser.empty());
   const auto style =
       parser.resolveStyle("f", "", {{0, "a", ""}, {1, "b", ""}, {2, "c", ""}, {3, "d", ""}, {4, "e", ""}});
-  EXPECT_FALSE(style.hasFontWeight());
+  EXPECT_TRUE(style.hasFontWeight());
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
 }
 
 TEST_F(CssArenaBackingTest, LargerSourceAllowanceRequiresPsram) {
@@ -261,7 +261,7 @@ TEST_F(CssArenaBackingTest, PreviousCacheVersionIsInvalidated) {
   std::vector<uint8_t> bytes(file.size());
   ASSERT_EQ(file.read(bytes.data(), bytes.size()), static_cast<int>(bytes.size()));
   file.close();
-  bytes[4] = 16;
+  bytes[4] = CssParser::CSS_CACHE_VERSION - 1;
   Storage.put("book/css_rules.cache", bytes);
   EXPECT_EQ(css.inspectCache(), CssParser::CacheStatus::Invalid);
 }
@@ -315,4 +315,56 @@ TEST_F(CssArenaBackingTest, ManyRulesSurviveArenaGrowthAndCacheRoundTrip) {
   ASSERT_EQ(css.ruleCount(), 1303u);
   for (int i = 0; i < 1303; ++i)
     EXPECT_EQ(css.resolveStyle("div", "rule" + std::to_string(i)).display, CssDisplay::None);
+}
+
+TEST_F(CssArenaBackingTest, BorderSuppressionSurvivesHydrationAndDiskFallback) {
+  for (int mode = 0; mode < 3; ++mode) {
+    fakeheap::reset(mode != 0);
+    const std::string text =
+        "hr.transition { border: none; } hr.visible { border: none; border-top: 1px solid; } "
+        "div hr { border-width: 0; }";
+    Storage.put("input.css", {text.begin(), text.end()});
+    FsFile file;
+    ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
+    CssParser css("book");
+    ASSERT_TRUE(css.loadFromStream(file));
+    file.close();
+    EXPECT_TRUE(css.resolveStyle("hr", "transition").suppressesHorizontalRule());
+    EXPECT_FALSE(css.resolveStyle("hr", "visible").suppressesHorizontalRule());
+    ASSERT_TRUE(css.saveToCache());
+    css.clear();
+    if (mode == 2) fakeheap::external.fail = 1;
+    ASSERT_TRUE(css.loadFromCache());
+    if (mode == 2) EXPECT_TRUE(fakeheap::live.empty());
+    EXPECT_TRUE(css.resolveStyle("hr", "transition").suppressesHorizontalRule());
+    EXPECT_FALSE(css.resolveStyle("hr", "visible").suppressesHorizontalRule());
+    EXPECT_TRUE(css.resolveStyle("hr", "", {{0, "div", ""}}).suppressesHorizontalRule());
+  }
+}
+
+TEST_F(CssArenaBackingTest, PublisherDecorationsAndContextSurviveAllCacheBackings) {
+  for (int mode = 0; mode < 3; ++mode) {
+    fakeheap::reset(mode != 0);
+    const std::string text =
+        "section#chapter > p.note.wide { border: 2px dashed; background: #ddd; white-space: pre-wrap; } "
+        "p.note::first-letter { initial-letter: 3; float: left; }";
+    Storage.put("input.css", {text.begin(), text.end()});
+    FsFile file;
+    ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
+    CssParser css("book");
+    ASSERT_TRUE(css.loadFromStream(file));
+    file.close();
+    ASSERT_TRUE(css.saveToCache());
+    css.clear();
+    if (mode == 2) fakeheap::external.fail = 1;
+    ASSERT_TRUE(css.loadFromCache());
+    auto style = css.resolveStyle("p", "wide note", {{0, "section", "", "chapter"}});
+    EXPECT_EQ(style.borders[0].width, 2);
+    EXPECT_EQ(style.borders[0].style, CssBorderStyle::Dashed);
+    EXPECT_TRUE(style.shaded);
+    EXPECT_TRUE(style.preserveWhitespace);
+    auto cap = css.resolveStyle("p", "note", {}, {}, true);
+    EXPECT_EQ(cap.initialLetter, 3);
+    EXPECT_TRUE(cap.floatLeft);
+  }
 }

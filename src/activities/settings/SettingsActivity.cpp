@@ -5,6 +5,7 @@
 #include <HalGPIO.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <iterator>
 
+#include "AboutActivity.h"
 #include "AppCapabilities.h"
 #include "AppVersion.h"
 #include "BackupStatsActivity.h"
@@ -22,8 +24,11 @@
 #include "ClockOffsetActivity.h"
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
+#include "CrossPointState.h"
 #include "DeviceCapabilities.h"
+#include "FilenameFontSystem.h"
 #include "FontSelectionActivity.h"
+#include "HyphenationManagerActivity.h"
 #if CROSSINK_SCALABLE_FONTS
 #include "TtfRenderOptionsActivity.h"
 #endif
@@ -34,6 +39,7 @@
 #include "OpdsServerListActivity.h"
 #include "QuickActions.h"
 #include "QuickActionsActivity.h"
+#include "ScreenCalibrationActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
@@ -70,7 +76,7 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DIS
 namespace {
 constexpr int systemVersionFooterSideMargin = 20;
 constexpr int systemVersionFooterBottomInset = 15;
-constexpr size_t controlsParentBaseCount = 4;
+constexpr size_t controlsParentBaseCount = 5;
 constexpr size_t controlsHomeButtonCount = 4;
 constexpr size_t controlsPowerMinCount = 2;
 constexpr size_t controlsPowerMaxCount = 3;
@@ -83,9 +89,7 @@ void formatFrontlightScheduleTime(const uint16_t timeOfDay, char* const buf, con
            I18N.get(time.isPm ? StrId::STR_PM : StrId::STR_AM));
 }
 
-Rect settingsHeaderRect(const ThemeMetrics& metrics, const int pageWidth) {
-  return Rect{0, metrics.topPadding, pageWidth, CompactHeader::headerBottomY(metrics) - metrics.topPadding};
-}
+Rect settingsHeaderRect(const GfxRenderer& renderer) { return TouchHeaderBackButton::compactHeaderRect(renderer); }
 
 bool useLandscapeTouchLayout(const GfxRenderer& renderer) {
   // Layout is an app capability decision, not a live GT911 probe or SDK board
@@ -156,7 +160,7 @@ void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, c
   const std::string label = std::string("InxAO3 ") + AppVersion::version();
   const int maxWidth = pageWidth - systemVersionFooterSideMargin * 2;
   const int bottomLineY =
-      pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - systemVersionFooterBottomInset;
+      pageHeight - UITheme::getButtonHintsReserve(renderer) - metrics.verticalSpacing - systemVersionFooterBottomInset;
 
   if (renderer.getTextWidth(SMALL_FONT_ID, label.c_str()) <= maxWidth) {
     drawCenteredTextLine(renderer, pageWidth, bottomLineY, label);
@@ -201,7 +205,7 @@ std::string formatSettingValue(const SettingInfo& setting) {
   }
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     if (SETTINGS.sleepTimeoutMinutes >= CrossPointSettings::SLEEP_TIMEOUT_NEVER_MINUTES) {
-      return tr(STR_SLEEP_NEVER);
+      return tr(STR_NEVER);
     }
     char valueBuffer[32];
     snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_SLEEP_TIMER_VALUE_FORMAT),
@@ -216,6 +220,14 @@ std::string formatSettingValue(const SettingInfo& setting) {
   }
   if (setting.valuePtr == &CrossPointSettings::clockUtcOffsetQ) {
     return formatUtcOffset(SETTINGS.*(setting.valuePtr));
+  }
+  if (setting.valuePtr == &CrossPointSettings::wordSpacing) {
+    return std::to_string(WordSpacing::level(SETTINGS.wordSpacing));
+  }
+  if (setting.valuePtr == &CrossPointSettings::characterSpacing) {
+    char value[8];
+    CrossPointSettings::formatCharacterSpacing(SETTINGS.characterSpacing, value, sizeof(value));
+    return value;
   }
   return std::to_string(SETTINGS.*(setting.valuePtr));
 }
@@ -486,7 +498,7 @@ void SettingsActivity::enterCategory(int categoryIndex) {
 StrId SettingsActivity::activeSubmenuTitleId() const {
   switch (activeSubmenu) {
     case SettingAction::DisplaySleepScreen:
-      return StrId::STR_DISPLAY_SLEEP_SCREEN;
+      return StrId::STR_SLEEP_SCREEN;
     case SettingAction::DisplayFrontlight:
       return StrId::STR_FRONTLIGHT;
     case SettingAction::ReaderFontOptions:
@@ -527,7 +539,7 @@ void SettingsActivity::openSubmenu(SettingAction action) {
   activeSubmenu = action;
   if (action == SettingAction::ReaderFontOptions) {
     RenderLock lock;
-    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP), true);
+    GUI.drawPopup(renderer, tr(STR_LOADING), true);
     rebuildSettingsLists();
   }
   setCurrentSettingsForCategory();
@@ -560,7 +572,7 @@ void SettingsActivity::closeSubmenu() {
 
 bool SettingsActivity::currentSettingUsesOptionMenu(const SettingInfo& setting) const {
   return setting.nameId != StrId::STR_FONT_FAMILY && setting.type == SettingType::ENUM &&
-         settingEnumOptionCount(setting) > 2 &&
+         (settingEnumOptionCount(setting) > 2 || setting.valuePtr == &CrossPointSettings::menuNavigation) &&
          (setting.valuePtr != nullptr || (setting.valueGetter && setting.valueSetter));
 }
 
@@ -608,6 +620,9 @@ void SettingsActivity::openEnumOptionPicker(const SettingInfo& setting) {
         requestUpdate();
       },
       note);
+  if (setting.valuePtr == &CrossPointSettings::menuNavigation) {
+    menuNavigationNote.apply(optionPopup);
+  }
   requestUpdate();
 }
 
@@ -641,56 +656,170 @@ void SettingsActivity::openScreenMarginPicker(const SettingInfo& setting) {
 void SettingsActivity::openWordSpacingPicker() {
   startActivityForResult(
       std::make_unique<IntervalSelectionActivity>(
-          renderer, mappedInput, "WordSpacingInterval", StrId::STR_WORD_SPACING, SETTINGS.wordSpacing, 0,
-          CrossPointSettings::MAX_WORD_SPACING, 1, 1, StrId::STR_NONE_OPT,
+          renderer, mappedInput, "WordSpacingInterval", StrId::STR_WORD_SPACING,
+          WordSpacing::sliderValue(SETTINGS.wordSpacing), 0, CrossPointSettings::MAX_WORD_SPACING, 1, 1,
+          StrId::STR_NONE_OPT,
           /*readerActivity=*/false, /*allowPowerAsConfirm=*/false, /*ignoreInitialConfirmRelease=*/false,
           /*showPercentValue=*/false, StrId::STR_NONE_OPT, /*overrideDisabledReaderTouchscreen=*/false,
-          /*showTouchHeaderBackButton=*/true, /*valueFormatter=*/nullptr, /*tapStep=*/1,
+          /*showTouchHeaderBackButton=*/true, /*valueFormatter=*/CrossPointSettings::formatWordSpacingSlider,
+          /*tapStep=*/1,
           /*useReaderSlider=*/true, IntervalSelectionActivity::ReaderPreviewSetting::WordSpacing),
       [this](const ActivityResult& result) {
         if (!result.isCancelled) {
-          SETTINGS.wordSpacing =
-              static_cast<uint8_t>(std::clamp(std::get<IntervalResult>(result.data).value, static_cast<uint32_t>(0),
-                                              static_cast<uint32_t>(CrossPointSettings::MAX_WORD_SPACING)));
+          SETTINGS.wordSpacing = WordSpacing::fromSlider(std::get<IntervalResult>(result.data).value);
           SETTINGS.saveToFile();
         }
         requestUpdate();
       });
 }
 
-void SettingsActivity::openLanguagePicker() {
-  const int languageCount = static_cast<int>(sizeof(SORTED_LANGUAGE_INDICES) / sizeof(SORTED_LANGUAGE_INDICES[0]));
+void SettingsActivity::openCharacterSpacingPicker() {
+  startActivityForResult(
+      std::make_unique<IntervalSelectionActivity>(
+          renderer, mappedInput, "CharacterSpacingInterval", StrId::STR_CHARACTER_SPACING, SETTINGS.characterSpacing, 0,
+          CrossPointSettings::MAX_CHARACTER_SPACING, 1, 1, StrId::STR_NONE_OPT,
+          /*readerActivity=*/false, /*allowPowerAsConfirm=*/false, /*ignoreInitialConfirmRelease=*/false,
+          /*showPercentValue=*/false, StrId::STR_NONE_OPT, /*overrideDisabledReaderTouchscreen=*/false,
+          /*showTouchHeaderBackButton=*/true, /*valueFormatter=*/CrossPointSettings::formatCharacterSpacing,
+          /*tapStep=*/1,
+          /*useReaderSlider=*/true, IntervalSelectionActivity::ReaderPreviewSetting::CharacterSpacing),
+      [this](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          SETTINGS.characterSpacing =
+              static_cast<uint8_t>(std::clamp(std::get<IntervalResult>(result.data).value, static_cast<uint32_t>(0),
+                                              static_cast<uint32_t>(CrossPointSettings::MAX_CHARACTER_SPACING)));
+          SETTINGS.saveToFile();
+        }
+        requestUpdate();
+      });
+}
 
-  std::vector<std::string> options;
-  options.reserve(languageCount);
-  for (int i = 0; i < languageCount; i++) {
-    options.push_back(I18N.getLanguageName(static_cast<Language>(SORTED_LANGUAGE_INDICES[i])));
+void SettingsActivity::openFilenameFontPicker() {
+#if CROSSINK_SCALABLE_FONTS
+  RenderLock lock(*this);
+  optionPopup.clear();
+  if (!filenameFontSystem.discover(filenameFontNames)) {
+    optionPopup.show(
+        StrId::STR_FILENAME_FALLBACK_FONT, {tr(STR_OK)}, 0, [this](int) { requestUpdate(); },
+        OptionPopup::Note(tr(STR_FONT_DATA_UNREADABLE), tr(STR_FILENAME_FONT_HINT)));
+    requestUpdate();
+    return;
   }
+  filenameFontNames.insert(filenameFontNames.begin(), tr(STR_NONE_OPT));
+  int selected = 0;
+  for (size_t i = 1; i < filenameFontNames.size(); ++i) {
+    if (filenameFontNames[i] == SETTINGS.filenameFallbackFont) selected = static_cast<int>(i);
+  }
+  optionPopup.showBorrowed(
+      StrId::STR_FILENAME_FALLBACK_FONT,
+      OptionLabels(&filenameFontNames, filenameFontNames.size(),
+                   [](const void* owner, size_t i) {
+                     return (*static_cast<const std::vector<std::string>*>(owner))[i].c_str();
+                   }),
+      selected,
+      [this](int index) {
+        if (index < 0 || static_cast<size_t>(index) >= filenameFontNames.size()) return;
+        std::strncpy(pendingFilenameFont, index ? filenameFontNames[index].c_str() : "",
+                     sizeof(pendingFilenameFont) - 1);
+        filenameFontSelectionPending = true;
+      },
+      OptionPopup::Note("", tr(STR_FILENAME_FONT_HINT)));
+  requestUpdate();
+#endif
+}
 
-  const auto currentLang = static_cast<uint8_t>(I18N.getLanguage());
-  const auto* begin = std::begin(SORTED_LANGUAGE_INDICES);
-  const auto* end = std::end(SORTED_LANGUAGE_INDICES);
-  const auto* it = std::find(begin, end, currentLang);
-  int currentIndex = (it != end) ? static_cast<int>(std::distance(begin, it)) : 0;
+void SettingsActivity::openLanguagePicker() {
+  RenderLock lock(*this);
+  optionPopup.clear();
+  languageCatalog.reset();
+  // Fixed <3 KiB catalog, cold-path only. A failed allocation still offers
+  // English and the active cache without constructing any owning label list.
+  languageCatalog.init(MemoryPool::None);
+  const auto status = languageCatalog ? I18N.discover(*languageCatalog.get()) : language_cache::Result::Memory;
+  const bool cached = std::strcmp(I18N.getCode(), "EN") != 0;
+  int currentIndex = cached ? 1 : 0;
+  OptionLabels labels;
+  bool duplicates = false;
+  if (status == language_cache::Result::Ok) {
+    for (size_t i = 0; i < languageCatalog->count; ++i) {
+      if (std::strcmp(languageCatalog->code(i), I18N.getCode()) == 0) currentIndex = static_cast<int>(i);
+      duplicates = duplicates || languageCatalog->disabled(i);
+    }
+    labels = OptionLabels(
+        languageCatalog.get(), languageCatalog->count,
+        [](const void* owner, size_t i) { return static_cast<const I18n::Catalog*>(owner)->name(i); },
+        [](const void* owner, size_t i) { return static_cast<const I18n::Catalog*>(owner)->disabled(i); });
+  } else {
+    LOG_ERR("LANG", "Language picker: %s", language_cache::resultName(status));
+    languageCatalog.reset();
+    labels =
+        OptionLabels(nullptr, cached ? 2 : 1, [](const void*, size_t i) { return i ? I18N.getName() : "English"; });
+  }
+  const char* note = status == language_cache::Result::Ok
+                         ? (duplicates ? tr(STR_LANGUAGE_DUPLICATE) : tr(STR_LANGUAGE_APPLY_HINT))
+                     : status == language_cache::Result::Memory   ? tr(STR_MEMORY_ERROR)
+                     : status == language_cache::Result::TooLarge ? tr(STR_LANGUAGE_CATALOG_LIMIT)
+                                                                  : tr(STR_LANGUAGE_IO_ERROR);
+  optionPopup.showBorrowed(
+      StrId::STR_LANGUAGE, labels, currentIndex,
+      [this](int index) {
+        if (index < 0) return;
+        if (languageCatalog) {
+          if (static_cast<size_t>(index) >= languageCatalog->count || languageCatalog->disabled(index)) return;
+          languageCatalog->select(index, pendingLanguage);
+        } else {
+          std::strcpy(pendingLanguage.code, index ? I18N.getCode() : "EN");
+          pendingLanguage.path[0] = '\0';
+          pendingLanguage.generation = index ? I18N.getGeneration() : 0;
+        }
+        // Installation starts on the next loop, after this callback returns.
+      },
+      OptionPopup::Note(tr(STR_LANGUAGE), note));
+  requestUpdate();
+}
 
-  optionPopup.show(StrId::STR_LANGUAGE, options, currentIndex, [this](int selectedIndex) {
-    const int languageCount = static_cast<int>(sizeof(SORTED_LANGUAGE_INDICES) / sizeof(SORTED_LANGUAGE_INDICES[0]));
-    if (selectedIndex < 0 || selectedIndex >= languageCount) {
-      requestUpdate();
+void SettingsActivity::applyLanguage(const I18n::Option& selected) {
+  // Rendering also reads popup labels; retire them under its existing lock.
+  {
+    RenderLock lock(*this);
+    optionPopup.clear();
+    languageCatalog.reset();
+  }
+  language_cache::Installed installed;
+  std::strcpy(installed.metadata.code, selected.code);
+  installed.generation = selected.generation;
+  {
+    RenderLock lock(*this);
+    GUI.drawPopup(renderer, tr(STR_LOADING));
+    if (selected.path[0]) {
+      const auto status = I18N.prepare(selected.path, installed);
+      if (status != language_cache::Result::Ok) {
+        languageError = status == language_cache::Result::StorageUnavailable ? StrId::STR_LANGUAGE_STORAGE_UNAVAILABLE
+                        : status == language_cache::Result::Memory           ? StrId::STR_MEMORY_ERROR
+                        : status == language_cache::Result::Io               ? StrId::STR_LANGUAGE_IO_ERROR
+                                                                             : StrId::STR_LANGUAGE_FILE_INVALID;
+        return;
+      }
+    }
+    // The active mapping and every existing string pointer remain untouched.
+    // Only a successful settings save selects this generation on the next boot.
+    char previousCode[sizeof(SETTINGS.languageCode)];
+    std::strcpy(previousCode, SETTINGS.languageCode);
+    const uint64_t previousGeneration = SETTINGS.languageCacheGeneration;
+    if (!APP_STATE.saveToFile()) {
+      languageError = StrId::STR_LANGUAGE_SAVE_FAILED;
       return;
     }
-
-    const uint8_t langIndex = SORTED_LANGUAGE_INDICES[selectedIndex];
-    {
-      RenderLock lock(*this);
-      I18N.setLanguage(static_cast<Language>(langIndex));
+    std::strcpy(SETTINGS.languageCode, installed.metadata.code);
+    SETTINGS.languageCacheGeneration = installed.generation;
+    if (!SETTINGS.saveToFile()) {
+      std::strcpy(SETTINGS.languageCode, previousCode);
+      SETTINGS.languageCacheGeneration = previousGeneration;
+      languageError = StrId::STR_LANGUAGE_SAVE_FAILED;
+      return;
     }
-
-    SETTINGS.language = langIndex;
-    SETTINGS.saveToFile();
-    requestUpdate();
-  });
-  requestUpdate();
+    silentRestart();
+  }
 }
 
 void SettingsActivity::openStringEditor(const SettingInfo& setting) {
@@ -859,10 +988,49 @@ void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valueP
 }
 
 void SettingsActivity::loop() {
+#if CROSSINK_SCALABLE_FONTS
+  if (filenameFontSelectionPending) {
+    filenameFontSelectionPending = false;
+    RenderLock lock(*this);
+    char previous[sizeof(SETTINGS.filenameFallbackFont)];
+    std::strcpy(previous, SETTINGS.filenameFallbackFont);
+    std::strcpy(SETTINGS.filenameFallbackFont, pendingFilenameFont);
+    filenameFontSystem.invalidate();
+    if (pendingFilenameFont[0]) GUI.drawPopup(renderer, tr(STR_LOADING), true);
+    if (filenameFontSystem.ensureLoaded(renderer) && SETTINGS.saveToFile()) {
+      // The selected font and persisted setting are ready together.
+    } else {
+      std::strcpy(SETTINGS.filenameFallbackFont, previous);
+      filenameFontSystem.ensureLoaded(renderer);
+      optionPopup.show(
+          StrId::STR_FILENAME_FALLBACK_FONT, {tr(STR_OK)}, 0, [this](int) { requestUpdate(); },
+          OptionPopup::Note(tr(STR_FONT_DATA_UNREADABLE), tr(STR_FILENAME_FONT_HINT)));
+    }
+    requestUpdate();
+    return;
+  }
+#endif
+  if (pendingLanguage.code[0]) {
+    const auto selected = pendingLanguage;
+    pendingLanguage.code[0] = '\0';
+    applyLanguage(selected);
+    return;
+  }
+  // Defer replacing the popup callback until its previous invocation has returned.
+  if (languageError != StrId::_COUNT) {
+    const StrId error = languageError;
+    languageError = StrId::_COUNT;
+    const StrId options[] = {StrId::STR_OK};
+    optionPopup.show(
+        StrId::STR_LANGUAGE, options, 1, 0, [this](int) { requestUpdate(); },
+        OptionPopup::Note(tr(STR_LANGUAGE_INSTALL_FAILED), I18N.get(error)));
+    requestUpdate();
+    return;
+  }
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  if (TouchHeaderBackButton::wasTapped(mappedInput, settingsHeaderRect(metrics, renderer.getScreenWidth()))) {
+  if (TouchHeaderBackButton::wasTapped(mappedInput, settingsHeaderRect(renderer))) {
     if (!isFileBrowserView() && activeSubmenu != SettingAction::None) {
       closeSubmenu();
       requestUpdate();
@@ -974,14 +1142,15 @@ void SettingsActivity::loop() {
                                      : ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1));
     moveSelection(index, forward);
   };
-  const auto previousButtons = isFileBrowserView() ? ButtonNavigator::getPreviousButtons() : std::array{up, up};
-  const auto nextButtons = isFileBrowserView() ? ButtonNavigator::getNextButtons() : std::array{down, down};
+  const bool classicNavigation = SETTINGS.menuNavigation == CrossPointSettings::MENU_NAV_CLASSIC;
+  const auto previousButtons =
+      (isFileBrowserView() || classicNavigation) ? ButtonNavigator::getPreviousButtons() : std::array{up, up};
+  const auto nextButtons =
+      (isFileBrowserView() || classicNavigation) ? ButtonNavigator::getNextButtons() : std::array{down, down};
   buttonNavigator.onRelease(nextButtons, [&] { navigateRows(true); });
   buttonNavigator.onRelease(previousButtons, [&] { navigateRows(false); });
 
   if (!isFileBrowserView()) {
-    buttonNavigator.onContinuous(nextButtons, [&] { navigateRows(true); });
-    buttonNavigator.onContinuous(previousButtons, [&] { navigateRows(false); });
     const auto changeCategory = [this, &hasChangedCategory](const bool forward) {
       hasChangedCategory = true;
       showSettingSelection = true;
@@ -989,12 +1158,19 @@ void SettingsActivity::loop() {
                             : ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount));
       requestUpdate();
     };
-    const auto left = mappedInput.menuButton(MappedInputManager::Button::Left);
-    const auto right = mappedInput.menuButton(MappedInputManager::Button::Right);
-    buttonNavigator.onRelease({right, right}, [&] { changeCategory(true); });
-    buttonNavigator.onRelease({left, left}, [&] { changeCategory(false); });
-    buttonNavigator.onContinuous({right, right}, [&] { changeCategory(true); });
-    buttonNavigator.onContinuous({left, left}, [&] { changeCategory(false); });
+    if (classicNavigation) {
+      buttonNavigator.onNextContinuous([&] { changeCategory(true); });
+      buttonNavigator.onPreviousContinuous([&] { changeCategory(false); });
+    } else {
+      buttonNavigator.onContinuous(nextButtons, [&] { navigateRows(true); });
+      buttonNavigator.onContinuous(previousButtons, [&] { navigateRows(false); });
+      const auto left = mappedInput.menuButton(MappedInputManager::Button::Left);
+      const auto right = mappedInput.menuButton(MappedInputManager::Button::Right);
+      buttonNavigator.onRelease({right, right}, [&] { changeCategory(true); });
+      buttonNavigator.onRelease({left, left}, [&] { changeCategory(false); });
+      buttonNavigator.onContinuous({right, right}, [&] { changeCategory(true); });
+      buttonNavigator.onContinuous({left, left}, [&] { changeCategory(false); });
+    }
   }
 
   if (hasChangedCategory) {
@@ -1051,6 +1227,10 @@ void SettingsActivity::toggleCurrentSetting() {
   }
   if (setting.valuePtr == &CrossPointSettings::lineHeightPercent) {
     openLineHeightPicker();
+    return;
+  }
+  if (setting.valuePtr == &CrossPointSettings::characterSpacing) {
+    openCharacterSpacingPicker();
     return;
   }
   if (setting.valuePtr == &CrossPointSettings::wordSpacing) {
@@ -1129,6 +1309,29 @@ void SettingsActivity::toggleCurrentSetting() {
     auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
 
     switch (setting.action) {
+      case SettingAction::ScreenCalibration: {
+        auto activity = makeUniqueNoThrow<ScreenCalibrationActivity>(renderer, mappedInput);
+        if (!activity) {
+          LOG_ERR("SET", "Failed to allocate screen calibration");
+          break;
+        }
+        startActivityForResult(std::move(activity), [this](const ActivityResult&) {
+          RenderLock lock(*this);
+          app.setDevice(uiTarget.deviceContext());
+          requestUpdate();
+        });
+        break;
+      }
+      case SettingAction::About: {
+        // The bounded activity owns its snapshot and UI host only while open.
+        auto about = makeUniqueNoThrow<AboutActivity>(renderer, mappedInput);
+        if (!about) {
+          LOG_ERR("SET", "OOM: About activity");
+          return;
+        }
+        startActivityForResult(std::move(about), [this](const ActivityResult&) { requestUpdate(); });
+        break;
+      }
       case SettingAction::RemapFrontButtons:
         startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput, false), resultHandler);
         break;
@@ -1217,17 +1420,32 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::DownloadFonts:
         silentRestartToManageFonts();
         break;
-      case SettingAction::TtfRendering:
+      case SettingAction::TtfRendering: {
 #if CROSSINK_SCALABLE_FONTS
-        startActivityForResult(
-            std::make_unique<TtfRenderOptionsActivity>(renderer, mappedInput, SETTINGS.sdFontFamilyName, false),
-            [this](const ActivityResult& result) {
-              if (const auto* options = std::get_if<TtfRenderOptionsResult>(&result.data)) {
-                ttfRenderingChanged = ttfRenderingChanged || options->activeFamilyChanged;
-              }
-              rebuildSettingsLists();
-            });
+        auto activity =
+            makeUniqueNoThrow<TtfRenderOptionsActivity>(renderer, mappedInput, SETTINGS.sdFontFamilyName, false);
+        if (!activity) {
+          LOG_ERR("SET", "Failed to allocate TTF rendering settings");
+          break;
+        }
+        startActivityForResult(std::move(activity), [this](const ActivityResult& result) {
+          if (const auto* options = std::get_if<TtfRenderOptionsResult>(&result.data)) {
+            ttfRenderingChanged = ttfRenderingChanged || options->activeFamilyChanged;
+          }
+          rebuildSettingsLists();
+        });
 #endif
+        break;
+      }
+      case SettingAction::FilenameFallbackFont:
+        openFilenameFontPicker();
+        break;
+      case SettingAction::ManageHyphenation:
+        if (auto manager = makeUniqueNoThrow<HyphenationManagerActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(manager), [](const ActivityResult&) {});
+        } else {
+          LOG_ERR("HYPH", "OOM: hyphenation manager");
+        }
         break;
       case SettingAction::Language:
         openLanguagePicker();
@@ -1312,7 +1530,7 @@ void SettingsActivity::openSleepTimeoutPicker() {
           CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1, 5,
           StrId::STR_SLEEP_TIMER_VALUE_FORMAT,
           /*readerActivity=*/false, /*allowPowerAsConfirm=*/false, /*ignoreInitialConfirmRelease=*/true,
-          /*showPercentValue=*/false, StrId::STR_SLEEP_NEVER, /*overrideDisabledReaderTouchscreen=*/false,
+          /*showPercentValue=*/false, StrId::STR_NEVER, /*overrideDisabledReaderTouchscreen=*/false,
           /*showTouchHeaderBackButton=*/true, /*valueFormatter=*/nullptr, /*tapStep=*/0,
           /*useReaderSlider=*/true),
       [this](const ActivityResult& result) {
@@ -1380,7 +1598,7 @@ void SettingsActivity::openIdleTimeThresholdPicker() {
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (settingShowsNavigationCaret(setting)) return ">";
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
-    return SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    return SETTINGS.*(setting.valuePtr) ? tr(STR_ON) : tr(STR_OFF);
   }
   if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t displayIndex = enumDisplayIndexForRawValue(setting, SETTINGS.*(setting.valuePtr));
@@ -1392,8 +1610,11 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::VALUE && (setting.valuePtr != nullptr || setting.value16Ptr != nullptr)) {
     return formatSettingValue(setting);
   }
+  if (setting.type == SettingType::ACTION && setting.action == SettingAction::FilenameFallbackFont) {
+    return SETTINGS.filenameFallbackFont[0] ? SETTINGS.filenameFallbackFont : tr(STR_NONE_OPT);
+  }
   if (setting.type == SettingType::ACTION && setting.action == SettingAction::Language) {
-    return I18N.getLanguageName(I18N.getLanguage());
+    return I18N.getName();
   }
   if (setting.type == SettingType::STRING) {
     if (setting.nameId == StrId::STR_DEVICE_NAME) return SETTINGS.getEffectiveDeviceName();
@@ -1416,9 +1637,15 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   // setContentMargin() is relative to the bezel-safe rectangle, while the
   // compact header geometry is in absolute screen coordinates. Overlap the
   // tab's top rule with the header's final underline pixel.
-  const int tabTop = std::max<int>(safe.y, CompactHeader::headerBottomY(metrics) - 1);
-  screen.setContentMargin(
-      fui::Insets{static_cast<int16_t>(tabTop - safe.y), 0, static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  const int tabTop = std::max<int>(safe.y, CompactHeader::headerBottomY(renderer) - 1);
+  if (renderer.hasCustomViewableInsets()) {
+    setUiContentMargin(screen, renderer,
+                       fui::Insets{static_cast<int16_t>(tabTop), 0,
+                                   static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
+  } else {
+    screen.setContentMargin(fui::Insets{static_cast<int16_t>(tabTop - safe.y), 0,
+                                        static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
+  }
 
   if (isFileBrowserView()) {
     const int16_t listInset = static_cast<int16_t>(metrics.listInset);
@@ -1637,7 +1864,7 @@ void SettingsActivity::render(RenderLock&&) {
   }
 
   uiReady = false;
-  app.render();
+  renderUiApp(app, uiTarget);
   uiReady = true;
 
   // Keep build information discoverable without crowding the common header.
@@ -1669,7 +1896,8 @@ void SettingsActivity::render(RenderLock&&) {
                  ? tr(STR_SELECT)
                  : tr(STR_TOGGLE));
 
-  const bool horizontalFront = !isFileBrowserView() && !deviceUsesHorizontalSideButtonsForMenus(gpio);
+  const bool horizontalFront = SETTINGS.menuNavigation == CrossPointSettings::MENU_NAV_DIRECTIONAL &&
+                               !isFileBrowserView() && !deviceUsesHorizontalSideButtonsForMenus(gpio);
   const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), confirmLabel,
                                             (horizontalFront ? tr(STR_DIR_LEFT) : tr(STR_DIR_UP)),
                                             (horizontalFront ? tr(STR_DIR_RIGHT) : tr(STR_DIR_DOWN)));

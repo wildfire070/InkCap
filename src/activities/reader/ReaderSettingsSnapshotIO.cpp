@@ -19,7 +19,7 @@ constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 // (and its ArduinoJson dependency) into this otherwise dependency-free module. See the header comment.
 constexpr uint8_t MIN_SCREEN_MARGIN = 5;
 constexpr uint8_t MAX_WORD_SPACING = 4;
-constexpr uint8_t MAX_CHARACTER_SPACING = 4;
+constexpr uint8_t MAX_CHARACTER_SPACING = 10;
 constexpr uint8_t INDEXING_FULL_SECTION = 1;
 constexpr uint8_t INDEXING_METHOD_COUNT = 2;
 
@@ -146,7 +146,8 @@ bool writeReaderSettingsSnapshot(FsFile& file, const ReaderSettingsSnapshot& in)
 
 BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSettingsSnapshot& defaults,
                                                     const char* defaultDictionarySdFontFamilyName,
-                                                    const uint8_t defaultDictionaryFontPointSize) {
+                                                    const uint8_t defaultDictionaryFontPointSize,
+                                                    ReadStatus* status) {
   BookReaderSettingsData data;
   data.readerSettings = defaults;
   std::strncpy(data.dictionarySdFontFamilyName, defaultDictionarySdFontFamilyName,
@@ -163,11 +164,13 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
 
   if (version == LEGACY_READER_SETTINGS_FILE_VERSION) {
     uint16_t seconds = 0;
-    if (readU16(file, seconds) && seconds != 0) {
+    const bool valid = readU16(file, seconds);
+    if (valid && seconds != 0) {
       data.hasAutoPageTurnInterval = true;
       data.autoPageTurnSeconds = clampAutoPageTurnIntervalSeconds(seconds);
     }
     file.close();
+    if (status) *status = valid ? ReadStatus::Loaded : ReadStatus::Invalid;
     return data;
   }
 
@@ -179,7 +182,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       version != PRE_SPLIT_SCREEN_MARGIN_READER_SETTINGS_FILE_VERSION &&
       version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_FIELD_OVERRIDES_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -194,6 +198,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   snapshot.indexingMethod = data.readerSettings.indexingMethod;
   // Books saved before Character Spacing existed inherit the current global spacing.
   snapshot.characterSpacing = data.readerSettings.characterSpacing;
+  // Books saved before Image Grayscale existed inherit the current global setting.
+  snapshot.imageGrayscale = data.readerSettings.imageGrayscale;
   bool ok = readU8(file, flags) && readU16(file, seconds);
   if (ok) {
     ok = readU8(file, renderMode);
@@ -213,9 +219,21 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   uint32_t overrideMask = 0;
   if (ok && version >= PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION) {
     ok = readU32(file, overrideMask) && (overrideMask & ~ALL_READER_SETTING_OVERRIDES) == 0;
+    if (ok && version <= PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION) {
+      // Pre-v12 layout: bit 18 was the SD font override, bit 19 (v11 only) was Character
+      // Spacing. v12 inserted Image Grayscale at bit 18, pushing both up by one.
+      const bool hadSdFontOverride = (overrideMask & (1U << 18)) != 0;
+      const bool hadCharacterSpacingOverride = (overrideMask & (1U << 19)) != 0;
+      overrideMask &= ~((1U << 18) | (1U << 19));
+      if (hadSdFontOverride) overrideMask |= SD_FONT_FAMILY_OVERRIDE;
+      if (hadCharacterSpacingOverride) overrideMask |= CHARACTER_SPACING_OVERRIDE;
+    }
+  }
+  if (ok && version >= PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION) {
+    ok = readU8(file, snapshot.characterSpacing);
   }
   if (ok && version >= READER_SETTINGS_FILE_VERSION) {
-    ok = readU8(file, snapshot.characterSpacing);
+    ok = readU8(file, snapshot.imageGrayscale);
   }
   file.close();
   if (!ok) {
@@ -233,7 +251,11 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
     data.readerSettingsOverrideMask =
         version < PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION ? ALL_READER_SETTING_OVERRIDES : overrideMask;
     // Files older than v11 never stored a spacing, so they must not pin one: the book follows the global value.
-    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~CHARACTER_SPACING_OVERRIDE;
+    if (version < PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION) {
+      data.readerSettingsOverrideMask &= ~CHARACTER_SPACING_OVERRIDE;
+    }
+    // Files older than v12 never stored a grayscale choice either.
+    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~IMAGE_GRAYSCALE_OVERRIDE;
     data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
     applyReaderSettingsOverrides(data.readerSettings, snapshot, data.readerSettingsOverrideMask);
   }
@@ -252,6 +274,7 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
     data.dictionarySdFontFamilyName[sizeof(data.dictionarySdFontFamilyName) - 1] = '\0';
     data.dictionaryFontPointSize = defaultDictionaryFontPointSize;
   }
+  if (status) *status = ReadStatus::Loaded;
   return data;
 }
 
@@ -273,7 +296,8 @@ bool writeBookReaderSettingsFile(FsFile& file, const BookReaderSettingsData& dat
                   writeExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName)) &&
                   writeU8(file, data.dictionaryFontPointSize) &&
                   writeU32(file, data.readerSettingsOverrideMask & ALL_READER_SETTING_OVERRIDES) &&
-                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.characterSpacing, MAX_CHARACTER_SPACING));
+                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.characterSpacing, MAX_CHARACTER_SPACING)) &&
+                  writeU8(file, normalizedReaderSettings.imageGrayscale ? 1 : 0);
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Short write saving reader settings");

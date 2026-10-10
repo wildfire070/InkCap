@@ -47,6 +47,7 @@ struct CssAncestorEntry {
   int depth = 0;
   std::string tag;
   std::string classAttr;
+  std::string idAttr;
 };
 
 class CssParser {
@@ -65,7 +66,9 @@ class CssParser {
   // (new list-style-type and font-size CssLength property support) -- a
   // coincidental collision at the same number for unrelated reasons, so this
   // must exceed both so caches written under either lineage are invalidated.
-  static constexpr uint8_t CSS_CACHE_VERSION = 21;
+  // 23: upstream's own further bump to 22 (border/white-space/float/initial-letter
+  // CSS parsing) landed alongside this branch's 21 above; bumped past both again.
+  static constexpr uint8_t CSS_CACHE_VERSION = 23;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers
   // can admit larger publisher stylesheets; rule-count and internal-heap
@@ -104,7 +107,8 @@ class CssParser {
    * @return Combined style with all applicable rules merged
    */
   [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
-                                      const std::vector<CssAncestorEntry>& ancestors = {}) const;
+                                      const std::vector<CssAncestorEntry>& ancestors = {}, std::string_view idAttr = {},
+                                      bool firstLetter = false) const;
 
   /**
    * Parse an inline style attribute string.
@@ -194,13 +198,8 @@ class CssParser {
   static constexpr uint8_t CSS_CACHE_FLAG_PARTIAL = 1 << 0;
 
   struct DescendantRule {
-    // Ancestor-context parts, outermost first; only the first `contextCount`
-    // entries are populated (e.g. a 2-part rule like "div p" has contextCount
-    // == 1, contextSelectors[0] == "div"). Unused trailing entries are
-    // default-constructed empty strings, which cost no heap allocation (SSO).
-    std::array<std::string, MAX_DESCENDANT_CONTEXT_PARTS> contextSelectors;
-    uint8_t contextCount = 0;
-    std::string subjectSelector;  // e.g. "p", ".indent", "p.indent"
+    std::string ancestorSelector;  // e.g. "div", ".chapter", "section.body"
+    std::string subjectSelector;   // e.g. "p", ".indent", "p.indent"
     CssStyle style;
   };
 

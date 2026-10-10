@@ -26,6 +26,16 @@ constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
 // Gap between the top reader bar and the first line of book text.
 constexpr int8_t TOP_STATUS_BAR_TEXT_PADDING = 0;
 
+inline bool isNavigationLongPressAction(const uint8_t action) {
+  return action == CrossPointSettings::LONG_MENU_HOME_READER || action == CrossPointSettings::LONG_MENU_BACK_HOME;
+}
+
+inline bool dispatchNavigationLongPressAction(const uint8_t action) {
+  if (!isNavigationLongPressAction(action)) return false;
+  return dispatchShortcutAction(action == CrossPointSettings::LONG_MENU_HOME_READER ? CrossPointSettings::HOME_READER
+                                                                                    : CrossPointSettings::BACK_HOME);
+}
+
 inline bool isRtlBookLanguage(std::string_view tag) {
   if (tag.size() < 2 || (tag.size() > 2 && tag[2] != '-' && tag[2] != '_')) return false;
   const auto first = std::tolower(static_cast<unsigned char>(tag[0]));
@@ -58,7 +68,9 @@ inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
 // stays centered in every orientation instead of sitting at a fixed portrait offset.
 inline int messageCenterY(const GfxRenderer& renderer) { return renderer.getScreenHeight() / 2; }
 
-inline bool shouldShowTopStatusBar() { return UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top) > 0; }
+inline bool shouldShowTopStatusBar(const GfxRenderer& renderer) {
+  return UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top, renderer) > 0;
+}
 
 // Night Mode is applied by the display after normal-polarity reader content is
 // rendered. Keep this compatibility helper for existing reader call sites.
@@ -69,7 +81,7 @@ inline uint8_t readerBackgroundColor() { return readerDarkModeEnabled() ? 0x00 :
 inline bool readerForegroundBlack() { return true; }
 
 inline int getTopStatusBarReservedHeight(const GfxRenderer& renderer) {
-  const int statusBarHeight = UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top);
+  const int statusBarHeight = UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top, renderer);
   if (statusBarHeight <= 0) {
     return 0;
   }
@@ -81,15 +93,17 @@ inline int getTopStatusBarReservedHeight(const GfxRenderer& renderer) {
 }
 
 inline bool bottomStatusBarHasTextLane() {
-  return SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom).hasTextItems(halClock.isAvailable());
+  const auto bar = SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom);
+  return !bar.hidden && bar.hasTextItems(halClock.isAvailable());
 }
 
-inline int getReaderFooterReservedHeight(const bool automaticPageTurnActive) {
-  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+inline int getReaderFooterReservedHeight(const GfxRenderer& renderer, const bool automaticPageTurnActive) {
+  if (SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom).hidden) return SETTINGS.screenMarginVertical;
+  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight(renderer);
   if (automaticPageTurnActive && !bottomStatusBarHasTextLane()) {
     const int autoTurnBarHeight =
         readerStatusBarTotalHeight(ReaderStatusBarPosition::Bottom, true, UITheme::getProgressBarHeight(),
-                                   UITheme::getInstance().getMetrics().statusBarVerticalMargin);
+                                   UITheme::getReaderStatusBarTextHeight(renderer));
     return std::max(static_cast<int>(SETTINGS.screenMarginVertical),
                     std::max(statusBarHeight, autoTurnBarHeight) + STATUS_BAR_TEXT_PADDING);
   }
