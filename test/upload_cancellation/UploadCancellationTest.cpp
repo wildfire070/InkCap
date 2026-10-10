@@ -25,16 +25,27 @@ struct HalFile {
   std::vector<uint8_t> bytes;
   explicit operator bool() const { return opened; }
   bool isOpen() const { return opened; }
-  void close() { opened = false; }
+  bool failWrite = false;
+  bool failSync = false;
+  bool failClose = false;
+  bool close() {
+    opened = false;
+    return !failClose;
+  }
+  bool sync() const { return !failSync; }
   size_t write(const uint8_t* data, size_t size) {
     assert(opened);
+    if (failWrite) return 0;
     bytes.insert(bytes.end(), data, data + size);
     return size;
   }
 };
 struct StorageMock {
   std::vector<std::string> removed;
-  void remove(const char* path) { removed.emplace_back(path); }
+  bool remove(const char* path) {
+    removed.emplace_back(path);
+    return true;
+  }
 } Storage;
 struct FontSystem {
   void markRegistryDirtyForPath(const char*) {}
@@ -46,6 +57,16 @@ unsigned cacheClears = 0;
 void clearBookCachePreservingUserState(const char*) { ++cacheClears; }
 unsigned long millis() { return 100; }
 unsigned long uploadStartTime = 0;
+String wsLastCompleteName;
+size_t wsLastCompleteSize = 0;
+unsigned long wsLastCompleteAt = 0;
+std::string ao3ReceiveFolder;
+namespace FsHelpers {
+inline bool hasEpubExtension(const String&) { return false; }
+}  // namespace FsHelpers
+namespace Ao3ReceiveUtils {
+inline void appendPending(const char*) {}
+}  // namespace Ao3ReceiveUtils
 struct FontInstaller {
   static unsigned validations;
   static bool validateCpfontFile(const char*) {
@@ -97,7 +118,7 @@ class CrossPointWebServer {
   void* uploadCancelContext = nullptr;
   std::unique_ptr<Server> server = std::make_unique<Server>();
   bool dropUploadIfCancelled() const;
-  void abortUpload(UploadState&) const;
+  void abortUpload(UploadState&, const char* error = "Upload aborted") const;
   void abortFontUpload();
   void handleUpload(UploadState&) const;
   void handleFontUploadData();
@@ -173,6 +194,34 @@ int main() {
     send(aborted, font, UPLOAD_FILE_ABORTED);
     assert(!(font ? aborted.fontUpload.file.isOpen() : aborted.upload.file.isOpen()));
   }
+  // Mid-body, final-buffer, sync and close failures all leave a retryable path.
+  for (int failure = 0; failure < 4; ++failure) {
+    Storage.removed.clear();
+    cacheClears = 0;
+    CrossPointWebServer failed;
+    if (failure == 0) failed.upload.file.failWrite = true;
+    send(failed, false, UPLOAD_FILE_WRITE, failure == 0 ? 5000 : 80);
+    if (failure == 1) failed.upload.file.failWrite = true;
+    if (failure == 2) failed.upload.file.failSync = true;
+    if (failure == 3) failed.upload.file.failClose = true;
+    send(failed, false, UPLOAD_FILE_END);
+    assert(!failed.upload.success && !failed.upload.error.isEmpty());
+    assert(!failed.upload.file.isOpen());
+    assert(Storage.removed == std::vector<std::string>{"/books/test.epub"});
+    assert(cacheClears == 0);
+    send(failed, false, UPLOAD_FILE_END);
+    send(failed, false, UPLOAD_FILE_ABORTED);
+    assert(Storage.removed.size() == 1);
+  }
+  // A refused collision owns no file and must never delete the existing book.
+  Storage.removed.clear();
+  CrossPointWebServer collision;
+  collision.upload.file.opened = false;
+  collision.upload.error = "File already exists";
+  send(collision, false, UPLOAD_FILE_END);
+  send(collision, false, UPLOAD_FILE_ABORTED);
+  assert(Storage.removed.empty());
+
   // Touch-header/Home/back-release exit events use the same latch as held Back.
   CrossPointWebServerActivity touched;
   touched.exitEvent = true;

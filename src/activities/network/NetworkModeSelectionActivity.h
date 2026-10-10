@@ -25,7 +25,7 @@ enum class NetworkMode {
  * - "Connect to Calibre" - Use Calibre wireless device transfers
  * - "Create Hotspot" - Create an Access Point that others can connect to (AP mode)
  * - "AO3 Receive" - Receive fics sent by the Send to AvesO3 browser extension
- * - "Sync Stats" - Sync reading stats directly with a nearby reader
+ * - "Nearby Stats Sync" - Sync reading stats directly with a nearby reader
  * - "Receive File" - Receive a file directly from another reader
  *
  * The onModeSelected callback is called with the user's choice.

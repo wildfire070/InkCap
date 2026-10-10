@@ -8,6 +8,11 @@
 #include <array>
 #include <bitset>
 
+#include "Epub/converters/DirectPixelWriter.h"
+#include "lib/Epub/Epub/blocks/ImageBlock.cpp"
+
+ImageToFramebufferDecoder* ImageDecoderFactory::getDecoder(const std::string&) { return nullptr; }
+
 namespace {
 // Deterministic 2-bit glyphs with negative bearings and descenders. Both the
 // built-in and real .cpfont loaders use these bytes, including RTL/CJK/marks.
@@ -77,6 +82,83 @@ struct RasterFont {
     return bytes;
   }
 };
+
+TEST(EpubTextGrayscaleTest, CharacterSpacingMeasuresAndDrawsTheSameGlyphPositions) {
+  for (bool sd : {false, true}) {
+    fakeheap::reset(true);
+    Storage.reset();
+    RasterFont fixture(12);
+    HalDisplay display(800, 480);
+    GfxRenderer renderer(display);
+    renderer.begin();
+    SdCardFont sdFont;
+    if (sd) {
+      Storage.put("spacing.cpfont", fixture.file());
+      ASSERT_TRUE(sdFont.load("spacing.cpfont"));
+      renderer.insertFont(1, EpdFontFamily(sdFont.getEpdFont()));
+      renderer.registerSdCardFont(1, &sdFont);
+      sdFont.prewarm(
+          "ABCD A B A\xcc\x81"
+          "BCD",
+          0x01);
+    } else {
+      renderer.insertFont(1, EpdFontFamily(&fixture.font));
+    }
+    renderer.setOrientation(GfxRenderer::LandscapeCounterClockwise);
+    for (int spacing = -5; spacing <= 5; ++spacing) {
+      SCOPED_TRACE(spacing);
+      // Four equal glyphs: three adjustable gaps, with half-pixel rounding.
+      const int shift = (3 * spacing + 1) >> 1;
+      EXPECT_EQ(renderer.getTextAdvanceX(1, "ABCD", EpdFontFamily::REGULAR, 0, spacing), 48 + shift);
+      EXPECT_EQ(renderer.getTextAdvanceX(1, "A B", EpdFontFamily::REGULAR, 0, spacing), 36);
+      EXPECT_EQ(renderer.getTextAdvanceX(1,
+                                         "A\xcc\x81"
+                                         "BCD",
+                                         EpdFontFamily::REGULAR, 0, spacing),
+                48 + shift);
+      renderer.clearScreen();
+      renderer.drawText(1, 20, 20, "ABCD", true, EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO, 1.0f, spacing);
+      const auto actual = display.bw;
+      renderer.clearScreen();
+      for (int i = 0; i < 4; ++i) {
+        char letter[] = {static_cast<char>('A' + i), 0};
+        renderer.drawText(1, 20 + i * 12 + ((i * spacing + 1) >> 1), 20, letter);
+      }
+      EXPECT_EQ(display.bw, actual);
+    }
+    EXPECT_EQ(renderer.getTextAdvanceX(1, "ABCD", EpdFontFamily::REGULAR), 48);
+  }
+}
+
+TEST(EpubTextGrayscaleTest, CharacterSpacingDecorationsFollowTextWidth) {
+  fakeheap::reset(true);
+  Storage.reset();
+  RasterFont fixture(12);
+  HalDisplay display(800, 480);
+  GfxRenderer renderer(display);
+  renderer.begin();
+  renderer.insertFont(1, EpdFontFamily(&fixture.font));
+  renderer.setOrientation(GfxRenderer::LandscapeCounterClockwise);
+  for (int8_t spacing : {-5, 5}) {
+    for (auto decoration : {EpdFontFamily::UNDERLINE, EpdFontFamily::STRIKETHROUGH}) {
+      for (auto size : {EpdFontFamily::REGULAR, EpdFontFamily::SUP}) {
+        const auto style = static_cast<EpdFontFamily::Style>(decoration | size);
+        TextBlock line({"ABCD"}, {0}, {style}, {}, {}, {}, {}, {}, {}, {}, {}, "", spacing);
+        renderer.clearScreen();
+        line.render(renderer, 1, 20, 20, true);
+        const auto actual = display.bw;
+        renderer.clearScreen();
+        const int wordY = 20 + line.wordYOffset(renderer, 1, 0);
+        renderer.drawText(1, 20, wordY, "ABCD", true, style, BidiUtils::BidiBaseDir::AUTO, 1.0f, spacing);
+        const int width = renderer.getTextAdvanceX(1, "ABCD", style, 0, spacing);
+        const int glyphHeight = size == EpdFontFamily::SUP ? 7 : 13;
+        const int lineY = decoration == EpdFontFamily::UNDERLINE ? wordY + 15 : wordY + 13 - glyphHeight / 2;
+        renderer.drawLine(20, lineY, 20 + width, lineY, 3, true);
+        EXPECT_EQ(display.bw, actual) << int(spacing) << ' ' << int(style);
+      }
+    }
+  }
+}
 
 TEST(EpubTextGrayscaleTest, RealTextRasterMatchesFullAndStripTargets) {
   for (bool sd : {false, true})
@@ -220,18 +302,22 @@ TEST(EpubTextRaster, CharacterSpacingWidensGlyphGapsButNeverSpaces) {
     const auto advance = [&](const char* text, const int8_t tracking) {
       return renderer.getTextAdvanceX(1, text, style, 0, tracking);
     };
+    // Mirrors GfxRenderer.cpp's characterSpacingPixels(): level is -5..+5 half-pixel
+    // steps, snapped to the nearest whole pixel the same way fp4::toPixel() does.
+    const auto gapPixels = [](const int gaps, const int8_t level) { return (gaps * level * 8 + 8) >> 4; };
 
     // A gap is added between adjacent glyphs only: n glyphs -> n - 1 gaps, and none around a space.
     EXPECT_EQ(advance("a", 3), advance("a", 0));
-    EXPECT_EQ(advance("ab", 3), advance("ab", 0) + 3);
-    EXPECT_EQ(advance("abc", 2), advance("abc", 0) + 4);
-    EXPECT_EQ(advance("abc", -1), advance("abc", 0) - 2);
+    EXPECT_EQ(advance("ab", 3), advance("ab", 0) + gapPixels(1, 3));
+    EXPECT_EQ(advance("abc", 2), advance("abc", 0) + gapPixels(2, 2));
+    EXPECT_EQ(advance("abc", -1), advance("abc", 0) + gapPixels(2, -1));
     EXPECT_EQ(advance("a b", 3), advance("a b", 0));
-    EXPECT_EQ(advance("ab cd", 2), advance("ab cd", 0) + 4);  // one gap inside each word, none at the space
+    EXPECT_EQ(advance("ab cd", 2), advance("ab cd", 0) + gapPixels(2, 2));  // one gap inside each word, none at the space
     // Tracking also applies to the boundary with a following codepoint (attached tokens), but not a space.
-    EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, 'b', 3), renderer.getTextAdvanceX(1, "a", style, 'b', 0) + 3);
+    EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, 'b', 3),
+             renderer.getTextAdvanceX(1, "a", style, 'b', 0) + gapPixels(1, 3));
     EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, ' ', 3), renderer.getTextAdvanceX(1, "a", style, ' ', 0));
-    EXPECT_EQ(renderer.getKerning(1, 'a', 'b', style, 3), renderer.getKerning(1, 'a', 'b', style, 0) + 3);
+    EXPECT_EQ(renderer.getKerning(1, 'a', 'b', style, 3), renderer.getKerning(1, 'a', 'b', style, 0) + gapPixels(1, 3));
     EXPECT_EQ(renderer.getKerning(1, 'a', ' ', style, 3), renderer.getKerning(1, 'a', ' ', style, 0));
 
     // Drawing agrees with measuring: 'b' lands exactly where the measured advance says it should.
@@ -247,7 +333,7 @@ TEST(EpubTextRaster, CharacterSpacingWidensGlyphGapsButNeverSpaces) {
       const auto together = display.bw;
       renderer.clearScreen();
       renderer.drawText(1, x, 40, "a");
-      renderer.drawText(1, x + renderer.getTextAdvanceX(1, "a", style) + tracking, 40, "b");
+      renderer.drawText(1, x + renderer.getTextAdvanceX(1, "a", style) + gapPixels(1, tracking), 40, "b");
       EXPECT_EQ(display.bw, together) << "tracking=" << static_cast<int>(tracking);
     }
     // Zero tracking is byte-identical to the old behavior.
@@ -450,5 +536,100 @@ TEST(EpubTextGrayscaleTest, ColdSdSamplePreviewMatchesFullyLoadedFont) {
         }
       }
     }
+  }
+}
+
+TEST(EpubTextGrayscaleTest, NightModeImagesKeepPolarityAndMidtonesOnRepeatedDraws) {
+  for (int orientation = 0; orientation < 4; ++orientation) {
+    for (bool grayscale : {false, true}) {
+      for (int level = 0; level < 4; ++level) {
+        SCOPED_TRACE(testing::Message() << orientation << ' ' << grayscale << ' ' << level);
+        HalDisplay display(800, 480);
+        GfxRenderer renderer(display);
+        renderer.begin();
+        renderer.setOrientation(GfxRenderer::Orientation(orientation));
+        // The light-mode monochrome image is the expected Night Mode output.
+        renderer.clearScreen(255);
+        DirectPixelWriter writer;
+        const auto draw = [&](bool imageGrayscale) {
+          writer.init(renderer, imageGrayscale);
+          for (int y = 13; y < 29; ++y) {
+            writer.beginRow(y);
+            for (int x = 9; x < 25; ++x) writer.writePixel(x, level);
+          }
+          renderer.preserveImagePolarity(9, 13, 16, 16);
+        };
+        draw(false);
+        const auto expected = display.bw;
+        display.inverted = true;
+        renderer.clearScreen(255);
+        for (int redraw = 0; redraw < 3; ++redraw) {
+          draw(grayscale);
+          // Apply output inversion only to the image rectangle for comparison;
+          // surrounding text/background is expected to change in Night Mode.
+          renderer.invertRect(9, 13, 16, 16);
+          EXPECT_EQ(display.bw, expected) << redraw;
+          renderer.invertRect(9, 13, 16, 16);
+        }
+      }
+    }
+  }
+}
+
+TEST(EpubTextGrayscaleTest, CachedNightModeImagesMatchMonochromeAcrossStoragePaths) {
+  for (bool psram : {false, true}) {
+    for (int orientation = 0; orientation < 4; ++orientation) {
+      SCOPED_TRACE(testing::Message() << psram << ' ' << orientation);
+      fakeheap::reset(psram);
+      Storage.reset();
+      ImageBlock::clearSessionRenderFailures();
+      std::vector<uint8_t> pixels(4 + 16 * 4, 0x1B);
+      pixels[0] = pixels[2] = 16;
+      pixels[1] = pixels[3] = 0;
+      Storage.put("image.pxc", pixels);
+      HalDisplay display(800, 480);
+      GfxRenderer renderer(display);
+      renderer.begin();
+      renderer.setOrientation(GfxRenderer::Orientation(orientation));
+      ImageBlock image("image.png", "source.png", 16, 16);
+      renderer.clearScreen(255);
+      image.render(renderer, 9, 13, true, false);
+      const auto expected = display.bw;
+      display.inverted = true;
+      renderer.clearScreen(255);
+      for (int redraw = 0; redraw < 3; ++redraw) {
+        image.render(renderer, 9, 13, true, true);
+        renderer.invertRect(9, 13, 16, 16);
+        EXPECT_EQ(display.bw, expected) << redraw;
+        renderer.invertRect(9, 13, 16, 16);
+      }
+      ImageBlock::clearSessionRenderFailures();
+    }
+  }
+}
+
+namespace {
+class TaggedPageElement final : public PageElement {
+ public:
+  explicit TaggedPageElement(PageElementTag tag) : PageElement(0, 0), tag(tag) {}
+  void render(GfxRenderer&, int, int, int, bool) override {}
+  bool serialize(Print&) override { return true; }
+  PageElementTag getTag() const override { return tag; }
+
+ private:
+  PageElementTag tag;
+};
+}  // namespace
+TEST(PageTextDetection, OnlyTextAndTablesNeedTextAntialiasing) {
+  Page page;
+  EXPECT_FALSE(page.hasText());
+  for (auto tag : {TAG_PageImage, TAG_PageHorizontalRule}) {
+    page.elements.emplace_back(std::make_unique<TaggedPageElement>(tag));
+    EXPECT_FALSE(page.hasText());
+  }
+  for (auto tag : {TAG_PageLine, TAG_PageTableFragment}) {
+    page.elements.emplace_back(std::make_unique<TaggedPageElement>(tag));
+    EXPECT_TRUE(page.hasText());
+    page.elements.pop_back();
   }
 }

@@ -19,6 +19,8 @@
 
 #include <GfxRenderer.h>
 
+extern uint32_t testHyphenationIdentity;
+
 namespace {
 // Mirrors Section.cpp's SECTION_FILE_VERSION/SECTION_FILE_PARTIAL_VERSION,
 // which live in an anonymous namespace there and so aren't reachable from
@@ -26,30 +28,38 @@ namespace {
 // whenever those change (loadSectionFile() rejects anything else as a
 // version mismatch, which is exactly what silently broke this test after an
 // earlier CrossInk sync bumped 66/0xF6 to 75/0xF4 without touching this file).
-// The chain below covers every version actually shipped on either lineage
-// before they were unified here, so a device carrying a stale cache from any
-// of them gets correctly rejected rather than misread.
-constexpr uint8_t kFullVersion = 87;
-constexpr uint8_t kPartialVersion = 0xFE;
-constexpr uint8_t kPreviousFullVersion = 85;
-constexpr uint8_t kPreviousPartialVersion = 0xFD;
-constexpr uint8_t kOlderFullVersion = 83;
+//
+// This branch and crossink/development each bumped this counter independently
+// for unrelated reasons, and some full-version numbers collide (e.g. byte 87
+// meant something different on each side) while their partial markers never
+// do -- every distinct byte either side ever used as a sentinel is listed
+// below and must still be rejected, regardless of which branch originally
+// produced it (a stale file on a real SD card could be from either history).
+constexpr uint8_t kFullVersion = 88;
+constexpr uint8_t kPartialVersion = 0xC9;
+constexpr uint8_t kPreviousFullVersion = 87;  // this branch's own former-current (publisher decorations bundle)
+constexpr uint8_t kPreviousPartialVersion = 0xFE;
+constexpr uint8_t kUpstreamPublisherDecorationsFullVersion = 87;  // upstream's own v87 -- same byte, different format
+constexpr uint8_t kUpstreamPublisherDecorationsPartialVersion = 0xC8;
+constexpr uint8_t kParagraphSpacingFullVersion = 85;  // upstream v85/86: hyphenation identity + paragraph layout
+constexpr uint8_t kParagraphSpacingPartialVersion = 0xC6;
+constexpr uint8_t kBorderSuppressionFullVersion = 84;  // upstream v84: suppressed CSS borders
+constexpr uint8_t kBorderSuppressionPartialVersion = 0xC5;
+constexpr uint8_t kOlderFullVersion = 83;  // this branch's own v83 (Hangul-boundary, own port)
 constexpr uint8_t kOlderPartialVersion = 0xFC;
 // Upstream's own version 83 (bold/italic inheritance) landed on the same
 // integer as this branch's own prior version 83 above by coincidence -- the
 // two are different formats; both must be rejected.
 constexpr uint8_t kUpstreamBoldItalicFullVersion = 83;
 constexpr uint8_t kUpstreamBoldItalicPartialVersion = 0xC4;
-constexpr uint8_t kEarlierFullVersion = 82;
-constexpr uint8_t kEarlierPartialVersion = 0xFB;
-constexpr uint8_t kLastReleaseFullVersion = 81;
-constexpr uint8_t kLastReleasePartialVersion = 0xC2;
-constexpr uint8_t kPreReleaseFullVersion = 80;
-constexpr uint8_t kPreReleasePartialVersion = 0xC1;
-constexpr uint8_t kBetaFullVersion = 79;
-constexpr uint8_t kBetaPartialVersion = 0xF4;
-constexpr uint8_t kAlphaFullVersion = 78;
-constexpr uint8_t kAlphaPartialVersion = 0xF2;
+constexpr uint8_t kEvenOlderFullVersion = 82;  // this branch's own v82 (character spacing port, now retired)
+constexpr uint8_t kEvenOlderPartialVersion = 0xFB;
+constexpr uint8_t kEarlierFullVersion = 79;
+constexpr uint8_t kEarlierPartialVersion = 0xF4;
+constexpr uint8_t kLastReleaseFullVersion = 78;
+constexpr uint8_t kLastReleasePartialVersion = 0xF2;
+constexpr uint8_t kPreReleaseFullVersion = 77;
+constexpr uint8_t kPreReleasePartialVersion = 0xF3;
 constexpr uint8_t kPreviousReleasePrepPartialVersion = 0x80;
 
 ReaderRenderSpec renderSpec() {
@@ -65,7 +75,9 @@ ReaderRenderSpec renderSpec() {
 struct SectionHarness {
   Epub epub{"/books/test.epub", "/cache"};
   GfxRenderer renderer;
-  Section section{epub, 0, renderer};
+  Section section;
+  explicit SectionHarness(EpubRenderMode mode = EpubRenderMode::CrossInkDefault)
+      : section(epub, 0, renderer, sectionCacheSuffixForRenderMode(mode)) {}
   ReaderRenderSpec spec = renderSpec();
 
   void begin(const std::vector<std::pair<std::string, uint16_t>>& anchors = {}) {
@@ -108,7 +120,10 @@ struct SectionHarness {
 
 class SectionPersistenceTest : public testing::Test {
  protected:
-  void SetUp() override { Storage.reset(); }
+  void SetUp() override {
+    Storage.reset();
+    testHyphenationIdentity = 1;
+  }
 };
 
 TEST_F(SectionPersistenceTest, FullCommitReopensAndResolvesMetadataAcrossAChunkBoundary) {
@@ -184,10 +199,12 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreviousFullVersion, kPreviousPartialVersion, kOlderFullVersion, kOlderPartialVersion,
-        kUpstreamBoldItalicFullVersion, kUpstreamBoldItalicPartialVersion, kEarlierFullVersion, kEarlierPartialVersion,
-        kLastReleaseFullVersion, kLastReleasePartialVersion, kPreReleaseFullVersion, kPreReleasePartialVersion,
-        kBetaFullVersion, kBetaPartialVersion, kAlphaFullVersion, kAlphaPartialVersion,
+       {kPreviousFullVersion, kPreviousPartialVersion, kUpstreamPublisherDecorationsFullVersion,
+        kUpstreamPublisherDecorationsPartialVersion, kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion,
+        kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion, kOlderFullVersion, kOlderPartialVersion,
+        kUpstreamBoldItalicFullVersion, kUpstreamBoldItalicPartialVersion, kEvenOlderFullVersion,
+        kEvenOlderPartialVersion, kEarlierFullVersion, kEarlierPartialVersion, kLastReleaseFullVersion,
+        kLastReleasePartialVersion, kPreReleaseFullVersion, kPreReleasePartialVersion,
         kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
@@ -274,3 +291,65 @@ TEST_F(SectionPersistenceTest, PartialPositionLookupRejectsOffsetsBeyondCommitte
 }
 
 }  // namespace
+
+TEST_F(SectionPersistenceTest, SyncLookupsUseTheSelectedRenderModesCache) {
+  const EpubRenderMode modes[] = {EpubRenderMode::CrossInkDefault, EpubRenderMode::Balanced, EpubRenderMode::Light};
+  for (int i = 0; i < 3; ++i) {
+    SectionHarness harness(modes[i]);
+    harness.spec.renderMode = modes[i];
+    harness.begin();
+    harness.appendPages(i + 2);
+    ASSERT_TRUE(harness.commit(kFullVersion));
+    harness.finishSuccessfulCommit();
+  }
+  Epub epub{"/books/test.epub", "/cache"};
+  GfxRenderer renderer;
+  for (int i = 0; i < 3; ++i) {
+    Section section(epub, 0, renderer, sectionCacheSuffixForRenderMode(modes[i]));
+    EXPECT_EQ(section.getCachedPageCount(), i + 2);
+    EXPECT_EQ(section.getPageForParagraphIndex((i + 1) * 3), i + 1);
+  }
+}
+
+TEST_F(SectionPersistenceTest, ChangedPatternsInvalidateCompleteAndPartialSections) {
+  for (const auto version : {kFullVersion, kPartialVersion}) {
+    Storage.reset();
+    testHyphenationIdentity = 41;
+    SectionHarness harness;
+    harness.begin();
+    harness.appendPages(1);
+    ASSERT_TRUE(harness.commit(version, version == kPartialVersion ? 100 : 0, 200));
+    harness.finishSuccessfulCommit();
+    testHyphenationIdentity = 42;
+    Section reopened(harness.epub, 0, harness.renderer);
+    EXPECT_FALSE(reopened.loadSectionFile(harness.spec));
+  }
+}
+
+TEST_F(SectionPersistenceTest, PatternChangesDoNotInvalidateDisabledHyphenation) {
+  SectionHarness harness;
+  harness.spec.hyphenationEnabled = false;
+  harness.begin();
+  harness.appendPages(1);
+  ASSERT_TRUE(harness.commit(kFullVersion));
+  harness.finishSuccessfulCommit();
+  testHyphenationIdentity = 99;
+  Section reopened(harness.epub, 0, harness.renderer);
+  EXPECT_TRUE(reopened.loadSectionFile(harness.spec));
+}
+
+TEST_F(SectionPersistenceTest, CharacterSpacingInvalidatesCompleteAndPartialSections) {
+  for (const auto version : {kFullVersion, kPartialVersion}) {
+    Storage.reset();
+    SectionHarness harness;
+    harness.spec.characterSpacing = -5;
+    harness.begin();
+    harness.appendPages(1);
+    ASSERT_TRUE(harness.commit(version, version == kPartialVersion ? 100 : 0, 200));
+    harness.finishSuccessfulCommit();
+    Section reopened(harness.epub, 0, harness.renderer);
+    EXPECT_TRUE(reopened.loadSectionFile(harness.spec));
+    harness.spec.characterSpacing = 5;
+    EXPECT_FALSE(reopened.loadSectionFile(harness.spec));
+  }
+}

@@ -1,7 +1,6 @@
 #include "SleepActivity.h"
 
 #include <BitmapHelpers.h>
-#include <BoardConfig.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -64,23 +63,28 @@ void hideOverlayBatteryStrip(const GfxRenderer& renderer) {
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
 
-  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  const int statusBarHeight = UITheme::getInstance().getStatusBarHeight(renderer);
   if (statusBarHeight <= 0) {
     return;
   }
 
   const int textY = renderer.getScreenHeight() - statusBarHeight - orientedMarginBottom - 4;
-  const bool showBatteryPercentage =
-      SETTINGS.hideBatteryPercentage == CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_NEVER;
+  const auto batteryStyle = SETTINGS.readerStatusBar(ReaderStatusBarPosition::Bottom).batteryStyle;
+  const bool showBatteryIcon = batteryStyle != ReaderStatusBarBatteryStyle::PercentOnly;
+  const bool showBatteryPercentage = batteryStyle != ReaderStatusBarBatteryStyle::IconOnly;
 
   // Reserve the full left-side status indicator lane used by bookmark + battery.
   // This keeps chapter/progress text readable while removing the battery glance target.
   static constexpr int bookmarkReserveWidth = 13;  // bookmark width + gap from BaseTheme::drawReaderStatusBar()
   static constexpr int batteryPercentSpacing = 4;  // matches BaseTheme::batteryPercentSpacing
-  const int clearWidth =
-      bookmarkReserveWidth + metrics.batteryWidth +
-      (showBatteryPercentage ? batteryPercentSpacing + renderer.getTextWidth(SMALL_FONT_ID, "100%") : 0);
-  const int clearHeight = std::max(renderer.getTextHeight(SMALL_FONT_ID), metrics.batteryHeight + 6);
+  const int clearWidth = bookmarkReserveWidth + (showBatteryIcon ? metrics.batteryWidth : 0) +
+                         (showBatteryPercentage ? (showBatteryIcon ? batteryPercentSpacing : 0) +
+                                                      renderer.getTextWidth(UITheme::getReaderStatusBarFontId(), "100%")
+                                                : 0);
+  const int clearHeight =
+      std::max(renderer.getTextHeight(UITheme::getReaderStatusBarFontId()),
+               metrics.batteryHeight + 6 + renderer.getLineHeight(UITheme::getReaderStatusBarFontId()) -
+                   renderer.getLineHeight(SMALL_FONT_ID));
 
   renderer.fillRect(metrics.statusBarHorizontalMargin + orientedMarginLeft + 1, textY, clearWidth, clearHeight, false);
 }
@@ -541,19 +545,13 @@ void SleepActivity::onEnter() {
   overlayBackgroundBufferStored =
       sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderer.storeBwBuffer();
 
-  // X4 Pro and X4 Classic share a panel that can retain this high-contrast
-  // transient update beneath the final OEM-style sleep refresh. Render only
-  // the final sleep frame on that panel family.
-  const bool showSleepPopup = !BoardConfig::isX4Pro() && !CROSSINK_APP_DEVICE_X4CLASSIC;
   // Show the popup in the orientation that was visible before reader exit restores
   // global settings. Reset to portrait afterwards so sleep screen layout stays unchanged.
   if (APP_STATE.lastSleepFromReader) {
-    if (showSleepPopup) {
-      renderer.setOrientation(sleepPopupOrientation);
-      GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
-    }
+    renderer.setOrientation(sleepPopupOrientation);
+    GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
     renderer.setOrientation(GfxRenderer::Orientation::Portrait);
-  } else if (showSleepPopup) {
+  } else {
     GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
   }
 

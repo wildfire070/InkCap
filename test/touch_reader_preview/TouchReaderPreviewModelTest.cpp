@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <limits>
 #include <memory>
 
 #include "TouchReaderPreviewModel.h"
@@ -113,7 +114,7 @@ TEST(TouchReaderPreviewModel, CharacterSpacingWidensWordsAndIsHandedToTheRendere
   const auto secondWordX = [&](const int8_t spacing) {
     renderer.drawCalls.clear();
     model.renderText(renderer, 2, 0, 0, 40, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true,
-                     spacing);
+                     std::numeric_limits<int>::max(), spacing);
     EXPECT_EQ(renderer.drawCalls.size(), 2U);
     for (const auto& call : renderer.drawCalls) EXPECT_EQ(call.tracking, spacing);
     return renderer.drawCalls[1].x;
@@ -133,12 +134,14 @@ TEST(TouchReaderPreviewModel, CharacterSpacingReflowsPreviewText) {
   ASSERT_TRUE(model.capture(page, renderer, 1, 100));
 
   // Four 4 px words and three 1 px gaps fit a 19 px line; +2 px glyph gaps make each word 6 px, so they wrap.
-  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 0);
+  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true,
+                   std::numeric_limits<int>::max(), 0);
   ASSERT_EQ(renderer.drawCalls.size(), 4U);
   EXPECT_EQ(renderer.drawCalls[3].y, 0);
 
   renderer.drawCalls.clear();
-  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 2);
+  model.renderText(renderer, 2, 0, 0, 19, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true,
+                   std::numeric_limits<int>::max(), 2);
   ASSERT_EQ(renderer.drawCalls.size(), 4U);
   EXPECT_GT(renderer.drawCalls[3].y, 0);
 }
@@ -425,11 +428,58 @@ TEST(SampleReaderPreviewModel, DrawsOnlyCompleteLinesInsideThePreview) {
   for (const int spacing : {70, 100, 200}) {
     GfxRenderer renderer;
     model.renderText(renderer, 1, 0, 5, 80, spacing, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true,
-                     0, 24);
+                     24);
     ASSERT_FALSE(renderer.drawCalls.empty());
     for (const auto& call : renderer.drawCalls) EXPECT_LE(call.y + renderer.getTextHeight(1), 24);
   }
   GfxRenderer tiny;
-  model.renderText(tiny, 1, 0, 5, 80, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 0, 10);
+  model.renderText(tiny, 1, 0, 5, 80, 100, 0, static_cast<uint8_t>(CssTextAlign::Left), false, false, true, 10);
   EXPECT_TRUE(tiny.drawCalls.empty());
+}
+
+TEST(TouchReaderPreviewModel, NegativeWordSpacingTightensNaturalGaps) {
+  Page page;
+  page.elements.push_back(std::make_unique<PageLine>(makeLine({"aa", "bb"}), 0, 0));
+  GfxRenderer renderer;
+  renderer.spaceWidth = 5;
+  TouchReaderPreviewModel model;
+  ASSERT_TRUE(model.capture(page, renderer, 1, 100));
+  for (bool guide : {false, true}) {
+    int previous = 1000;
+    int original = 0;
+    for (int level = 0; level >= -4; --level) {
+      renderer.drawCalls.clear();
+      model.renderText(renderer, 2, 0, 0, 100, 100, WordSpacing::fromLevel(level),
+                       static_cast<uint8_t>(CssTextAlign::Left), false, guide, true);
+      ASSERT_EQ(renderer.drawCalls.size(), guide ? 3u : 2u);
+      const int x = renderer.drawCalls.back().x;
+      EXPECT_LE(x, previous);
+      EXPECT_GT(x, 4);
+      if (level == 0) original = x;
+      previous = x;
+    }
+    EXPECT_EQ(previous, original - 4);
+  }
+}
+
+TEST(WordSpacing, SavedValuesAndSliderRoundTrip) {
+  for (int level = -4; level <= 4; ++level) {
+    const auto value = WordSpacing::fromLevel(level);
+    EXPECT_EQ(WordSpacing::level(value), level);
+    EXPECT_EQ(WordSpacing::fromSlider(WordSpacing::sliderValue(value)), value);
+    if (level >= 0) {
+      EXPECT_EQ(value, level);
+      EXPECT_EQ(WordSpacing::extra(6, value), 10 * level);
+    }
+  }
+  EXPECT_EQ(WordSpacing::fromSlider(4), 0);
+  for (int gap = 1; gap <= 30; ++gap) {
+    int previous = gap;
+    for (int level = -1; level >= -4; --level) {
+      const int adjusted = gap + WordSpacing::extra(gap, WordSpacing::fromLevel(level));
+      EXPECT_GE(adjusted, 1);
+      EXPECT_LE(adjusted, previous);
+      previous = adjusted;
+    }
+  }
 }

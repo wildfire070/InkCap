@@ -43,8 +43,9 @@ Rect downloadCancelButtonRect(const GfxRenderer& renderer, const ThemeMetrics& m
   const int centerY = (pageHeight - lineHeight) / 2;
   const int barY = centerY + (downloadAttemptTotal > 1 ? lineHeight : metrics.verticalSpacing);
   const int width = std::min(kMaxButtonWidth, pageWidth - metrics.contentSidePadding * 2);
-  const int y = std::min(barY + metrics.progressBarHeight + lineHeight + metrics.verticalSpacing,
-                         pageHeight - metrics.buttonHintsHeight - kButtonHeight - metrics.verticalSpacing);
+  const int y =
+      std::min(barY + metrics.progressBarHeight + lineHeight + metrics.verticalSpacing,
+               pageHeight - UITheme::getButtonHintsReserve(renderer) - kButtonHeight - metrics.verticalSpacing);
   return Rect{(pageWidth - width) / 2, y, width, kButtonHeight};
 }
 
@@ -710,7 +711,7 @@ bool FontDownloadActivity::rebuildListItems() {
     item.label = family.name;
     if (family.description[0] != '\0') item.subtitle = family.description;
     if (family.hasUpdate) {
-      item.value = tr(STR_UPDATE_AVAILABLE);
+      item.value = tr(STR_UPDATE);
     } else if (family.installed) {
       item.value = tr(STR_INSTALLED);
       // Dimmed but still tappable (opens the delete prompt): visual-only
@@ -1090,9 +1091,9 @@ void FontDownloadActivity::listScreen(UiApp::ScreenType& screen, void* user) {
 void FontDownloadActivity::buildListScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMargin(
-      fui::Insets{static_cast<int16_t>(metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput)), 0,
-                  static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  setUiContentMargin(screen, renderer,
+                     fui::Insets{static_cast<int16_t>(TouchHeaderBackButton::contentTop(renderer, mappedInput)), 0,
+                                 static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   if (manifestFamilyCount_ == 0) {
@@ -1284,8 +1285,7 @@ void FontDownloadActivity::render(RenderLock&&) {
   }
 
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const auto contentTop =
-      metrics.topPadding + TouchHeaderBackButton::height(metrics, mappedInput) + metrics.verticalSpacing;
+  const auto contentTop = TouchHeaderBackButton::contentTop(renderer, mappedInput) + metrics.verticalSpacing;
   const auto centerY = (pageHeight - lineHeight) / 2;
 
   if (state_ == LOADING_MANIFEST) {
@@ -1294,7 +1294,7 @@ void FontDownloadActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state_ == FAMILY_LIST) {
     uiReady_ = false;
-    app_.render();
+    renderUiApp(app_, uiTarget_);
     uiReady_ = true;
 
     const char* confirmLabel = manifestFamilyCount_ == 0        ? ""

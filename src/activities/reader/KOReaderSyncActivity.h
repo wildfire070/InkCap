@@ -10,6 +10,9 @@
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
 #include "activities/ScreenTransitionRefresh.h"
+#include "network/ReadingSyncUpload.h"
+
+struct Rect;
 
 /**
  * Activity for syncing reading progress with KOReader sync server.
@@ -39,7 +42,8 @@ class KOReaderSyncActivity final : public Activity {
         readerOrientation(readerOrientation) {}
 
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string epubPath,
-                                DocumentMatchMethod matchMethod, const uint8_t readerOrientation)
+                                DocumentMatchMethod matchMethod, const uint8_t readerOrientation,
+                                bool folderSync = false, bool includeGlobalStats = true)
       : Activity(NAME, renderer, mappedInput),
         epubPath(std::move(epubPath)),
         currentSpineIndex(0),
@@ -51,6 +55,8 @@ class KOReaderSyncActivity final : public Activity {
         remotePosition{},
         localProgress{},
         localProgressDeferred(true),
+        folderSync(folderSync),
+        includeGlobalStats(includeGlobalStats),
         readerOrientation(readerOrientation) {}
 
   void onEnter() override;
@@ -99,12 +105,22 @@ class KOReaderSyncActivity final : public Activity {
   KOReaderPosition localProgress;
   bool localProgressDeferred = false;
   bool restartBeforeNetwork = false;
+  bool folderSync = false;
+  bool includeGlobalStats = true;
+  bool syncSucceeded = false;
+  bool progressSucceeded = false;
+  bool extrasAttempted = false;
+  bool exitingBatch = false;
+  ReadingSyncUpload::ExtrasResult extrasResult;
+  StatsUploadClient::Result globalStatsResult = StatsUploadClient::Result::Skipped;
+  ProgressSyncResult syncResult() const;
   // The reader can use a book-specific orientation that its teardown restores
   // before this activity gets control. Keep that one value through the
   // lightweight network reboot so every sync screen matches the book.
   uint8_t readerOrientation = CrossPointSettings::ORIENTATION_COUNT;
 
-  // Selection in result screen (0=Apply, 1=Upload)
+  // Selection in result screen (0=Apply, 1=Upload, 2=Skip in bulk sync);
+  // in a bulk sync's no-remote screen (0=Upload, 1=Skip).
   int selectedOption = 0;
 
   // Timed return for successful smart-sync terminal states.
@@ -122,6 +138,8 @@ class KOReaderSyncActivity final : public Activity {
   void onWifiSelectionComplete(bool success);
   void performSync();
   void performUpload();
+  bool uploadExtras();
+  void drawExtrasResults(Rect textArea, int y) const;
   bool consumeInitialConfirmRelease();
   bool smartSyncEnabled() const;
   void markAutoReturn();
@@ -129,5 +147,9 @@ class KOReaderSyncActivity final : public Activity {
   void ensureEpubLoaded();
   bool ensureLocalProgressLoaded();
   void saveProgressAndReturn(const CrossPointPosition& position);
-  void returnToReader();
+  void returnToSource();
+  // Bulk sync only: Skip book keeps the batch going, Exit stops all of it.
+  void skipBook();
+  bool batchExitRequested();
+  void exitBatch();
 };
