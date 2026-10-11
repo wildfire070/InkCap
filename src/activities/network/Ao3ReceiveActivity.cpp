@@ -1,11 +1,16 @@
 #include "Ao3ReceiveActivity.h"
 
 #include <ESPmDNS.h>
+#include <Epub.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
+#include "../../Ao3Librarian.h"
+#include "../../Ao3MarkedForLaterStore.h"
+#include "../../Ao3NewChaptersStore.h"
+#include "../../BookStatus.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
@@ -14,7 +19,9 @@
 #include "components/CompactHeader.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/Ao3ArchiveUtils.h"
 #include "util/Ao3ReceiveUtils.h"
+#include "util/QrUtils.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -44,6 +51,7 @@ void Ao3ReceiveActivity::onEnter() {
   lastHandleClientTime = 0;
   lastProcessedCompleteAt = 0;
   exitRequested = false;
+  errorMessage.clear();
 
   if (WiFi.status() != WL_CONNECTED) {
     startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
@@ -128,10 +136,63 @@ void Ao3ReceiveActivity::stopWebServer() {
   }
 }
 
+void Ao3ReceiveActivity::handleUpdateComplete(const std::string& receivedPath) {
+  stopWebServer();
+
+  if (receivedPath.empty() || !Storage.exists(receivedPath.c_str())) {
+    RenderLock lock(*this);
+    errorMessage = tr(STR_AO3_UPDATE_ERROR_NOT_FOUND);
+    state = Ao3ReceiveState::ERROR;
+    requestUpdate();
+    return;
+  }
+
+  // An archived fic's own path moved when it was archived; follow it back first so the
+  // swap below lands on the real file, same as the reader's own "update found" handling.
+  if (Ao3ArchiveUtils::isArchived(targetPath)) {
+    const std::string restored = Ao3ArchiveUtils::restoreFic(targetPath);
+    if (!restored.empty()) {
+      targetPath = restored;
+    }
+  }
+
+  if (!Ao3ReceiveUtils::replaceExisting(targetPath, receivedPath)) {
+    RenderLock lock(*this);
+    errorMessage = tr(STR_AO3_UPDATE_ERROR_SWAP_FAILED);
+    state = Ao3ReceiveState::ERROR;
+    requestUpdate();
+    return;
+  }
+  Ao3ReceiveUtils::removePending(receivedPath);
+
+  // replaceExisting() tombstones targetPath's AO3 index record along with its stale derived
+  // cache (sections/html/sidecar) -- the next library scan re-indexes it from the new content.
+  // Flag it now so the status survives that re-index: scraping doesn't touch ao3-status.bin.
+  const std::string cachePath = Epub::cachePathForFilePath(targetPath, "/.crosspoint");
+  Ao3Librarian::saveBookStatus(cachePath, BookStatus::NEW_CHAPTER_AVAILABLE);
+  AO3_NEW_CHAPTERS_STORE.addBook(targetPath, updateTitle, updateAuthor);
+  AO3_MARKED_FOR_LATER_STORE.removeByPath(targetPath);
+
+  RenderLock lock(*this);
+  state = Ao3ReceiveState::FILE_RECEIVED;
+  requestUpdate();
+}
+
 void Ao3ReceiveActivity::loop() {
+  if (state == Ao3ReceiveState::FILE_RECEIVED) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+        mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
+  }
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     exitRequested = true;
   }
+
+  bool updateJustCompleted = false;
+  std::string receivedPath;
 
   if (webServer && webServer->isRunning()) {
     const unsigned long timeSinceLastHandleClient = millis() - lastHandleClientTime;
@@ -183,12 +244,18 @@ void Ao3ReceiveActivity::loop() {
       // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
       // This prevents restoring an old value after the 6s timeout clears it
       if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
-        lastCompleteAt = status.lastCompleteAt;
-        lastCompleteName = status.lastCompleteName;
         lastProcessedCompleteAt = status.lastCompleteAt;  // Mark this value as processed
-        changed = true;
+        if (mode == Ao3ReceiveMode::UPDATE_SINGLE) {
+          // Handled below, outside this lock -- it does its own SD/state work.
+          updateJustCompleted = true;
+          receivedPath = status.lastCompletePath;
+        } else {
+          lastCompleteAt = status.lastCompleteAt;
+          lastCompleteName = status.lastCompleteName;
+          changed = true;
+        }
       }
-      if (lastCompleteAt > 0 && (millis() - lastCompleteAt) >= 6000) {
+      if (mode == Ao3ReceiveMode::RECEIVE_NEW && lastCompleteAt > 0 && (millis() - lastCompleteAt) >= 6000) {
         lastCompleteAt = 0;
         lastCompleteName.clear();
         // Note: we DON'T reset lastProcessedCompleteAt here, so we won't re-process the old server value
@@ -198,6 +265,11 @@ void Ao3ReceiveActivity::loop() {
     if (changed) {
       requestUpdate();
     }
+  }
+
+  if (updateJustCompleted) {
+    handleUpdateComplete(receivedPath);
+    return;
   }
 
   if (exitRequested) {
@@ -213,14 +285,20 @@ void Ao3ReceiveActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  CompactHeader::drawTitle(renderer, tr(STR_AO3_RECEIVE));
+  const bool isUpdate = mode == Ao3ReceiveMode::UPDATE_SINGLE;
+  CompactHeader::drawTitle(renderer, isUpdate ? tr(STR_AO3_RECEIVE_UPDATE_TITLE) : tr(STR_AO3_RECEIVE));
   const auto height = renderer.getLineHeight(UI_10_FONT_ID);
   const auto top = (pageHeight - height) / 2;
 
   if (state == Ao3ReceiveState::SERVER_STARTING) {
     renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_AO3_RECEIVE_STARTING));
   } else if (state == Ao3ReceiveState::ERROR) {
-    renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_CONNECTION_FAILED), true, EpdFontFamily::BOLD);
+    const char* msg = errorMessage.empty() ? tr(STR_CONNECTION_FAILED) : errorMessage.c_str();
+    renderer.drawCenteredText(UI_12_FONT_ID, top, msg, true, EpdFontFamily::BOLD);
+  } else if (state == Ao3ReceiveState::FILE_RECEIVED) {
+    renderFileReceived();
+  } else if (state == Ao3ReceiveState::SERVER_RUNNING && isUpdate) {
+    renderUpdateRunning();
   } else if (state == Ao3ReceiveState::SERVER_RUNNING) {
     const int subHeaderTop = CompactHeader::contentTop(metrics);
     GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
@@ -279,4 +357,66 @@ void Ao3ReceiveActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
   renderer.displayBuffer(screenTransitionRefresh.modeFor(static_cast<uint8_t>(state)));
+}
+
+void Ao3ReceiveActivity::renderUpdateRunning() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+
+  const int subHeaderTop = CompactHeader::contentTop(metrics);
+  GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
+
+  int y = subHeaderTop + metrics.tabBarHeight + metrics.verticalSpacing * 3;
+  const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
+  renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true, EpdFontFamily::BOLD);
+  y += heightText12 + metrics.verticalSpacing * 2;
+
+  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_AO3_UPDATE_INSTRUCTION_1));
+  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_AO3_RECEIVE_INSTRUCTION_2));
+  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_AO3_UPDATE_INSTRUCTION_3));
+  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_AO3_UPDATE_INSTRUCTION_4));
+  y += height * 4 + metrics.verticalSpacing * 4;
+
+  if (!updateTitle.empty()) {
+    const auto truncTitle =
+        renderer.truncatedText(UI_12_FONT_ID, updateTitle.c_str(), pageWidth - metrics.contentSidePadding * 2);
+    renderer.drawCenteredText(UI_12_FONT_ID, y, truncTitle.c_str(), true, EpdFontFamily::BOLD);
+    y += renderer.getLineHeight(UI_12_FONT_ID) + 4;
+  }
+  if (!updateAuthor.empty()) {
+    const auto truncAuthor =
+        renderer.truncatedText(UI_10_FONT_ID, updateAuthor.c_str(), pageWidth - metrics.contentSidePadding * 2);
+    renderer.drawCenteredText(UI_10_FONT_ID, y, truncAuthor.c_str());
+    y += height + metrics.verticalSpacing * 2;
+  }
+
+  constexpr int QR_SIZE = 170;
+  const Rect qrBounds{(pageWidth - QR_SIZE) / 2, y, QR_SIZE, QR_SIZE};
+  QrUtils::drawQrCode(renderer, qrBounds, updateStoryUrl);
+  y += QR_SIZE + metrics.verticalSpacing * 2;
+
+  const auto truncUrl =
+      renderer.truncatedText(SMALL_FONT_ID, updateStoryUrl.c_str(), pageWidth - metrics.contentSidePadding * 2);
+  renderer.drawCenteredText(SMALL_FONT_ID, y, truncUrl.c_str());
+
+  const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+void Ao3ReceiveActivity::renderFileReceived() const {
+  const auto pageHeight = renderer.getScreenHeight();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+  const int mid = pageHeight / 2;
+
+  renderer.drawCenteredText(UI_12_FONT_ID, mid - height, tr(STR_AO3_UPDATE_COMPLETE), true, EpdFontFamily::BOLD);
+
+  if (!updateTitle.empty()) {
+    const auto truncated = renderer.truncatedText(UI_10_FONT_ID, updateTitle.c_str(), pageWidth - 40);
+    renderer.drawCenteredText(UI_10_FONT_ID, mid + 8, truncated.c_str());
+  }
+
+  const auto labels = mappedInput.mapLabels("", tr(STR_DONE), "", "");
+  GUI.drawButtonHints(renderer, "", labels.btn2, "", "");
 }

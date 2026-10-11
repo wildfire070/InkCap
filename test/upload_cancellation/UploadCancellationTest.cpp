@@ -58,6 +58,7 @@ void clearBookCachePreservingUserState(const char*) { ++cacheClears; }
 unsigned long millis() { return 100; }
 unsigned long uploadStartTime = 0;
 String wsLastCompleteName;
+String wsLastCompletePath;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
 std::string ao3ReceiveFolder;

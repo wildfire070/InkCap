@@ -10,6 +10,7 @@
 
 #include "../Ao3LibraryMetadata.h"
 #include "ActivityManager.h"
+#include "activities/network/Ao3ReceiveActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
@@ -61,6 +62,14 @@ void Ao3PageQrActivity::loop() {
 
   if (!filePath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     activityManager.goToReader(filePath);
+    return;
+  }
+
+  if (!storyUrl.empty() && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    startActivityForResult(
+        std::make_unique<Ao3ReceiveActivity>(renderer, mappedInput, Ao3ReceiveMode::UPDATE_SINGLE, filePath,
+                                             storyUrl, std::string(title), std::string(author)),
+        [this](const ActivityResult&) { requestUpdate(true); });
   }
 }
 
@@ -188,7 +197,8 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   }
 
   const char* confirmLabel = filePath.empty() ? "" : tr(STR_OPEN);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
+  const char* updateLabel = storyUrl.empty() ? "" : tr(STR_AO3_QR_UPDATE);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, updateLabel, "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
