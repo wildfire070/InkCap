@@ -373,7 +373,7 @@ void Ao3ReceiveActivity::renderUpdateRunning() const {
   y += heightText12 + metrics.verticalSpacing * 2;
 
   renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_AO3_UPDATE_INSTRUCTION_1));
-  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_AO3_RECEIVE_INSTRUCTION_2));
+  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_AO3_UPDATE_INSTRUCTION_2));
   renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_AO3_UPDATE_INSTRUCTION_3));
   renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_AO3_UPDATE_INSTRUCTION_4));
   y += height * 4 + metrics.verticalSpacing * 4;
