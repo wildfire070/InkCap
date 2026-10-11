@@ -174,7 +174,8 @@ void Ao3PageQrActivity::render(RenderLock&&) {
     }
   }
 
-  renderer.drawCenteredText(UI_10_FONT_ID, infoY, infoStr.c_str());
+  const auto truncInfoStr = renderer.truncatedText(UI_10_FONT_ID, infoStr.c_str(), pageWidth - 40);
+  renderer.drawCenteredText(UI_10_FONT_ID, infoY, truncInfoStr.c_str());
 
   curY = infoY + infoH + gapInfoToQr;
 
