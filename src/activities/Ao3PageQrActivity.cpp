@@ -15,12 +15,32 @@
 #include "fontIds.h"
 #include "util/QrUtils.h"
 
+namespace {
+// Matches the wording Ao3LibraryActivity's Sort & Filter overlay already uses for this
+// same rating char, so the two screens describe a rating the same way.
+const char* ratingLabel(const char rating) {
+  switch (rating) {
+    case 'G':
+      return "General";
+    case 'T':
+      return "Teen";
+    case 'M':
+      return "Mature";
+    case 'E':
+      return "Explicit";
+    default:
+      return "Not Rated";
+  }
+}
+}  // namespace
+
 void Ao3PageQrActivity::loadMetadata() {
   storyUrl.clear();
   memset(title, 0, sizeof(title));
   memset(author, 0, sizeof(author));
   memset(tags, 0, sizeof(tags));
   memset(updatedDate, 0, sizeof(updatedDate));
+  rating = 0;
   chapterCount = 0;
 
   const std::string cachePath = Epub::cachePathForFilePath(filePath, "/.crosspoint");
@@ -31,6 +51,7 @@ void Ao3PageQrActivity::loadMetadata() {
       strncpy(title, meta.title, sizeof(title) - 1);
       strncpy(author, meta.author, sizeof(author) - 1);
       for (int i = 0; i < 4; i++) strncpy(tags[i], meta.tags[i], sizeof(tags[i]) - 1);
+      rating = meta.rating;
       chapterCount = meta.chapterCount;
       strncpy(updatedDate, meta.updatedDate, sizeof(updatedDate) - 1);
     }
@@ -91,21 +112,33 @@ void Ao3PageQrActivity::render(RenderLock&&) {
     authorStr = renderer.truncatedText(UI_12_FONT_ID, (std::string("by ") + author).c_str(), pageWidth - 40);
   }
 
-  std::string infoStr = std::string(tr(STR_AO3_QR_CHAPTERS_ON_DEVICE)) + ": " + std::to_string(chapterCount);
+  const std::string infoLine1 = std::string(tr(STR_AO3_QR_CHAPTERS_ON_DEVICE)) + ": " + std::to_string(chapterCount);
+  std::string infoLine2;
   if (updatedDate[0]) {
-    infoStr += " - " + std::string(tr(STR_AO3_QR_UPDATED_ON)) + " " + updatedDate;
+    infoLine2 = std::string(tr(STR_AO3_QR_UPDATED_ON)) + " " + updatedDate;
   }
 
-  // Tags are laid out no wider than the info line beneath them.
-  const int infoWidth = renderer.getTextWidth(UI_10_FONT_ID, infoStr.c_str());
-  const int maxTagWidth = (infoWidth > 0 && infoWidth < pageWidth - 40) ? infoWidth : (pageWidth - 40);
+  // Tags are laid out no wider than the chapter-count line beneath them -- but only when
+  // that's the only info line. Once an "Updated on" second line exists, there's no single
+  // line left to visually match against, so tags simply use the full available width
+  // (matching how this already behaved before the two-line split, back when the combined
+  // line was wide enough to overflow and fall back to the same full-width case below).
+  const int infoWidth1 = renderer.getTextWidth(UI_10_FONT_ID, infoLine1.c_str());
+  const int maxTagWidth = (infoLine2.empty() && infoWidth1 > 0 && infoWidth1 < pageWidth - 40)
+                               ? infoWidth1
+                               : (pageWidth - 40);
+
+  // Pill 0 is always the rating; pills 1-2 are the first two scraped tags (same freeform
+  // "Genre:"/"Additional Tags:" values as before -- just two of them now, to make room).
+  std::string pillTexts[3] = {ratingLabel(rating)};
+  int pillTextCount = 1;
+  for (int i = 0; i < 2 && tags[i][0]; i++) pillTexts[pillTextCount++] = tags[i];
 
   int fittingCount = 0;
   int actualTotalW = 0;
-  int tagWidths[4] = {};
-  for (int i = 0; i < 4; i++) {
-    if (!tags[i][0]) break;
-    const int w = renderer.getTextWidth(SMALL_FONT_ID, tags[i]) + 16;
+  int tagWidths[3] = {};
+  for (int i = 0; i < pillTextCount; i++) {
+    const int w = renderer.getTextWidth(SMALL_FONT_ID, pillTexts[i].c_str()) + 16;
     const int nextW = actualTotalW + (fittingCount > 0 ? 8 : 0) + w;
     if (nextW > maxTagWidth) break;
     tagWidths[fittingCount] = w;
@@ -118,7 +151,8 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   const int titleH = titleCount == 0 ? 0 : titleCount * titleLineH + (titleCount - 1) * 2;
   const int authorH = authorStr.empty() ? 0 : titleLineH;
   const int tagsH = (fittingCount > 0) ? 20 : 0;
-  const int infoH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int infoLineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int infoH = infoLine2.empty() ? infoLineH : (infoLineH * 2 + 2);
 
   const int gapTitleToAuthor = (titleCount > 0 && !authorStr.empty()) ? 6 : 0;
   const int gapAuthorToTags = (!authorStr.empty() && fittingCount > 0) ? 20 : 0;
@@ -169,12 +203,17 @@ void Ao3PageQrActivity::render(RenderLock&&) {
     int tagX = (pageWidth - actualTotalW) / 2;
     for (int i = 0; i < fittingCount; i++) {
       renderer.drawRoundedRect(tagX, curY, tagWidths[i], 20, 1, 6, true);
-      renderer.drawText(SMALL_FONT_ID, tagX + 8, curY - 2, tags[i]);
+      renderer.drawText(SMALL_FONT_ID, tagX + 8, curY - 2, pillTexts[i].c_str());
       tagX += tagWidths[i] + 8;
     }
   }
 
-  renderer.drawCenteredText(UI_10_FONT_ID, infoY, infoStr.c_str());
+  const auto truncInfoLine1 = renderer.truncatedText(UI_10_FONT_ID, infoLine1.c_str(), pageWidth - 40);
+  renderer.drawCenteredText(UI_10_FONT_ID, infoY, truncInfoLine1.c_str());
+  if (!infoLine2.empty()) {
+    const auto truncInfoLine2 = renderer.truncatedText(UI_10_FONT_ID, infoLine2.c_str(), pageWidth - 40);
+    renderer.drawCenteredText(UI_10_FONT_ID, infoY + infoLineH + 2, truncInfoLine2.c_str());
+  }
 
   curY = infoY + infoH + gapInfoToQr;
 
