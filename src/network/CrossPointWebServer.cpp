@@ -275,6 +275,7 @@ bool wsUploadInProgress = false;
 uint8_t wsUploadClientNum = 255;  // 255 = no active upload client
 size_t wsLastProgressSent = 0;
 String wsLastCompleteName;
+String wsLastCompletePath;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
 // Running tally for the current Calibre Wireless screen visit (see
@@ -634,6 +635,7 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   status.total = wsUploadSize;
   status.filename = wsUploadFileName.c_str();
   status.lastCompleteName = wsLastCompleteName.c_str();
+  status.lastCompletePath = wsLastCompletePath.c_str();
   status.lastCompleteSize = wsLastCompleteSize;
   status.lastCompleteAt = wsLastCompleteAt;
   for (const auto& name : wsBatchSucceeded) status.batchSucceeded.emplace_back(name.c_str());
@@ -1174,9 +1176,17 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
 
       if (state.error.isEmpty()) {
         state.success = true;
+
+        // Clear epub cache after uploading the file
+        String filePath = state.path;
+        if (!filePath.endsWith("/")) filePath += "/";
+        filePath += state.fileName;
+
         // On-screen "Received: <file>" feedback for receive-mode screens (same
-        // fields the websocket upload path fills in).
+        // fields the websocket upload path fills in). lastCompletePath lets AO3
+        // Update locate the just-uploaded file to swap it into place.
         wsLastCompleteName = state.fileName;
+        wsLastCompletePath = filePath;
         wsLastCompleteSize = state.size;
         wsLastCompleteAt = millis();
         const unsigned long elapsed = millis() - uploadStartTime;
@@ -1184,10 +1194,6 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         LOG_DBG("WEB", "[UPLOAD] Complete: %s (%d bytes in %lu ms, avg %.1f KB/s)", state.fileName.c_str(), state.size,
                 elapsed, avgKbps);
 
-        // Clear epub cache after uploading the file
-        String filePath = state.path;
-        if (!filePath.endsWith("/")) filePath += "/";
-        filePath += state.fileName;
         clearBookCachePreservingUserState(filePath.c_str());
         if (!ao3ReceiveFolder.empty() && FsHelpers::hasEpubExtension(filePath)) {
           Ao3ReceiveUtils::appendPending(filePath.c_str());
