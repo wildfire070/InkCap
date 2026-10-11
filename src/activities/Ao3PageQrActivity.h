@@ -20,6 +20,7 @@ class Ao3PageQrActivity final : public Activity {
   char title[128] = {};
   char author[128] = {};
   char tags[4][16] = {};
+  char rating = 0;  // 'G', 'T', 'M', 'E', '-', or 0 if never scraped
   uint16_t chapterCount = 0;
   char updatedDate[12] = {};
 
