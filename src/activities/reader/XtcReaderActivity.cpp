@@ -110,6 +110,7 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
 
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
+  showOpeningFeedback();
 
   if (!xtc) {
     return;
@@ -139,8 +140,10 @@ void XtcReaderActivity::onEnter() {
   if (!skipRecentBookUpdateOnEntry) {
     RECENT_BOOKS.addOrUpdateBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath());
   }
+  showOpeningFeedback();
   SleepCoverAssets::prepareXtc(*xtc);
 
+  showOpeningFeedback();
   // Trigger first update
   requestUpdate();
 }
@@ -784,6 +787,7 @@ void XtcReaderActivity::commitReadingStats() {
   }
   sessionReadingSeconds = 0;
   if ((statsTrackingActive || paceDirty || pendingStatsCommit) && stats.save(xtc->getCachePath())) {
+    pendingSync.mark(xtc->getPath(), SyncPending::STATS_BIT);
     paceDirty = false;
     if (statsTrackingActive || pendingStatsCommit) {
       globalStats.save();
@@ -825,7 +829,9 @@ void XtcReaderActivity::setBookCompleted(const bool isCompleted) {
     }
   }
 
-  if (stats.save(xtc->getCachePath()) && statsTrackingActive) {
+  const bool saved = stats.save(xtc->getCachePath());
+  if (saved) pendingSync.mark(xtc->getPath(), SyncPending::STATS_BIT);
+  if (saved && statsTrackingActive) {
     if (isCompleted) {
       globalStats.completedBooks++;
     } else if (globalStats.completedBooks > 0) {
@@ -874,13 +880,15 @@ std::unique_ptr<Activity> XtcReaderActivity::createFrontlightReadingStatsActivit
   }
 
   const bool hasSyncedStats = GlobalReadingStats::hasSyncedStats();
-  if (hasSyncedStats) {
-    return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, xtc->getTitle(), xtc->getCachePath(),
-                                                displayStats, getCurrentBookProgressPercent(), false, 0, globalStats,
-                                                GlobalReadingStats::loadAggregated(globalStats));
-  }
-  return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, xtc->getTitle(), xtc->getCachePath(), displayStats,
-                                              getCurrentBookProgressPercent(), false, 0, globalStats);
+  auto statsActivity =
+      hasSyncedStats
+          ? makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, xtc->getTitle(), xtc->getCachePath(),
+                                                 displayStats, getCurrentBookProgressPercent(), false, 0, globalStats,
+                                                 GlobalReadingStats::loadAggregated(globalStats))
+          : makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, xtc->getTitle(), xtc->getCachePath(),
+                                                 displayStats, getCurrentBookProgressPercent(), false, 0, globalStats);
+  if (statsActivity) statsActivity->setSyncBookPath(xtc->getPath());
+  return statsActivity;
 }
 
 void XtcReaderActivity::onFrontlightPanelClosed() {
@@ -1194,6 +1202,7 @@ bool XtcReaderActivity::handleShortcutAction(const CrossPointSettings::SHORT_PWR
 }
 
 void XtcReaderActivity::render(RenderLock&&) {
+  showOpeningFeedback();
   if (!xtc) {
     return;
   }
@@ -1216,11 +1225,13 @@ void XtcReaderActivity::render(RenderLock&&) {
       endOfBookOptions->loadOnce(xtc->getPath());
       endOfBookOptions->render(renderer, mappedInput);
     }
+    openingFeedback.finish();
     renderer.displayBuffer();
     return;
   }
 
   renderPage(pageToRender);
+  openingFeedback.finish();
   pageShownAtMs = millis();
   startDailyReadingInterval();
   if (!queueProgressSave(pageToRender)) {
@@ -1351,6 +1362,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
       return;
     }
     renderOverlays(true);
+    openingFeedback.finish();
 
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);
@@ -1414,6 +1426,7 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
     return;
   }
 
+  showOpeningFeedback();
   // Clear screen first
   renderer.clearScreen();
 
@@ -1468,6 +1481,8 @@ bool XtcReaderActivity::saveProgress(const uint32_t page) {
     return false;
   }
   progressSaveDebouncer.markPersisted(page);
+  // XTC has no KOReader position; reading only changes its stats, and only with tracking on.
+  if (statsTrackingActive) pendingSync.mark(xtc->getPath(), SyncPending::STATS_BIT);
   return true;
 }
 

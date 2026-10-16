@@ -15,7 +15,7 @@ inline bool recover(const std::string& destination) {
   if (!ok) LOG_ERR("HTTP", "Could not recover download backup: %s", backup.c_str());
   return ok;
 }
-inline bool publish(const std::string& destination) {
+inline bool publish(const std::string& destination, bool requireBackupCleanup = false) {
   if (!recover(destination)) return false;
   const std::string partial = destination + ".part";
   const std::string backup = destination + ".old";
@@ -31,9 +31,11 @@ inline bool publish(const std::string& destination) {
     }
     return false;
   }
-  // Cleanup failure does not invalidate the published file. recover() retries later.
+  // Asset sources require completed cleanup; legacy book/font callers retain
+  // their successful-publication behavior. Both keep the valid new destination.
   if (replacing && !Storage.remove(backup.c_str())) {
     LOG_ERR("HTTP", "Could not remove download backup: %s", backup.c_str());
+    return !requireBackupCleanup;
   }
   return true;
 }

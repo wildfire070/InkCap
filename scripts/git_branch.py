@@ -142,7 +142,43 @@ def get_production_version(project_dir):
     return get_crossink_version(project_dir)
 
 
+def get_hardware_version(project_dir, pioenv):
+    if os.environ.get('CROSSINK_RC_HASH'):
+        return get_release_candidate_version(project_dir)
+
+    if pioenv == 'default':
+        if os.environ.get('CROSSINK_RELEASE_VERSION'):
+            return get_production_version(project_dir)
+        base_version = get_crossink_version(project_dir)
+        branch = get_git_branch(project_dir)
+        return f'{base_version}-dev+{branch}'
+
+    base_version = (
+        get_production_version(project_dir)
+        if os.environ.get('CROSSINK_RELEASE_VERSION')
+        else get_crossink_version(project_dir)
+    )
+    device_suffix = {'sticky': '-sticky', 'x4-pro': '-x4-pro', 'x4-classic': '-x4-classic'}[pioenv]
+    return f'{base_version}{device_suffix}'
+
+
+def inject_download_endpoints(env):
+    # Explicit build configuration only; never read an endpoint from SD/catalogs.
+    for variable, define, scheme in (
+        ('CROSSINK_ASSET_BASE_URL', 'ASSET_DOWNLOAD_BASE_URL', 'https'),
+        ('CROSSINK_FONT_BASE_URL', 'FONT_DOWNLOAD_BASE_URL', 'https?'),
+    ):
+        base = os.environ.get(variable, '')
+        if not base:
+            continue
+        if not re.fullmatch(scheme + r'://[A-Za-z0-9.-]+(?::[0-9]+)?/(?:[A-Za-z0-9_-]+/)*', base):
+            protocols = 'HTTP(S)' if scheme == 'https?' else 'HTTPS'
+            raise ValueError(f'{variable} must be an {protocols} prefix ending in /')
+        env.Append(CPPDEFINES=[(define, '\\\"' + base + '\\\"')])
+
+
 def inject_version(env):
+    inject_download_endpoints(env)
     project_dir = env['PROJECT_DIR']
     pioenv = env['PIOENV']
     # Keep build provenance separate from CROSSINK_VERSION: production versions

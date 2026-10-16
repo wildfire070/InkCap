@@ -119,6 +119,10 @@ add_subdirectory(library_recent_order)
 add_subdirectory(scalable_fonts)
 add_subdirectory(glyph_bitmap)
 add_subdirectory(daily_reading_stats)
+add_subdirectory(sync_files)
+add_subdirectory(sync_pending)
+add_subdirectory(sync_ids)
+add_subdirectory(sync_parked)
 add_subdirectory(opds_server_store)
 add_subdirectory(support_info)
 add_subdirectory(log_retention)
@@ -130,7 +134,6 @@ add_test(NAME WebDavGetRegression
 add_test(NAME ImageProbeFramebufferRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_image_probe_framebuffer.py)
 add_subdirectory(language_cache)
-
 add_subdirectory(hyphenation_pack)
 add_test(NAME UploadFailureRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_upload_cancellation.py)
@@ -138,3 +141,12 @@ add_test(NAME StorageAndBrowsingRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_storage_and_browsing_ports.py)
 add_test(NAME OptimizerCacheSeedRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_optimizer_cache_seed.py)
+add_test(NAME WifiAutoConnectRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_wifi_auto_connect.py)
+add_subdirectory(book_loading_feedback)
+add_subdirectory(otf_fonts)
+
+add_subdirectory(asset_catalog)
+add_subdirectory(asset_download)
+add_subdirectory(asset_companion_index)
+add_subdirectory(asset_companion_store)

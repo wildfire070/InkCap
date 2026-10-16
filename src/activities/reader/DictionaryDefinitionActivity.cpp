@@ -30,6 +30,15 @@
 #include "util/LookupHistory.h"
 #include "util/TextPool.h"
 
+namespace {
+Rect dictionaryHeaderRect(const GfxRenderer& renderer, const int contentX, const int gutterWidth,
+                          const int gutterHeight) {
+  return UITheme::getHeaderRect(
+      renderer, UITheme::getInstance().getMetrics().headerHeight,
+      Rect{contentX, gutterHeight, renderer.getScreenWidth() - gutterWidth, renderer.getScreenHeight() - gutterHeight});
+}
+}  // namespace
+
 static constexpr char kBullet[] = "- ";
 static constexpr const char kEtymologyTreeMarker[] = "Etymology tree";
 static constexpr int kDictionarySwitchTouchHeight = 56;
@@ -577,7 +586,8 @@ void DictionaryDefinitionActivity::wrapText() {
     const int sidePadding = metrics.contentSidePadding + SETTINGS.screenMarginHorizontal;
     leftPadding = contentX + sidePadding;
     rightPadding = (isLandscapeCcw ? hintGutterWidth : 0) + sidePadding;
-    bodyStartY = hintGutterHeight + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const Rect header = dictionaryHeaderRect(renderer, contentX, hintGutterWidth, hintGutterHeight);
+    bodyStartY = header.y + header.height + metrics.verticalSpacing;
   }
 
   const int footerHeight = dictionaryFooterHeight();
@@ -1512,8 +1522,7 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
 
   // Header chrome stays in the built-in UI font; the looked-up word uses the
   // active reader font and is drawn with the definition body after prewarming.
-  Rect headerRect{contentX, hintGutterHeight + metrics.topPadding, renderer.getScreenWidth() - hintGutterWidth,
-                  metrics.headerHeight};
+  Rect headerRect = dictionaryHeaderRect(renderer, contentX, hintGutterWidth, hintGutterHeight);
   if (hasModalBackground()) {
     drawModalFrame();
     const int innerPadding = metrics.optionPopupInnerPadding;

@@ -716,8 +716,8 @@ bool SleepActivity::renderBitmapSleepScreen(Bitmap& bitmap) const {
   const auto pageHeight = renderer.getScreenHeight();
   float cropX = 0, cropY = 0;
 
-  // Keep error diffusion on the screen-sized grid. Resampling an already
-  // dithered source makes the source pattern alias into regular seams.
+  // Average source pixels before dithering on the screen-sized grid: skipping
+  // pixels can erase thin details, while resizing dithered pixels creates seams.
   if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::FIT &&
       (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight)) {
     const float scale = std::min(static_cast<float>(pageWidth) / bitmap.getWidth(),

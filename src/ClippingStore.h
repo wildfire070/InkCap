@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "sync/SyncPending.h"
+
 inline constexpr size_t CLIPPING_CHAPTER_TITLE_MAX = 48;
 // Clipping text lives on the SD card rather than in every in-memory clipping
 // record. Match the reader's bounded selection-text budget so previews retain
@@ -104,6 +106,11 @@ class ClippingStore {
                             bool& done);
   static bool hasAnyClippings();
   static bool getAllClippedBooks(std::vector<ClippedBookEntry>& out);
+  enum class ClippedBookStep : uint8_t { Book, Skip, Done, Error };
+  // Streams the clippings folder one file per call, with no list in RAM and no
+  // handle held between calls. `position` starts at 0 and is advanced here.
+  // Book: an EPUB with saved clippings that still exists at `bookPath`.
+  static ClippedBookStep nextClippedEpub(uint64_t& position, std::string& bookPath);
   static void deleteForFilePath(const std::string& filePath, const std::string& bookType);
   static bool migrateForFilePath(const std::string& oldFilePath, const std::string& newFilePath,
                                  const std::string& title, const std::string& author, const std::string& bookType);
@@ -123,6 +130,8 @@ class ClippingStore {
   std::string bookAuthor;
   std::string storeFilePath;
   bool dirty = false;
+  // Queues the book for the next Sync Clippings, once per load.
+  SyncPending::SessionMarker pendingSync;
 
   bool readFromFile();
   bool readFromFile(const std::string& path, std::vector<Clipping>& out, size_t onlyIndex = SIZE_MAX) const;

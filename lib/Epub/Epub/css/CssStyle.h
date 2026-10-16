@@ -126,6 +126,7 @@ struct CssPropertyFlags {
   uint32_t shaded : 1;
   uint32_t floatLeft : 1;
   uint32_t initialLetter : 1;
+  uint32_t fontFamily : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -161,7 +162,8 @@ struct CssPropertyFlags {
         whiteSpace(0),
         shaded(0),
         floatLeft(0),
-        initialLetter(0) {}
+        initialLetter(0),
+        fontFamily(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
@@ -169,7 +171,7 @@ struct CssPropertyFlags {
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
            pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
            fontSizeMultiplier || listStyleType || fontSize || border || whiteSpace || shaded || floatLeft ||
-           initialLetter;
+           initialLetter || fontFamily;
   }
 
   void clearAll() {
@@ -181,7 +183,7 @@ struct CssPropertyFlags {
     borderTop = borderRight = borderBottom = borderLeft = 0;
     fontSizeMultiplier = 0;
     listStyleType = 0;
-    fontSize = border = whiteSpace = shaded = floatLeft = initialLetter = 0;
+    fontSize = border = whiteSpace = shaded = floatLeft = initialLetter = fontFamily = 0;
   }
 };
 
@@ -192,6 +194,7 @@ static_assert(sizeof(CssPropertyFlags) <= sizeof(uint64_t),
 // Only stores properties relevant to e-ink text rendering
 // Length values are stored as CssLength (value + unit) for deferred resolution
 struct CssStyle {
+  uint32_t fontFamily = 0;
   CssTextAlign textAlign = CssTextAlign::Left;
   CssFontStyle fontStyle = CssFontStyle::Normal;
   CssFontWeight fontWeight = CssFontWeight::Normal;
@@ -257,6 +260,10 @@ struct CssStyle {
   // Apply properties from another style, only overwriting if the other style
   // has that property explicitly defined
   void applyOver(const CssStyle& base) {
+    if (base.defined.fontFamily) {
+      fontFamily = base.fontFamily;
+      defined.fontFamily = 1;
+    }
     if (base.defined.shaded) {
       shaded = base.shaded;
       defined.shaded = 1;

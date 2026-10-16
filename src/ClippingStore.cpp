@@ -1,6 +1,7 @@
 #include "ClippingStore.h"
 
 #include <Arduino.h>
+#include <FsHelpers.h>
 #include <HalClock.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -127,6 +128,7 @@ bool ClippingStore::loadForBook(const std::string& filePath, const std::string& 
   }
 
   bookFilePath = filePath;
+  pendingSync = {};  // a new reading session for this book
   bookTitle = title;
   bookAuthor = author;
   dirty = false;
@@ -188,6 +190,7 @@ ClippingStore::AddResult ClippingStore::addClipping(const uint16_t spineIndex, c
     return AddResult::SaveFailed;
   }
   dirty = false;
+  pendingSync.mark(bookFilePath, SyncPending::CLIPPINGS_BIT);
   return AddResult::Added;
 }
 
@@ -199,8 +202,11 @@ bool ClippingStore::removeClippingAt(const size_t index) {
   if (!saveToFile()) {
     clippings.insert(clippings.begin() + index, std::move(clipping));
     dirty = true;
+    // unload() may still persist a retried save; queueing the book is harmless.
+    pendingSync.mark(bookFilePath, SyncPending::CLIPPINGS_BIT);
     return false;
   }
+  pendingSync.mark(bookFilePath, SyncPending::CLIPPINGS_BIT);
   return true;
 }
 
@@ -286,6 +292,7 @@ void ClippingStore::clearAll() {
   dirty = false;
   if (!storeFilePath.empty() && Storage.exists(storeFilePath.c_str())) {
     Storage.remove(storeFilePath.c_str());
+    pendingSync.mark(bookFilePath, SyncPending::CLIPPINGS_BIT);
   }
 }
 
@@ -567,6 +574,46 @@ bool ClippingStore::getAllClippedBooks(std::vector<ClippedBookEntry>& out) {
                    std::move(header.bookType), header.count});
   }
   return true;
+}
+
+ClippingStore::ClippedBookStep ClippingStore::nextClippedEpub(uint64_t& position, std::string& bookPath) {
+  if (!Storage.exists(CLIPPINGS_DIR)) return ClippedBookStep::Done;
+  auto dir = Storage.open(CLIPPINGS_DIR);
+  if (!dir || !dir.isDirectory() || (position && !dir.seekSet(position))) {
+    if (dir) dir.close();
+    LOG_ERR("CLIP", "Cannot enumerate clippings folder");
+    return ClippedBookStep::Error;
+  }
+  auto entry = dir.openNextFile();
+  if (!entry) {
+    const bool failed = FsHelpers::directoryIterationFailed(dir);
+    dir.close();
+    if (failed) {
+      LOG_ERR("CLIP", "Clippings folder listing failed");
+      return ClippedBookStep::Error;
+    }
+    return ClippedBookStep::Done;
+  }
+  position = dir.position();
+  char name[64]{};
+  const size_t nameLength = entry.getName(name, sizeof(name));
+  const bool folder = entry.isDirectory();
+  entry.close();
+  dir.close();
+  // Store files are short "<type>_<crc>.bin" names; anything else is not ours.
+  if (folder || nameLength == 0 || nameLength >= sizeof(name) - 1 || strncmp(name, "epub_", 5) != 0 || nameLength < 4 ||
+      strcmp(name + nameLength - 4, ".bin") != 0)
+    return ClippedBookStep::Skip;
+  ClippingFileHeader header;
+  const std::string fullPath = std::string(CLIPPINGS_DIR) + "/" + name;
+  if (!readClippingFileHeader(fullPath, name, header) || header.path.empty() || header.count == 0)
+    return ClippedBookStep::Skip;
+  if (!Storage.exists(header.path.c_str())) {
+    LOG_DBG("CLIP", "Skipping clippings for missing book: %s", header.path.c_str());
+    return ClippedBookStep::Skip;
+  }
+  bookPath = std::move(header.path);
+  return ClippedBookStep::Book;
 }
 
 void ClippingStore::deleteForFilePath(const std::string& filePath, const std::string& bookType) {

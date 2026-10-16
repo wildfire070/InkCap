@@ -175,8 +175,8 @@ void OptionSelectionActivity::render(RenderLock&&) {
                                          orientation == GfxRenderer::Orientation::LandscapeCounterClockwise);
   const int gutter = landscape ? UITheme::getButtonHintsReserve(renderer) : 0;
   const int contentX = orientation == GfxRenderer::Orientation::LandscapeClockwise ? gutter : 0;
-  const Rect header{contentX, metrics.topPadding, renderer.getScreenWidth() - gutter,
-                    TouchHeaderBackButton::height(metrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(
+      renderer, mappedInput, Rect{contentX, 0, renderer.getScreenWidth() - gutter, renderer.getScreenHeight()});
   if (showTouchHeaderBackButton_ && mappedInput.hasTouchHardware()) {
     TouchHeaderBackButton::draw(renderer, uiTarget_, header, I18N.get(titleId_), readerMode_);
   } else {

@@ -80,7 +80,7 @@ for language in catalog["languages"]:
                             if entries[key]["active"] and value != entries[key]["english"])
     assert cache_bytes <= 65536
     assert len(data) <= 262144 and all(len(line) <= 2047 for line in data.split(b"\n"))
-assert unsafe.get("DE") and unsafe.get("RU")
+assert not unsafe, f"Community translations contain invalid printf contracts: {unsafe}"
 assert len([item for item in catalog["languages"] if "translation" in item]) == 27
 
 # The exported budget is the production on-flash layout, not just text length.

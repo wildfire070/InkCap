@@ -255,3 +255,31 @@ TEST_F(ZipCentralDirectory, EnumerationRejectsTruncatedDirectory) {
   EXPECT_FALSE(zip.enumerateFilePaths([](std::string_view) { ADD_FAILURE(); }));
   EXPECT_FALSE(zip.isOpen());
 }
+
+TEST_F(ZipCentralDirectory, IdentityLookupDistinguishesAbsentFromUnreadable) {
+  Storage.reset();
+  const std::string path = "/identity.epub";
+  constexpr char name[] = "META-INF/crossink/optimizer-v1.json";
+  const ZipFile::EntryTarget target{ZipFile::fnvHash64(name, sizeof(name) - 1), sizeof(name) - 1, 0, name};
+  ZipFile::EntryIdentity identity;
+  EXPECT_LT(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 0);
+  Storage.put(path, {1, 2, 3});
+  EXPECT_LT(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 0);
+  const auto ordinary = buildZip({{"chapter.html", "text", 0, 0, 42}});
+  Storage.put(path, ordinary);
+  Storage.failReadsAt(path, ordinary.size() - 1);
+  EXPECT_LT(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 0);
+  Storage.put(path, ordinary);
+  EXPECT_EQ(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 0);
+  EXPECT_FALSE(identity.found);
+  auto corrupt = ordinary;
+  // Keep the EOCD intact so loading the ZIP succeeds, but break its directory.
+  const size_t directory = 30 + std::string("chapter.html").size() + 4;
+  corrupt[directory] = 0;
+  Storage.put(path, corrupt);
+  EXPECT_LT(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 0);
+  Storage.put(path, buildZip({{name, "manifest", 0, 0, 123}}));
+  EXPECT_EQ(ZipFile(path).fillEntryIdentities(&target, 1, &identity, 1), 1);
+  EXPECT_TRUE(identity.found);
+  EXPECT_EQ(identity.crc32, 123u);
+}

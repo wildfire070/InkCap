@@ -4,12 +4,14 @@
 
 #include "BookStatsView.h"
 #include "EpubReaderMenuModel.h"
-#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "activities/network/StatsUploadActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
+#include "network/ReadingSyncUpload.h"
+#include "sync/BookSyncFile.h"
+#include "sync/SyncPending.h"
 #include "util/InputReleaseGuard.h"
 
 namespace {
@@ -46,6 +48,7 @@ BookStatsActivity::BookStatsActivity(GfxRenderer& renderer, MappedInputManager& 
       bookTitle(title),
       bookCachePath(bookCachePath),
       stats(stats),
+      savedCompleted(stats.isCompleted),
       globalStats(globalStats),
       returnToHomeOnExit(returnToHomeOnExit),
       progressPercent(progressPercent),
@@ -61,6 +64,7 @@ BookStatsActivity::BookStatsActivity(GfxRenderer& renderer, MappedInputManager& 
       bookTitle(title),
       bookCachePath(bookCachePath),
       stats(stats),
+      savedCompleted(stats.isCompleted),
       globalStats(globalStats),
       allDevicesStats(allDevicesStats),
       showAllDevicesStats(true),
@@ -99,6 +103,12 @@ void BookStatsActivity::saveStats() {
     return;
   }
   globalStats.save();
+  if (!syncBookPath.empty()) {
+    SyncPending::mark(syncBookPath, SyncPending::STATS_BIT);
+    // The date editor can mark the book finished (or not) too.
+    if (stats.isCompleted != savedCompleted) BookSyncFile::onFinishedChanged(syncBookPath, stats.isCompleted);
+  }
+  savedCompleted = stats.isCompleted;
   refreshAllDevicesStats();
   didChangeStats = false;
 }
@@ -361,14 +371,14 @@ bool BookStatsActivity::selectEditFieldFromTouchTarget(const int touchTarget) {
   return true;
 }
 
-bool BookStatsActivity::canSyncAllBooks() const { return KOREADER_STORE.hasCredentials(); }
+bool BookStatsActivity::canSyncReadingStats() const { return ReadingSyncUpload::canSyncReadingStats(); }
 
-void BookStatsActivity::startSyncAllBooks() {
+void BookStatsActivity::startSyncReadingStats() {
   // Ask here so Cancel returns to these stats instead of an already-closed reader.
-  auto confirm = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_SYNC_ALL_BOOKS),
-                                                         tr(STR_SYNC_ALL_CONFIRM), true);
+  auto confirm = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_SYNC_READING_STATS),
+                                                         tr(STR_SYNC_READING_STATS_CONFIRM), true);
   if (!confirm) {
-    LOG_ERR("BookStats", "Cannot allocate Sync All Books confirmation");
+    LOG_ERR("BookStats", "Cannot allocate Sync Reading Stats confirmation");
     return;
   }
   startActivityForResult(std::move(confirm), [this](const ActivityResult& result) {
@@ -377,9 +387,9 @@ void BookStatsActivity::startSyncAllBooks() {
       return;
     }
     auto sync = makeUniqueNoThrow<StatsUploadActivity>(renderer, mappedInput, std::string{},
-                                                       StatsUploadActivity::Scope::Library, true);
+                                                       StatsUploadActivity::Scope::ReadingStats, true);
     if (!sync) {
-      LOG_ERR("BookStats", "Cannot allocate Sync All Books activity");
+      LOG_ERR("BookStats", "Cannot allocate Sync Reading Stats activity");
       requestUpdate();
       return;
     }
@@ -389,7 +399,7 @@ void BookStatsActivity::startSyncAllBooks() {
                             static_cast<uint8_t>(EpubReaderMenuAction::READING_STATS));
     saveStats();
     // Close normally first: the parent (often the reader) imports these stats
-    // edits in its result handler before Sync All replaces the stack.
+    // edits in its result handler before the sync replaces the stack.
     activityManager.replaceAfterReturn(std::move(sync));
     finish();
   });
@@ -415,9 +425,9 @@ void BookStatsActivity::loop() {
   }
   int syncTarget = -1;
   const bool syncPage = usesNoRtcSingleScreenLayout() || page == Page::ThisDevice;
-  if (syncPage && canSyncAllBooks() && mappedInput.wasItemTapped(syncTarget) &&
+  if (syncPage && canSyncReadingStats() && mappedInput.wasItemTapped(syncTarget) &&
       syncTarget == BookStatsTouchTarget::SyncAll) {
-    startSyncAllBooks();
+    startSyncReadingStats();
     return;
   }
 
@@ -429,8 +439,8 @@ void BookStatsActivity::loop() {
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       mappedInput.suppressNextConfirmRelease();
-      if (canSyncAllBooks()) {
-        startSyncAllBooks();
+      if (canSyncReadingStats()) {
+        startSyncReadingStats();
         return;
       }
       exitStatsActivity();
@@ -505,8 +515,8 @@ void BookStatsActivity::loop() {
       beginDateEditing();
       return;
     }
-    if (page == Page::ThisDevice && canSyncAllBooks()) {
-      startSyncAllBooks();
+    if (page == Page::ThisDevice && canSyncReadingStats()) {
+      startSyncReadingStats();
       return;
     }
     exitStatsActivity();
@@ -556,7 +566,7 @@ void BookStatsActivity::render(RenderLock&&) {
   if (usesNoRtcSingleScreenLayout()) {
     renderNoRtcCombinedStatsPage(renderer, &mappedInput, bookTitle, stats, progressPercent, hasEstimatedTimeLeft,
                                  estimatedTimeLeftSeconds, globalStats,
-                                 showAllDevicesStats ? &allDevicesStats : nullptr, true, canSyncAllBooks());
+                                 showAllDevicesStats ? &allDevicesStats : nullptr, true, canSyncReadingStats());
     renderer.displayBuffer();
     return;
   }
@@ -568,7 +578,7 @@ void BookStatsActivity::render(RenderLock&&) {
       break;
     case Page::ThisDevice:
       renderGlobalStatsPage(renderer, &mappedInput, tr(STR_STATS_THIS_DEVICE_SCREEN), globalStats, true,
-                            showAllDevicesStats, &dailySummary, canSyncAllBooks());
+                            showAllDevicesStats, &dailySummary, canSyncReadingStats());
       break;
     case Page::AllDevices:
       renderGlobalStatsPage(renderer, &mappedInput, tr(STR_STATS_ALL_DEVICES_SCREEN), allDevicesStats, true, false);

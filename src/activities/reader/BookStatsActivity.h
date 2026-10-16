@@ -14,7 +14,9 @@ class BookStatsActivity final : public Activity {
 
   std::string bookTitle;
   std::string bookCachePath;
+  std::string syncBookPath;  // the book, for the sync pending-push list; empty when unknown
   BookReadingStats stats;
+  bool savedCompleted = false;  // finished state last written, to spot a change on save
   GlobalReadingStats globalStats;
   GlobalReadingStats allDevicesStats;
   DailyReadingStats::Summary dailySummary;
@@ -54,10 +56,12 @@ class BookStatsActivity final : public Activity {
   bool showNextStatsPage();
   bool selectEditFieldFromTouchTarget(int touchTarget);
   // "This Device" totals sync from here; needs a configured sync account.
-  bool canSyncAllBooks() const;
-  void startSyncAllBooks();
+  bool canSyncReadingStats() const;
+  void startSyncReadingStats();
 
  public:
+  // The book these stats belong to, so date edits are queued for the next sync.
+  void setSyncBookPath(std::string path) { syncBookPath = std::move(path); }
   BookStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                     const std::string& bookCachePath, const BookReadingStats& stats, float progressPercent,
                     bool hasEstimatedTimeLeft, uint32_t estimatedTimeLeftSeconds, const GlobalReadingStats& globalStats,

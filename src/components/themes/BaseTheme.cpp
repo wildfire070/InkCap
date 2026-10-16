@@ -1026,15 +1026,32 @@ void BaseTheme::drawReaderStatusBar(const GfxRenderer& renderer, const ReaderSta
   }
 }
 
+#ifdef SIMULATOR
+static int g_lastDisplayStatusBarOriginY = -1;
+int BaseTheme::takeLastDisplayStatusBarOriginY() {
+  const int origin = g_lastDisplayStatusBarOriginY;
+  g_lastDisplayStatusBarOriginY = -1;
+  return origin;
+}
+#endif
+
 void BaseTheme::drawDisplayStatusBar(const GfxRenderer& renderer, const int topY, const Rect* horizontalBounds) const {
   ReaderStatusBarContent content;
   content.outsideReader = true;
   content.horizontalBounds = horizontalBounds;
   content.previewOriginY = topY + UITheme::getTopStatusBarInset(renderer);
   if (renderer.hasCustomViewableInsets()) {
-    const auto insets = renderer.getViewableInsets().rotated(static_cast<unsigned>(renderer.getOrientation()));
-    content.previewOriginY = std::max(content.previewOriginY, static_cast<int>(insets.edges[0]));
+    // Every screen shares the reader's calibrated row. Only deliberate downward displacement (for example a
+    // top button-hint gutter) moves the bar below it; legacy topPadding rects and getHeaderRect() rects must
+    // not pull it off the row.
+    const int rowTop = UITheme::getHeaderRect(renderer, 0).y;
+    const int row = UITheme::getTopStatusBarY(renderer);
+    const bool displaced = topY > std::max(rowTop, static_cast<int>(UITheme::getInstance().getMetrics().topPadding));
+    content.previewOriginY = displaced ? topY + (row - rowTop) : row;
   }
+#ifdef SIMULATOR
+  g_lastDisplayStatusBarOriginY = content.previewOriginY;
+#endif
   const auto config = SETTINGS.displayStatusBar.asReaderConfig();
   drawReaderStatusBar(renderer, ReaderStatusBarPosition::Top, content, &config);
 }

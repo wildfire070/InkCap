@@ -31,6 +31,7 @@ struct ReaderSettingsSnapshot {
   uint8_t publisherPageNumbers = 0;
   uint8_t paragraphAlignment = 0;
   uint8_t embeddedStyle = 1;
+  uint8_t publisherFonts = 0;
   uint8_t hyphenationEnabled = 0;
   uint8_t textAntiAliasing = 1;
   uint8_t imageRendering = 0;
@@ -61,8 +62,9 @@ struct BookReaderSettingsData {
 
 // File format versions. v10 (upstream): per-field override mask. v11 (ours): appends the
 // Character Spacing byte after the mask. v12 (upstream, folded in on top of ours): appends an
-// Image Grayscale byte after that. Each new field is append-only at the tail -- never reorder or
-// reuse a version number for a different meaning, or an old on-disk file gets misread.
+// Image Grayscale byte after that. v13 (upstream): appends a Publisher Fonts byte after that.
+// Each new field is append-only at the tail -- never reorder or reuse a version number for a
+// different meaning, or an old on-disk file gets misread.
 constexpr uint8_t LEGACY_READER_SETTINGS_FILE_VERSION = 1;
 constexpr uint8_t PRE_WORD_SPACING_READER_SETTINGS_FILE_VERSION = 2;
 constexpr uint8_t PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION = 3;
@@ -77,7 +79,8 @@ constexpr uint8_t PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION = 10;
 // v11 on) was Character Spacing. From v12 on, Image Grayscale takes bit 18 and the other two
 // each shift up by one -- see the remap in readReaderSettingsSnapshot's caller.
 constexpr uint8_t PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION = 11;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 12;
+constexpr uint8_t PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION = 12;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 13;
 
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
@@ -116,7 +119,10 @@ constexpr uint32_t SD_FONT_FAMILY_OVERRIDE = 1U << READER_SETTING_FIELDS.size();
 // Character Spacing is ours, so it gets its own bit after upstream's fields instead of joining
 // the table (which would shift SD_FONT_FAMILY_OVERRIDE's bit inside already-written v10 files).
 constexpr uint32_t CHARACTER_SPACING_OVERRIDE = SD_FONT_FAMILY_OVERRIDE << 1;
-constexpr uint32_t ALL_READER_SETTING_OVERRIDES = (CHARACTER_SPACING_OVERRIDE << 1) - 1;
+// Publisher Fonts joined upstream after Character Spacing did on our side; same reasoning as
+// Character Spacing above -- its own bit after it rather than joining the table.
+constexpr uint32_t PUBLISHER_FONTS_OVERRIDE = CHARACTER_SPACING_OVERRIDE << 1;
+constexpr uint32_t ALL_READER_SETTING_OVERRIDES = (PUBLISHER_FONTS_OVERRIDE << 1) - 1;
 constexpr uint32_t READER_FONT_OVERRIDES = (1U << 0) | (1U << 1) | SD_FONT_FAMILY_OVERRIDE;
 // Anti-aliasing and grayscale change page drawing, but not the saved line/page layout.
 constexpr uint32_t READER_LAYOUT_SETTING_OVERRIDES =

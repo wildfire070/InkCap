@@ -20,6 +20,8 @@ constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr uint8_t MIN_SCREEN_MARGIN = 5;
 constexpr uint8_t MAX_WORD_SPACING = 4;
 constexpr uint8_t MAX_CHARACTER_SPACING = 10;
+// Mirrors lib/Epub/Epub/ReaderRenderSpec.h's PublisherFonts::All (2).
+constexpr uint8_t MAX_PUBLISHER_FONTS = 2;
 constexpr uint8_t INDEXING_FULL_SECTION = 1;
 constexpr uint8_t INDEXING_METHOD_COUNT = 2;
 
@@ -75,6 +77,7 @@ uint32_t changedReaderSettingsMask(const ReaderSettingsSnapshot& current, const 
   }
   if (std::strcmp(current.sdFontFamilyName, global.sdFontFamilyName) != 0) mask |= SD_FONT_FAMILY_OVERRIDE;
   if (current.characterSpacing != global.characterSpacing) mask |= CHARACTER_SPACING_OVERRIDE;
+  if (current.publisherFonts != global.publisherFonts) mask |= PUBLISHER_FONTS_OVERRIDE;
   return mask;
 }
 
@@ -90,6 +93,7 @@ void applyReaderSettingsOverrides(ReaderSettingsSnapshot& target, const ReaderSe
     std::memcpy(target.sdFontFamilyName, book.sdFontFamilyName, sizeof(target.sdFontFamilyName));
   }
   if (mask & CHARACTER_SPACING_OVERRIDE) target.characterSpacing = book.characterSpacing;
+  if (mask & PUBLISHER_FONTS_OVERRIDE) target.publisherFonts = book.publisherFonts;
 }
 
 bool readReaderSettingsSnapshot(FsFile& file, ReaderSettingsSnapshot& out, const bool includesWordSpacing,
@@ -183,7 +187,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       version != PRE_GLOBAL_DARK_MODE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_FIELD_OVERRIDES_READER_SETTINGS_FILE_VERSION &&
       version != PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -200,6 +205,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   snapshot.characterSpacing = data.readerSettings.characterSpacing;
   // Books saved before Image Grayscale existed inherit the current global setting.
   snapshot.imageGrayscale = data.readerSettings.imageGrayscale;
+  // Books saved before Publisher Fonts existed inherit the current global setting.
+  snapshot.publisherFonts = data.readerSettings.publisherFonts;
   bool ok = readU8(file, flags) && readU16(file, seconds);
   if (ok) {
     ok = readU8(file, renderMode);
@@ -232,8 +239,11 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   if (ok && version >= PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.characterSpacing);
   }
-  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+  if (ok && version >= PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.imageGrayscale);
+  }
+  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+    ok = readU8(file, snapshot.publisherFonts) && snapshot.publisherFonts <= MAX_PUBLISHER_FONTS;
   }
   file.close();
   if (!ok) {
@@ -255,7 +265,11 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       data.readerSettingsOverrideMask &= ~CHARACTER_SPACING_OVERRIDE;
     }
     // Files older than v12 never stored a grayscale choice either.
-    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~IMAGE_GRAYSCALE_OVERRIDE;
+    if (version < PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION) {
+      data.readerSettingsOverrideMask &= ~IMAGE_GRAYSCALE_OVERRIDE;
+    }
+    // Files older than v13 never stored a publisher-fonts choice either.
+    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~PUBLISHER_FONTS_OVERRIDE;
     data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
     applyReaderSettingsOverrides(data.readerSettings, snapshot, data.readerSettingsOverrideMask);
   }
@@ -297,7 +311,8 @@ bool writeBookReaderSettingsFile(FsFile& file, const BookReaderSettingsData& dat
                   writeU8(file, data.dictionaryFontPointSize) &&
                   writeU32(file, data.readerSettingsOverrideMask & ALL_READER_SETTING_OVERRIDES) &&
                   writeU8(file, std::min<uint8_t>(normalizedReaderSettings.characterSpacing, MAX_CHARACTER_SPACING)) &&
-                  writeU8(file, normalizedReaderSettings.imageGrayscale ? 1 : 0);
+                  writeU8(file, normalizedReaderSettings.imageGrayscale ? 1 : 0) &&
+                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.publisherFonts, MAX_PUBLISHER_FONTS));
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Short write saving reader settings");

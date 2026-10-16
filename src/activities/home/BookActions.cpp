@@ -31,6 +31,8 @@
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "sync/BookSyncFile.h"
+#include "sync/SyncPending.h"
 #include "util/Ao3ArchiveUtils.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMetadataUtils.h"
@@ -244,12 +246,14 @@ std::unique_ptr<Activity> createReadingStatsActivity(GfxRenderer& renderer, Mapp
                                                                : RecentBookProgress::loadPercent(book);
   const BookReadingStats stats = BookReadingStats::load(cachePath);
   const GlobalReadingStats global = GlobalReadingStats::load();
-  if (GlobalReadingStats::hasSyncedStats()) {
-    return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
-                                                global, GlobalReadingStats::loadAggregated(global));
-  }
-  return makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
-                                              global);
+  auto activity =
+      GlobalReadingStats::hasSyncedStats()
+          ? makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                                 global, GlobalReadingStats::loadAggregated(global))
+          : makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, title, cachePath, stats, progress, false, 0,
+                                                 global);
+  if (activity) activity->setSyncBookPath(fullPath);
+  return activity;
 }
 
 bool resetBookReaderSettings(const std::string& fullPath) {
@@ -372,6 +376,8 @@ bool setBookCompletedOnDisk(const std::string& fullPath, const bool completed) {
     LOG_ERR("BookActions", "Could not save completion for: %s", fullPath.c_str());
     return false;
   }
+  SyncPending::mark(fullPath, SyncPending::STATS_BIT);
+  BookSyncFile::onFinishedChanged(fullPath, completed);
   if (trackStats) {
     GlobalReadingStats globalStats = GlobalReadingStats::load();
     if (completed) {
