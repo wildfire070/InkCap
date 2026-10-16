@@ -10,6 +10,15 @@ target_compile_features(LanguageCacheTest PRIVATE cxx_std_20)
 target_compile_options(LanguageCacheTest PRIVATE -Wall -Wextra -Werror)
 add_test(NAME LanguageCacheTest COMMAND LanguageCacheTest)
 
+add_executable(FlashReadOnlyTest FlashReadOnlyTest.cpp
+  ${REPO_ROOT}/lib/HalFlashPartition/HalFlashPartition.cpp)
+target_include_directories(FlashReadOnlyTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/lib/HalFlashPartition)
+target_compile_definitions(FlashReadOnlyTest PRIVATE SIMULATOR)
+target_compile_features(FlashReadOnlyTest PRIVATE cxx_std_20)
+target_compile_options(FlashReadOnlyTest PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+add_test(NAME FlashReadOnlyTest COMMAND FlashReadOnlyTest)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(LANGUAGE_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${LANGUAGE_GENERATED}")
@@ -47,6 +56,7 @@ target_compile_options(LanguageSettingsAtomicTest PRIVATE -Wall -Wextra -Werror)
 add_test(NAME LanguageSettingsAtomicTest COMMAND LanguageSettingsAtomicTest)
 add_test(NAME LanguageGeneratorTest COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/generator_test.py ${REPO_ROOT})
 add_test(NAME LanguageBuiltinTest COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/builtin_test.py ${REPO_ROOT})
+add_test(NAME I18nTranslationTest COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_i18n.py)
 
 add_executable(LanguageAllocationTest LanguageAllocationTest.cpp ${REPO_ROOT}/lib/LanguageCache/LanguageCache.cpp)
 add_dependencies(LanguageAllocationTest LanguageTestSchema)

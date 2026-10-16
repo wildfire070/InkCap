@@ -25,7 +25,7 @@ void ConfirmationActivity::onEnter() {
     mappedInput.setReaderTouchscreenOverride(true);
   }
 
-  const char* options[] = {I18N.get(StrId::STR_CANCEL), I18N.get(StrId::STR_CONFIRM)};
+  const char* options[] = {I18N.get(cancelLabel), I18N.get(confirmLabel)};
   confirmPopup.show(popupTitle.c_str(), options, 2, 0, [this](int idx) {
     ActivityResult res;
     res.isCancelled = (idx != 1);

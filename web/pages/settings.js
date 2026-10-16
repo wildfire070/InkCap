@@ -229,6 +229,7 @@ let allSettings = [];
       for (const category in groups) {
         html += '<div class="card"><h2>' + escapeHtml(category) + '</h2>';
         groups[category].forEach(function(s) {
+          if (s.key === 'opdsDownloadFolder') return;
           html += '<div class="setting-row" id="row-setting-' + s.key + '">' +
             '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
             '<span class="setting-control">' + renderControl(s) + '</span>' +
@@ -239,6 +240,11 @@ let allSettings = [];
 
       container.innerHTML = html;
       updateSettingsVisibility();
+      const folderControl = document.getElementById('setting-opdsDownloadFolder');
+      if (folderControl) {
+        folderControl.value = originalValues.opdsDownloadFolder || '';
+        updateOpdsDestinations();
+      }
       document.getElementById('save-container').style.display = '';
       document.getElementById('saveBtn').disabled = true;
       preserveQuickResumeTimeoutOn = getControlValue('quickResumeSleepScreen') === 1;
@@ -267,6 +273,13 @@ let allSettings = [];
       }
     });
 
+    if (Object.prototype.hasOwnProperty.call(changes, 'koMatchMethod') &&
+        !confirm('Change Document Matching? Books get new ids, so the next sync checks every book again. ' +
+                 'Progress already uploaded stays under the old ids until you merge books in the web app.')) {
+      delete changes.koMatchMethod;
+      setControlValue('koMatchMethod', originalValues.koMatchMethod);
+    }
+
     if (Object.keys(changes).length === 0) {
       showMessage('No changes to save.', false);
       btn.textContent = 'Save Settings';
@@ -292,6 +305,7 @@ let allSettings = [];
       if (Object.prototype.hasOwnProperty.call(changes, 'trackReadingStats')) {
         await loadSettings();
       }
+      updateOpdsDestinations();
 
       showMessage('Settings saved successfully!', false);
     } catch (e) {
@@ -571,10 +585,51 @@ let allSettings = [];
   // the "(unchanged)" placeholder indicates an existing password is preserved on save.
   let opdsServers = [];
 
+  function opdsFolderMode(folder) {
+    return !folder ? 'default' : folder === '/' ? 'root' : 'custom';
+  }
+
+  function updateOpdsDestinations() {
+    document.querySelectorAll('[data-opds-folder]').forEach(function(server) {
+      const id = server.dataset.opdsFolder;
+      const mode = document.getElementById('opds-folder-mode-' + id).value;
+      const input = document.getElementById('opds-folder-' + id);
+      document.getElementById('opds-folder-path-' + id).hidden = mode !== 'custom';
+      const path = mode === 'default' ? originalValues.opdsDownloadFolder || '/' :
+        mode === 'root' ? '/' : input.value.trim();
+      document.getElementById('opds-destination-' + id).textContent =
+        'Downloads to: ' + (path || 'Enter folder path') + (mode === 'default' ? ' (default)' : '');
+    });
+  }
+
+  async function saveOpdsDefaultFolder() {
+    const input = document.getElementById('setting-opdsDownloadFolder');
+    try {
+      const resp = await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opdsDownloadFolder: input.value })
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      // Read the normalized saved path without replacing unsaved server forms.
+      const settings = await fetch('/api/settings');
+      if (!settings.ok) throw new Error('Folder saved, but settings could not be refreshed');
+      const saved = (await settings.json()).find(function(s) { return s.key === 'opdsDownloadFolder'; });
+      if (saved) {
+        input.value = saved.value;
+        originalValues.opdsDownloadFolder = saved.value;
+        const setting = allSettings.find(function(s) { return s.key === 'opdsDownloadFolder'; });
+        if (setting) setting.value = saved.value;
+      }
+      updateOpdsDestinations();
+      markChanged();
+      showMessage('Default download folder saved!', false);
+    } catch (error) { showMessage('Error: ' + error.message, true); }
+  }
+
   function renderOpdsServer(srv, idx) {
     const isNew = idx === -1;
     const id = isNew ? 'new' : idx;
-    return '<div class="opds-server" id="opds-' + id + '">' +
+    return '<div class="opds-server" id="opds-' + id + '" data-opds-folder="' + id + '">' +
       '<div class="setting-row">' +
         '<span class="setting-name">Server Name</span>' +
         '<span class="setting-control"><input type="text" id="opds-name-' + id + '" value="' + escapeHtml(srv.name || '') + '"></span>' +
@@ -599,6 +654,19 @@ let allSettings = [];
           '<option value="title_author"' + (srv.filenameFormat === 'title_author' ? ' selected' : '') + '>Title - Author</option>' +
         '</select></span>' +
       '</div>' +
+      '<div class="setting-row">' +
+        '<label class="setting-name" for="opds-folder-mode-' + id + '">Download Folder</label>' +
+        '<span class="setting-control"><select id="opds-folder-mode-' + id + '" onchange="updateOpdsDestinations()">' +
+          '<option value="default"' + (opdsFolderMode(srv.downloadFolder) === 'default' ? ' selected' : '') + '>Use default</option>' +
+          '<option value="root"' + (opdsFolderMode(srv.downloadFolder) === 'root' ? ' selected' : '') + '>SD root</option>' +
+          '<option value="custom"' + (opdsFolderMode(srv.downloadFolder) === 'custom' ? ' selected' : '') + '>Custom folder</option>' +
+        '</select></span>' +
+      '</div>' +
+      '<div class="setting-row" id="opds-folder-path-' + id + '"' + (opdsFolderMode(srv.downloadFolder) !== 'custom' ? ' hidden' : '') + '>' +
+        '<label class="setting-name" for="opds-folder-' + id + '">Folder path</label>' +
+        '<span class="setting-control"><input type="text" id="opds-folder-' + id + '" maxlength="63" placeholder="/Books/Calibre" value="' + escapeHtml(srv.downloadFolder && srv.downloadFolder !== '/' ? srv.downloadFolder : '') + '" oninput="updateOpdsDestinations()"></span>' +
+      '</div>' +
+      '<p class="opds-destination" id="opds-destination-' + id + '" aria-live="polite"></p>' +
       '<div class="opds-actions">' +
         '<button class="btn-small btn-save-server" onclick="saveOpdsServer(' + idx + ')">Save</button>' +
         (isNew ? '' : '<button class="btn-small btn-delete" onclick="deleteOpdsServer(' + idx + ')">Delete</button>') +
@@ -608,7 +676,11 @@ let allSettings = [];
 
   function renderOpdsSection() {
     const container = document.getElementById('opds-container');
-    let html = '<div class="card"><h2>OPDS Servers</h2>';
+    let html = '<div class="card"><h2>OPDS Servers</h2>' +
+      '<div class="setting-row"><label class="setting-name" for="setting-opdsDownloadFolder">Default download folder</label>' +
+      '<span class="setting-control"><input type="text" id="setting-opdsDownloadFolder" maxlength="63" value="' + escapeHtml(originalValues.opdsDownloadFolder || '') + '"></span></div>' +
+      '<div class="opds-actions"><button class="btn-small" onclick="saveOpdsDefaultFolder()">Save default</button></div>' +
+      '<p class="opds-folder-hint">Used by servers set to Use default. Blank means SD root.</p>';
 
     if (opdsServers.length === 0) {
       html += '<p style="color:var(--label-color);text-align:center;">No OPDS servers configured</p>';
@@ -622,6 +694,7 @@ let allSettings = [];
       '<button class="btn-small btn-add" onclick="addOpdsServer()">+ Add Server</button>' +
     '</div></div>';
     container.innerHTML = html;
+    updateOpdsDestinations();
   }
 
   async function loadOpdsServers() {
@@ -642,6 +715,7 @@ let allSettings = [];
     // Prevent multiple unsaved new-server forms at once (idx -1 → id "new")
     if (document.getElementById('opds-new')) return;
     addBtn.insertAdjacentHTML('beforebegin', renderOpdsServer({name:'',url:'',username:'',hasPassword:false,filenameFormat:'author_title'}, -1));
+    updateOpdsDestinations();
   }
 
   async function saveOpdsServer(idx) {
@@ -652,6 +726,13 @@ let allSettings = [];
       username: document.getElementById('opds-user-' + id).value,
       filenameFormat: document.getElementById('opds-filename-' + id).value,
     };
+    const mode = document.getElementById('opds-folder-mode-' + id).value;
+    const folder = document.getElementById('opds-folder-' + id).value.trim();
+    if (mode === 'custom' && !folder) {
+      showMessage('Enter a folder path, or choose Use default.', true);
+      return;
+    }
+    data.downloadFolder = mode === 'default' ? '' : mode === 'root' ? '/' : folder;
     // Only include password in payload when the user actually typed something;
     // omitting it tells the server to keep the existing password.
     const pass = document.getElementById('opds-pass-' + id).value;

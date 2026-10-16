@@ -707,6 +707,7 @@ ReaderSettingsDraft EpubReaderDrawerActivity::captureSettings() {
   value.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
   value.forceParagraphIndents = SETTINGS.forceParagraphIndents;
   value.embeddedStyle = SETTINGS.embeddedStyle;
+  value.publisherFonts = SETTINGS.publisherFonts;
   value.imageRendering = SETTINGS.imageRendering;
   value.imageGrayscale = SETTINGS.imageGrayscale;
   value.epubRenderMode = SETTINGS.epubRenderMode;
@@ -734,6 +735,7 @@ void EpubReaderDrawerActivity::applySettings(const ReaderSettingsDraft& value) {
   SETTINGS.extraParagraphSpacing = value.extraParagraphSpacing;
   SETTINGS.forceParagraphIndents = value.forceParagraphIndents;
   SETTINGS.embeddedStyle = value.embeddedStyle;
+  SETTINGS.publisherFonts = value.publisherFonts;
   SETTINGS.imageRendering = value.imageRendering;
   SETTINGS.imageGrayscale = value.imageGrayscale;
   SETTINGS.epubRenderMode = value.epubRenderMode;
@@ -1858,6 +1860,7 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
     case RowId::Orientation:
     case RowId::Alignment:
     case RowId::Images:
+    case RowId::PublisherFonts:
     case RowId::RenderMode:
       showEnumOptions(row);
       return;
@@ -2113,6 +2116,12 @@ void EpubReaderDrawerActivity::showEnumOptions(const RowId row) {
       raw = {0, 1, 2, 3, 4};
       currentRaw = draft.paragraphAlignment;
       break;
+    case RowId::PublisherFonts:
+      title = StrId::STR_PUBLISHER_FONTS;
+      labels = {tr(STR_OFF), tr(STR_PUBLISHER_FONTS_ACCENTS), tr(STR_PUBLISHER_FONTS_ALL)};
+      raw = {0, 1, 2};
+      currentRaw = draft.publisherFonts;
+      break;
     case RowId::Images:
       title = StrId::STR_IMAGES;
       labels = {tr(STR_IMAGES_DISPLAY), tr(STR_IMAGES_PLACEHOLDER), tr(STR_IMAGES_SUPPRESS)};
@@ -2248,6 +2257,10 @@ void EpubReaderDrawerActivity::selectEnumOption(const int index) {
       enumOptionSelectedIndex = static_cast<int16_t>(index);
       previewedEnumOptionIndex = -1;
       markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
+      break;
+    case RowId::PublisherFonts:
+      draft.publisherFonts = value;
+      markSettingChanged(ReaderSettingsChangeMask::Relayout);
       break;
     case RowId::Images:
       draft.imageRendering = value;
@@ -3219,6 +3232,8 @@ const char* EpubReaderDrawerActivity::rowLabel(const RowId row) const {
       return tr(STR_EXTRA_SPACING);
     case RowId::ForceIndents:
       return tr(STR_FORCE_PARAGRAPH_INDENTS);
+    case RowId::PublisherFonts:
+      return tr(STR_PUBLISHER_FONTS);
     case RowId::EmbeddedStyle:
       return tr(STR_EMBEDDED_STYLE);
     case RowId::Images:
@@ -3357,6 +3372,11 @@ const char* EpubReaderDrawerActivity::rowValue(const RowId row, char* buffer, co
       static const std::array<StrId, 5> labels = {StrId::STR_JUSTIFY, StrId::STR_DIR_LEFT, StrId::STR_CENTER,
                                                   StrId::STR_DIR_RIGHT, StrId::STR_BOOK_S_STYLE};
       return I18N.get(labels[std::min<size_t>(draft.paragraphAlignment, labels.size() - 1)]);
+    }
+    case RowId::PublisherFonts: {
+      static constexpr std::array<StrId, 3> labels = {StrId::STR_OFF, StrId::STR_PUBLISHER_FONTS_ACCENTS,
+                                                      StrId::STR_PUBLISHER_FONTS_ALL};
+      return I18N.get(labels[std::min<size_t>(draft.publisherFonts, labels.size() - 1)]);
     }
     case RowId::Images: {
       static const std::array<StrId, 3> labels = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise production I18n, its flash HAL, and generated data across fresh processes."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,6 +9,8 @@ import sys
 import tempfile
 
 binary, root = sys.argv[1], Path(sys.argv[2]).resolve()
+sys.path.insert(0, str(root / "scripts"))
+from generate_language_template import generate
 with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
     base = Path(temporary)
     languages = base / "sd/.crosspoint/languages"
@@ -21,6 +24,22 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
 
     assert run("boot", "ZZ-CUSTOM").startswith("EN|English|Settings|")
     assert not (base / "flash.bin").exists()  # boot never provisions or scans SD
+    # The full online source validator uses the live generated contract, keeps
+    # active strings pinned and never creates a flash image for a download.
+    artifacts = generate("native-fixture")
+    contract = json.loads(artifacts["language-template.json"])
+    french = next(item for item in contract["languages"] if item["code"] == "FR")
+    online = languages / "FR.yaml"
+    source = artifacts[french["translation"]["filename"]]
+    online.write_bytes(source)
+    run("validate", "FR", 0, "/.crosspoint/languages/FR.yaml")
+    assert not (base / "flash.bin").exists()
+    online.write_bytes(source.replace(contract["keysetSha256"].encode(), b"0" * 64))
+    rejected = subprocess.run([binary, "validate", "FR", "0", "/.crosspoint/languages/FR.yaml"],
+                              env=env, capture_output=True)
+    assert rejected.returncode == 5
+    assert not (base / "flash.bin").exists()
+    online.unlink()
     sample = languages / "custom.yaml"
     sample.write_text('_language_code: "ZZ-CUSTOM"\n_language_name: "My language"\n_direction: "rtl"\n'
                       '_keyboard: "HE"\nSTR_SETTINGS_TITLE: "Custom settings"\n', encoding="utf-8")
@@ -38,9 +57,14 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
     assert installed_flash[:-0x20000] == old_flash[:-0x20000]
     assert installed_flash[-0x10000:] == old_flash[-0x10000:]
     assert run("boot", "ZZ-CUSTOM", 1) == "ZZ-CUSTOM|My language|Custom settings|1"
+    run("unchanged", "ZZ-CUSTOM", 1, "/.crosspoint/languages/custom.yaml")
+    assert (base / "flash.bin").read_bytes() == installed_flash
+    unchanged_sample = languages / "same.yaml"
+    unchanged_sample.write_text("# Formatting-only edit\n" + sample.read_text())
     sample.write_text(sample.read_text().replace("Custom settings", "Revised settings"))
     assert "|Custom settings|" in run("boot", "ZZ-CUSTOM", 1)  # edits require apply
-    assert run("install", "ZZ-CUSTOM", 1, "/.crosspoint/languages/custom.yaml") == "ZZ-CUSTOM|2"
+    run("unchanged", "ZZ-CUSTOM", 1, "/.crosspoint/languages/same.yaml", "/.crosspoint/languages/custom.yaml")
+    unchanged_sample.unlink()
     assert "|Custom settings|" in run("boot", "ZZ-CUSTOM", 1)  # failed selection save keeps old generation
     assert "|Revised settings|" in run("boot", "ZZ-CUSTOM", 2)
     sample.unlink()

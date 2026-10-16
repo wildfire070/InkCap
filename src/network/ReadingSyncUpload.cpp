@@ -19,6 +19,7 @@
 #include "activities/reader/DailyReadingStats.h"
 #include "activities/reader/EpubReaderUtils.h"
 #include "activities/reader/StatsUploadPayload.h"
+#include "sync/BookSyncFile.h"
 
 bool ReadingSyncUpload::prepareProgress(const std::string& path, KOReaderProgress& progress) {
   if (!FsHelpers::hasEpubExtension(path)) return false;
@@ -48,8 +49,7 @@ bool ReadingSyncUpload::prepareProgress(const std::string& path, KOReaderProgres
       mapped.percentage > 1)
     return false;
   progress = {};
-  progress.document = method == DocumentMatchMethod::FILENAME ? KOReaderDocumentId::calculateFromFilename(path)
-                                                              : KOReaderDocumentId::calculate(path);
+  progress.document = BookSyncFile::documentId(path);
   if (progress.document.empty()) return false;
   progress.progress = mapped.xpath;
   progress.percentage = mapped.percentage;
@@ -146,14 +146,28 @@ StatsUploadClient::Result ReadingSyncUpload::globalStats(StatsUploadClient& clie
   return result;
 }
 
-StatsUploadClient::Result ReadingSyncUpload::stats(const std::string& path, const std::string& document) {
-  using Result = StatsUploadClient::Result;
-  if (!SETTINGS.shouldTrackReadingStats()) return Result::Skipped;
+bool ReadingSyncUpload::loadBookStats(const std::string& path, BookReadingStats& stats) {
+  if (!SETTINGS.shouldTrackReadingStats()) return false;
   // XTC books keep stats in their own cache folder; they have no KOReader position.
   const auto cache = FsHelpers::hasXtcExtension(path) ? Xtc(path, "/.crosspoint").getCachePath()
                                                       : Epub::resolveCachePathForFilePath(path, "/.crosspoint");
+  return BookStatsTracking::isEnabled(cache) && BookReadingStats::loadForUpload(cache, stats);
+}
+
+bool ReadingSyncUpload::canSyncReadingStats() {
+  return KOREADER_STORE.hasCredentials() && KOREADER_STORE.getServerSupport() == SyncServerSupport::SUPPORTED &&
+         KOREADER_STORE.getSyncStats() && SETTINGS.shouldTrackReadingStats();
+}
+
+bool ReadingSyncUpload::canSyncClippings() {
+  return KOREADER_STORE.hasCredentials() && KOREADER_STORE.getServerSupport() == SyncServerSupport::SUPPORTED &&
+         KOREADER_STORE.getSyncClippings();
+}
+
+StatsUploadClient::Result ReadingSyncUpload::stats(const std::string& path, const std::string& document) {
+  using Result = StatsUploadClient::Result;
   BookReadingStats book;
-  if (!BookStatsTracking::isEnabled(cache) || !BookReadingStats::loadForUpload(cache, book)) return Result::Skipped;
+  if (!loadBookStats(path, book)) return Result::Skipped;
   auto payload = makeUniqueNoThrow<char[]>(StatsUploadPayload::CAPACITY);
   char deviceId[32];
   if (!payload || !StatsUploadClient::deviceId(deviceId, sizeof(deviceId))) return Result::LowMemory;
@@ -198,4 +212,15 @@ const char* ReadingSyncUpload::countLabel(char* buffer, const size_t capacity, c
     snprintf(buffer, capacity, "%u (%u %s)", static_cast<unsigned>(ok), static_cast<unsigned>(failed),
              tr(STR_FAILED_LOWER));
   return buffer;
+}
+
+const char* ReadingSyncUpload::failureHeading(const bool progress, const bool stats, const bool clippings) {
+  if (progress + stats + clippings != 1) return tr(STR_SYNC_FAILED_MSG);
+  return progress ? tr(STR_PROGRESS_SYNC_FAILED) : stats ? tr(STR_STATS_SYNC_FAILED) : tr(STR_CLIPPINGS_SYNC_FAILED);
+}
+
+std::string ReadingSyncUpload::displayName(const std::string& bookPath) {
+  const size_t start = bookPath.find_last_of('/') + 1;
+  const size_t dot = bookPath.find_last_of('.');
+  return bookPath.substr(start, dot != std::string::npos && dot > start ? dot - start : std::string::npos);
 }

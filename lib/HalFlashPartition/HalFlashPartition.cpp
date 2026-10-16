@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #else
@@ -16,16 +17,22 @@
 #endif
 
 bool HalFlashPartition::begin(bool create) {
-  if (size_) return true;
 #if defined(SIMULATOR)
+  if (size_ && (!create || descriptor_ >= 0)) return true;
   // A host flash image is separate from the simulated SD card. Tests can
   // select a disposable image without touching normal simulator data.
   const char* path = std::getenv("CROSSINK_LANGUAGE_FLASH");
   if (!path || !*path) {
-    ::mkdir(".cache", 0700);
+    if (create) ::mkdir(".cache", 0700);
     path = ".cache/language-flash.bin";
   }
   descriptor_ = ::open(path, O_RDWR);
+  // An absent host image represents erased device flash. Read-only validation
+  // can inspect its capacity without provisioning or modifying a backing file.
+  if (descriptor_ < 0 && !create && errno == ENOENT) {
+    size_ = 0x360000;
+    return true;
+  }
   if (descriptor_ < 0 && create) {
     descriptor_ = ::open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
     if (descriptor_ >= 0) {
@@ -48,6 +55,7 @@ bool HalFlashPartition::begin(bool create) {
   }
   size_ = static_cast<size_t>(status.st_size);
 #else
+  if (size_) return true;
   (void)create;
   const auto* partition =
       esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
@@ -72,6 +80,10 @@ bool HalFlashPartition::begin(bool create) {
 bool HalFlashPartition::read(size_t offset, void* bytes, size_t length) const {
   if (!contains(offset, length)) return false;
 #if defined(SIMULATOR)
+  if (descriptor_ < 0) {
+    std::memset(bytes, 0xff, length);
+    return true;
+  }
   return descriptor_ >= 0 && ::pread(descriptor_, bytes, length, offset) == static_cast<ssize_t>(length);
 #else
   return partition_ &&

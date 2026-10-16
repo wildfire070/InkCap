@@ -3,24 +3,28 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstring>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/OptionSelectionActivity.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "util/OpdsDownloadFolder.h"
 
 namespace fui = freeink::ui;
 
 namespace {
-// Editable fields: Name, URL, Username, Password, Filename.
+// Editable fields: Name, URL, Username, Password, Filename, Download Folder.
 // Existing servers also show a Delete option (BASE_ITEMS + 1).
-constexpr int BASE_ITEMS = 5;
+constexpr int BASE_ITEMS = 6;
 constexpr fui::ActionId ACTION_ROW = 1;
 }  // namespace
 
@@ -51,6 +55,7 @@ void OpdsSettingsActivity::onEnter() {
   selectedIndex = 0;
   isNewServer = (serverIndex < 0);
   showSaveError = false;
+  showFolderError = false;
 
   if (!isNewServer) {
     // Edit flow: copy the selected server into local editable state.
@@ -65,6 +70,7 @@ void OpdsSettingsActivity::onEnter() {
     }
   }
 
+  updateDownloadFolderLabel();
   uiReady = false;
   visibleRows = 1;
   topIndex = 0;
@@ -103,13 +109,22 @@ void OpdsSettingsActivity::loop() {
   }
 
   const int menuItems = getMenuItemCount();
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+    topIndex = scrollListBy(topIndex, swipe == MappedInputManager::SwipeDir::Up ? visibleRows : -visibleRows,
+                            visibleRows, menuItems);
+    requestUpdate();
+    return;
+  }
   buttonNavigator.onNext([this, menuItems] {
     selectedIndex = (selectedIndex + 1) % menuItems;
+    topIndex = followListSelection(selectedIndex, topIndex, visibleRows, menuItems);
     requestUpdate();
   });
 
   buttonNavigator.onPrevious([this, menuItems] {
     selectedIndex = (selectedIndex + menuItems - 1) % menuItems;
+    topIndex = followListSelection(selectedIndex, topIndex, visibleRows, menuItems);
     requestUpdate();
   });
 }
@@ -205,7 +220,9 @@ void OpdsSettingsActivity::handleSelection() {
         static_cast<OpdsFilenameFormat>((static_cast<unsigned>(editServer.filenameFormat) + 1) % 3);
     saveServer();
     requestUpdate();
-  } else if (selectedIndex == 5 && !isNewServer) {
+  } else if (selectedIndex == 5) {
+    editDownloadFolder();
+  } else if (selectedIndex == BASE_ITEMS && !isNewServer) {
     // Delete flow is only available for existing servers.
     if (!OPDS_STORE.removeServer(static_cast<size_t>(serverIndex))) {
       LOG_ERR("OPS", "Failed to remove OPDS server at index %d", serverIndex);
@@ -215,6 +232,72 @@ void OpdsSettingsActivity::handleSelection() {
     }
     finish();
   }
+}
+
+void OpdsSettingsActivity::updateDownloadFolderLabel() {
+  if (editServer.downloadFolder.empty()) {
+    downloadFolderLabel = tr(STR_OPDS_USE_DEFAULT);
+    downloadFolderLabel += ": ";
+    downloadFolderLabel += SETTINGS.opdsDownloadFolder[0] ? SETTINGS.opdsDownloadFolder : tr(STR_OPDS_SD_ROOT);
+  } else {
+    downloadFolderLabel = editServer.downloadFolder == "/" ? tr(STR_OPDS_SD_ROOT) : editServer.downloadFolder;
+  }
+}
+
+void OpdsSettingsActivity::setDownloadFolder(std::string folder) {
+  showFolderError = false;
+  const std::string previous = editServer.downloadFolder;
+  editServer.downloadFolder = std::move(folder);
+  if (!saveServer()) editServer.downloadFolder = previous;
+  updateDownloadFolderLabel();
+  requestUpdate();
+}
+
+void OpdsSettingsActivity::editDownloadFolder() {
+  showFolderError = false;
+  std::vector<std::string> options;
+  options.reserve(3);
+  options.emplace_back(tr(STR_OPDS_USE_DEFAULT));
+  options.back() += ": ";
+  options.back() += SETTINGS.opdsDownloadFolder[0] ? SETTINGS.opdsDownloadFolder : tr(STR_OPDS_SD_ROOT);
+  options.emplace_back(tr(STR_OPDS_SD_ROOT));
+  options.emplace_back(tr(STR_OPDS_CUSTOM_FOLDER));
+  const uint8_t selected = editServer.downloadFolder.empty() ? 0 : editServer.downloadFolder == "/" ? 1 : 2;
+  auto picker = makeUniqueNoThrow<OptionSelectionActivity>(
+      renderer, mappedInput, "OpdsFolder", StrId::STR_OPDS_DOWNLOAD_FOLDER, std::move(options), selected, false, true);
+  if (!picker) {
+    LOG_ERR("OPS", "Cannot allocate folder picker");
+    showSaveError = true;
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(std::move(picker), [this](const ActivityResult& result) {
+    if (result.isCancelled) return;
+    const auto choice = std::get<OptionSelectionResult>(result.data).index;
+    if (choice < 2) {
+      setDownloadFolder(choice == 0 ? "" : "/");
+      return;
+    }
+    auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_OPDS_CUSTOM_FOLDER),
+                                                             editServer.downloadFolder, OpdsDownloadFolder::MAX_LENGTH,
+                                                             InputType::Text, 1);
+    if (!keyboard) {
+      LOG_ERR("OPS", "Cannot allocate folder keyboard");
+      showSaveError = true;
+      requestUpdate();
+      return;
+    }
+    startActivityForResult(std::move(keyboard), [this](const ActivityResult& entry) {
+      if (entry.isCancelled) return;
+      std::string folder;
+      if (!OpdsDownloadFolder::normalize(std::get<KeyboardResult>(entry.data).text, folder) || folder.empty()) {
+        showFolderError = true;
+        requestUpdate();
+        return;
+      }
+      setDownloadFolder(std::move(folder));
+    });
+  });
 }
 
 void OpdsSettingsActivity::listScreen(UiApp::ScreenType& screen, void* user) {
@@ -235,7 +318,7 @@ void OpdsSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   const StrId fieldNames[] = {StrId::STR_SERVER_NAME, StrId::STR_OPDS_SERVER_URL, StrId::STR_USERNAME,
-                              StrId::STR_PASSWORD, StrId::STR_FILENAME};
+                              StrId::STR_PASSWORD,    StrId::STR_FILENAME,        StrId::STR_OPDS_DOWNLOAD_FOLDER};
   const int menuItems = getMenuItemCount();
   const char* values[BASE_ITEMS] = {
       editServer.name.empty() ? tr(STR_NOT_SET) : editServer.name.c_str(),
@@ -245,6 +328,7 @@ void OpdsSettingsActivity::buildListScreen(UiApp::ScreenType& screen) {
       editServer.filenameFormat == OpdsFilenameFormat::SERVER_FILENAME ? tr(STR_SERVER_FILENAME)
       : editServer.filenameFormat == OpdsFilenameFormat::TITLE_AUTHOR  ? tr(STR_TITLE_AUTHOR)
                                                                        : tr(STR_AUTHOR_TITLE),
+      downloadFolderLabel.c_str(),
   };
 
   std::vector<fui::ListItem> items;
@@ -295,7 +379,9 @@ void OpdsSettingsActivity::render(RenderLock&&) {
       mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  if (showSaveError) {
+  if (showFolderError) {
+    GUI.drawPopup(renderer, tr(STR_OPDS_INVALID_FOLDER));
+  } else if (showSaveError) {
     GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
   }
 

@@ -33,7 +33,9 @@ bool supported(const char* code, uint8_t prefix, uint8_t suffix) {
   return language && !language->hyphenator && prefix == 2 && suffix == 2;
 }
 bool initialize(bool create) {
-  if (initialized) return true;
+  // Simulator read-only initialization can represent an erased, unprovisioned
+  // image. Only an explicit install may create its backing storage later.
+  if (initialized) return !create || flash.begin(true);
   if (!flash.begin(create)) return false;
   const auto result =
       store.begin({nullptr, capacity(), readFlash, writeFlash, eraseFlash, [] { delay(1); }}, supported);
@@ -78,6 +80,24 @@ bool isInstalled(const char* code) {
 bool hasSource(const char* code) {
   char path[64];
   return sourcePath(code, path) && Storage.exists(path);
+}
+hyphenation_pack::Result validateSource(const char* path, const char* code, void* context,
+                                        bool (*continueWork)(void*)) {
+  using hyphenation_pack::Result;
+  if (!supported(code, 2, 2)) return Result::Unsupported;
+  if (!initialize(false)) return Result::Unavailable;
+  FsFile file;
+  if (!Storage.openFileForRead("HYPH", path, file)) return Result::Io;
+  hyphenation_pack::ValidationOptions options;
+  options.expectedCode = code;
+  options.maxPayloadSize = store.availablePayloadBytes(code);
+  options.context = context;
+  options.continueWork = continueWork;
+  hyphenation_pack::Entry entry;
+  const auto result = hyphenation_pack::validate({&file, file.size(), readInput}, supported, entry, options);
+  file.close();
+  if (result != Result::Ok) LOG_ERR("HYPH", "Download validation: %s", hyphenation_pack::resultName(result));
+  return result;
 }
 hyphenation_pack::Result install(const char* code) {
   using hyphenation_pack::Result;

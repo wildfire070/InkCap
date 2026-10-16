@@ -21,6 +21,9 @@ class StatsUploadClient {
     return result != Result::Ok && result != Result::Skipped && result != Result::Unsupported;
   }
   static const char* resultString(Result result);
+  // The upload is done with: sent, or nothing to send. "Unsupported" is not:
+  // the data still has to go once the server accepts it.
+  static bool settled(Result result) { return result == Result::Ok || result == Result::Skipped; }
   static bool deviceId(char* out, size_t capacity);
 
  private:

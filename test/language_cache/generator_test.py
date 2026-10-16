@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -21,6 +22,21 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-generator-") as tempo
     for key in ("STR_HOLD_FOR_KEYBOARD", "STR_LIBRARY_SCAN_COUNT", "STR_LIBRARY_FILES_COUNT",
                 "STR_STATS_UPLOAD_COUNTS", "STR_FOLDER_SYNC_COUNTS"):
         assert key in generator.FORMAT_KEYS
+    # Device compatibility is tied to the original English source and complete
+    # ordered source keyset, independent of strip-unused and built-in choices.
+    generated = base / "generated"
+    generated.mkdir()
+    for flags in ([], ["--strip-unused"]):
+        subprocess.run([sys.executable, str(root / "scripts/gen_i18n.py"), str(base), str(generated),
+                        "--src-dirs", str(root / "src"), str(root / "lib"), *flags],
+                       check=True, capture_output=True)
+        cpp = (generated / "I18nStrings.cpp").read_text()
+        english = (base / "english.yaml").read_bytes()
+        source_keys = [key for key in generator.parse_yaml_file(str(base / "english.yaml"))
+                       if key.startswith("STR_")]
+        for name, data in (("SOURCE_SHA256", english),
+                           ("KEYSET_SHA256", ("\n".join(source_keys) + "\n").encode())):
+            assert f'const char {name}[] = "{hashlib.sha256(data).hexdigest()}";' in cpp
     compatibility = generator.known_languages()
     assert compatibility[0] == ["EN", "English"]
     assert dict(compatibility)["PT"] == "Português (Brasil)"

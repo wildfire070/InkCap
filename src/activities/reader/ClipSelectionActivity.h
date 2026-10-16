@@ -12,6 +12,7 @@
 
 #include "WordRef.h"
 #include "activities/Activity.h"
+#include "clippings/ClippingHighlightGeometry.h"
 #include "util/ButtonNavigator.h"
 
 struct ClipWordStyle {
@@ -69,6 +70,7 @@ class ClipSelectionActivity final : public Activity {
   int touchDragPageEndIdx = -1;
   uint32_t touchDragPageEndHeldSince = 0;
   bool hasDictionaryRequest = false;
+  bool textBuildMemoryError = false;
   bool ignoreInitialConfirmRelease = false;
   bool ignoreInitialPowerRelease = false;
   bool ignoreInitialBackRelease = false;
@@ -86,11 +88,13 @@ class ClipSelectionActivity final : public Activity {
   void restoreSavedBuffer() const;
   bool switchToPage(int pageIdx);
   void drawHighlights();
-  void applyWordStyle(const WordRef& word, const ClipWordStyle& style) const;
+  ClippingHighlightGeometry::WordRect wordHighlightRect(const WordRef& word) const;
+  void applyHighlightStyle(const ClippingHighlightGeometry::WordRect& rect, const ClipWordStyle& style) const;
   void useFallbackFont(const char* reason);
   bool selectWordAtPoint(int x, int y);
   bool isWithinCurrentPageEndDwellSlop(int x, int y) const;
   uint16_t tableSelectionForRange(int from, int to) const;
+  bool hasTextBuildMemory(int from, int to, uint16_t tableSelection = UINT16_MAX) const;
   void confirmSelection();
   bool finishDictionarySelection();
   int lineEndForward(int orderIdx) const;

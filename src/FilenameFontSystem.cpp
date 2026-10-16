@@ -1,5 +1,6 @@
 #include "FilenameFontSystem.h"
 
+#include <FontFileTypes.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -66,8 +67,7 @@ bool FilenameFontSystem::scanFamily(const char* name, SdCardFontFamilyInfo& fami
     const size_t nameLength = entry.getName(scratch->name, sizeof(scratch->name));
     entry.close();
     const size_t length = std::strlen(scratch->name);
-    if (directory || nameLength >= sizeof(scratch->name) - 1 || length < 5 ||
-        strcasecmp(scratch->name + length - 4, ".ttf") != 0)
+    if (directory || nameLength >= sizeof(scratch->name) - 1 || length < 5 || !fontfiles::isScalable(scratch->name))
       continue;
     const int written = std::snprintf(scratch->path, sizeof(scratch->path), "%s/%s", scratch->directory, scratch->name);
     if (written < 0 || static_cast<size_t>(written) >= sizeof(scratch->path)) continue;

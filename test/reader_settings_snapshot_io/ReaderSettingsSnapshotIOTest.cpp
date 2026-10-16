@@ -10,6 +10,7 @@ using ReaderSettingsIO::ALL_READER_SETTING_OVERRIDES;
 using ReaderSettingsIO::BookReaderSettingsData;
 using ReaderSettingsIO::CHARACTER_SPACING_OVERRIDE;
 using ReaderSettingsIO::IMAGE_GRAYSCALE_OVERRIDE;
+using ReaderSettingsIO::PUBLISHER_FONTS_OVERRIDE;
 using ReaderSettingsIO::ReaderSettingsSnapshot;
 using ReaderSettingsIO::SD_FONT_FAMILY_OVERRIDE;
 
@@ -73,6 +74,7 @@ ReaderSettingsSnapshot testDefaults() {
                                    // != anything a fixture below writes, so a test that observes 3
                                    // in the result can only have gotten it via inheritance.
   defaults.imageGrayscale = 0;  // Distinctive: != the struct's own default-member value (1).
+  defaults.publisherFonts = 2;  // Distinctive: != the struct's own default-member value (0).
   return defaults;
 }
 
@@ -93,6 +95,7 @@ TEST(ReaderSettingsSnapshotIOTest, CurrentVersionRoundTripPreservesEveryField) {
   written.readerSettings.wordSpacing = 3;
   written.readerSettings.characterSpacing = 4;
   written.readerSettings.imageGrayscale = 0;
+  written.readerSettings.publisherFonts = 1;
   written.readerSettings.screenMarginVertical = 20;
   written.readerSettings.screenMarginHorizontal = 25;
   std::strncpy(written.readerSettings.sdFontFamilyName, "ReaderFont", sizeof(written.readerSettings.sdFontFamilyName) - 1);
@@ -122,6 +125,7 @@ TEST(ReaderSettingsSnapshotIOTest, CurrentVersionRoundTripPreservesEveryField) {
   EXPECT_EQ(result.readerSettings.wordSpacing, 3);
   EXPECT_EQ(result.readerSettings.characterSpacing, 4);
   EXPECT_EQ(result.readerSettings.imageGrayscale, 0);
+  EXPECT_EQ(result.readerSettings.publisherFonts, 1);
   EXPECT_EQ(result.readerSettings.screenMarginVertical, 20);
   EXPECT_EQ(result.readerSettings.screenMarginHorizontal, 25);
   EXPECT_STREQ(result.readerSettings.sdFontFamilyName, "ReaderFont");
@@ -204,6 +208,46 @@ TEST(ReaderSettingsSnapshotIOTest, PreV12FileRemapsSdFontAndCharacterSpacingOver
   EXPECT_EQ(result.readerSettings.characterSpacing, 9);
   // A v11 file has no concept of Image Grayscale at all: it must inherit the global default.
   EXPECT_EQ(result.readerSettings.imageGrayscale, defaults.imageGrayscale);
+}
+
+// The same trap as the v10 test above, one version later: a v12 file predates Publisher Fonts,
+// so it can never have legitimately set PUBLISHER_FONTS_OVERRIDE -- but this test writes that
+// bit set anyway (adversarial/malformed input) to prove the version-gated clear
+// (`if (version < READER_SETTINGS_FILE_VERSION) mask &= ~PUBLISHER_FONTS_OVERRIDE;`) actually
+// runs. A regular field (fontFamily) in the same mask still applies, distinguishing "the whole
+// override path is broken" from "only publisherFonts is specifically protected."
+TEST(ReaderSettingsSnapshotIOTest, PreV13FileInheritsGlobalPublisherFontsEvenWithOverrideBitSet) {
+  RawWriter w;
+  w.u8(ReaderSettingsIO::PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION);  // version = 12
+  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                      // flags
+  w.u16(0);                                                                 // autoPageTurnSeconds (unused)
+  w.u8(0);                                                                  // renderMode (unused)
+  appendV10PlusSnapshotBody(w);
+  w.fixed("", 64);  // dictionarySdFontFamilyName
+  w.u8(0);          // dictionaryFontPointSize
+  // Override mask: every field bit set, INCLUDING PUBLISHER_FONTS_OVERRIDE -- the adversarial part.
+  w.u32(ALL_READER_SETTING_OVERRIDES);
+  w.u8(9);   // trailing characterSpacing byte (present from v11 on)
+  w.u8(1);   // trailing imageGrayscale byte (present from v12 on)
+  // No trailing publisherFonts byte: that's what makes this a v12 file, not v13.
+
+  Storage.reset();
+  const std::string path = "/book/reader_settings.bin";
+  Storage.put(path, w.bytes);
+
+  HalFile file;
+  ASSERT_TRUE(Storage.openFileForRead("T", path, file));
+  const ReaderSettingsSnapshot defaults = testDefaults();
+  const BookReaderSettingsData result = ReaderSettingsIO::parseBookReaderSettingsFile(file, defaults, "", 0);
+
+  EXPECT_TRUE(result.hasCustomReaderSettings);
+  // The override mask must have PUBLISHER_FONTS_OVERRIDE cleared even though the raw file set it.
+  EXPECT_EQ(result.readerSettingsOverrideMask & PUBLISHER_FONTS_OVERRIDE, 0u);
+  // publisherFonts follows the caller-supplied default, NOT the fixture's snapshot body (which
+  // never even encodes a publisher-fonts byte for a v12 file).
+  EXPECT_EQ(result.readerSettings.publisherFonts, defaults.publisherFonts);
+  // A regular field's override DID apply -- proves this isn't "overrides broken entirely."
+  EXPECT_EQ(result.readerSettings.fontFamily, 3);
 }
 
 // Version 1 predates every per-book snapshot field entirely -- only an auto-page-turn interval.

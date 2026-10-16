@@ -3,21 +3,97 @@
 #include <HalScreenCalibration.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <cstdio>
 
+#include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
 namespace {
 constexpr int SAFE_INSET = ScreenInsets::MAX_INSET + 16;
-constexpr int ROW_HEIGHT = 48;
+constexpr int EDGE_COUNT = 4;
 constexpr int ROW_COUNT = 7;
-constexpr int ADJUST_WIDTH = 48;
+constexpr int ROW_SAVE = 5;
+constexpr int ROW_HEIGHT = 48;
+constexpr int ROW_GAP = 8;
+constexpr int BUTTON_HEIGHT = 44;
+constexpr int BUTTON_GAP = 12;
+constexpr int SECTION_GAP = 20;
+constexpr int CONTROL_PADDING = 12;
+constexpr int CORNER_RADIUS = 2;
+constexpr int STEP_SIZE = 32;
+constexpr int VALUE_WIDTH = 44;
+constexpr int PANEL_HEIGHT =
+    EDGE_COUNT * ROW_HEIGHT + (EDGE_COUNT - 1) * ROW_GAP + SECTION_GAP + BUTTON_HEIGHT + ROW_GAP + BUTTON_HEIGHT;
 constexpr fui::ActionId ACTION_CONTROL = 1;
 constexpr StrId ROW_LABELS[] = {StrId::STR_TOP,       StrId::STR_RIGHT_EDGE,        StrId::STR_BOTTOM,
                                 StrId::STR_LEFT_EDGE, StrId::STR_CALIBRATION_RESET, StrId::STR_SAVE,
                                 StrId::STR_CANCEL};
+
+// Selected controls get a light fill and a heavier outline; an edge being
+// edited is outlined heavier still so Up/Down visibly change its value.
+void drawControlFrame(const GfxRenderer& renderer, const fui::Rect& bounds, const bool selected, const bool editing) {
+  if (selected) {
+    renderer.fillRoundedRect(bounds.x, bounds.y, bounds.width, bounds.height, CORNER_RADIUS, Color::LightGray);
+  }
+  renderer.drawRoundedRect(bounds.x, bounds.y, bounds.width, bounds.height, editing ? 3 : (selected ? 2 : 1),
+                           CORNER_RADIUS, true);
+}
+
+// Drawn with lines rather than "-"/"+" glyphs so both marks share a center.
+void drawStepButton(const GfxRenderer& renderer, const int x, const int y, const bool plus, const bool active) {
+  if (active) {
+    renderer.fillRoundedRect(x, y, STEP_SIZE, STEP_SIZE, CORNER_RADIUS, Color::Black);
+  } else {
+    renderer.fillRoundedRect(x, y, STEP_SIZE, STEP_SIZE, CORNER_RADIUS, Color::White);
+    renderer.drawRoundedRect(x, y, STEP_SIZE, STEP_SIZE, 1, CORNER_RADIUS, true);
+  }
+  constexpr int MARK = 12;
+  const int cx = x + STEP_SIZE / 2;
+  const int cy = y + STEP_SIZE / 2;
+  renderer.fillRect(cx - MARK / 2, cy - 1, MARK, 2, !active);
+  if (plus) renderer.fillRect(cx - 1, cy - MARK / 2, 2, MARK, !active);
+}
+
+struct KeyHint {
+  const char* key;
+  const char* action;
+};
+
+// One key per line in two aligned columns; keys sit against the shared gap,
+// on the right for right-to-left languages so each line still reads key first.
+void drawKeyLegend(const GfxRenderer& renderer, const fui::Rect& area, const KeyHint* hints, const int count) {
+  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  constexpr int COLUMN_GAP = 12;
+  constexpr int LINE_GAP = 4;
+  int keyWidth = 0;
+  int actionWidth = 0;
+  for (int i = 0; i < count; ++i) {
+    keyWidth = std::max(keyWidth, renderer.getTextWidth(UI_10_FONT_ID, hints[i].key, EpdFontFamily::BOLD));
+    actionWidth = std::max(actionWidth, renderer.getTextWidth(UI_10_FONT_ID, hints[i].action));
+  }
+  // Long translations wrap within the action column rather than overflow the screen.
+  actionWidth = std::min(actionWidth, std::max(0, area.width - keyWidth - COLUMN_GAP));
+  const bool rtl = I18N.isRightToLeft();
+  const int left = area.x + (area.width - keyWidth - COLUMN_GAP - actionWidth) / 2;
+  int y = area.y;
+  for (int i = 0; i < count; ++i) {
+    const auto lines = renderer.wrappedText(UI_10_FONT_ID, hints[i].action, actionWidth, 2);
+    if (y + static_cast<int>(lines.size()) * lineHeight > area.bottom()) break;
+    const int keyTextWidth = renderer.getTextWidth(UI_10_FONT_ID, hints[i].key, EpdFontFamily::BOLD);
+    const int keyX = rtl ? left + actionWidth + COLUMN_GAP : left + keyWidth - keyTextWidth;
+    renderer.drawText(UI_10_FONT_ID, keyX, y, hints[i].key, true, EpdFontFamily::BOLD);
+    for (const auto& line : lines) {
+      const int actionX =
+          rtl ? keyX - COLUMN_GAP - renderer.getTextWidth(UI_10_FONT_ID, line.c_str()) : left + keyWidth + COLUMN_GAP;
+      renderer.drawText(UI_10_FONT_ID, actionX, y, line.c_str());
+      y += lineHeight;
+    }
+    y += LINE_GAP;
+  }
+}
 }  // namespace
 
 ScreenCalibrationActivity::ScreenCalibrationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -126,49 +202,105 @@ void ScreenCalibrationActivity::loop() {
 
 void ScreenCalibrationActivity::calibrationScreen(UiApp::ScreenType& screen, void* user) {
   auto& self = *static_cast<ScreenCalibrationActivity*>(user);
+  const auto& renderer = self.renderer;
   const auto safe = screen.device().safeRect();
-  const int panelY = (screen.device().height - ROW_HEIGHT * ROW_COUNT) / 2;
+  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int panelY = (screen.device().height - PANEL_HEIGHT) / 2;
   auto text = screen.theme().smallText;
   text.maxLines = 4;
+  text.align = fui::TextAlign::Center;
   const auto instructionRect =
       fui::Rect{safe.x, static_cast<int16_t>(safe.y + 44), safe.width, static_cast<int16_t>(panelY - safe.y - 52)};
-  fui::layoutText(
-      screen.target(), instructionRect, tr(STR_CALIBRATION_HELP), text,
-      [&](const char* line, const fui::Rect rect) { self.renderer.drawText(UI_10_FONT_ID, rect.x, rect.y, line); });
-  for (int row = 0; row < ROW_COUNT; ++row) {
-    const int y = panelY + row * ROW_HEIGHT;
-    const auto bounds = fui::Rect{safe.x, static_cast<int16_t>(y), safe.width, ROW_HEIGHT};
+  fui::layoutText(screen.target(), instructionRect, tr(STR_CALIBRATION_HELP), text,
+                  [&](const char* line, const fui::Rect rect) {
+                    const int width = renderer.getTextWidth(UI_10_FONT_ID, line);
+                    renderer.drawText(UI_10_FONT_ID, rect.x + (rect.width - width) / 2, rect.y, line);
+                  });
+
+  // Edge rows: label on the left, a [-] value [+] stepper on the right.
+  for (int row = 0; row < EDGE_COUNT; ++row) {
+    const auto bounds =
+        fui::Rect{safe.x, static_cast<int16_t>(panelY + row * (ROW_HEIGHT + ROW_GAP)), safe.width, ROW_HEIGHT};
     const bool selected = self.selected == row;
-    if (selected) self.renderer.fillRectDither(bounds.x, bounds.y, bounds.width, bounds.height, Color::LightGray);
-    self.renderer.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
-    const int textY = y + (ROW_HEIGHT - self.renderer.getLineHeight(UI_10_FONT_ID)) / 2;
-    const int edgeWidth = row < 4 ? ADJUST_WIDTH * 2 : 0;
-    const auto center =
-        bounds.inset(fui::Insets{0, static_cast<int16_t>(edgeWidth / 2), 0, static_cast<int16_t>(edgeWidth / 2)});
-    screen.frame().hit(center, ACTION_CONTROL, static_cast<int16_t>(row), fui::InputTouch);
-    self.renderer.drawText(UI_10_FONT_ID, center.x + 8, textY, I18N.get(ROW_LABELS[row]));
-    if (row < 4) {
-      char value[8];
-      std::snprintf(value, sizeof(value), "%u", self.draft.edges[row]);
-      const int valueWidth = self.renderer.getTextWidth(UI_10_FONT_ID, value);
-      self.renderer.drawText(UI_10_FONT_ID, center.right() - valueWidth - 8, textY, value, true,
-                             self.editing && selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-      const fui::Rect decrease{bounds.x, bounds.y, ADJUST_WIDTH, bounds.height};
-      const fui::Rect increase{static_cast<int16_t>(bounds.right() - ADJUST_WIDTH), bounds.y, ADJUST_WIDTH,
-                               bounds.height};
-      screen.frame().hit(decrease, ACTION_CONTROL, static_cast<int16_t>(7 + row), fui::InputTouch);
-      screen.frame().hit(increase, ACTION_CONTROL, static_cast<int16_t>(11 + row), fui::InputTouch);
-      self.renderer.drawText(UI_10_FONT_ID, decrease.x + 18, textY, "-");
-      self.renderer.drawText(UI_10_FONT_ID, increase.x + 18, textY, "+");
-    }
+    const bool editing = selected && self.editing;
+    drawControlFrame(renderer, bounds, selected, editing);
+    const int textY = bounds.y + (ROW_HEIGHT - lineHeight) / 2;
+    renderer.drawText(UI_10_FONT_ID, bounds.x + CONTROL_PADDING, textY, I18N.get(ROW_LABELS[row]), true,
+                      selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+
+    const int stepY = bounds.y + (ROW_HEIGHT - STEP_SIZE) / 2;
+    const int plusX = bounds.right() - CONTROL_PADDING / 2 - STEP_SIZE;
+    const int valueX = plusX - VALUE_WIDTH;
+    const int minusX = valueX - STEP_SIZE;
+    drawStepButton(renderer, minusX, stepY, false, editing);
+    drawStepButton(renderer, plusX, stepY, true, editing);
+    char value[8];
+    std::snprintf(value, sizeof(value), "%u", self.draft.edges[row]);
+    const auto valueStyle = editing ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    renderer.drawText(UI_10_FONT_ID,
+                      valueX + (VALUE_WIDTH - renderer.getTextWidth(UI_10_FONT_ID, value, valueStyle)) / 2, textY,
+                      value, true, valueStyle);
+
+    // Generous touch targets: each half of the stepper spans the full row height.
+    const auto valueCenter = static_cast<int16_t>(valueX + VALUE_WIDTH / 2);
+    const fui::Rect decrease{static_cast<int16_t>(minusX - CONTROL_PADDING / 2), bounds.y,
+                             static_cast<int16_t>(valueCenter - minusX + CONTROL_PADDING / 2), bounds.height};
+    const fui::Rect increase{valueCenter, bounds.y, static_cast<int16_t>(bounds.right() - valueCenter), bounds.height};
+    const fui::Rect label{bounds.x, bounds.y, static_cast<int16_t>(decrease.x - bounds.x), bounds.height};
+    screen.frame().hit(label, ACTION_CONTROL, static_cast<int16_t>(row), fui::InputTouch);
+    screen.frame().hit(decrease, ACTION_CONTROL, static_cast<int16_t>(7 + row), fui::InputTouch);
+    screen.frame().hit(increase, ACTION_CONTROL, static_cast<int16_t>(11 + row), fui::InputTouch);
   }
-  const auto note = self.saveFailed ? tr(STR_CALIBRATION_SAVE_FAILED)
-                                    : (self.editing ? tr(STR_CALIBRATION_EDIT_HELP) : tr(STR_CALIBRATION_SELECT_HELP));
-  const auto noteRect = fui::Rect{safe.x, static_cast<int16_t>(panelY + ROW_HEIGHT * ROW_COUNT + 16), safe.width,
-                                  static_cast<int16_t>(safe.bottom() - panelY - ROW_HEIGHT * ROW_COUNT - 16)};
-  fui::layoutText(screen.target(), noteRect, note, text, [&](const char* line, const fui::Rect rect) {
-    self.renderer.drawText(UI_10_FONT_ID, rect.x, rect.y, line);
-  });
+
+  // Actions: Reset spans the width; Save and Cancel share the row below it.
+  const int resetY = panelY + EDGE_COUNT * ROW_HEIGHT + (EDGE_COUNT - 1) * ROW_GAP + SECTION_GAP;
+  const int buttonRowY = resetY + BUTTON_HEIGHT + ROW_GAP;
+  const int halfWidth = (safe.width - BUTTON_GAP) / 2;
+  const fui::Rect buttons[] = {
+      fui::Rect{safe.x, static_cast<int16_t>(resetY), safe.width, BUTTON_HEIGHT},
+      fui::Rect{safe.x, static_cast<int16_t>(buttonRowY), static_cast<int16_t>(halfWidth), BUTTON_HEIGHT},
+      fui::Rect{static_cast<int16_t>(safe.right() - halfWidth), static_cast<int16_t>(buttonRowY),
+                static_cast<int16_t>(halfWidth), BUTTON_HEIGHT},
+  };
+  for (int i = 0; i < 3; ++i) {
+    const int row = EDGE_COUNT + i;
+    const auto& bounds = buttons[i];
+    const bool selected = self.selected == row;
+    drawControlFrame(renderer, bounds, selected, false);
+    const char* label = I18N.get(ROW_LABELS[row]);
+    const auto style = selected || row == ROW_SAVE ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const auto fitted = renderer.truncatedText(UI_10_FONT_ID, label, bounds.width - CONTROL_PADDING, style);
+    renderer.drawText(UI_10_FONT_ID,
+                      bounds.x + (bounds.width - renderer.getTextWidth(UI_10_FONT_ID, fitted.c_str(), style)) / 2,
+                      bounds.y + (BUTTON_HEIGHT - lineHeight) / 2, fitted.c_str(), true, style);
+    screen.frame().hit(bounds, ACTION_CONTROL, static_cast<int16_t>(row), fui::InputTouch);
+  }
+
+  const int noteY = buttonRowY + BUTTON_HEIGHT + SECTION_GAP;
+  const int noteBottom =
+      std::min<int>(safe.bottom(), renderer.getScreenHeight() - UITheme::getButtonHintsReserve(renderer));
+  const auto noteRect =
+      fui::Rect{safe.x, static_cast<int16_t>(noteY), safe.width, static_cast<int16_t>(std::max(0, noteBottom - noteY))};
+  if (self.saveFailed) {
+    // Pin the error under the buttons instead of centering it in the free space.
+    const auto errorRect = fui::Rect{noteRect.x, noteRect.y, noteRect.width,
+                                     static_cast<int16_t>(std::min<int>(noteRect.height, lineHeight * 3))};
+    fui::layoutText(
+        screen.target(), errorRect, tr(STR_CALIBRATION_SAVE_FAILED), text, [&](const char* line, const fui::Rect rect) {
+          const int width = renderer.getTextWidth(UI_10_FONT_ID, line, EpdFontFamily::BOLD);
+          renderer.drawText(UI_10_FONT_ID, rect.x + (rect.width - width) / 2, rect.y, line, true, EpdFontFamily::BOLD);
+        });
+  } else {
+    char upDown[48];
+    std::snprintf(upDown, sizeof(upDown), "%s/%s", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    const KeyHint selectHints[] = {
+        {upDown, tr(STR_SELECT)}, {tr(STR_CONFIRM), tr(STR_CALIBRATION_EDIT_OR_APPLY)}, {tr(STR_BACK), tr(STR_CANCEL)}};
+    const KeyHint editHints[] = {{upDown, tr(STR_CALIBRATION_ADJUST)}, {tr(STR_CONFIRM), tr(STR_DONE)}};
+    if (self.editing)
+      drawKeyLegend(renderer, noteRect, editHints, 2);
+    else
+      drawKeyLegend(renderer, noteRect, selectHints, 3);
+  }
 }
 
 void ScreenCalibrationActivity::render(RenderLock&&) {
@@ -192,5 +324,10 @@ void ScreenCalibrationActivity::render(RenderLock&&) {
   uiReady = false;
   app.render();
   uiReady = true;
+  const auto labels =
+      mappedInput.mapLabels(mappedInput.withBackArrow(editing ? tr(STR_BACK) : tr(STR_CANCEL)),
+                            editing ? tr(STR_CONFIRM) : (selected < EDGE_COUNT ? tr(STR_EDIT) : tr(STR_SELECT)),
+                            editing ? "-" : tr(STR_DIR_UP), editing ? "+" : tr(STR_DIR_DOWN));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

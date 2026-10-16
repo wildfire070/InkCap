@@ -1306,6 +1306,11 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
   spec.wordSpacing = wordSpacing;
   spec.characterSpacing = characterSpacingLevel(characterSpacing);
   spec.renderMode = renderMode;
+#if CROSSINK_SCALABLE_FONTS
+  if (spec.embeddedStyle && renderMode != EpubRenderMode::Light &&
+      publisherFonts <= static_cast<uint8_t>(PublisherFonts::All))
+    spec.publisherFonts = static_cast<PublisherFonts>(publisherFonts);
+#endif
   return spec;
 }
 

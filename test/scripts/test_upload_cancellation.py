@@ -18,7 +18,9 @@ def function(text, signature):
     return text[start:end] + '\n'
 
 
-parts = [function(source, signature) for signature in (
+validation = (ROOT / 'src/FontFileValidation.cpp').read_text()
+parts = [function(validation, 'bool FontInstaller::finishUpload(')]
+parts += [function(source, signature) for signature in (
     'bool CrossPointWebServer::dropUploadIfCancelled()',
     'void CrossPointWebServer::abortUpload(',
     'void CrossPointWebServer::abortFontUpload()',

@@ -334,6 +334,10 @@ class BaseTheme {
                                    const ReaderStatusBarContent& content,
                                    const ReaderStatusBarConfig* overrideConfig = nullptr) const;
   void drawDisplayStatusBar(const GfxRenderer& renderer, int topY, const Rect* horizontalBounds = nullptr) const;
+#ifdef SIMULATOR
+  // Smoke-test hook: origin Y of the latest drawDisplayStatusBar call (-1 if none since the last take).
+  static int takeLastDisplayStatusBarOriginY();
+#endif
   virtual void drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label) const;
   virtual void drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode = false,
                              int contentStartX = 0, int contentWidth = 0) const;

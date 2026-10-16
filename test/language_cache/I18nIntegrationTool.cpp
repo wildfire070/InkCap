@@ -33,6 +33,31 @@ int main(int argc, char** argv) {
       }
     }
     return 2;
+  } else if (std::strcmp(argv[1], "validate") == 0) {
+    if (argc < 5) return 2;
+    const char* before = tr(STR_SETTINGS_TITLE);
+    const auto result = I18N.validateSource(argv[4], code, I18n::sourceContract(), I18n::keysetContract());
+    if (result != language_cache::Result::Ok) {
+      std::fprintf(stderr, "%s\n", language_cache::resultName(result));
+      return 5;
+    }
+    if (tr(STR_SETTINGS_TITLE) != before) return 6;
+  } else if (std::strcmp(argv[1], "unchanged") == 0) {
+    if (argc < 5) return 2;
+    const char* old = tr(STR_SETTINGS_TITLE);
+    language_cache::Installed installed;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (I18N.prepare(argv[4], installed) != language_cache::Result::Unchanged) return 5;
+      if (installed.generation != generation || std::strcmp(installed.metadata.code, code) != 0 ||
+          I18N.getGeneration() != generation || tr(STR_SETTINGS_TITLE) != old)
+        return 6;
+    }
+    // Neither no-op may consume the one successful mutation allowed per boot.
+    if (argc > 5) {
+      if (I18N.prepare(argv[5], installed) != language_cache::Result::Ok) return 7;
+      if (installed.generation != generation + 1 || tr(STR_SETTINGS_TITLE) != old) return 8;
+      if (I18N.prepare(argv[5], installed) != language_cache::Result::RestartRequired) return 9;
+    }
   } else if (std::strcmp(argv[1], "install") == 0) {
     if (argc < 5) return 2;
     const char* old = tr(STR_SETTINGS_TITLE);
@@ -44,6 +69,8 @@ int main(int argc, char** argv) {
       return 5;
     }
     if (std::strcmp(old, before.c_str()) != 0 || tr(STR_SETTINGS_TITLE) != old) return 6;
+    language_cache::Installed another;
+    if (I18N.prepare(argv[4], another) != language_cache::Result::RestartRequired) return 7;
     std::printf("%s|%llu\n", installed.metadata.code, static_cast<unsigned long long>(installed.generation));
   } else if (std::strcmp(argv[1], "scan") == 0) {
     HeapObject<I18n::Catalog> catalog;

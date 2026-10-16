@@ -109,6 +109,11 @@ struct ProgressSyncResult {
   bool statsFailed = false;
   bool clippingsFailed = false;
   bool skipped = false;  // Bulk sync: the user chose Skip book for this one.
+  // Background bulk sync only: a conflict kept (parked) for the end of the run.
+  bool deferred = false;
+  bool progressFailed = false;  // the progress step itself failed
+  std::string reason;           // why it failed, for the run's summary
+  std::string title;            // the book's title, when its metadata was loaded
 };
 
 struct ReadingStatsResult {
@@ -129,6 +134,7 @@ struct ClippingResult {
   uint16_t paragraphIndex = UINT16_MAX;
   uint16_t tableSelection = UINT16_MAX;
   uint16_t wordCount = 0;
+  bool memoryError = false;
 };
 
 // A dictionary lookup retains the selected page-word range and exact byte
