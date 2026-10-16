@@ -141,6 +141,8 @@ void drawToast(const GfxRenderer& renderer, const char* msg) {
 
 void TxtReaderActivity::onEnter() {
   Activity::onEnter();
+  ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+  showOpeningFeedback();
 
   if (!txt) {
     return;
@@ -150,7 +152,7 @@ void TxtReaderActivity::onEnter() {
   COMPANION.beginSession();
 
   sdFontSystem.ensureLoaded(renderer);
-  ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+  showOpeningFeedback();
 
   // Activate reader-specific front button mapping (if configured).
   mappedInput.setReaderMode(true);
@@ -162,12 +164,14 @@ void TxtReaderActivity::onEnter() {
   auto fileName = filePath.substr(filePath.rfind('/') + 1);
   APP_STATE.openEpubPath = filePath;
   APP_STATE.saveToFile();
+  showOpeningFeedback();
   SleepCoverAssets::prepareTxt(*txt);
   const std::string coverBmpPath = Storage.exists(txt->getCoverBmpPath().c_str()) ? txt->getCoverBmpPath() : "";
   if (!skipRecentBookUpdateOnEntry) {
     RECENT_BOOKS.addOrUpdateBook(filePath, fileName, "", coverBmpPath);
   }
 
+  showOpeningFeedback();
   // Trigger first update
   requestUpdate();
 }
@@ -751,13 +755,21 @@ void TxtReaderActivity::buildPageIndex() {
   size_t offset = 0;
   const size_t fileSize = txt->getFileSize();
 
-  GUI.drawPopup(renderer, tr(STR_INDEXING));
+  openingFeedback.showIndexing(renderer);
 
+  // At most 8193 bytes, owned only by this indexing call: too large for the
+  // task stack, and no permanent C3 RAM cost after indexing finishes.
+  auto scratch = makeUniqueNoThrow<uint8_t[]>(std::min(CHUNK_SIZE, fileSize) + 1);
+  if (!scratch) {
+    LOG_ERR("TRS", "Failed to allocate TXT indexing scratch");
+    totalPages = pageOffsets.size();
+    return;
+  }
   while (offset < fileSize) {
     std::vector<std::string> tempLines;
     size_t nextOffset = offset;
 
-    if (!loadPageAtOffset(offset, tempLines, nextOffset)) {
+    if (!loadPageAtOffset(offset, tempLines, nextOffset, scratch.get())) {
       break;
     }
 
@@ -780,7 +792,8 @@ void TxtReaderActivity::buildPageIndex() {
   totalPages = pageOffsets.size();
 }
 
-bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset) {
+bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset,
+                                         uint8_t* scratch) {
   outLines.clear();
   const size_t fileSize = txt->getFileSize();
 
@@ -790,14 +803,14 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
 
   // Read a chunk from file
   size_t chunkSize = std::min(CHUNK_SIZE, fileSize - offset);
-  auto* buffer = static_cast<uint8_t*>(malloc(chunkSize + 1));
+  auto ownedBuffer = scratch ? std::unique_ptr<uint8_t[]>{} : makeUniqueNoThrow<uint8_t[]>(chunkSize + 1);
+  uint8_t* buffer = scratch ? scratch : ownedBuffer.get();
   if (!buffer) {
     LOG_ERR("TRS", "Failed to allocate %zu bytes", chunkSize);
     return false;
   }
 
   if (!txt->readContent(buffer, offset, chunkSize)) {
-    free(buffer);
     return false;
   }
   buffer[chunkSize] = '\0';
@@ -816,12 +829,11 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
     nextOffset = fileSize;
   }
 
-  free(buffer);
-
   return !outLines.empty();
 }
 
 void TxtReaderActivity::render(RenderLock&&) {
+  showOpeningFeedback();
   if (!txt) {
     return;
   }
@@ -855,7 +867,9 @@ void TxtReaderActivity::render(RenderLock&&) {
     }
   }
 
+  showOpeningFeedback();
   if (pageOffsets.empty()) {
+    openingFeedback.finish();
     renderer.clearScreen(ReaderUtils::readerBackgroundColor());
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_FILE), ReaderUtils::readerForegroundBlack(),
                               EpdFontFamily::BOLD);
@@ -872,6 +886,7 @@ void TxtReaderActivity::render(RenderLock&&) {
   size_t nextOffset;
   currentPageLines.clear();
   loadPageAtOffset(offset, currentPageLines, nextOffset);
+  showOpeningFeedback();
 
   renderer.clearScreen(ReaderUtils::readerBackgroundColor());
   renderPage();
@@ -933,6 +948,8 @@ void TxtReaderActivity::renderPage() {
   auto scope = fcm->createPrewarmScope();
   renderLines();  // scan pass — text accumulated, no drawing
   scope.endScanAndPrewarm();
+  if (showOpeningFeedback()) renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+  openingFeedback.finish();
 
   // BW rendering
   renderLines();

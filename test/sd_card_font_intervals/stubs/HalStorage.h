@@ -9,9 +9,10 @@ inline unsigned long millis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
+inline uint32_t freeHeap = 1024 * 1024, maxAllocHeap = 1024 * 1024;
 inline struct {
-  uint32_t getFreeHeap() const { return 1024 * 1024; }
-  uint32_t getMaxAllocHeap() const { return 1024 * 1024; }
+  uint32_t getFreeHeap() const { return freeHeap; }
+  uint32_t getMaxAllocHeap() const { return maxAllocHeap; }
 } ESP;
 class HalFile {
   FILE* file_ = nullptr;

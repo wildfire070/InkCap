@@ -3,6 +3,7 @@
 #include "SimulatorSmokeTest.h"
 
 #include <Epub.h>
+#include <Epub/parsers/ChapterHtmlSlimParser.h>
 #include <HalClock.h>
 #include <HalScreenCalibration.h>
 #include <HalStorage.h>
@@ -18,18 +19,21 @@
 #include <exception>
 #include <filesystem>
 
+#include "AssetDownloadSmokeTest.h"
+#include "BookFontSystem.h"
+#include "ClippingSelectionSmokeTest.h"
 #include "OpdsCatalogSmokeTest.h"
 #include "ReadingUploadSmokeTest.h"
+#include "SilentRestart.h"
 #include "StatsUploadSmokeTest.h"
+#include "util/WordSelectNavigator.h"
 #if CROSSINK_SCALABLE_FONTS
-#include <Epub/parsers/ChapterHtmlSlimParser.h>
 #include <HalScalableFont.h>
 
 #include <fstream>
 
 #include "FontInstaller.h"
 #include "TtfRenderProfileStore.h"
-#include "util/WordSelectNavigator.h"
 #endif
 #include <AppVersion.h>
 #include <ArduinoJson.h>
@@ -42,6 +46,7 @@
 #include "Ao3LibraryMetadata.h"
 #include "Ao3MarkedForLaterStore.h"
 #include "Ao3NewChaptersStore.h"
+#include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "DeviceCapabilities.h"
@@ -49,6 +54,7 @@
 #include "HyphenationPackStore.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
+#include "ReleaseNotes.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "SupportInfoExport.h"
@@ -56,6 +62,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
+#include "activities/home/AlertActivity.h"
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/home/HomeActivity.h"
@@ -63,12 +70,14 @@
 #include "activities/library/LibraryActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
 #include "activities/network/StatsUploadActivity.h"
+#include "activities/reader/BookLoadingFeedback.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/BookStatsView.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/reader/EpubReaderDrawerActivity.h"
 #include "activities/reader/EpubReaderFootnotesActivity.h"
+#include "activities/reader/EpubReaderUtils.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/reader/ReaderFontLoading.h"
 #include "activities/reader/ReaderUtils.h"
@@ -76,22 +85,30 @@
 #include "activities/reader/TxtReaderActivity.h"
 #include "activities/reader/XtcReaderActivity.h"
 #include "activities/settings/AboutActivity.h"
+#include "activities/settings/AssetDownloadActivity.h"
 #include "activities/settings/FontSelectionActivity.h"
 #include "activities/settings/FrontlightTimePickerActivity.h"
 #include "activities/settings/HyphenationManagerActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
 #include "activities/settings/QuickActionsActivity.h"
+#include "activities/settings/ReleaseNotesActivity.h"
 #include "activities/settings/ScreenCalibrationActivity.h"
 #include "activities/settings/SettingsActivity.h"
 #include "activities/settings/StatusBarSettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/FrontlightPanelActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/OptionSelectionActivity.h"
 #include "components/CompactHeader.h"
 #include "components/HeaderDate.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "simulator/SimulatorHomeKeyInput.h"
+#include "sync/BookSyncFile.h"
+#include "sync/SyncIds.h"
+#include "sync/SyncParked.h"
+#include "sync/SyncPending.h"
+#include "sync/SyncState.h"
 #include "util/BookMetadataUtils.h"
 #include "util/BookMoveUtils.h"
 #include "util/ButtonShortcutController.h"
@@ -105,6 +122,26 @@ extern MappedInputManager mappedInputManager;
 // Use a detached reader so these boundary checks cannot race its render task.
 struct EpubReaderCompletionSmokeTest {
   static std::optional<uint32_t> statusAnchor;
+#if !CROSSINK_SCALABLE_FONTS
+  static bool fontReload(EpubReaderActivity& reader) {
+    RenderLock lock;
+    if (!reader.section || reader.section->isBuilding()) return false;
+    const int spine = reader.currentSpineIndex;
+    const auto anchor = reader.section->getVisibleTextOffsetForPage(reader.section->currentPage);
+    // Model a font registration removed by a dictionary/reload handoff. The
+    // reader must reconcile its live section before attempting any prewarm.
+    reader.activeSectionFontId = std::numeric_limits<int>::min();
+    reader.render(std::move(lock));
+    if (!reader.section || reader.currentSpineIndex != spine ||
+        reader.activeSectionFontId != SETTINGS.getReaderFontId())
+      return false;
+    const auto page = reader.section->currentPage;
+    const auto start = reader.section->getVisibleTextOffsetForPage(page);
+    const auto next =
+        page + 1 < reader.section->pageCount ? reader.section->getVisibleTextOffsetForPage(page + 1) : std::nullopt;
+    return !anchor || (start && *start <= *anchor && (!next || *next > *anchor));
+  }
+#endif
   static bool openStatusSettings(EpubReaderActivity& reader) {
     Section* original = nullptr;
     const bool firstEdit = !statusAnchor;
@@ -597,6 +634,72 @@ struct ScreenCalibrationSmokeTest {
     LOG_INF("SMOKE", "Calibration max32 headers/back targets/list geometry: %s", valid ? "passed" : "failed");
     return valid;
   }
+  // Every screen must draw the clock/battery bar on the reader's calibrated row, whichever header rect it passes.
+  static bool statusBarOrigin(RenderLock& lock) {
+    const auto original = renderer.getViewableInsets();
+    const auto orientation = renderer.getOrientation();
+    const auto theme = SETTINGS.uiTheme;
+    bool valid = true;
+    for (const auto& insets : {ScreenInsets{{{15, 6, 3, 3}}}, ScreenInsets{{{4, 3, 3, 3}}}}) {
+      renderer.setViewableInsets(insets);
+      for (const auto variant :
+           {CrossPointSettings::CLASSIC, CrossPointSettings::LYRA, CrossPointSettings::ROUNDEDRAFF}) {
+        SETTINGS.uiTheme = variant;
+        UITheme::getInstance().reload();
+        for (const auto rotation :
+             {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise, GfxRenderer::PortraitInverted}) {
+          renderer.setOrientation(rotation);
+          const int expected = UITheme::getTopStatusBarY(renderer);
+          const auto check = [&](const char* screen, Activity& activity) {
+            renderer.setOrientation(rotation);  // activity exits restore the saved orientation
+            BaseTheme::takeLastDisplayStatusBarOriginY();
+            activity.onEnter();
+            activity.render(std::move(lock));
+            const int actual = BaseTheme::takeLastDisplayStatusBarOriginY();
+            activity.onExit();
+            LOG_INF("SMOKE", "Status bar origin screen=%s theme=%d rotation=%d top=%d actual=%d expected=%d", screen,
+                    static_cast<int>(variant), static_cast<int>(rotation), insets.edges[0], actual, expected);
+            if (actual != expected) {
+              LOG_ERR("SMOKE", "Status bar origin mismatch on %s: %d, reader row is %d", screen, actual, expected);
+              valid = false;
+            }
+          };
+          HomeActivity home(renderer, mappedInputManager);
+          check("Home", home);
+          SettingsActivity settings(renderer, mappedInputManager);
+          check("Settings", settings);
+          FileBrowserActivity files(renderer, mappedInputManager, "/books");
+          check("FileBrowser", files);
+          AlertActivity alert(renderer, mappedInputManager);
+          check("Alert", alert);
+          OptionSelectionActivity options(renderer, mappedInputManager, "Options", StrId::STR_SCREEN_CALIBRATION,
+                                          {"A", "B"}, 0);
+          check("OptionSelection", options);
+          if (rotation == GfxRenderer::PortraitInverted) {
+            // Headers pushed below the top hint gutter keep the bar on their own row.
+            renderer.setOrientation(rotation);
+            const Rect header = TouchHeaderBackButton::headerRect(
+                renderer, mappedInputManager, UITheme::getInstance().getScreenSafeArea(renderer, true, false));
+            BaseTheme::takeLastDisplayStatusBarOriginY();
+            GUI.drawHeader(renderer, header, "");
+            const int actual = BaseTheme::takeLastDisplayStatusBarOriginY();
+            const int gutterExpected = header.y + expected - UITheme::getHeaderRect(renderer, 0).y;
+            if (actual != gutterExpected || (UITheme::getTopStatusBarInset(renderer) >= 0 && actual < header.y)) {
+              LOG_ERR("SMOKE", "Status bar origin below hint gutter: %d, expected %d (header %d)", actual,
+                      gutterExpected, header.y);
+              valid = false;
+            }
+          }
+        }
+      }
+    }
+    renderer.setViewableInsets(original);
+    renderer.setOrientation(orientation);
+    SETTINGS.uiTheme = theme;
+    UITheme::getInstance().reload();
+    LOG_INF("SMOKE", "Calibration status bar origin consistency: %s", valid ? "passed" : "failed");
+    return valid;
+  }
   static bool keyboardAndHints(RenderLock& lock, const StatusBarFeatureSmokeTest::Capture& capture) {
     const auto original = renderer.getViewableInsets();
     const auto orientation = renderer.getOrientation();
@@ -814,8 +917,11 @@ enum class SmokeStep : uint8_t {
   SyncServerCaptureBottom,
   SyncServerCaptureUnsupported,
   SyncServerCaptureStats,
+  SyncServerCaptureFileTransfer,
   StatsUploadReturn,
   StatsUploadEmptyDone,
+  KeptPositionDone,
+  MatchingChangeDone,
   RecentLibrary,
   Settings,
   SideButtons,
@@ -854,8 +960,9 @@ class HomeReaderSmokeActivity final : public Activity {
 };
 
 // Stands in for a reader hosting Reading Stats: its result handler must run
-// before Sync All replaces the stack, even when it pushes another screen.
+// before the sync replaces the stack, even when it pushes another screen.
 bool statsParentHandlerRan = false;
+bool secondSyncStarted = false;
 
 class StatsParentSmokeActivity final : public Activity {
  public:
@@ -949,6 +1056,15 @@ class NavigationPickerSmokeActivity final : public Activity {
   }
 };
 
+// While armed, network reboot requests are recorded here instead of relaunching the simulator,
+// so a scenario can check the boot target and keep driving the same process.
+struct CapturedNetworkRestart {
+  bool armed = false;
+  int count = 0;
+  uint32_t target = 0;
+  uint32_t payload = 0;
+} capturedNetworkRestart;
+
 class SimulatorSmokeTest {
  public:
   void tick() {
@@ -1040,9 +1156,20 @@ class SimulatorSmokeTest {
   unsigned hyphenationPhase = 0;
   unsigned aboutPhase = 0;
   unsigned aboutPass = 0;
+  unsigned releaseNotesPhase = 0;
+  unsigned releaseNotesWait = 0;
+  unsigned releaseNotesPass = 0;
+  int releaseNotesPortraitPages = 0;
+  int releaseNotesPortraitWidth = 0;
+  std::vector<uint8_t> releaseNotesHintStrip;
   uint32_t aboutSnapshotUptime = 0;
   unsigned homeThemePass = 0;
   unsigned calibrationPhase = 0;
+  unsigned receiveFolderPhase = 0;
+  unsigned receiveFolderPass = 0;
+  bool receiveFolderReturned = false;
+  bool receiveFolderCancelled = false;
+  std::string receiveFolderResult;
   unsigned calibrationPickerPass = 0;
   int calibrationPickerResult = -1;
   ScreenInsets calibrationExpected;
@@ -2252,6 +2379,20 @@ class SimulatorSmokeTest {
     LOG_INF("SMOKE", "Archive/Restore move contract passed");
   }
 
+  // Keeps remote-progress.json (first.epub at page 7 of 10) for `bookPath`,
+  // as a pull that could not apply it would.
+  static bool parkRemoteFixture(const char* bookPath, const float scale = 1.0f) {
+    JsonDocument remote;
+    if (deserializeJson(remote, Storage.readFile("/remote-progress.json").c_str())) return false;
+    KOReaderProgressChange parked;
+    parked.document = BookSyncFile::documentId(bookPath);
+    parked.percentage = remote["percentage"].as<float>() * scale;
+    parked.progress = remote["progress"].as<const char*>();
+    parked.device = "Phone";
+    parked.timestamp = 2;
+    return !parked.document.empty() && SyncParked::park(parked);
+  }
+
   [[noreturn]] static void fail(const char* message) {
     LOG_ERR("SMOKE", "%s", message);
     std::_Exit(2);
@@ -2837,25 +2978,32 @@ class SimulatorSmokeTest {
     queueStep("Carousel return cache", SmokeStep::CarouselHome, 8);
   }
 
-#if CROSSINK_SCALABLE_FONTS
-  void verifyBlockFontSizes(const int readerFontId) {
+  void verifyBlockFontSizes(const int readerFontId, const char* captureName = "block-font-sizes") {
     RenderLock lock;
     const int baseFont = renderer.getFontIdForSize(readerFontId, 12);
-    if (renderer.getFontPointSize(baseFont) != 12) fail("Missing scalable body size");
+    if (renderer.getFontPointSize(baseFont) != 12) fail("Missing body size");
     for (const uint8_t points : {8, 12, 24, 32, 44}) {
-      if (renderer.getFontPointSize(renderer.getFontIdForSize(baseFont, points)) != points)
+#if CROSSINK_SCALABLE_FONTS
+      if (!renderer.isSdCardFont(baseFont) &&
+          renderer.getFontPointSize(renderer.getFontIdForSize(baseFont, points)) != points)
         fail("Missing scalable content size %u", unsigned(points));
+#endif
+      const int chosen = renderer.getFontIdForSize(baseFont, points);
+      if (!renderer.getFontPointSize(chosen)) fail("Bitmap size missing");
     }
     const std::string path = "/block-font-smoke.xhtml";
     if (!Storage.writeFile(path.c_str(),
                            "<html><body><h1>Heading Heading Heading Heading Heading</h1>"
-                           "<p style=\"font-size:150%\">Large Large Large</p><p>Body Body Body</p></body></html>"))
+                           "<p style=\"font-size:150%\">Large Large Large</p><p>Body Body Body</p>"
+                           "<p>Body <span style=\"font-size:150%\">Large</span> Body</p>"
+                           "<p style=\"font-size:50%\">Small Small Small</p></body></html>"))
       fail("Cannot write block font fixture");
     Epub book("/block-font-smoke.epub", "/.crosspoint");
     CssParser css("/.crosspoint/block-font-smoke");
     unsigned checked = 0;
+    const int height = std::min(600, renderer.getScreenHeight() - 40);
     ChapterHtmlSlimParser parser(
-        book, path, renderer, baseFont, 1.0f, false, false, 1, 320, 600, false, false, false, 0,
+        book, path, renderer, baseFont, 1.0f, false, false, 1, 320, height, false, false, false, 0,
         [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
           FsFile file;
           if (!Storage.openFileForWrite("SMOKE", "/block-font-page", file) || !page->serialize(file))
@@ -2872,17 +3020,36 @@ class SimulatorSmokeTest {
             const auto& block = *line.getBlock();
             if (!block.wordCount()) continue;
             const char* word = block.wordText(0);
-            const int expected = std::strcmp(word, "Heading") == 0 ? 24 : std::strcmp(word, "Large") == 0 ? 18 : 12;
+            const int requested = std::strcmp(word, "Heading") == 0 ? 24
+                                  : std::strcmp(word, "Large") == 0 ? 18
+                                  : std::strcmp(word, "Small") == 0 ? 8
+                                                                    : 12;
+            const int expected = renderer.getFontPointSize(renderer.getFontIdForSize(baseFont, requested));
+            if (requested > 12 && expected <= 12) fail("Heading/CSS enlargement did not apply");
             const int actualFont = block.resolvedFontId(renderer, baseFont);
             if (block.getBlockStyle().fontSize != expected || renderer.getFontPointSize(actualFont) != expected ||
-                block.getBlockStyle().lineHeight != renderer.getLineHeight(actualFont))
+                block.getBlockStyle().lineHeight < renderer.getLineHeight(actualFont))
               fail("Sized page metrics mismatch: %s", word);
-            if (line.yPos < bottom || line.yPos + block.getBlockStyle().lineHeight > 600)
+            for (uint16_t i = 0; i < block.wordCount(); ++i) {
+              const char* text = block.wordText(i);
+              const int wanted = std::strcmp(text, "Heading") == 0 ? 24
+                                 : std::strcmp(text, "Large") == 0 ? 18
+                                 : std::strcmp(text, "Small") == 0 ? 8
+                                                                   : 12;
+              const int chosen = block.wordFontId(renderer, baseFont, i);
+              if (renderer.getFontPointSize(chosen) !=
+                  renderer.getFontPointSize(renderer.getFontIdForSize(baseFont, wanted)))
+                fail("Inline bitmap size was lost in page cache");
+              if (block.getBlockStyle().lineHeight < renderer.getLineHeight(chosen)) fail("Inline size height clipped");
+            }
+            if (line.yPos < bottom || line.yPos + block.getBlockStyle().lineHeight > height)
               fail("Sized page lines overlap or overflow");
             bottom = line.yPos + block.getBlockStyle().lineHeight;
             ++checked;
           }
-          restored->renderText(renderer, baseFont, 0, 0);
+          renderer.clearScreen();
+          restored->renderText(renderer, baseFont, 20, 20);
+          captureStatusBarScreen(captureName);
         },
         true, "", "", 0, {}, nullptr, &css);
     if (!parser.parseAndBuildPages() || checked < 3) fail("Block font parser smoke failed");
@@ -2902,7 +3069,309 @@ class SimulatorSmokeTest {
     Storage.remove("/block-font-page");
     LOG_INF("SMOKE", "Block font sizes: layout, cache, rendering and selection passed");
   }
+
+#if CROSSINK_SCALABLE_FONTS
+  void verifyPublisherFonts() {
+    RenderLock lock;
+    const auto savedMode = SETTINGS.publisherFonts;
+    if (savedMode != static_cast<uint8_t>(PublisherFonts::Accents))
+      fail("Fresh settings did not default to Ignore Body Font");
+    Epub book(std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK"), "/.crosspoint");
+    if (!book.load()) fail("Cannot open publisher-font fixture");
+    const auto settingsPath = book.getCachePath() + "/reader_settings.bin";
+    uint8_t record[160]{};
+    record[0] = 13;
+    record[1] = 1;
+    record[155] = 32;  // Publisher-font override bit 21.
+    record[159] = 2;
+    auto writeSettingsFixture = [&](size_t bytes) {
+      auto file = Storage.open(settingsPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+      if (!file || file.write(record, bytes) != bytes || !file.sync()) fail("Publisher settings fixture write failed");
+      file.close();
+    };
+    writeSettingsFixture(sizeof(record));
+    if (EpubReaderActivity::readBookReaderSettings(book).readerSettings.publisherFonts != 2 ||
+        !EpubReaderActivity::saveBookRenderMode(book.getPath(), 0) ||
+        EpubReaderActivity::readBookReaderSettings(book).readerSettings.publisherFonts != 2)
+      fail("Publisher book setting did not survive reload/save");
+    record[0] = 12;
+    record[155] = 16;  // Existing character-spacing override bit 20.
+    record[158] = 3;
+    SETTINGS.publisherFonts = 1;
+    writeSettingsFixture(sizeof(record) - 1);
+    const auto legacy = EpubReaderActivity::readBookReaderSettings(book);
+    if (legacy.readerSettings.characterSpacing != 3 || legacy.readerSettings.publisherFonts != 1 ||
+        (legacy.readerSettingsOverrideMask & (1U << 21)))
+      fail("Publisher mode broke version 12 inheritance");
+    Storage.remove(settingsPath.c_str());
+    const int readerFont = sdFontSystem.ensureBuiltInReaderFont(renderer);
+    for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise}) {
+      renderer.setOrientation(orientation);
+      for (uint8_t mode = 0; mode < 3; ++mode) {
+        SETTINGS.publisherFonts = mode;
+        bookFontSystem.close();
+        for (unsigned i = 0; i < 32; ++i)
+          Storage.remove((book.getCachePath() + "/publisher-font-" + std::to_string(i)).c_str());
+        bookFontSystem.ensure(book, renderer, mode != 0);
+        if (bookFontSystem.requestedFaces()) fail("Opening book eagerly requested fonts");
+        auto spec = SETTINGS.readerRenderSpec(renderer.getScreenWidth() - 40, renderer.getScreenHeight() - 40);
+        spec.publisherFontSignature = mode ? bookFontSystem.signature() : 0;
+        Section section(book, 0, renderer, "-publisher-smoke");
+        if (!section.createSectionFile(spec) || !section.loadSectionFile(spec)) fail("Publisher layout/cache failed");
+        bool publisherWord = false, readerWord = false;
+        for (uint16_t index = 0; index < section.pageCount; ++index) {
+          section.currentPage = index;
+          auto page = section.loadPageFromSectionFile();
+          if (!page) fail("Publisher page cache failed");
+          for (const auto& element : page->elements) {
+            if (element->getTag() != TAG_PageLine) continue;
+            const auto& text = *static_cast<const PageLine&>(*element).getBlock();
+            for (uint16_t word = 0; word < text.wordCount(); ++word) {
+              const int id = text.wordFontId(renderer, readerFont, word);
+              const uint8_t points = renderer.getFontPointSize(id);
+              const bool isReader = id == renderer.getFontIdForSize(readerFont, points);
+              publisherWord |= !isReader;
+              readerWord |= isReader;
+            }
+          }
+          renderer.setRenderMode(GfxRenderer::BW);
+          renderer.clearScreen();
+          page->renderText(renderer, readerFont, 20, 20);
+          char capture[72];
+          std::snprintf(capture, sizeof(capture), "publisher-mode-%u-orientation-%u-page-%u", unsigned(mode),
+                        unsigned(orientation), unsigned(index));
+          captureStatusBarScreen(capture);
+        }
+        if (mode == 0 && (publisherWord || !readerWord)) fail("Off changed the reader font");
+        if (mode == 1 && (!publisherWord || !readerWord)) fail("Ignore Body Font did not retain the reader body font");
+        if (mode == 2 && (!publisherWord || readerWord)) fail("All Text did not use publisher fonts");
+        if (mode == 1 && Storage.exists((book.getCachePath() + "/publisher-font-0").c_str()))
+          fail("Ignore Body Font extracted the ignored body face");
+        const uint32_t requested = bookFontSystem.requestedFaces();
+        bookFontSystem.close();
+        bookFontSystem.ensure(book, renderer, mode != 0);
+        if (bookFontSystem.requestedFaces() || !section.loadSectionFile(spec) ||
+            bookFontSystem.requestedFaces() != requested)
+          fail("Publisher cache did not restore its demanded families");
+        auto changed = spec;
+        changed.publisherFontSignature ^= 1;
+        if (section.loadSectionFile(changed)) fail("Publisher font identity did not invalidate section cache");
+      }
+    }
+    bookFontSystem.close();
+    SETTINGS.publisherFonts = 1;
+    for (unsigned i = 0; i < 32; ++i)
+      Storage.remove((book.getCachePath() + "/publisher-font-" + std::to_string(i)).c_str());
+    if (!EpubReaderActivity::drawCurrentPageToBuffer(book.getPath(), renderer))
+      fail("Publisher sleep-page reconstruction failed");
+    bool extracted = false;
+    for (unsigned i = 1; i < 32; ++i)
+      extracted |= Storage.exists((book.getCachePath() + "/publisher-font-" + std::to_string(i)).c_str());
+    if (!extracted || bookFontSystem.signature() || bookFontSystem.requestedFaces())
+      fail("Sleep reconstruction did not load and release publisher fonts");
+    const auto sleepPageHash = hashBytes(renderer.getFrameBuffer(), renderer.getBufferSize());
+    if (!EpubReaderActivity::drawCurrentPageToBuffer(book.getPath(), renderer) ||
+        sleepPageHash != hashBytes(renderer.getFrameBuffer(), renderer.getBufferSize()))
+      fail("Publisher sleep page changed when reopening its cache");
+    const auto globalRows = buildReaderSettingsParentList(getSettingsList());
+    if (std::any_of(globalRows.begin(), globalRows.end(),
+                    [](const auto& row) { return row.valuePtr == &CrossPointSettings::publisherFonts; }))
+      fail("Publisher fonts remained in the global Reader parent menu");
+    const auto fontRows = buildReaderFontSettingsList(getSettingsList());
+    const auto publisherRow = std::find_if(fontRows.begin(), fontRows.end(), [](const auto& row) {
+      return row.valuePtr == &CrossPointSettings::publisherFonts;
+    });
+    if (publisherRow == fontRows.end()) fail("Global Publisher fonts setting is missing from Font Options");
+    const int publisherIndex = static_cast<int>(std::distance(fontRows.begin(), publisherRow)) + 1;
+    const std::string savedFamily = SETTINGS.sdFontFamilyName;
+    lock.unlock();  // Opening Font Options takes its own render lock.
+    for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise}) {
+      for (const bool useTtf : {false, true}) {
+        const char* family = std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_FAMILY");
+        if (useTtf && !family) continue;
+        std::snprintf(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), "%s", useTtf ? family : "");
+        renderer.setOrientation(orientation);
+        SETTINGS.publisherFonts = 1;
+        SettingsActivity globalSettings(renderer, mappedInputManager);
+        globalSettings.onEnter();
+        const auto release = [&](MappedInputManager::Button button) {
+          mappedInputManager.simulatorInjectRelease(button);
+          globalSettings.loop();
+          mappedInputManager.simulatorClearInputFrame();
+        };
+        release(MappedInputManager::Button::Confirm);  // Display tab to Reader tab.
+        release(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+        release(MappedInputManager::Button::Confirm);  // Reader > Font Options.
+        RenderLock globalLock;
+        globalSettings.render(std::move(globalLock));
+        const int expectedIndex = publisherIndex + (useTtf ? 1 : 0);
+        for (int i = 1; i < expectedIndex; ++i)
+          release(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+        if (globalSettings.simulatorCategoryIndex() != 1 || globalSettings.simulatorSelectedIndex() != expectedIndex)
+          fail("Global Publisher fonts row was not reachable in Font Options");
+        globalSettings.render(std::move(globalLock));
+        char globalCapture[72];
+        std::snprintf(globalCapture, sizeof(globalCapture), "publisher-global-ttf-%u-orientation-%u", unsigned(useTtf),
+                      unsigned(orientation));
+        captureStatusBarScreen(globalCapture);
+        release(MappedInputManager::Button::Confirm);
+        if (!globalSettings.simulatorOptionPopupActive()) fail("Global Publisher fonts picker did not open");
+        globalSettings.render(std::move(globalLock));
+        std::snprintf(globalCapture, sizeof(globalCapture), "publisher-global-options-ttf-%u-orientation-%u",
+                      unsigned(useTtf), unsigned(orientation));
+        captureStatusBarScreen(globalCapture);
+        release(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+        mappedInputManager.simulatorInjectPress(MappedInputManager::Button::Confirm);
+        globalSettings.loop();
+        mappedInputManager.simulatorClearInputFrame();
+        release(MappedInputManager::Button::Confirm);
+        if (SETTINGS.publisherFonts != 2) fail("Global Publisher fonts picker did not apply All Text");
+        globalSettings.onExit();
+      }
+      std::snprintf(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), "%s", savedFamily.c_str());
+      RenderLock menuLock;
+      renderer.setOrientation(orientation);
+      for (uint8_t mode = 0; mode < 3; ++mode) {
+        SETTINGS.publisherFonts = mode;
+        ReaderDrawerState state;
+        state.tab = ReaderDrawerTab::Font;
+        const auto catalog = makeReaderDrawerCatalog({});
+        const auto& rows = catalog[static_cast<size_t>(state.tab)];
+        state.selectedIndex = 1;
+        state.rootTopIndex[static_cast<size_t>(state.tab)] = 0;
+        if (rows.items[state.selectedIndex] != ReaderDrawerCatalogItem::PublisherFonts)
+          fail("Publisher menu row missing");
+        EpubReaderDrawerActivity editor(renderer, mappedInputManager, {}, nullptr, 0.0f, 0, 0, false, false, false,
+                                        false, false, false, false, false, true, true, 0, 0, 5, false, nullptr, nullptr,
+                                        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, false,
+                                        nullptr, nullptr, state);
+        editor.onEnter();
+        renderer.clearScreen();
+        editor.render(std::move(menuLock));
+        char capture[64];
+        std::snprintf(capture, sizeof(capture), "publisher-menu-%u-orientation-%u", unsigned(mode),
+                      unsigned(orientation));
+        captureStatusBarScreen(capture);
+        mappedInputManager.simulatorInjectRelease(MappedInputManager::Button::Confirm);
+        editor.loop();
+        mappedInputManager.simulatorClearInputFrame();
+        editor.render(std::move(menuLock));
+        if (editor.simulatorState().pane != ReaderDrawerPane::EnumOptions ||
+            editor.simulatorState().selectedIndex != mode)
+          fail("Publisher menu did not open the current choice");
+        std::snprintf(capture, sizeof(capture), "publisher-options-%u-orientation-%u", unsigned(mode),
+                      unsigned(orientation));
+        captureStatusBarScreen(capture);
+        editor.onExit();
+      }
+    }
+    bookFontSystem.close();
+    if (renderer.resolveBookFont(readerFont, CssParser::hashFontFamily("Publisher Body")) != readerFont)
+      fail("Publisher fonts survived close");
+    SETTINGS.publisherFonts = savedMode;
+    renderer.setOrientation(GfxRenderer::Portrait);
+    LOG_INF("SMOKE", "Publisher fonts: modes, orientations, cache identity and cleanup passed");
+  }
 #endif
+
+  void verifyBitmapBook(const int fontId, const char* label) {
+    if (!std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_SIZE_BOOK")) return;
+    RenderLock lock;
+    Epub book(std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK"), "/.crosspoint");
+    if (!book.load()) fail("Cannot load supplied font-size book");
+    unsigned dropCaps = 0, pages = 0;
+    for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise}) {
+      renderer.setOrientation(orientation);
+      auto spec = SETTINGS.readerRenderSpec(renderer.getScreenWidth() - 40, renderer.getScreenHeight() - 40);
+      spec.fontId = fontId;
+      spec.embeddedStyle = true;
+      spec.paragraphAlignment = CrossPointSettings::BOOK_STYLE;
+      for (int spine = 0; spine < book.getSpineItemsCount(); ++spine) {
+        Section section(book, spine, renderer, "-font-size-smoke");
+        if (!section.loadSectionFile(spec) && (!section.createSectionFile(spec) || !section.loadSectionFile(spec)))
+          fail("Supplied book section failed: %d", spine);
+        for (uint16_t index = 0; index < section.pageCount; ++index) {
+          section.currentPage = index;
+          auto page = section.loadPageFromSectionFile();
+          if (!page) fail("Supplied book page cache failed: %d/%u", spine, unsigned(index));
+          for (const auto& element : page->elements) {
+            if (element->getTag() == TAG_PageDropCap) {
+              const auto& cap = static_cast<const PageDropCap&>(*element);
+              if (std::strcmp(cap.getText(), "R")) fail("Opening drop cap lost its letter");
+              ++dropCaps;
+            }
+          }
+          renderer.setRenderMode(GfxRenderer::BW);
+          renderer.clearScreen();
+          if (auto* cache = renderer.getFontCacheManager()) {
+            FontCacheManager::PrewarmScope scope(*cache, FontCacheManager::PreparationPolicy::Normal);
+            page->renderText(renderer, fontId, 20, 20);
+            if (!scope.endScanAndPrewarm()) fail("Supplied book page prewarm failed");
+            page->renderText(renderer, fontId, 20, 20);
+          } else {
+            page->renderText(renderer, fontId, 20, 20);
+          }
+          char name[96];
+          std::snprintf(name, sizeof(name), "publisher-%s-o%u-s%d-p%u", label, unsigned(orientation), spine,
+                        unsigned(index));
+          captureStatusBarScreen(name);
+          ++pages;
+        }
+      }
+    }
+    if (dropCaps != 2) fail("Supplied book opening drop cap missing after layout/cache");
+    LOG_INF("SMOKE", "Supplied book %s: %u pages rendered, opening drop cap preserved in both orientations", label,
+            pages);
+  }
+
+  void verifyBitmapFontSizes() {
+    const auto orientation = renderer.getOrientation();
+#if CROSSINK_SCALABLE_FONTS
+    verifyBlockFontSizes(sdFontSystem.ensureBuiltInReaderFont(renderer), "s3-scalable");
+#else
+    for (const int base : {BITTER_12_FONT_ID, LEXENDDECA_12_FONT_ID}) {
+      if (renderer.getFontPointSize(base) != 12) fail("Bitmap body size missing");
+      for (const auto pair : {std::pair<uint8_t, uint8_t>{8, 10}, {11, 10}, {13, 14}, {15, 16}, {44, 16}}) {
+        const int chosen = renderer.getFontIdForSize(base, pair.first);
+        if (renderer.getFontPointSize(chosen) != pair.second) fail("Bitmap size snapping failed");
+      }
+      renderer.setOrientation(GfxRenderer::Portrait);
+      verifyBlockFontSizes(base, base == BITTER_12_FONT_ID ? "c3-bitter" : "c3-lexend");
+      renderer.setOrientation(GfxRenderer::LandscapeClockwise);
+      verifyBlockFontSizes(base, base == BITTER_12_FONT_ID ? "c3-bitter-landscape" : "c3-lexend-landscape");
+      verifyBitmapBook(base, base == BITTER_12_FONT_ID ? "bitter12" : "lexend12");
+      verifyBitmapBook(renderer.getFontIdForSize(base, 16), base == BITTER_12_FONT_ID ? "bitter16" : "lexend16");
+      renderer.setOrientation(orientation);
+    }
+#endif
+    if (renderer.getFontPointSize(UI_12_FONT_ID) != 0 || renderer.getFontIdForSize(UI_12_FONT_ID, 24) != UI_12_FONT_ID)
+      fail("Reader sizing changed UI fonts");
+    if (const char* family = std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_FAMILY")) {
+      std::snprintf(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), "%s", family);
+      SETTINGS.readerFontPointSize = 12;
+      sdFontSystem.ensureLoaded(renderer);
+      const int original = SETTINGS.getReaderFontId();
+      if (!renderer.isSdCardFont(original)) fail("Bitmap SD family not loaded");
+      renderer.setOrientation(GfxRenderer::Portrait);
+      verifyBlockFontSizes(original, "bitmap-sd");
+      renderer.setOrientation(GfxRenderer::LandscapeClockwise);
+      verifyBlockFontSizes(original, "bitmap-sd-landscape");
+      renderer.setOrientation(orientation);
+      sdFontSystem.releaseLoadedFont(renderer);
+      sdFontSystem.ensureLoaded(renderer);
+      if (SETTINGS.getReaderFontId() != original) fail("Bitmap SD size identity changed on reload");
+      verifyBlockFontSizes(original, "bitmap-sd-reloaded");
+      if (renderer.getFontPointSize(renderer.getFontIdForSize(original, 8)) >= 12)
+        fail("Bitmap SD shrinking unavailable");
+      const auto dictionary = sdFontSystem.activateDictionaryFont(renderer, family, 8);
+      if (!dictionary.usingDictionaryFont || dictionary.fontId == original) fail("Bitmap dictionary font did not swap");
+      if (sdFontSystem.restoreReaderFont(renderer) != original) fail("Bitmap dictionary return lost content sizes");
+      verifyBlockFontSizes(original, "bitmap-sd-dictionary-return");
+      verifyBitmapBook(original, "sd12");
+    }
+    renderer.setOrientation(orientation);
+    LOG_INF("SMOKE", "Bitmap size snapping, page cache and selection passed");
+  }
 
   void tickFileBrowserSyncReturn() {
 #if CROSSINK_APP_CAP_TOUCH
@@ -3342,36 +3811,45 @@ class SimulatorSmokeTest {
         inputScript.push_back(render("Hyphenation language list", 5));
         break;
       }
-      case 1:
-        if (!manager || !manager->simulatorOptionDisabled(0)) fail("Built-in English is not protected");
+      case 1: {
+        if (!manager || manager->simulatorOptionDisabled(0)) fail("Built-in English is crossed out");
+        const char* expected = stage ? tr(STR_INSTALLED) : tr(STR_HYPHENATION_INSTALL_ACTION);
+        if (!std::strstr(manager->simulatorLabel(2), expected) ||
+            std::strstr(manager->simulatorLabel(2), tr(STR_ASSET_USE)))
+          fail("Hyphenation row status does not match pack state");
         {
           RenderLock lock;
           captureStatusBarScreen(stage ? "hyphenation-installed" : "hyphenation-sd");
         }
+        // A pack with an SD source installs directly, with no actions menu.
+        if (!stage) setenv("CROSSINK_HYPHENATION_SMOKE_STAGE", "1", 1);
         addTap(MappedInputManager::Button::Confirm);
-        inputScript.push_back(render("Hyphenation actions", 4));
+        inputScript.push_back(render(stage ? "Hyphenation actions" : "Install hyphenation from SD", stage ? 4 : 10));
         break;
+      }
       case 2:
-        if (!manager || manager->simulatorOptionDisabled(1) || manager->simulatorOptionDisabled(2) != (stage == 0))
-          fail("Hyphenation install/delete availability mismatch");
+        if (!stage) fail("Hyphenation install from SD did not restart");
+        if (!manager || std::strcmp(manager->simulatorOptionLabel(0), tr(STR_UPDATE)) ||
+            std::strcmp(manager->simulatorOptionLabel(1), tr(STR_DELETE)) ||
+            std::strcmp(manager->simulatorOptionLabel(2), tr(STR_CANCEL)))
+          fail("Installed pack does not offer Update, Delete and Cancel");
         {
           RenderLock lock;
-          captureStatusBarScreen(stage ? "hyphenation-remove" : "hyphenation-install");
+          captureStatusBarScreen("hyphenation-remove");
         }
         addTap(MappedInputManager::Button::Back);
-        inputScript.push_back(render("Cancel hyphenation change", 4));
+        inputScript.push_back(render("Cancel hyphenation actions", 4));
         break;
       case 3:
-        if (HyphenationPackStore::isInstalled("de") != (stage == 1)) fail("Cancel changed installed hyphenation");
+        if (!HyphenationPackStore::isInstalled("de")) fail("Cancel changed installed hyphenation");
         addTap(MappedInputManager::Button::Confirm);
         inputScript.push_back(render("Reopen hyphenation actions", 4));
         break;
       case 4:
-        setenv("CROSSINK_HYPHENATION_SMOKE_STAGE", stage ? "2" : "1", 1);
-        addTap(MappedInputManager::Button::Down);
-        if (stage == 1) addTap(MappedInputManager::Button::Down);
+        setenv("CROSSINK_HYPHENATION_SMOKE_STAGE", "2", 1);
+        addTap(MappedInputManager::Button::Up);  // Cancel -> Delete
         addTap(MappedInputManager::Button::Confirm);
-        inputScript.push_back(render("Apply hyphenation change", 10));
+        inputScript.push_back(render("Delete hyphenation pack", 10));
         break;
       default:
         fail("Hyphenation operation did not restart");
@@ -3624,6 +4102,8 @@ class SimulatorSmokeTest {
         if (!ScreenCalibrationSmokeTest::geometry(
                 lock, [this](const std::string& name) { captureStatusBarScreen(name.c_str()); }))
           fail("Calibration maximum headers, status, touch targets, or list bounds failed");
+        if (!ScreenCalibrationSmokeTest::statusBarOrigin(lock))
+          fail("Calibration status bar origin differs between screens");
         if (!ScreenCalibrationSmokeTest::keyboardAndHints(
                 lock, [this](const std::string& name) { captureStatusBarScreen(name.c_str()); }))
           fail("Calibration hints, keyboard edge keys, or font picker resume failed");
@@ -3763,6 +4243,476 @@ class SimulatorSmokeTest {
         LOG_INF("SMOKE", "Simulator smoke test passed: calibration and max32 Classic/RoundedRaff time picker touch");
         std::_Exit(0);
     }
+  }
+
+  void tickReceiveFolder() {
+    if (scriptIndex < inputScript.size()) {
+      runReaderInputScript();
+      return;
+    }
+    inputScript.clear();
+    scriptIndex = 0;
+    static constexpr const char* paths[] = {"/", "/receive", "/receive/empty"};
+    switch (receiveFolderPhase++) {
+      case 0: {
+        Storage.mkdir("/receive");
+        Storage.mkdir("/receive/empty");
+        {
+          RenderLock lock;
+          SETTINGS.uiTheme = receiveFolderPass < 8 ? CrossPointSettings::CLASSIC : CrossPointSettings::LYRA;
+          SETTINGS.uiScale =
+              receiveFolderPass % 2 ? CrossPointSettings::UI_SCALE_LARGE : CrossPointSettings::UI_SCALE_SMALL;
+          renderer.setOrientation(static_cast<GfxRenderer::Orientation>((receiveFolderPass / 2) % 4));
+          renderer.setViewableInsets(ScreenInsets{{{32, 32, 32, 32}}});
+          UITheme::getInstance().reload();
+        }
+        receiveFolderReturned = false;
+        receiveFolderResult.clear();
+        const char* path = receiveFolderPass == 18   ? "/receive"
+                           : receiveFolderPass == 19 ? "/receive/empty"
+                           : receiveFolderPass >= 16 ? "/"
+                                                     : paths[receiveFolderPass % 3];
+        activityManager.simulatorCurrentActivity()->startActivityForResult(
+            std::make_unique<FileBrowserActivity>(renderer, mappedInputManager, path,
+                                                  FileBrowserActivity::Mode::PickDirectory),
+            [this](const ActivityResult& result) {
+              receiveFolderReturned = true;
+              receiveFolderCancelled = result.isCancelled;
+              if (const auto* selected = std::get_if<FilePathResult>(&result.data))
+                receiveFolderResult = selected->path;
+            });
+        queueStep("Receive folder picker opened", SmokeStep::Start, 4);
+        break;
+      }
+      case 1: {
+        auto* picker = dynamic_cast<FileBrowserActivity*>(activityManager.simulatorCurrentActivity());
+        if (!picker) fail("Receive folder picker missing");
+        if ((receiveFolderPass == 18 && picker->simulatorFolderPath() == "/receive") ||
+            (receiveFolderPass == 19 && picker->simulatorFolderPath() == "/receive/empty")) {
+          addTap(receiveFolderPass == 18 ? MappedInputManager::Button::Confirm : MappedInputManager::Button::Back);
+          inputScript.push_back(render("Receive folder navigation", 4));
+          receiveFolderPhase = 1;
+          break;
+        }
+        {
+          RenderLock lock;
+          captureStatusBarScreen(("receive-folder-" + std::to_string(receiveFolderPass)).c_str());
+        }
+        if (receiveFolderPass == 16) {
+          addTap(MappedInputManager::Button::Back);
+        } else if (receiveFolderPass == 17 || !mappedInputManager.hasTouchHardware()) {
+          addTap(MappedInputManager::Button::Right);
+        } else {
+#if CROSSINK_APP_CAP_TOUCH
+          const auto button = picker->simulatorDirectorySelectRect();
+          const auto safe = picker->simulatorSafeRect();
+          if (button.width <= 0 || button.height < 44 || button.x < safe.x || button.y < safe.y ||
+              button.right() > safe.right() || button.bottom() > safe.bottom())
+            fail("Receive folder Select button missing or outside safe bounds");
+          const int x = button.x + button.width / 2;
+          const int y = button.y + button.height / 2;
+          inputScript = {touchDown(x, y), touchRelease(x, y)};
+#endif
+        }
+        inputScript.push_back(render("Receive folder picker returned", 4));
+        break;
+      }
+      case 2:
+        if (!receiveFolderReturned || receiveFolderCancelled != (receiveFolderPass == 16))
+          fail("Receive folder selection/cancellation did not return to caller");
+        if (receiveFolderPass != 16 &&
+            receiveFolderResult != (receiveFolderPass == 18   ? "/receive/empty"
+                                    : receiveFolderPass == 19 ? "/receive"
+                                    : receiveFolderPass >= 16 ? "/"
+                                                              : paths[receiveFolderPass % 3]))
+          fail("Receive folder picker returned wrong directory");
+        if (++receiveFolderPass < 20) {
+          receiveFolderPhase = 0;
+          queueStep("Next receive folder layout", SmokeStep::Start, 2);
+        } else {
+          LOG_INF("SMOKE",
+                  "Simulator smoke test passed: receive folder touch selection, empty/root folders, "
+                  "navigation, cancellation and physical selection across themes/scales/rotations");
+          std::_Exit(0);
+        }
+        break;
+    }
+  }
+
+  // What's New: shown once over Home, Close marks it seen and saves, Settings reopens it without touching that state.
+  void tickReleaseNotes() {
+    if (scriptIndex < inputScript.size()) {
+      runReaderInputScript();
+      return;
+    }
+    inputScript.clear();
+    scriptIndex = 0;
+    switch (releaseNotesPhase) {
+      case 0: {
+        // A fresh state file has revision 0, so Home hands over to What's New on its own.
+        if (!activityManager.isCurrentActivityNamed("ReleaseNotes")) {
+          if (++releaseNotesWait > 600) fail("What's New was not shown over Home on a fresh state");
+          return;
+        }
+        auto* notes = dynamic_cast<ReleaseNotesActivity*>(activityManager.simulatorCurrentActivity());
+        if (!notes) fail("What's New activity type mismatch");
+        if (APP_STATE.releaseNotesSeen != 0) fail("What's New was marked seen before it was dismissed");
+        if (std::strcmp(I18N.getCode(), "EN")) fail("Release notes smoke expects the English UI");
+        if (!I18N.hasTranslation(StrId::STR_WHATS_NEW) || releaseNotesNeedLanguageUpdate() ||
+            notes->simulatorUpdateOffered())
+          fail("English must offer Install Languages, not Update");
+        if (notes->simulatorPageCount() < 1) fail("What's New has no pages");
+        if (notes->simulatorPageCount() > 1) {
+          addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+          addTap(mappedInputManager.menuButton(MappedInputManager::Button::Up));
+        }
+        inputScript.push_back(render("What's New over Home", 4));
+        releaseNotesPhase = 1;
+        break;
+      }
+      case 1:
+        captureStatusBarScreen("release-notes-first-run");
+        addTap(MappedInputManager::Button::Back);
+        inputScript.push_back(render("What's New closed", 6));
+        releaseNotesPhase = 2;
+        releaseNotesWait = 0;
+        break;
+      case 2: {
+        if (activityManager.isCurrentActivityNamed("ReleaseNotes")) fail("What's New did not close");
+        if (APP_STATE.releaseNotesSeen != RELEASE_NOTES_REVISION) fail("Close did not mark What's New seen");
+        const String saved = Storage.readFile(CrossPointState::getFilePath());
+        JsonDocument doc;
+        if (deserializeJson(doc, saved) || doc["releaseNotesSeen"].as<int>() != RELEASE_NOTES_REVISION)
+          fail("Close did not save releaseNotesSeen");
+        if (++releaseNotesWait < 60) return;  // Stay on Home long enough for a repeat push to show up.
+        if (!activityManager.isCurrentActivityNamed("Home")) fail("Expected Home after closing What's New");
+        // Reopen from Settings with an unseen revision: it must not touch the stored value.
+        APP_STATE.releaseNotesSeen = 0;
+        activityManager.goToSettings();
+        queueStep("Settings for Release Notes", SmokeStep::Start, 4);
+        releaseNotesPhase = 3;
+        break;
+      }
+      case 3: {
+        const auto settings = buildSystemSettingsParentList(getSettingsList());
+        if (settings.size() < 2 || settings[settings.size() - 2].action != SettingAction::ReleaseNotes ||
+            settings.back().action != SettingAction::About)
+          fail("Release Notes row is not directly above About");
+        for (int i = 0; i < 3; ++i) addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("Release Notes System tab", 3));
+        for (size_t i = 0; i < settings.size(); ++i)
+          addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+        addTap(mappedInputManager.menuButton(MappedInputManager::Button::Up));
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("Release Notes opened from Settings", 4));
+        inputScript.push_back(assertActivity("ReleaseNotes"));
+        releaseNotesPhase = 4;
+        break;
+      }
+      case 4:
+        if (APP_STATE.releaseNotesSeen != 0) fail("Opening Release Notes from Settings changed the seen revision");
+        captureStatusBarScreen("release-notes-from-settings");
+        addTap(MappedInputManager::Button::Back);
+        inputScript.push_back(render("Release Notes closed to Settings", 4));
+        inputScript.push_back(assertActivity("Settings"));
+        releaseNotesPhase = 5;
+        break;
+      case 5:
+        if (APP_STATE.releaseNotesSeen != 0) fail("Leaving Release Notes from Settings changed the seen revision");
+        // Saved German that is not installed (upgrade from built-in translations) gets one-click Update,
+        // until an update was tried for this revision. English and unknown custom codes never do.
+        if (!releaseNotesOfferLanguageUpdate("DE", "EN", 0)) fail("Saved but inactive German should offer Update");
+        if (releaseNotesOfferLanguageUpdate("DE", "EN", RELEASE_NOTES_REVISION))
+          fail("Update must not be offered again after it was tried");
+        if (releaseNotesOfferLanguageUpdate("EN", "EN", 0)) fail("English must not offer Update");
+        if (releaseNotesOfferLanguageUpdate("XX-CUSTOM", "EN", 0)) fail("Custom languages must not offer Update");
+        activityManager.goHome();
+        queueStep("Home before What's New Install Languages", SmokeStep::Start, 4);
+        releaseNotesPhase = 6;
+        break;
+      case 6:
+        // FirstRun Install Languages: Settings > System > Device with the Download Languages popup, and the notes seen.
+        if (!activityManager.isCurrentActivityNamed("Home")) fail("Expected Home before What's New Install Languages");
+        saveReleaseNotesState(0, RELEASE_NOTES_REVISION);
+        openFirstRunReleaseNotes("What's New for Install Languages");
+        releaseNotesPhase = 7;
+        break;
+      case 7:
+        if (currentReleaseNotes().simulatorUpdateOffered()) fail("English What's New must offer Install Languages");
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("What's New Install Languages", 6));
+        inputScript.push_back(assertActivity("Settings"));
+        releaseNotesPhase = 8;
+        break;
+      case 8: {
+        auto* settings = dynamic_cast<SettingsActivity*>(activityManager.simulatorCurrentActivity());
+        if (!settings) fail("Install Languages did not open Settings");
+        if (settings->simulatorActiveSubmenu() != SettingAction::SystemDevice)
+          fail("Install Languages did not land in System > Device");
+        if (!settings->simulatorLanguageDownloadsOpen()) fail("Install Languages did not open Download Languages");
+        if (APP_STATE.releaseNotesSeen != RELEASE_NOTES_REVISION ||
+            savedStateValue("releaseNotesSeen") != RELEASE_NOTES_REVISION)
+          fail("Install Languages did not save releaseNotesSeen");
+        {
+          RenderLock lock;
+          captureStatusBarScreen("release-notes-download-languages");
+        }
+        activityManager.goHome();
+        queueStep("Home before What's New Update", SmokeStep::Start, 4);
+        releaseNotesPhase = 9;
+        break;
+      }
+      case 9:
+        // Update: a saved German preference that is not active offers the one-click language download.
+        if (!activityManager.isCurrentActivityNamed("Home")) fail("Expected Home before What's New Update");
+        std::snprintf(SETTINGS.languageCode, sizeof(SETTINGS.languageCode), "%s", "DE");
+        saveReleaseNotesState(0, 0);
+        capturedNetworkRestart = CapturedNetworkRestart{};
+        capturedNetworkRestart.armed = true;
+        openFirstRunReleaseNotes("What's New for Update");
+        releaseNotesPhase = 10;
+        break;
+      case 10:
+        if (!currentReleaseNotes().simulatorUpdateOffered()) fail("Saved inactive German must offer Update");
+        {
+          RenderLock lock;
+          captureStatusBarScreen("release-notes-update-offered");
+        }
+        addTap(MappedInputManager::Button::Confirm);
+        inputScript.push_back(render("What's New Update", 4));
+        releaseNotesPhase = 11;
+        break;
+      case 11: {
+        const uint32_t payload = AssetDownloadActivity::bootPayload(AssetCatalog::Kind::Translation,
+                                                                    static_cast<uint8_t>(I18n::languageFromCode("DE")));
+        if (capturedNetworkRestart.count != 1 ||
+            capturedNetworkRestart.target != static_cast<uint32_t>(NetworkBootTarget::DOWNLOAD_ASSETS) ||
+            capturedNetworkRestart.payload != payload)
+          fail("Update did not request one German language download reboot (count=%d target=%u payload=%u)",
+               capturedNetworkRestart.count, capturedNetworkRestart.target, capturedNetworkRestart.payload);
+        if (APP_STATE.releaseNotesUpdateTried != RELEASE_NOTES_REVISION ||
+            savedStateValue("releaseNotesUpdateTried") != RELEASE_NOTES_REVISION)
+          fail("Update did not save releaseNotesUpdateTried");
+        if (APP_STATE.releaseNotesSeen != 0 || savedStateValue("releaseNotesSeen") != 0)
+          fail("Update marked What's New seen before the translated notes were shown");
+        // A real device has rebooted by now; leaving must still not mark the notes seen.
+        addTap(MappedInputManager::Button::Back);
+        inputScript.push_back(render("What's New closed after Update", 4));
+        releaseNotesPhase = 12;
+        break;
+      }
+      case 12:
+        if (APP_STATE.releaseNotesSeen != 0 || savedStateValue("releaseNotesSeen") != 0)
+          fail("Leaving after Update marked What's New seen");
+        capturedNetworkRestart.armed = false;
+        std::snprintf(SETTINGS.languageCode, sizeof(SETTINGS.languageCode), "%s", "EN");
+        if (!SETTINGS.saveToFile()) fail("Cannot restore the English language setting");
+#if CROSSINK_APP_CAP_TOUCH
+        releaseNotesPhase = 13;
+#else
+        releaseNotesPhase = 17;
+#endif
+        activityManager.goHome();
+        queueStep("Home after What's New Update", SmokeStep::Start, 4);
+        break;
+#if CROSSINK_APP_CAP_TOUCH
+      case 13:
+        // Touch: only a completed tap on Later dismisses; a swipe that starts on the buttons pages.
+        if (!activityManager.isCurrentActivityNamed("Home")) fail("Expected Home before What's New touch checks");
+        saveReleaseNotesState(0, RELEASE_NOTES_REVISION);
+        openFirstRunReleaseNotes("What's New for touch");
+        releaseNotesPhase = 14;
+        break;
+      case 14: {
+        const auto& notes = currentReleaseNotes();
+        if (notes.simulatorPageCount() < 2) fail("Touch swipe check needs a multi-page What's New");
+        const Rect later = notes.simulatorActionRect(1);
+        if (later.width <= 0 || later.height <= 0) fail("What's New has no Later button");
+        const int x = later.x + later.width / 2;
+        const int y = later.y + later.height / 2;
+        inputScript = {touchDown(x, y),
+                       touchMove(x, y - 120),
+                       touchMove(x, y - 240),
+                       touchRelease(x, y - 240),
+                       render("What's New swipe from Later", 4),
+                       assertActivity("ReleaseNotes")};
+        releaseNotesPhase = 15;
+        break;
+      }
+      case 15: {
+        const auto& notes = currentReleaseNotes();
+        if (notes.simulatorPage() != 1) fail("Swipe from Later did not page (page=%d)", notes.simulatorPage());
+        if (APP_STATE.releaseNotesSeen != 0) fail("Swipe from Later marked What's New seen");
+        const Rect later = notes.simulatorActionRect(1);
+        const int x = later.x + later.width / 2;
+        const int y = later.y + later.height / 2;
+        inputScript = {touchDown(x, y), touchRelease(x, y), render("What's New Later tapped", 6),
+                       assertActivity("Home")};
+        releaseNotesPhase = 16;
+        break;
+      }
+      case 16:
+        if (APP_STATE.releaseNotesSeen != RELEASE_NOTES_REVISION ||
+            savedStateValue("releaseNotesSeen") != RELEASE_NOTES_REVISION)
+          fail("Later tap did not save releaseNotesSeen");
+        releaseNotesPhase = 17;
+        break;
+#endif
+      case 17:
+        // Landscape: rotating an open What's New rebuilds its pages, and every page stays clear of the hints.
+        if (!activityManager.isCurrentActivityNamed("Home")) fail("Expected Home before What's New landscape checks");
+        saveReleaseNotesState(0, RELEASE_NOTES_REVISION);
+        openFirstRunReleaseNotes("What's New for landscape");
+        releaseNotesPhase = 18;
+        break;
+      case 18: {
+        auto& notes = currentReleaseNotes();
+        if (renderer.getOrientation() != GfxRenderer::Orientation::Portrait) fail("Landscape check expects portrait");
+        releaseNotesPortraitPages = notes.simulatorPageCount();
+        releaseNotesPortraitWidth = notes.simulatorLayoutWidth();
+        rotateReleaseNotes(notes, releaseNotesPass == 0 ? GfxRenderer::Orientation::LandscapeClockwise
+                                                        : GfxRenderer::Orientation::LandscapeCounterClockwise);
+        releaseNotesPhase = 19;
+        break;
+      }
+      case 19:
+        checkReleaseNotesLandscapePage(true);
+        releaseNotesPhase = 20;
+        break;
+      case 20: {
+        auto& notes = currentReleaseNotes();
+        if (notes.simulatorPage() + 1 < notes.simulatorPageCount()) {
+          addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+          inputScript.push_back(render("What's New landscape next page", 3));
+          releaseNotesPhase = 21;
+          break;
+        }
+        if (++releaseNotesPass < 2) {
+          rotateReleaseNotes(notes, GfxRenderer::Orientation::LandscapeCounterClockwise);
+          releaseNotesPhase = 19;
+          break;
+        }
+        rotateReleaseNotes(notes, GfxRenderer::Orientation::Portrait);
+        releaseNotesPhase = 22;
+        break;
+      }
+      case 21:
+        checkReleaseNotesLandscapePage(false);
+        releaseNotesPhase = 20;
+        break;
+      case 22: {
+        const auto& notes = currentReleaseNotes();
+        if (notes.simulatorLayoutWidth() != releaseNotesPortraitWidth ||
+            notes.simulatorPageCount() != releaseNotesPortraitPages)
+          fail("Rotating back to portrait did not restore the portrait pages");
+        addTap(MappedInputManager::Button::Back);
+        inputScript.push_back(render("What's New closed after rotation", 4));
+        inputScript.push_back(assertActivity("Home"));
+        releaseNotesPhase = 23;
+        break;
+      }
+      case 23:
+        LOG_INF(
+            "SMOKE",
+            "Simulator smoke test passed: release notes shown once over Home, Close saves seen, Settings row "
+            "opens notes without changing seen, English offers Install Languages, saved inactive language offers "
+            "Update, "
+            "Install Languages opens Download Languages, Update reboots to the language download without marking seen"
+#if CROSSINK_APP_CAP_TOUCH
+            ", Later tap dismisses but a swipe from the buttons pages"
+#endif
+            ", landscape rebuilds pages clear of the button hints");
+        std::_Exit(0);
+    }
+  }
+
+  static void saveReleaseNotesState(const uint16_t seen, const uint16_t updateTried) {
+    APP_STATE.releaseNotesSeen = seen;
+    APP_STATE.releaseNotesUpdateTried = updateTried;
+    if (!APP_STATE.saveToFile()) fail("Cannot save release notes state");
+  }
+
+  static int savedStateValue(const char* key) {
+    const String saved = Storage.readFile(CrossPointState::getFilePath());
+    JsonDocument doc;
+    if (deserializeJson(doc, saved)) fail("Cannot parse saved state");
+    return doc[key] | -1;
+  }
+
+  static ReleaseNotesActivity& currentReleaseNotes() {
+    auto* notes = dynamic_cast<ReleaseNotesActivity*>(activityManager.simulatorCurrentActivity());
+    if (!notes) fail("Expected What's New to be the current activity");
+    return *notes;
+  }
+
+  void openFirstRunReleaseNotes(const char* label) {
+    activityManager.pushActivity(
+        std::make_unique<ReleaseNotesActivity>(renderer, mappedInputManager, ReleaseNotesActivity::Mode::FirstRun));
+    inputScript.push_back(render(label, 4));
+    inputScript.push_back(assertActivity("ReleaseNotes"));
+  }
+
+  void rotateReleaseNotes(ReleaseNotesActivity& notes, const GfxRenderer::Orientation orientation) {
+    {
+      RenderLock lock;
+      renderer.setOrientation(orientation);
+      notes.simulatorSetPage(0);
+    }
+    inputScript.push_back(render("What's New rotated", 4));
+  }
+
+  // Pages must be rebuilt for the rotated screen, the text and header stay inside the area the hints leave free,
+  // and the hint strip itself looks the same on every page, so no page draws text under it.
+  void checkReleaseNotesLandscapePage(const bool firstPage) {
+    const auto& notes = currentReleaseNotes();
+    {
+      RenderLock lock;
+      char name[64];
+      std::snprintf(name, sizeof(name), "release-notes-landscape-%s-page-%d", releaseNotesPass == 0 ? "cw" : "ccw",
+                    notes.simulatorPage() + 1);
+      captureStatusBarScreen(name);
+    }
+    const int width = renderer.getScreenWidth();
+    const int height = renderer.getScreenHeight();
+    if (width <= height) fail("What's New landscape check is not in landscape");
+    if (notes.simulatorLayoutWidth() != width || notes.simulatorLayoutHeight() != height)
+      fail("What's New pages were not rebuilt after rotation");
+    if (firstPage && notes.simulatorPage() != 0) fail("What's New landscape check did not start on page 1");
+    const bool touch = mappedInputManager.hasTouch();
+    const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, !touch, false);
+    const Rect body = notes.simulatorBodyRect();
+    const Rect header = notes.simulatorHeaderRect();
+    for (const Rect& r : {body, header}) {
+      if (r.x < safe.x || r.x + r.width > safe.x + safe.width || r.y < safe.y || r.y + r.height > safe.y + safe.height)
+        fail("What's New content escaped the hint-safe area (%d,%d %dx%d vs %d,%d %dx%d)", r.x, r.y, r.width, r.height,
+             safe.x, safe.y, safe.width, safe.height);
+    }
+    // Touch devices and, since the Install Languages button, button devices both draw an on-screen action.
+    const Rect action = notes.simulatorActionRect(0);
+    if (action.width <= 0 || action.x < safe.x || action.x + action.width > safe.x + safe.width ||
+        action.y + action.height > safe.y + safe.height)
+      fail("What's New action button escaped the hint-safe area in landscape");
+    if (body.y + body.height > action.y) fail("What's New text overlaps the action button in landscape");
+
+    std::vector<uint8_t> strip;
+    {
+      RenderLock lock;
+      for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+          const bool inSafe = x >= safe.x && x < safe.x + safe.width && y >= safe.y && y < safe.y + safe.height;
+          if (!inSafe) strip.push_back(renderer.isPixelBlack(x, y) ? 1 : 0);
+        }
+      }
+    }
+    if (!touch && std::find(strip.begin(), strip.end(), 1) == strip.end())
+      fail("What's New landscape drew no button hints");
+    if (firstPage) {
+      releaseNotesHintStrip = std::move(strip);
+    } else if (strip != releaseNotesHintStrip) {
+      fail("What's New page %d drew under the side button hints", notes.simulatorPage() + 1);
+    }
+    LOG_INF("SMOKE", "What's New landscape %s page %d/%d (portrait had %d pages)", releaseNotesPass == 0 ? "cw" : "ccw",
+            notes.simulatorPage() + 1, notes.simulatorPageCount(), releaseNotesPortraitPages);
   }
 
   void tickAbout() {
@@ -4314,6 +5264,7 @@ class SimulatorSmokeTest {
       tickFilenameFont();
       return;
     }
+    if (tickAssetDownloadSmokeTest()) return;
     if (tickOpdsCatalogSmokeTest()) return;
 
     if (std::getenv("CROSSINK_SIMULATOR_SMOKE_SUPPORT_EXPORT")) {
@@ -4324,8 +5275,16 @@ class SimulatorSmokeTest {
       tickCalibration();
       return;
     }
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_RECEIVE_FOLDER")) {
+      tickReceiveFolder();
+      return;
+    }
     if (std::getenv("CROSSINK_SIMULATOR_SMOKE_ABOUT")) {
       tickAbout();
+      return;
+    }
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_RELEASE_NOTES")) {
+      tickReleaseNotes();
       return;
     }
     if (std::getenv("CROSSINK_SIMULATOR_SMOKE_FILE_BROWSER_SYNC_RETURN")) {
@@ -4345,6 +5304,9 @@ class SimulatorSmokeTest {
           if (Storage.exists("/menu-network-checked")) {
             if (!activityManager.isCurrentActivityNamed("Library") || APP_STATE.pendingOverlayResume.valid())
               fail("Completed menu sync did not return to Library");
+            // Sync Book reconciled the book, so the position kept for it is gone.
+            if (std::getenv("CROSSINK_READING_TEST_MENU_KEPT") && !SyncParked::empty())
+              fail("Sync Book left the book's kept position");
             LOG_INF("SMOKE", "Stats upload transport smoke passed");
             std::_Exit(0);
           }
@@ -4370,6 +5332,78 @@ class SimulatorSmokeTest {
         if (prepareReadingUploadSmokeTest()) {
           WiFi.mode(WIFI_STA);
           WiFi.begin("reading-smoke");
+          if (const char* matching = std::getenv("CROSSINK_READING_TEST_MATCHING")) {
+            // Sync state keyed by Filename ids: a recorded book, a prepared
+            // folder and a kept position, all dropped by a confirmed change.
+            if (!SyncState::load().save()) fail("Cannot save sync state fixture");
+            SyncScope scope;
+            scope.path = "/read";
+            scope.prepared = true;
+            scope.cursor = 5;
+            if (!SyncState::putScope(scope)) fail("Cannot prepare the sync scope fixture");
+            if (!parkRemoteFixture("/read/first.epub") || SyncIds::generation() == 0)
+              fail("Cannot record sync ids and a kept position");
+            inputScript.clear();
+            scriptIndex = 0;
+            inputCompletionStep = SmokeStep::MatchingChangeDone;
+            if (std::strcmp(matching, "web") == 0) {
+              // The web settings page saves through the settings list (after its own warning).
+              for (const auto& setting : getSettingsList())
+                if (setting.key && std::strcmp(setting.key, "koMatchMethod") == 0)
+                  setting.valueSetter(static_cast<uint8_t>(DocumentMatchMethod::BINARY));
+              inputScript.push_back(render("Web Document Matching change", 2));
+              step = SmokeStep::ReaderInput;
+              break;
+            }
+            activityManager.replaceActivity(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInputManager));
+            inputScript.push_back(render("Sync Server settings", 10));
+            // Up wraps to Send Metadata, then Document Matching.
+            addTap(mappedInputManager.menuButton(MappedInputManager::Button::Up));
+            addTap(mappedInputManager.menuButton(MappedInputManager::Button::Up));
+            addTap(MappedInputManager::Button::Confirm);
+            inputScript.push_back(render("Document Matching warning", 10));
+            inputScript.push_back(assertActivity("Confirmation"));
+            // Cancel is selected first; Confirm is the second option.
+            if (std::strcmp(matching, "confirm") == 0)
+              addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+            addTap(MappedInputManager::Button::Confirm);
+            inputScript.push_back(render("Sync Server after the warning", 10));
+            inputScript.push_back(assertActivity("KOReaderSettings"));
+            step = SmokeStep::ReaderInput;
+            break;
+          }
+          if (const char* kept = std::getenv("CROSSINK_READING_TEST_OPEN_KEPT")) {
+            // Another reader left first.epub further ahead (page 7 of 10 vs 2), or
+            // well behind it.
+            const bool prepared = std::strcmp(kept, "unprepared") != 0;
+            const bool behind = std::strcmp(kept, "behind") == 0;
+            if (!SyncState::load().save()) fail("Cannot save sync state fixture");
+            SyncScope scope;
+            scope.path = prepared ? "/read" : "/read-sibling";
+            scope.prepared = true;
+            if (!SyncState::putScope(scope)) fail("Cannot prepare the sync scope fixture");
+            if (behind) {
+              Epub book("/read/first.epub", "/.crosspoint");
+              if (!EpubReaderUtils::saveProgress(book, 1, 0, 4)) fail("Cannot move the local position to chapter 2");
+            }
+            if (!parkRemoteFixture("/read/first.epub", behind ? 0.1f : 1.0f)) fail("Cannot keep a remote position");
+            activityManager.goToReader("/read/first.epub");
+            inputScript.clear();
+            scriptIndex = 0;
+            inputCompletionStep = SmokeStep::KeptPositionDone;
+            inputScript.push_back(render("Reader with a kept position", 80));
+            if (prepared && !behind) {
+              inputScript.push_back(assertActivity("Confirmation"));
+              // Stay here is selected first; Continue is the second option.
+              if (std::strcmp(kept, "accept") == 0)
+                addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+              addTap(MappedInputManager::Button::Confirm);
+              inputScript.push_back(render("Reader after the kept position choice", 80));
+            }
+            inputScript.push_back(assertActivity("EpubReader"));
+            step = SmokeStep::ReaderInput;
+            break;
+          }
           if (std::getenv("CROSSINK_READING_TEST_MENU")) {
             for (const auto* path : {"/read/first.epub", "/read/notes.txt", "/read/book.xtc"}) {
               const auto actions = BookActions::buildBookActionItems(path, true);
@@ -4387,6 +5421,8 @@ class SimulatorSmokeTest {
             resume.origin = PendingOverlayOrigin::Library;
             resume.tab = 4;
             resume.pane = true;
+            if (std::getenv("CROSSINK_READING_TEST_MENU_KEPT") && !parkRemoteFixture("/read/first.epub"))
+              fail("Cannot keep a remote position");
             BookActions::syncProgress(
                 renderer, mappedInputManager,
                 std::getenv("CROSSINK_READING_TEST_COLD") ? "/read/unread.epub" : "/read/first.epub",
@@ -4411,25 +5447,42 @@ class SimulatorSmokeTest {
             inputScript.push_back(assertActivity("Library"));
             step = SmokeStep::ReaderInput;
             break;
+          } else if (std::getenv("CROSSINK_READING_TEST_CLIPPINGS_ONLY")) {
+            // Sync Clippings lists the clippings folder; no overall stats, stats, or progress.
+            // Started as if from File Transfer opened inside a book: leaving reopens it.
+            auto sync = std::make_unique<StatsUploadActivity>(renderer, mappedInputManager, std::string{},
+                                                              StatsUploadActivity::Scope::Clippings, true);
+            sync->setReturnToFileTransfer("/read/first.epub", false);
+            activityManager.replaceActivity(std::move(sync));
+            inputScript.clear();
+            scriptIndex = 0;
+            inputCompletionStep = SmokeStep::StatsUploadEmptyDone;
+            inputScript.push_back(render("Sync Clippings result", 100));
+            inputScript.push_back(assertActivity("StatsUpload"));
+            addTap(MappedInputManager::Button::Back);
+            inputScript.push_back(render("Back to the book", 60));
+            inputScript.push_back(assertActivity("EpubReader"));
+            step = SmokeStep::ReaderInput;
+            break;
           } else if (std::getenv("CROSSINK_READING_TEST_ALL")) {
-            // Sync All Books walks the Library index, not a folder.
+            // Sync Books walks the Library index, not a folder.
             library::BuildStats stats;
-            if (!library::buildLibraryIndex("/", stats)) fail("Cannot build Sync All Books Library fixture");
+            if (!library::buildLibraryIndex("/", stats)) fail("Cannot build Sync Books Library fixture");
             // An indexed book deleted afterwards is skipped, not a failure.
             if (!Storage.remove("/read-sibling/outside.epub")) fail("Cannot remove indexed fixture book");
             if (std::getenv("CROSSINK_READING_TEST_STATS_ENTRY")) {
-              // Reading Stats asks first, closes, then Sync All replaces the stack.
+              // Reading Stats asks first, closes, then Sync Reading Stats replaces the stack.
               activityManager.pushActivity(std::make_unique<StatsParentSmokeActivity>(renderer, mappedInputManager));
               inputScript.clear();
               scriptIndex = 0;
               inputCompletionStep = SmokeStep::StatsUploadEmptyDone;
-              inputScript.push_back(render("Reading stats before Sync All", 5));
+              inputScript.push_back(render("Reading stats before Sync Reading Stats", 5));
               addTap(MappedInputManager::Button::Confirm);
-              inputScript.push_back(render("Sync All confirmation", 5));
+              inputScript.push_back(render("Sync Reading Stats confirmation", 5));
               inputScript.push_back(assertActivity("Confirmation"));
               addTap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
               addTap(MappedInputManager::Button::Confirm);
-              inputScript.push_back(render("Sync All from Reading Stats", 100));
+              inputScript.push_back(render("Sync Reading Stats from Reading Stats", 100));
               inputScript.push_back(assertActivity("StatsUpload"));
               addTap(MappedInputManager::Button::Back);
               inputScript.push_back(assertActivity("Home"));
@@ -4467,12 +5520,14 @@ class SimulatorSmokeTest {
           if (!std::getenv("CROSSINK_READING_TEST_CANCEL")) {
             addTap(MappedInputManager::Button::Confirm);
             if (std::getenv("CROSSINK_READING_TEST_ASK")) {
-              for (int book = 0; book < 2; ++book) {
+              // Ask on conflicts: only first.epub's differing remote position asks, after
+              // the run; second.EPUB has no remote position and uploads without asking.
+              for (int book = 0; book < 1; ++book) {
                 inputScript.push_back(render("Folder sync choice", 25));
                 inputScript.push_back(assertActivity("KOReaderSync"));
                 if (std::getenv("CROSSINK_READING_TEST_ASK_CANCEL")) break;
                 if (std::getenv("CROSSINK_READING_TEST_ASK_SKIP")) {
-                  // Skip book is one step up from the default on both prompts.
+                  // Skip book is one step up from the default.
                   addTap(MappedInputManager::Button::Up);
                   inputScript.push_back(render("Folder sync Skip book selected", 5));
                   addTap(MappedInputManager::Button::Confirm);
@@ -4491,31 +5546,9 @@ class SimulatorSmokeTest {
               }
             }
             inputScript.push_back(render("Folder upload result", 100));
-            if (std::getenv("CROSSINK_READING_TEST_SKIP_FAILED")) {
-              const bool invalidBook = std::getenv("CROSSINK_READING_TEST_INVALID_BOOK");
-              const int failures = std::getenv("CROSSINK_READING_TEST_ALL_FAIL") ? 2 : 1;
-              for (int i = 0; i < failures; ++i) {
-                inputScript.push_back(assertActivity(invalidBook ? "StatsUpload" : "KOReaderSync"));
-                if (std::getenv("CROSSINK_READING_TEST_TOUCH")) {
-#if CROSSINK_APP_CAP_TOUCH
-                  if (!mappedInputManager.hasTouchHardware()) fail("Touch skip test requires a touch simulator");
-                  const auto area = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-                  const auto& metrics = UITheme::getInstance().getMetrics();
-                  const int x = area.x + area.width / 2;
-                  const int y = area.y + area.height - (invalidBook ? 52 : metrics.verticalSpacing + 28);
-                  inputScript.push_back(touchDown(x, y));
-                  inputScript.push_back(touchRelease(x, y));
-#else
-                  fail("Touch skip test requires a touch simulator");
-#endif
-                } else {
-                  addTap(MappedInputManager::Button::Confirm);
-                }
-                inputScript.push_back(render("Folder sync after skipping failed book", 100));
-              }
+            if (std::getenv("CROSSINK_READING_TEST_SKIP_FAILED") || std::getenv("CROSSINK_READING_TEST_ERROR")) {
+              // Failed books never stop the run: it ends on the summary, which lists them.
               inputScript.push_back(assertActivity("StatsUpload"));
-            } else if (std::getenv("CROSSINK_READING_TEST_ERROR")) {
-              inputScript.push_back(assertActivity("KOReaderSync"));
             }
           }
           if (std::getenv("CROSSINK_READING_TEST_DONE_TOUCH")) {
@@ -4556,6 +5589,57 @@ class SimulatorSmokeTest {
           inputScript.push_back(assertActivity("Home"));
           step = SmokeStep::ReaderInput;
           break;
+        }
+#if CROSSINK_SCALABLE_FONTS
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_PUBLISHER_FONTS")) {
+          verifyPublisherFonts();
+          LOG_INF("SMOKE", "Simulator smoke test passed: publisher fonts");
+          std::_Exit(0);
+        }
+#endif
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_RECOVERY")) {
+          // A catalog-only fixture: the detail allocation fails before the
+          // deliberately invalid font bytes are opened.
+          std::filesystem::create_directories("fs_/fonts/Recovery");
+          if (!Storage.writeFile("/fonts/Recovery/Recovery_12.cpfont", "catalog fixture"))
+            fail("Cannot create font recovery fixture");
+          std::strcpy(SETTINGS.sdFontFamilyName, "Recovery");
+          SETTINGS.legacySdFontSizeStep = UINT8_MAX;
+          SETTINGS.readerFontPointSize = 12;
+          int saves = 0;
+          sdFontSystem.setSettingsPersistenceCallback([](void* ctx) { ++*static_cast<int*>(ctx); }, &saves);
+          sdFontSystem.releaseForNetwork(renderer);
+          // Model FontInstaller's direct catalog discovery and subsequent exit.
+          sdFontSystem.registry().discover();
+          sdFontSystem.releaseRegistry();
+          if (sdFontSystem.registry().getFamilyCount() != 0) fail("Installer catalog survived release");
+          sdFontSystem.ensureRegistry();
+          const auto* summary = sdFontSystem.registry().findSummary("Recovery");
+          if (!summary || !summary->files.empty()) fail("Recovery summary not lazy");
+          const size_t available = ESP.getFreeHeap();
+          if (available <= 4096) fail("Insufficient initial heap for recovery check");
+          void* pressure = heap_caps_malloc(available - 4096, MALLOC_CAP_INTERNAL);
+          if (!pressure) fail("Cannot inject font detail memory pressure");
+          sdFontSystem.ensureLoaded(renderer);
+          heap_caps_free(pressure);
+          if (std::strcmp(SETTINGS.sdFontFamilyName, "Recovery") != 0 || saves != 0)
+            fail("Temporary detail failure erased the reader selection");
+          if (!summary->ensureDetails()) fail("Font details did not recover after memory pressure");
+          sdFontSystem.ensureLoaded(renderer);
+          if (std::strcmp(SETTINGS.sdFontFamilyName, "Recovery") != 0 || saves != 0)
+            fail("Unreadable font file erased the reader selection");
+          std::strcpy(SETTINGS.sdFontFamilyName, "Missing Recovery Family");
+          sdFontSystem.ensureLoaded(renderer);
+          if (SETTINGS.sdFontFamilyName[0] || saves != 1) fail("Truly missing family was not cleared");
+          sdFontSystem.setSettingsPersistenceCallback(nullptr, nullptr);
+          sdFontSystem.releaseRegistry();
+          LOG_INF("SMOKE", "Simulator smoke test passed: font recovery");
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_C3_FONT_SIZES")) {
+          verifyBitmapFontSizes();
+          LOG_INF("SMOKE", "Simulator smoke test passed: bitmap font sizes");
+          std::_Exit(0);
         }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_DICTIONARY")) verifyDictionaryElisions();
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_FEATURE")) {
@@ -5017,6 +6101,43 @@ class SimulatorSmokeTest {
         break;
 
       case SmokeStep::Home:
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK_LOADING")) {
+          RenderLock lock;
+          BookLoadingFeedback feedback;
+          feedback.start();
+          if (!feedback.showIfPending(renderer)) fail("Book open omitted immediate loading feedback");
+          captureStatusBarScreen("book-loading-immediate");
+          if (feedback.showIfPending(renderer)) fail("Book loading feedback refreshed twice");
+          const auto frameHash = []() {
+            uint32_t hash = 2166136261U;
+            for (int y = 0; y < renderer.getScreenHeight(); ++y) {
+              for (int x = 0; x < renderer.getScreenWidth(); ++x) {
+                hash = (hash ^ static_cast<uint32_t>(renderer.isPixelBlack(x, y))) * 16777619U;
+              }
+            }
+            return hash;
+          };
+          const auto originalOrientation = renderer.getOrientation();
+          for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise,
+                                         GfxRenderer::PortraitInverted, GfxRenderer::LandscapeCounterClockwise}) {
+            // Reproduce the old handoff: portrait Loading followed by rotated Indexing.
+            renderer.setOrientation(GfxRenderer::Portrait);
+            feedback.start();
+            feedback.showIfPending(renderer);
+            renderer.setOrientation(orientation);
+            feedback.showIndexing(renderer);
+            char capture[48];
+            snprintf(capture, sizeof(capture), "book-indexing-orientation-%d", static_cast<int>(orientation));
+            captureStatusBarScreen(capture);
+            const uint32_t actualFrame = frameHash();
+            renderer.clearScreen();
+            GUI.drawPopup(renderer, tr(STR_INDEXING));
+            if (actualFrame != frameHash()) fail("Indexing retained pixels from the previous notice");
+            if (feedback.showIfPending(renderer)) fail("Loading replaced Indexing");
+          }
+          renderer.setOrientation(originalOrientation);
+          LOG_INF("SMOKE", "Immediate book loading feedback passed");
+        }
         activityManager.goToFileBrowser("/books");
         queueStep("File Browser", SmokeStep::FileBrowser);
         break;
@@ -5231,10 +6352,20 @@ class SimulatorSmokeTest {
           break;
         }
         inputCompletionStep = SmokeStep::StatsUploadReturn;
-        for (int i = 0; i < 5; ++i) addTap(MappedInputManager::Button::Down);  // Sync All Books.
+        // Sync actions live in File Transfer. With stats and clippings sync off,
+        // Sync Books is the last Sync Server row, just above the Nearby rows that
+        // end the list.
+        activityManager.goToFileTransfer();
+        inputScript.push_back(render("File Transfer", 10));
+        inputScript.push_back(assertActivity("NetworkModeSelection"));
+        for (int i = 0; i < nearbyFileTransferRows() + 1; ++i) {
+          addTap(MappedInputManager::Button::Up);
+          inputScript.push_back(render("File Transfer row up", 5));
+        }
+        inputScript.push_back(render("Sync Books selected", 5));
         addTap(MappedInputManager::Button::Confirm);
         inputScript.push_back(assertActivity("StatsUpload"));
-        inputScript.push_back(render("Sync All Books confirmation", 10));
+        inputScript.push_back(render("Sync Books confirmation", 10));
         addTap(MappedInputManager::Button::Back);  // Opening does not upload.
         inputScript.push_back(assertActivity("Home"));
         step = SmokeStep::ReaderInput;
@@ -5257,7 +6388,7 @@ class SimulatorSmokeTest {
           RenderLock lock;
           captureStatusBarScreen("sync-server-3-progress-only");
         }
-        // Reading Stats "This Device" page offers Sync All Books once an account exists.
+        // Reading Stats "This Device" page offers Sync Reading Stats once the server accepts stats.
         GlobalReadingStats device;
         device.totalSessions = 12;
         device.totalReadingSeconds = 3456;
@@ -5272,19 +6403,129 @@ class SimulatorSmokeTest {
           RenderLock lock;
           captureStatusBarScreen("sync-server-4-stats-page");
         }
+        // File Transfer's Sync Server rows, with stats and clippings sync on.
+        KOREADER_STORE.setServerUrl("");
+        KOREADER_STORE.setSyncStats(true);
+        KOREADER_STORE.setSyncClippings(true);
+        SETTINGS.trackReadingStats = 1;
+        activityManager.goToFileTransfer();
+        inputScript.clear();
+        scriptIndex = 0;
+        inputCompletionStep = SmokeStep::SyncServerCaptureFileTransfer;
+        inputScript.push_back(render("File Transfer", 10));
+        // Sync Clippings sits just above the Nearby rows that end the list.
+        for (int i = 0; i < nearbyFileTransferRows() + 1; ++i) {
+          addTap(MappedInputManager::Button::Up);
+          inputScript.push_back(render("File Transfer row up", 5));
+        }
+        inputScript.push_back(render("File Transfer Sync Server rows", 6));
+        step = SmokeStep::ReaderInput;
+        break;
+      }
+
+      case SmokeStep::SyncServerCaptureFileTransfer: {
+        {
+          RenderLock lock;
+          captureStatusBarScreen("sync-server-5-file-transfer");
+        }
         LOG_INF("SMOKE", "Simulator smoke test passed: Sync Server captures");
         std::_Exit(0);
       }
 
       case SmokeStep::StatsUploadEmptyDone:
+        if (std::getenv("CROSSINK_READING_TEST_TWICE") && !secondSyncStarted) {
+          // A later sync of the same card: the catch-up is done, so only books
+          // changed since (marked pending) are sent.
+          secondSyncStarted = true;
+          LOG_INF("SMOKE", "Starting second sync");
+          if (std::getenv("CROSSINK_READING_TEST_FEED")) {
+            // Incremental Sync Folder: the first walk prepared /read, so this run
+            // pulls the change feed and pushes only the book marked pending.
+            if (!Storage.writeFile("/second-sync-started", "1")) fail("Cannot mark second sync");
+            if (!SyncPending::mark("/read/sub/second.EPUB", SyncPending::PROGRESS_BIT))
+              fail("Cannot mark book progress pending");
+            // first.epub also gets a pulled change: its pending stats must survive the apply.
+            if (!SyncPending::mark("/read/first.epub", SyncPending::STATS_BIT)) fail("Cannot mark book stats pending");
+            if (std::getenv("CROSSINK_READING_TEST_PARKED")) {
+              // A remote position parked for second.EPUB (further ahead): the push
+              // must compare with it (Smart applies it) instead of uploading.
+              if (!parkRemoteFixture("/read/sub/second.EPUB")) fail("Cannot park a remote position");
+            }
+            activityManager.replaceActivity(std::make_unique<StatsUploadActivity>(
+                renderer, mappedInputManager, "/read", StatsUploadActivity::Scope::Folder, true));
+            inputScript.clear();
+            scriptIndex = 0;
+            inputCompletionStep = SmokeStep::StatsUploadEmptyDone;
+            inputScript.push_back(render("Incremental sync result", 100));
+            inputScript.push_back(assertActivity("StatsUpload"));
+            step = SmokeStep::ReaderInput;
+            break;
+          }
+          const bool clippingsOnly = std::getenv("CROSSINK_READING_TEST_CLIPPINGS_ONLY");
+          if (clippingsOnly) {
+            // Save a clipping the way the reader does; the store queues the book itself.
+            if (!CLIPPINGS.loadForBook("/read/first.epub", "Fixture", "Writer", "epub") ||
+                CLIPPINGS.addClipping(0, 3, 3, 10, 1, 3, 4, "Chapter", UINT16_MAX, "A later clipping", UINT16_MAX,
+                                      1234) != ClippingStore::AddResult::Added)
+              fail("Cannot add a clipping between syncs");
+            CLIPPINGS.unload();
+          } else if (const char* changed = std::getenv("CROSSINK_READING_TEST_MARK_PENDING")) {
+            if (!SyncPending::mark(changed, SyncPending::STATS_BIT)) fail("Cannot mark book pending");
+          }
+          const auto scope =
+              clippingsOnly ? StatsUploadActivity::Scope::Clippings : StatsUploadActivity::Scope::ReadingStats;
+          activityManager.replaceActivity(
+              std::make_unique<StatsUploadActivity>(renderer, mappedInputManager, std::string{}, scope, true));
+          inputScript.clear();
+          scriptIndex = 0;
+          inputCompletionStep = SmokeStep::StatsUploadEmptyDone;
+          inputScript.push_back(render("Second sync result", 100));
+          inputScript.push_back(assertActivity("StatsUpload"));
+          step = SmokeStep::ReaderInput;
+          break;
+        }
         if (std::getenv("CROSSINK_READING_TEST_STATS_ENTRY") && !statsParentHandlerRan)
-          fail("Reading Stats parent handler did not run before Sync All replaced the stack");
+          fail("Reading Stats parent handler did not run before the sync replaced the stack");
         LOG_INF("SMOKE", "Stats upload transport smoke passed");
         std::_Exit(0);
 
+      case SmokeStep::KeptPositionDone: {
+        const bool prepared = std::strcmp(std::getenv("CROSSINK_READING_TEST_OPEN_KEPT"), "unprepared") != 0;
+        // Offered (and settled either way) only inside a prepared scope.
+        if (SyncParked::empty() != prepared) fail("Kept position not settled as expected");
+        const char* kept = std::getenv("CROSSINK_READING_TEST_OPEN_KEPT");
+        if (std::strcmp(kept, "decline") == 0 || std::strcmp(kept, "behind") == 0) {
+          // Staying here, or being further along already, queues this reader's
+          // position for the next sync.
+          SyncPending::Cursor cursor;
+          std::string path;
+          uint8_t mask = 0;
+          bool queued = false;
+          if (!cursor.begin()) fail("Cannot read pending books");
+          while (cursor.next(path, mask) == SyncPending::Cursor::Step::Entry)
+            queued |= path == "/read/first.epub" && (mask & SyncPending::PROGRESS_BIT);
+          if (!queued) fail("Declined kept position did not queue local progress");
+        }
+        LOG_INF("SMOKE", "Stats upload transport smoke passed");
+        std::_Exit(0);
+      }
+
+      case SmokeStep::MatchingChangeDone: {
+        const bool changed = std::strcmp(std::getenv("CROSSINK_READING_TEST_MATCHING"), "cancel") != 0;
+        SyncScope scope;
+        const bool prepared = SyncState::findScope("/read", scope) && scope.prepared && scope.cursor == 5;
+        if ((KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::BINARY) != changed)
+          fail("Document Matching was not saved as chosen");
+        // Changed: ids, kept positions and scope progress start over. Cancelled: untouched.
+        if (SyncParked::empty() != changed || (SyncIds::generation() == 0) != changed || prepared == changed)
+          fail("Sync state does not match the Document Matching choice");
+        LOG_INF("SMOKE", "Stats upload transport smoke passed");
+        std::_Exit(0);
+      }
+
       case SmokeStep::StatsUploadReturn:
         KOREADER_STORE.setCredentials("", "");
-        LOG_INF("SMOKE", "Sync All Books entry and cancellation passed");
+        LOG_INF("SMOKE", "Sync Books entry and cancellation passed");
         activityManager.goToSettings();
         queueStep(mappedInputManager.hasHomeKey() ? "Settings landscape" : "Settings", SmokeStep::Settings);
         break;
@@ -5437,7 +6678,21 @@ class SimulatorSmokeTest {
       }
 
       case SmokeStep::Reader:
+#if CROSSINK_APP_CAP_TOUCH
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_CLIPPING_SELECTION")) {
+          if (ClippingSelectionSmokeTest::tick()) {
+            LOG_INF("SMOKE", "Simulator smoke test passed: touch clipping actions");
+            std::_Exit(0);
+          }
+          break;
+        }
+#endif
         if (!activityManager.isCurrentActivityNamed("EpubReader")) fail("Completion test requires EPUB reader");
+#if !CROSSINK_SCALABLE_FONTS
+        if (!EpubReaderCompletionSmokeTest::fontReload(
+                *static_cast<EpubReaderActivity*>(activityManager.simulatorCurrentActivity())))
+          fail("Bitmap font reload lost live section or reading position");
+#endif
         if (!EpubReaderCompletionSmokeTest::run(
                 *static_cast<EpubReaderActivity*>(activityManager.simulatorCurrentActivity()))) {
           fail("EPUB completion shortcut regression");
@@ -5785,6 +7040,9 @@ class SimulatorSmokeTest {
     inputScript.push_back(press(button));
     inputScript.push_back(release(button));
   }
+
+  // File Transfer ends with Receive Nearby Book, plus Nearby Stats Sync when reading stats are tracked.
+  static int nearbyFileTransferRows() { return SETTINGS.shouldTrackReadingStats() ? 2 : 1; }
 
   unsigned statusBarReaderPass = 0;
 
@@ -6685,5 +7943,22 @@ SimulatorSmokeTest smokeTest;
 }  // namespace
 
 void runSimulatorSmokeTestTick() { smokeTest.tick(); }
+
+bool simulatorInterceptNetworkRestart(const uint32_t target, const uint32_t payload) {
+  if (!capturedNetworkRestart.armed) return false;
+  ++capturedNetworkRestart.count;
+  capturedNetworkRestart.target = target;
+  capturedNetworkRestart.payload = payload;
+  LOG_INF("SMOKE", "Captured network restart target=%u payload=%u", target, payload);
+  return true;
+}
+
+// Every scenario except the release notes one starts with What's New already dismissed so it cannot cover Home.
+void prepareSimulatorSmokeState() {
+  // Smoke tests and scripted-input harnesses (scripts/test_*.py) expect to drive Home directly.
+  const bool harness = std::getenv("CROSSINK_SIMULATOR_SMOKE_TEST") || std::getenv("CROSSPOINT_SIM_INPUT_SCRIPT");
+  if (harness && !std::getenv("CROSSINK_SIMULATOR_SMOKE_RELEASE_NOTES"))
+    APP_STATE.releaseNotesSeen = RELEASE_NOTES_REVISION;
+}
 
 #endif

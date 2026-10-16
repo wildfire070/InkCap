@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 using String = std::string;
@@ -44,6 +45,9 @@ auto makeUniqueNoThrow(size_t n) {
 inline constexpr int O_WRONLY = 1, O_APPEND = 2;
 inline std::map<std::string, std::string> files;
 inline bool failWrite = false, failSync = false;
+inline uint64_t cardCapacity = 0, cardUsedBytes = 0;
+inline size_t fileWriteOpens = 0, capacityChecks = 0;
+inline std::set<std::string> failRemovePaths, failRenameSources;
 struct FsFile {
   std::string path;
   bool opened = false;
@@ -61,10 +65,15 @@ struct FsFile {
   }
 };
 struct StorageFake {
+  uint64_t totalBytes() {
+    ++capacityChecks;
+    return cardCapacity;
+  }
+  uint64_t usedBytes() { return cardUsedBytes; }
   bool exists(const char* p) { return files.count(p); }
-  bool remove(const char* p) { return files.erase(p) > 0; }
+  bool remove(const char* p) { return !failRemovePaths.count(p) && files.erase(p) > 0; }
   bool rename(const char* a, const char* b) {
-    if (!exists(a) || exists(b)) return false;
+    if (failRenameSources.count(a) || !exists(a) || exists(b)) return false;
     files[b] = std::move(files[a]);
     files.erase(a);
     return true;
@@ -74,11 +83,15 @@ struct StorageFake {
     return bool(f);
   }
   bool openFileForWrite(const char*, const char* p, FsFile& f) {
+    ++fileWriteOpens;
     files[p].clear();
     f = {p, true};
     return true;
   }
-  FsFile open(const char* p, int) { return {p, true}; }
+  FsFile open(const char* p, int) {
+    ++fileWriteOpens;
+    return {p, true};
+  }
 };
 inline StorageFake Storage;
 struct Reply {
@@ -91,6 +104,8 @@ struct Reply {
   std::string etag = "\"v1\"";
   std::string disposition;
   std::vector<std::string> extraDispositions;
+  size_t chunkSize = 0;
+  bool transportFailureAfterHeaders = false;
 };
 inline std::vector<Reply> replies;
 inline size_t nextReply = 0;
@@ -148,6 +163,7 @@ inline int64_t esp_http_client_fetch_headers(FakeHttp* h) {
 inline int esp_http_client_get_status_code(FakeHttp* h) { return h->reply.status; }
 inline int esp_http_client_read(FakeHttp* h, char* p, size_t len) {
   auto n = std::min(len, h->reply.body.size() - h->position);
+  if (h->reply.chunkSize) n = std::min(n, h->reply.chunkSize);
   memcpy(p, h->reply.body.data() + h->position, n);
   h->position += n;
   return n;
@@ -179,8 +195,15 @@ class SecureHttpClient {
       wasAborted = true;
       return reply.status;
     }
-    if (!reply.body.empty()) stopped = !write((const uint8_t*)reply.body.data(), reply.body.size());
-    return reply.status;
+    size_t position = 0;
+    while (position < reply.body.size()) {
+      const size_t count =
+          std::min(reply.chunkSize ? reply.chunkSize : reply.body.size(), reply.body.size() - position);
+      stopped = !write((const uint8_t*)reply.body.data() + position, count);
+      if (stopped) break;
+      position += count;
+    }
+    return reply.transportFailureAfterHeaders ? -1 : reply.status;
   }
   int getStatus() { return reply.status; }
   bool hasContentLength() { return reply.length > 0; }

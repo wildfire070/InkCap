@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <string>
 
+#include "BookLoadingFeedback.h"
 #include "BookReadingStats.h"
 #include "BookStatus.h"
 #include "BookmarkStore.h"
@@ -28,6 +30,8 @@
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
 #include "components/OptionPopup.h"
+#include "sync/KeptPosition.h"
+#include "sync/SyncPending.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "activities/reader/ReaderPinchGesture.h"
 #endif
@@ -43,6 +47,7 @@ class EpubReaderActivity final : public Activity {
 #ifdef SIMULATOR
   friend struct EpubReaderCompletionSmokeTest;
   friend struct ScreenCalibrationSmokeTest;
+  friend struct ClippingSelectionSmokeTest;
 #endif
  public:
   bool usesFullScreenReaderVerticalSwipes() const override { return true; }
@@ -88,7 +93,6 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   int activeSectionFontId = 0;
-  uint32_t activeSectionLayoutSignature = 0;
   std::optional<uint16_t> pendingPageJump;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.
@@ -139,6 +143,12 @@ class EpubReaderActivity final : public Activity {
   QueuedTurnRenderingState queuedTurnRendering;
   bool hyphenationPackChecked = false;
   bool checkHyphenationPack();
+  // A position another reader left for this book (sync_parked.bin), offered
+  // once the first page is on screen. Allocated only when one is found.
+  std::unique_ptr<KeptPosition::Offer> keptOffer;
+  bool keptOfferShown = false;
+  bool offerKeptPosition();
+  void applyKeptPosition(const KeptPosition::Offer& offer);
   unsigned long pageShownAtMs = 0UL;
   unsigned long lastRenderCompleteMs = 0UL;
   int idlePrewarmSpine = -1;
@@ -372,6 +382,12 @@ class EpubReaderActivity final : public Activity {
   // library, "going home" returns there at the remembered index instead of Home.
   void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   ReaderProgressSaveDebouncer progressSaveDebouncer;
+  // Records this book on the sync pending-push list once per reading session.
+  // saveProgress() can run on the render task (low-heap restart), so it only
+  // flags the mark; the main loop and onExit() write it.
+  SyncPending::SessionMarker pendingSync;
+  std::atomic<bool> pendingSyncDue{false};
+  void flushPendingSyncMark();
   bool progressSaveRequiredAfterRelayout = false;
   // Adapted from Sichroteph/YACP commit 3f3c5fc42e794c021edb9832856ef98c2d2065b9
   // (MIT): retain one render-only strip instead of reallocating it on every
@@ -553,16 +569,25 @@ class EpubReaderActivity final : public Activity {
   void navigateToHref(const std::string& href, bool savePosition = false, bool preferFootnotePreview = false);
   void restoreSavedPosition();
 
+  BookLoadingFeedback openingFeedback;
+  bool showOpeningFeedback() {
+    if (!openingFeedback.showIfPending(renderer)) return false;
+    pagesUntilFullRefresh = 0;
+    return true;
+  }
+
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
                               const BookReaderSettingsData& readerSettings, int initialRefreshCountdown,
-                              bool cleanImageBaseOnEntry = false, bool skipRecentBookUpdateOnEntry = false)
+                              bool cleanImageBaseOnEntry = false, bool skipRecentBookUpdateOnEntry = false,
+                              BookLoadingFeedback openingFeedback = {})
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
         initialBookReaderSettings(readerSettings),
         pagesUntilFullRefresh(initialRefreshCountdown),
         cleanImageBasePending(cleanImageBaseOnEntry),
-        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry) {}
+        skipRecentBookUpdateOnEntry(skipRecentBookUpdateOnEntry),
+        openingFeedback(openingFeedback) {}
   // Set from APP_STATE.ao3LibraryReturnIndex in onEnter(); -1 unless opened from the AO3 library.
   void onEnter() override;
   void onExit() override;

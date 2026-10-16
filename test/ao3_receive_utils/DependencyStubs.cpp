@@ -16,4 +16,4 @@ bool BookMoveUtils::migrateMovedEpubState(const std::string&, const std::string&
   return true;
 }
 
-bool clearBookCachePreservingUserState(const std::string&) { return true; }
+bool clearBookCachePreservingUserState(const std::string&, bool) { return true; }

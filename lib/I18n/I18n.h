@@ -18,6 +18,8 @@ class I18n {
 
   const char* get(StrId id) const;
   const char* operator[](StrId id) const { return get(id); }
+  // True when the active language has its own text for id (English always does).
+  bool hasTranslation(StrId id) const;
   // Called once before activities/rendering start. Mappings remain pinned until reboot.
   void begin(const char* preferredCode, uint64_t generation = 0);
   Language getLanguage() const { return languageFromCode(active_.keyboard); }
@@ -63,8 +65,22 @@ class I18n {
     uint16_t append(const char* value);
   };
   // Discovery/installation are explicit Settings actions, never boot/render work.
-  language_cache::Result discover(Catalog& catalog) const;
+  struct SourceProjection {
+    const char* path;
+    const language_cache::Metadata* metadata;
+  };
+  // A projection previews publication without opening its payload or changing SD,
+  // flash, or the active locale. Metadata and path are borrowed for this call.
+  language_cache::Result discover(Catalog& catalog, void* context = nullptr, bool (*continueWork)(void*) = nullptr,
+                                  const SourceProjection* projection = nullptr) const;
+  // Unchanged returns the active identity without consuming the boot mutation guard.
   language_cache::Result prepare(const char* path, language_cache::Installed& result);
+  // Download verification only: no flash access, settings writes or activation.
+  language_cache::Result validateSource(const char* path, const char* code, const char* source, const char* keyset,
+                                        void* context = nullptr, bool (*continueWork)(void*) = nullptr) const;
+  static const char* sourceContract();
+  static const char* keysetContract();
+  static bool supportedDownload(const char* code);
   // Diagnostic only: compares identical bytes in embedded flash, mapped flash,
   // and (where available) PSRAM. No backend switch or timing on the hot path.
   void benchmark() const;
@@ -83,6 +99,7 @@ class I18n {
   uint64_t generation_ = 0;
   int slot_ = -1;
   bool begun_ = false;
+  bool prepared_ = false;  // Successful slot mutation pins this boot until restart.
   // 2 bytes/key in internal RAM, no string copies or per-lookup allocation.
   uint16_t offsets_[static_cast<size_t>(StrId::_COUNT)] = {};
 };

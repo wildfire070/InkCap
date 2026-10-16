@@ -120,10 +120,8 @@ void NearbyBookPositionSyncActivity::onExit() { Activity::onExit(); }
 void NearbyBookPositionSyncActivity::loop() {
   if (consumeInitialInputRelease()) return;
 
-  const auto& headerMetrics = UITheme::getInstance().getMetrics();
   const Rect headerScreen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header{headerScreen.x, headerScreen.y + headerMetrics.topPadding, headerScreen.width,
-                    TouchHeaderBackButton::height(headerMetrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, headerScreen);
   if (TouchHeaderBackButton::wasTapped(mappedInput, header)) {
     returnToReader(true);
     return;
@@ -775,10 +773,8 @@ void NearbyBookPositionSyncActivity::loop() {
 
   processEvents();
 
-  const auto& headerMetrics = UITheme::getInstance().getMetrics();
   const Rect headerScreen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect header{headerScreen.x, headerScreen.y + headerMetrics.topPadding, headerScreen.width,
-                    TouchHeaderBackButton::height(headerMetrics, mappedInput)};
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, headerScreen);
   if (TouchHeaderBackButton::wasTapped(mappedInput, header)) {
     returnToReader(true);
     return;

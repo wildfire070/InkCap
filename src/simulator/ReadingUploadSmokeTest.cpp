@@ -56,6 +56,9 @@ bool prepareReadingUploadSmokeTest() {
   load(R"({"cfgVersion":2})");
   KOREADER_STORE.setCredentials("smoke", "smoke-password");
   KOREADER_STORE.setServerUrl(server);
+  // Sync Reading Stats appears only once the server is known to accept stats.
+  if (std::getenv("CROSSINK_READING_TEST_STATS_ENTRY") || std::getenv("CROSSINK_READING_TEST_SUPPORTED"))
+    KOREADER_STORE.setServerSupport(SyncServerSupport::SUPPORTED);
   KOREADER_STORE.setSendMetadata(true);
   KOREADER_STORE.setSyncBehavior(std::getenv("CROSSINK_READING_TEST_ASK") ? KOReaderSyncBehavior::ASK_EVERY_TIME
                                                                           : KOReaderSyncBehavior::SMART);

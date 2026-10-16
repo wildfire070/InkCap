@@ -1,9 +1,12 @@
+#include <OpdsParser.h>
 #include <gtest/gtest.h>
 
+#include "DownloadFileSwap.h"
 #include "HttpDownloadFilename.h"
 #include "HttpDownloadResume.h"
 #include "HttpDownloader.h"
 #include "TestPlatform.h"
+#include "util/OpdsFeedError.h"
 
 class HttpDownloaderTest : public testing::TestWithParam<HttpDownloader::Transport> {
   void SetUp() override {
@@ -13,6 +16,10 @@ class HttpDownloaderTest : public testing::TestWithParam<HttpDownloader::Transpo
     requestUrls.clear();
     nextReply = 0;
     failWrite = failSync = false;
+    cardCapacity = cardUsedBytes = 0;
+    fileWriteOpens = capacityChecks = 0;
+    failRemovePaths.clear();
+    failRenameSources.clear();
   }
 
  protected:
@@ -37,11 +44,12 @@ class HttpDownloaderTest : public testing::TestWithParam<HttpDownloader::Transpo
     reply.disposition = "attachment; filename=\"" + name + "\"";
     return reply;
   }
-  HttpDownloader::DownloadError download(HttpDownloader::CancelCallback cancel = nullptr) {
+  HttpDownloader::DownloadError download(HttpDownloader::CancelCallback cancel = nullptr, bool strictCleanup = false) {
     HttpDownloader::DownloadOptions options;
     options.transport = GetParam();
     options.stageAsPart = true;
     options.shouldCancel = cancel;
+    options.requireBackupCleanup = strictCleanup;
     return HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "user", "pass",
                                           options);
   }
@@ -316,4 +324,532 @@ TEST_P(HttpDownloaderTest, DuplicateDispositionHeadersUseGeneratedFallback) {
   EXPECT_EQ(files[resolved], "abc");
   EXPECT_FALSE(files.count("/Books/First.epub"));
   EXPECT_FALSE(files.count("/Books/Second.epub"));
+}
+
+TEST_P(HttpDownloaderTest, DeclaredLimitRejectsBeforeOpeningFileOrCallingSink) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = true;
+  options.maxBytes = 3;
+  files["/book"] = "original";
+  replies = {{200, "abcd", 4}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.part"));
+  nextReply = 0;
+  size_t received = 0;
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/book",
+                [&](const uint8_t*, size_t n) {
+                  received += n;
+                  return true;
+                },
+                nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(received, 0u);
+}
+
+TEST_P(HttpDownloaderTest, UnknownLengthLimitChecksEveryChunkBeforeDelivery) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.maxBytes = 3;
+  options.stageAsPart = true;
+  options.preservePartial = true;
+  Reply reply{200, "abcd", 0};  // Chunked or close-delimited body.
+  reply.chunkSize = 2;
+  replies = {reply};
+  size_t received = 0;
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/book",
+                [&](const uint8_t*, size_t n) {
+                  received += n;
+                  return true;
+                },
+                nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(received, 2u);  // The chunk that would cross the cap never reaches the callback.
+  EXPECT_EQ(nextReply, 1u);
+  nextReply = 0;
+  files["/book"] = "original";
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(files["/book.part"], "ab");
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_EQ(nextReply, 1u);
+}
+
+TEST_P(HttpDownloaderTest, ExpectedSizeAcceptsExactAndRejectsShortOrLongBodies) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.expectedBytes = 3;
+  for (size_t declared : {0u, 2u, 3u, 4u}) {
+    for (const std::string body : {"ab", "abc", "abcd"}) {
+      nextReply = 0;
+      replies = {{200, body, declared}};
+      size_t received = 0;
+      const auto result = HttpDownloader::streamUrl(
+          "https://example.com/book",
+          [&](const uint8_t*, size_t n) {
+            received += n;
+            return true;
+          },
+          nullptr, "", "", options);
+      EXPECT_EQ(result,
+                body.size() == 3 && (declared == 0 || declared == 3) ? HttpDownloader::OK : HttpDownloader::HTTP_ERROR);
+      EXPECT_LE(received, 3u);
+      if (declared != 0 && declared != 3) EXPECT_EQ(received, 0u);
+    }
+  }
+}
+
+TEST_P(HttpDownloaderTest, LimitsIncludeResumedBytesAndTotalFromContentRange) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.maxBytes = 6;
+  options.expectedBytes = 6;
+  options.stageAsPart = true;
+  replies = {{200, "abc", 6, "", false}, {206, "def", 3, "bytes 3-5/6", true}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::OK);
+  EXPECT_EQ(files["/book"], "abcdef");
+  files["/book.part"] = "abc";
+  options.resumePartial = true;
+  options.maxBytes = 5;
+  nextReply = 0;
+  replies = {{206, "def", 3, "bytes 3-5/6", true}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(files["/book"], "abcdef");
+  EXPECT_FALSE(files.count("/book.part"));
+}
+
+TEST_P(HttpDownloaderTest, UrlPolicyAppliesBeforeInitialAndEachRedirectConnection) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  std::vector<std::string> checked;
+  options.urlContext = &checked;
+  options.allowUrl = [](std::string_view url, void* context) {
+    static_cast<std::vector<std::string>*>(context)->emplace_back(url);
+    return url == "https://example.com/book" || url == "https://example.com/next";
+  };
+  const auto sink = [](const uint8_t*, size_t) { return true; };
+  replies = {{200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::streamUrl("https://unapproved.example/book", sink, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_TRUE(requestUrls.empty());
+  ASSERT_EQ(checked.size(), 1u);
+  checked.clear();
+  replies = {
+      {302, "", 0, "", true, "/next"}, {302, "", 0, "", true, "https://unapproved.example/book"}, {200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::streamUrl("https://example.com/book", sink, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  ASSERT_EQ(requestUrls.size(), 2u);
+  EXPECT_EQ(requestUrls[1], "https://example.com/next");
+  ASSERT_EQ(checked.size(), 3u);
+  EXPECT_EQ(checked[2], "https://unapproved.example/book");
+}
+
+TEST_P(HttpDownloaderTest, RedirectBudgetCountsRedirectsAndAllowsZero) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  const auto sink = [](const uint8_t*, size_t) { return true; };
+  options.maxRedirects = 0;
+  replies = {{200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::streamUrl("https://example.com/book", sink, nullptr, "", "", options), HttpDownloader::OK);
+  nextReply = 0;
+  replies = {{302, "", 0, "", true, "/next"}, {200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::streamUrl("https://example.com/book", sink, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(nextReply, 1u);
+  options.maxRedirects = 1;
+  nextReply = 0;
+  EXPECT_EQ(HttpDownloader::streamUrl("https://example.com/book", sink, nullptr, "", "", options), HttpDownloader::OK);
+  EXPECT_EQ(nextReply, 2u);
+}
+
+TEST_P(HttpDownloaderTest, ContextValidatorChecksStagedFileBeforePublication) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = true;
+  std::string expected = "wrong";
+  options.validationContext = &expected;
+  options.validateWithContext = [](const std::string& path, void* context) {
+    EXPECT_EQ(path, "/book.part");
+    EXPECT_EQ(files["/book"], "original");
+    return files[path] == *static_cast<std::string*>(context);
+  };
+  files["/book"] = "original";
+  replies = {{200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.part"));
+  expected = "abc";
+  nextReply = 0;
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::OK);
+  EXPECT_EQ(files["/book"], "abc");
+}
+
+TEST_P(HttpDownloaderTest, PublicationCleanupFailureReportsFailureAndRecoversWithoutLosingSource) {
+  files["/book"] = "original";
+  replies = {{200, "abc", 3}};
+  failRemovePaths.insert("/book.old");
+  EXPECT_EQ(download(nullptr, true), HttpDownloader::FILE_ERROR);
+  EXPECT_EQ(files["/book"], "abc");
+  EXPECT_EQ(files["/book.old"], "original");
+  EXPECT_FALSE(DownloadFileSwap::recover("/book"));
+  EXPECT_EQ(files["/book"], "abc");
+  failRemovePaths.clear();
+  EXPECT_TRUE(DownloadFileSwap::recover("/book"));
+  EXPECT_EQ(files["/book"], "abc");
+  EXPECT_FALSE(files.count("/book.old"));
+}
+
+TEST_P(HttpDownloaderTest, FailedPublishAndRollbackLeaveRecoverableOriginal) {
+  files["/book"] = "original";
+  replies = {{200, "abc", 3}};
+  failRenameSources.insert("/book.part");
+  failRenameSources.insert("/book.old");
+  EXPECT_EQ(download(), HttpDownloader::FILE_ERROR);
+  EXPECT_FALSE(files.count("/book"));
+  EXPECT_EQ(files["/book.old"], "original");
+  failRenameSources.clear();
+  EXPECT_TRUE(DownloadFileSwap::recover("/book"));
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.old"));
+}
+
+TEST_P(HttpDownloaderTest, ExactSizeMismatchNeverValidatesOrPublishesStagedFile) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = true;
+  options.expectedBytes = 3;
+  bool validated = false;
+  options.validationContext = &validated;
+  options.validateWithContext = [](const std::string&, void* context) {
+    *static_cast<bool*>(context) = true;
+    return true;
+  };
+  files["/book"] = "original";
+  replies = {{200, "ab", 0}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_FALSE(validated);
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.part"));
+  EXPECT_EQ(nextReply, 1u);
+}
+
+TEST_P(HttpDownloaderTest, UnknownLengthBodyAtMaximumIsAccepted) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.maxBytes = 3;
+  Reply reply{200, "abc", 0};
+  reply.chunkSize = 1;
+  replies = {reply};
+  size_t received = 0;
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/book",
+                [&](const uint8_t*, size_t count) {
+                  received += count;
+                  return true;
+                },
+                nullptr, "", "", options),
+            HttpDownloader::OK);
+  EXPECT_EQ(received, 3u);
+}
+
+TEST_P(HttpDownloaderTest, LegacyPublicationCleanupFailureStillReportsSuccess) {
+  files["/book"] = "original";
+  replies = {{200, "abc", 3}};
+  failRemovePaths.insert("/book.old");
+  EXPECT_EQ(download(), HttpDownloader::OK);
+  EXPECT_EQ(files["/book"], "abc");
+  EXPECT_EQ(files["/book.old"], "original");
+  failRemovePaths.clear();
+  EXPECT_TRUE(DownloadFileSwap::recover("/book"));
+  EXPECT_EQ(files["/book"], "abc");
+  EXPECT_FALSE(files.count("/book.old"));
+}
+
+TEST_P(HttpDownloaderTest, FontStyleUnstagedDownloadKeepsResumablePartialOnTransportFailure) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.preservePartial = options.resumePartial = true;
+  replies = {{200, "abc", 9, "", false}, {206, "def", 3, "bytes 3-5/9", false}, {500, "", 0}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/font", "/font.tmp", nullptr, nullptr, "", "", options),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(files["/font.tmp"], "abcdef");
+  EXPECT_EQ(requests[0].count("Range"), 0u);
+  EXPECT_EQ(requests[1]["Range"], "bytes=3-");
+  EXPECT_EQ(requests[2]["Range"], "bytes=6-");
+  EXPECT_FALSE(files.count("/font.tmp.old"));
+  EXPECT_EQ(capacityChecks, 0u);  // Existing fonts do not opt into capacity preflight.
+}
+
+#ifndef SIMULATOR
+TEST_P(HttpDownloaderTest, ExpectedSizePreflightsUnknownLengthBeforeOpeningOrWriting) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = true;
+  options.expectedBytes = 6;
+  files["/book"] = "original";
+  cardCapacity = 10;
+  cardUsedBytes = 8;  // Includes the existing source; never reclaim it up front.
+  replies = {{200, "abcdef", 0}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::INSUFFICIENT_SPACE);
+  EXPECT_EQ(fileWriteOpens, 0u);
+  EXPECT_EQ(capacityChecks, 1u);
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.part"));
+  EXPECT_EQ(nextReply, 1u);
+}
+
+TEST_P(HttpDownloaderTest, ExactFreeSpaceAllowsUnknownLengthReplacementWithOldSourceRetained) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = true;
+  options.expectedBytes = 6;
+  files["/book"] = "original";
+  cardCapacity = 14;
+  cardUsedBytes = 8;
+  Reply reply{200, "abcdef", 0};
+  reply.chunkSize = 2;
+  replies = {reply};
+  options.validate = [](const std::string&) { return files["/book"] == "original"; };
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::OK);
+  EXPECT_EQ(files["/book"], "abcdef");
+  EXPECT_FALSE(files.count("/book.old"));
+  EXPECT_EQ(capacityChecks, 1u);
+}
+
+TEST_P(HttpDownloaderTest, ResumedPreflightRequiresOnlyRemainingBytes) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = options.resumePartial = true;
+  options.expectedBytes = 6;
+  files["/book"] = "original";
+  files["/book.part"] = "abc";
+  cardCapacity = 14;
+  cardUsedBytes = 11;  // Existing source and partial are both already on SD.
+  replies = {{206, "def", 3, "bytes 3-5/6"}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::OK);
+  EXPECT_EQ(files["/book"], "abcdef");
+  EXPECT_EQ(capacityChecks, 1u);
+}
+
+TEST_P(HttpDownloaderTest, DeclaredLengthStillPreflightsLegacyBookDownloads) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = true;
+  files["/book"] = "original";
+  cardCapacity = cardUsedBytes = 8;
+  replies = {{200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::INSUFFICIENT_SPACE);
+  EXPECT_EQ(fileWriteOpens, 0u);
+  EXPECT_EQ(files["/book"], "original");
+}
+
+TEST_P(HttpDownloaderTest, UnknownCapacityFallsBackToSdWriteError) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = true;
+  options.expectedBytes = 3;
+  files["/book"] = "original";
+  cardCapacity = 0;
+  failWrite = true;
+  replies = {{200, "abc", 0}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::FILE_ERROR);
+  EXPECT_EQ(fileWriteOpens, 1u);
+  EXPECT_EQ(files["/book"], "original");
+  EXPECT_FALSE(files.count("/book.part"));
+}
+
+TEST_P(HttpDownloaderTest, UsedCapacityAboveTotalSaturatesWithoutUnsignedWrap) {
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = options.checkFreeSpace = true;
+  options.expectedBytes = 3;
+  cardCapacity = 4;
+  cardUsedBytes = 5;
+  replies = {{200, "abc", 0}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::INSUFFICIENT_SPACE);
+  EXPECT_EQ(fileWriteOpens, 0u);
+}
+#endif
+TEST_P(HttpDownloaderTest, FeedDiagnosticsFollowFinalResponseAndAuthorization) {
+  for (const auto* destination : {"https://example.com/feed", "https://other.example/feed"}) {
+    for (const bool credentials : {false, true}) {
+      replies = {{302, "", 0, "", true, destination}, {401, "", 0}};
+      nextReply = 0;
+      requests.clear();
+      HttpRequestDiagnostics diagnostic;
+      HttpDownloader::DownloadOptions options;
+      options.transport = GetParam();
+      auto result = HttpDownloader::streamUrl(
+          "https://example.com/start", [](const uint8_t*, size_t) { return true; }, nullptr, credentials ? "user" : "",
+          credentials ? "pass" : "", options, &diagnostic);
+      const bool withheld = credentials && std::string(destination).find("other") != std::string::npos;
+      EXPECT_EQ(result, HttpDownloader::HTTP_ERROR);
+      EXPECT_EQ(diagnostic.status, 401);
+      EXPECT_EQ(diagnostic.authorizationWithheld, withheld);
+      ASSERT_EQ(requests.size(), 2u);
+      EXPECT_EQ(requests[1].count("Authorization") > 0, credentials && !withheld);
+      EXPECT_EQ(classifyFeedFailure(diagnostic, true),
+                withheld ? OpdsFeedError::Redirected : OpdsFeedError::Unauthorized);
+    }
+  }
+}
+
+TEST_P(HttpDownloaderTest, FeedDiagnosticsResetAcrossRequestsAndKeep200FailuresGeneric) {
+  HttpRequestDiagnostics diagnostic;
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  for (int status : {401, 500, 503, 530, 599, 403, 404, 600, -1, 200}) {
+    replies = {{status, "", 4, "", false}};
+    nextReply = 0;
+    auto result = HttpDownloader::streamUrl(
+        "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options, &diagnostic);
+    EXPECT_EQ(result, HttpDownloader::HTTP_ERROR);
+    EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR),
+              status == 401                   ? OpdsFeedError::Unauthorized
+              : status >= 500 && status < 600 ? OpdsFeedError::ServerError
+              : status < 0                    ? OpdsFeedError::Unreachable
+                                              : OpdsFeedError::Other);
+    EXPECT_FALSE(diagnostic.authorizationWithheld);
+  }
+  replies = {{200, "abc", 3}};
+  nextReply = 0;
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/feed", [](const uint8_t*, size_t) { return false; }, nullptr, "", "", options,
+                &diagnostic),
+            HttpDownloader::FILE_ERROR);
+  EXPECT_TRUE(diagnostic.callbackRejected);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Other);
+
+  options.shouldCancel = [] { return true; };
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options,
+                &diagnostic),
+            HttpDownloader::ABORTED);
+  EXPECT_FALSE(diagnostic.attempted);
+  EXPECT_FALSE(diagnostic.callbackRejected);
+  EXPECT_EQ(diagnostic.status, 0);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, false), OpdsFeedError::Other);
+}
+
+TEST_P(HttpDownloaderTest, FeedDiagnosticsDiscardRedirectStatusWhenNextConnectionFails) {
+  replies = {{302, "", 0, "", true, "https://other.example/feed"}, {-1, "", 0}};
+  HttpRequestDiagnostics diagnostic;
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "user", "pass",
+                options, &diagnostic),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_LE(diagnostic.status, 0);
+  EXPECT_TRUE(diagnostic.authorizationWithheld);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Unreachable);
+}
+
+TEST_P(HttpDownloaderTest, FeedDiagnosticsRespectSavedOriginAndHttpUpgrade) {
+  replies = {{302, "", 0, "", true, "https://example.com/feed"}, {401, "", 0}};
+  HttpRequestDiagnostics diagnostic;
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "http://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "user", "pass",
+                options, &diagnostic),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Redirected);
+  EXPECT_FALSE(requests.back().count("Authorization"));
+  replies = {{401, "", 0}};
+  nextReply = 0;
+  options.authorizationOrigin = "https://saved.example";
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://other.example/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "user", "pass",
+                options, &diagnostic),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Redirected);
+}
+
+TEST_P(HttpDownloaderTest, FeedDiagnosticsMissingCallbackAndSuccessAreGeneric) {
+  HttpRequestDiagnostics diagnostic{401, true, true, true};
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  EXPECT_EQ(HttpDownloader::streamUrl("https://example.com/feed", nullptr, nullptr, "", "", options, &diagnostic),
+            HttpDownloader::HTTP_ERROR);
+  EXPECT_FALSE(diagnostic.attempted);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Other);
+  replies = {{200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::streamUrl(
+                "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options,
+                &diagnostic),
+            HttpDownloader::OK);
+  EXPECT_EQ(diagnostic.status, 200);
+  EXPECT_FALSE(diagnostic.authorizationWithheld);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, false), OpdsFeedError::Other);
+}
+
+TEST_P(HttpDownloaderTest, FeedInFlightCancellationIsNotConnectivityFailure) {
+  replies = {{200, "abc", 3}};
+  HttpRequestDiagnostics diagnostic;
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  int checks = 0;
+  options.shouldCancel = [&checks] { return ++checks > 1; };
+  auto result = HttpDownloader::streamUrl(
+      "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options, &diagnostic);
+  EXPECT_EQ(result, HttpDownloader::ABORTED);
+  EXPECT_TRUE(diagnostic.attempted);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+}
+
+TEST_P(HttpDownloaderTest, FeedNegativeGetRetainsHeadersAndDoesNotReportConnectivity) {
+  if (GetParam() != HttpDownloader::Transport::WOLFSSL) GTEST_SKIP() << "wolfSSL GET contract";
+  Reply reply{200, "abc", 6, "", false};
+  reply.transportFailureAfterHeaders = true;
+  replies = {reply};
+  HttpRequestDiagnostics diagnostic;
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  auto result = HttpDownloader::streamUrl(
+      "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options, &diagnostic);
+  EXPECT_EQ(result, HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(diagnostic.status, 200);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Other);
+  nextReply = 0;
+  result = HttpDownloader::streamUrl(
+      "https://example.com/feed", [](const uint8_t*, size_t) { return false; }, nullptr, "", "", options, &diagnostic);
+  EXPECT_TRUE(diagnostic.callbackRejected);
+  EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+}
+
+TEST_P(HttpDownloaderTest, MalformedAndUnfinishedFeedsAreNotConnectivityFailures) {
+  for (const std::string body : {"<feed></wrong>", "<feed>"}) {
+    OpdsEntry entry[1];
+    OpdsParser parser(entry);
+    replies = {{200, body, body.size()}};
+    nextReply = 0;
+    HttpRequestDiagnostics diagnostic;
+    HttpDownloader::DownloadOptions options;
+    options.transport = GetParam();
+    auto result = HttpDownloader::streamUrl(
+        "https://example.com/feed",
+        [&parser](const uint8_t* data, size_t size) { return parser.write(data, size) == size; }, nullptr, "", "",
+        options, &diagnostic);
+    parser.flush();  // Same finalization performed by OpdsParserStream.
+    EXPECT_FALSE(parser);
+    EXPECT_EQ(parser.getErrorReason(), OpdsParserError::XML_PARSE);
+    EXPECT_EQ(diagnostic.status, 200);
+    EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+  }
 }

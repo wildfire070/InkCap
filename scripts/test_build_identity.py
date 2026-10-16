@@ -3,6 +3,8 @@ from pathlib import Path
 import runpy
 import unittest
 import os
+import re
+import subprocess
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +24,66 @@ class Env(dict):
     def AddBuildMiddleware(self, callback, pattern): self.middleware.append((callback, pattern))
 
 class BuildIdentityTest(unittest.TestCase):
+    def test_download_endpoint_is_explicit_and_validated(self):
+        base = "https://crossink-languages.s3.us-east-1.amazonaws.com/testing/abc/"
+        function = MODULE["inject_download_endpoints"]
+        env = Env()
+        with patch.dict(os.environ, {"CROSSINK_ASSET_BASE_URL": base}, clear=True):
+            function(env)
+        self.assertEqual(len(env.defines), 1)
+        self.assertEqual(env.defines[0][0], "ASSET_DOWNLOAD_BASE_URL")
+        self.assertIn(base, env.defines[0][1])
+        for invalid in ("http://host/", "https://host/no-slash", "https://host/../", "https://user:pass@host/", 'https://host/"bad/'):
+            with patch.dict(os.environ, {"CROSSINK_ASSET_BASE_URL": invalid}, clear=True):
+                with self.assertRaises(ValueError): function(Env())
+        with patch.dict(os.environ, {"CROSSINK_ASSET_BASE_URL": ""}, clear=True):
+            empty = Env(); function(empty)
+            self.assertEqual(empty.defines, [])
+
+    def test_font_endpoint_is_opt_in_and_validated(self):
+        function = MODULE["inject_download_endpoints"]
+        with patch.dict(os.environ, {}, clear=True):
+            env = Env(); function(env)
+            self.assertEqual(env.defines, [])
+        for base in ("http://fonts.example.com/", "https://fonts.example.com/custom/"):
+            with patch.dict(os.environ, {"CROSSINK_FONT_BASE_URL": base}, clear=True):
+                env = Env(); function(env)
+                self.assertEqual(len(env.defines), 1)
+                self.assertEqual(env.defines[0][0], "FONT_DOWNLOAD_BASE_URL")
+                self.assertIn(base, env.defines[0][1])
+        for invalid in ("ftp://host/", "https://host/no-slash", "https://host/../",
+                        "https://user:pass@host/", 'https://host/"bad/', "https://host/\n"):
+            with patch.dict(os.environ, {"CROSSINK_FONT_BASE_URL": invalid}, clear=True):
+                with self.assertRaises(ValueError): function(Env())
+        with patch.dict(os.environ, {"CROSSINK_ASSET_BASE_URL": "https://assets.example.com/",
+                                    "CROSSINK_FONT_BASE_URL": "http://fonts.example.com/"}, clear=True):
+            env = Env(); function(env)
+            self.assertEqual([item[0] for item in env.defines],
+                             ["ASSET_DOWNLOAD_BASE_URL", "FONT_DOWNLOAD_BASE_URL"])
+
+    def test_font_manifest_url_matches_build_configuration_and_format(self):
+        header = (ROOT / "src/activities/settings/FontDownloadActivity.h").read_text()
+        macros = header[header.index("#define FONTS_MANIFEST_VERSION"):header.index("class FontDownloadActivity")]
+        font_header = (ROOT / "lib/EpdFont/SdCardFont.h").read_text()
+        version = re.search(r"^#define CPFONT_VERSION ([0-9]+)$", font_header, re.M).group(1)
+        manifest_version = re.search(r"^#define FONTS_MANIFEST_VERSION ([0-9]+)$", macros, re.M).group(1)
+        for prefix in (None, "http://fonts.example.com/", "https://fonts.example.com/custom/"):
+            with self.subTest(prefix=prefix):
+                source = f"#define CPFONT_VERSION {version}\n"
+                if prefix is not None:
+                    source += f'#define FONT_DOWNLOAD_BASE_URL "{prefix}"\n'
+                effective_prefix = prefix or "https://github.com/uxjulia/crossink-fonts/releases/download/"
+                catalog_base = f"{effective_prefix}sd-fonts-m{manifest_version}-b{version}/"
+                expected = catalog_base + "fonts.json"
+                source += macros + f'\nstatic_assert(__builtin_strcmp(FONT_MANIFEST_URL, "{expected}") == 0);\n'
+                source += f'static_assert(__builtin_strcmp(FONT_DOWNLOAD_CATALOG_BASE_URL, "{catalog_base}") == 0);\n'
+                if prefix is None:
+                    source += '#ifndef FONT_DOWNLOAD_USE_GITHUB_RELEASES\n#error Missing GitHub fallback\n#endif\n'
+                else:
+                    source += '#ifdef FONT_DOWNLOAD_USE_GITHUB_RELEASES\n#error Custom host must retain its catalog base URL\n#endif\n'
+                subprocess.run(["c++", "-std=c++17", "-x", "c++", "-fsyntax-only", "-"],
+                               input=source, text=True, check=True, capture_output=True)
+
     def test_identity_only_changes_one_compile_environment(self):
         function = MODULE["inject_version"]
         globals_ = function.__globals__

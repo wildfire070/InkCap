@@ -40,6 +40,8 @@
 #include "util/BookMoveUtils.h"
 #include "components/icons/libraryIcons.h"
 #include "components/icons/listIcons.h"
+#include "sync/BookSyncFile.h"
+#include "sync/SyncPending.h"
 
 namespace fui = freeink::ui;
 
@@ -1552,6 +1554,9 @@ void LibraryActivity::promptDeleteBook(const RecentBook& book) {
       LOG_ERR("LIB", "Failed to delete file: %s", path.c_str());
       return;
     }
+    // A deleted book has nothing left to upload or pull.
+    SyncPending::removePath(path);
+    BookSyncFile::onDeleted(path);
 
     library::invalidateLibraryIndex();
     // The card changed, so a cancelled scan must not keep showing this book.

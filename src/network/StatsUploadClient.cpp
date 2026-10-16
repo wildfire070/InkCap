@@ -3,11 +3,11 @@
 #include <ArduinoJson.h>
 #include <I18n.h>
 #include <KOReaderCredentialStore.h>
+#include <KOReaderSyncClient.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <SecureHttpClient.h>
 #ifndef SIMULATOR
-#include <esp_mac.h>
 #endif
 
 #include <cstdio>
@@ -31,19 +31,9 @@ StatsUploadClient::StatsUploadClient() : impl(makeUniqueNoThrow<Impl>()) {}
 StatsUploadClient::~StatsUploadClient() = default;
 
 bool StatsUploadClient::deviceId(char* out, const size_t capacity) {
-#ifdef SIMULATOR
-  // Deliberately separate from hardware identities; never overwrite a reader.
-  const int n = snprintf(out, capacity, "crossink-simulator");
-#else
-  uint8_t mac[6]{};
-  if (esp_efuse_mac_get_default(mac) != ESP_OK) {
-    LOG_ERR("StatsSync", "Cannot read device identity");
-    return false;
-  }
-  const int n =
-      snprintf(out, capacity, "crossink-%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-#endif
-  return n > 0 && static_cast<size_t>(n) < capacity;
+  if (KOReaderSyncClient::readerId(out, capacity)) return true;
+  LOG_ERR("StatsSync", "Cannot read device identity");
+  return false;
 }
 
 StatsUploadClient::Result StatsUploadClient::put(const char* endpoint, const char* payload, const bool book,

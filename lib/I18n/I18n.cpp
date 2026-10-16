@@ -69,7 +69,15 @@ const char* I18n::get(StrId id) const {
     return english(static_cast<uint16_t>(index));
   }
   const uint16_t offset = builtin_.offsets[index];
-  return offset & 0x8000 ? i18n_strings::STRINGS_EN_DATA + (offset & 0x7fff) : builtin_.data + offset;
+  // Reserve one offset for English fallback; localized blobs may use the other 16 bits.
+  return offset == I18N_ENGLISH_FALLBACK_OFFSET ? english(static_cast<uint16_t>(index)) : builtin_.data + offset;
+}
+bool I18n::hasTranslation(StrId id) const {
+  const size_t index = static_cast<size_t>(id);
+  if (index >= KEY_COUNT) return false;
+  if (std::strcmp(active_.code, "EN") == 0) return true;
+  if (activeData_) return offsets_[index] != MISSING;
+  return builtin_.offsets[index] != I18N_ENGLISH_FALLBACK_OFFSET;
 }
 void I18n::begin(const char* preferredCode, uint64_t generation) {
   if (begun_) return;
@@ -180,7 +188,8 @@ void I18n::Catalog::select(size_t index, Option& result) const {
   result.generation = entries[index].cached ? cachedGeneration : 0;
   result.duplicate = entries[index].duplicate;
 }
-Result I18n::discover(Catalog& catalog) const {
+Result I18n::discover(Catalog& catalog, void* context, bool (*continueWork)(void*),
+                      const SourceProjection* projection) const {
   catalog.reset();
   bool cachedAdded = false;
   for (uint8_t index = 0; index < getLanguageCount(); ++index) {
@@ -192,11 +201,40 @@ Result I18n::discover(Catalog& catalog) const {
   }
   if (mapping_.data && !cachedAdded && !catalog.add(active_.code, active_.name, "", true)) return Result::TooLarge;
   catalog.cachedGeneration = generation_;
+  const char* projectedFilename = nullptr;
+  if (projection) {
+    if (!projection->path || !projection->metadata) return Result::Invalid;
+    const size_t prefix = std::strlen(DIRECTORY);
+    if (std::strncmp(projection->path, DIRECTORY, prefix) || projection->path[prefix] != '/') return Result::Invalid;
+    projectedFilename = projection->path + prefix + 1;
+    const size_t length = std::strlen(projectedFilename);
+    if (length < 6 || length >= MAX_FILENAME - 1 || std::strchr(projectedFilename, '/') ||
+        std::strchr(projectedFilename, '\\') || std::strcmp(projectedFilename + length - 5, ".yaml"))
+      return Result::Invalid;
+  }
+  auto addSource = [&](const Metadata& metadata, const char* filename) {
+    size_t existing = 1;
+    while (existing < catalog.count && std::strcmp(catalog.code(existing), metadata.code) != 0) ++existing;
+    if (existing < catalog.count) {
+      if (*catalog.file(existing)) {
+        catalog.entries[existing].duplicate = true;
+        LOG_ERR("LANG", "Duplicate language code %s", metadata.code);
+        return true;
+      }
+      return catalog.source(existing, metadata.name, filename);
+    }
+    return catalog.add(metadata.code, metadata.name, filename);
+  };
+  if (continueWork && !continueWork(context)) return Result::Cancelled;
   auto directory = Storage.open(DIRECTORY);
   if (!directory || !directory.isDirectory()) {
     const bool allocationFailed = directory.allocationFailed();
     directory.close();
-    return allocationFailed ? Result::Memory : Result::Ok;
+    if (allocationFailed) return Result::Memory;
+    // Existing offline behavior permits a missing directory. A new projected
+    // source still consumes a row and text even before the directory exists.
+    if (projection && !addSource(*projection->metadata, projectedFilename)) return Result::TooLarge;
+    return Result::Ok;
   }
   Inspector inspector;
   if (!inspector.available()) {
@@ -206,14 +244,18 @@ Result I18n::discover(Catalog& catalog) const {
   }
   Result status = Result::Ok;
   size_t files = 0;
+  bool projected = false;
   while (true) {
+    if (continueWork && !continueWork(context)) {
+      status = Result::Cancelled;
+      break;
+    }
     auto file = directory.openNextFile();
     if (!file) {
-      if (directory.allocationFailed()) status = Result::Memory;
-#ifndef SIMULATOR
+      if (directory.allocationFailed())
+        status = Result::Memory;
       else if (directory.iterationFailed())
         status = Result::Io;
-#endif
       file.close();
       break;
     }
@@ -234,32 +276,49 @@ Result I18n::discover(Catalog& catalog) const {
       break;
     }
     Metadata metadata;
-    Result result =
-        file.fileSize() > MAX_SOURCE_SIZE ? Result::TooLarge : inspector.inspect({&file, readInput}, metadata);
-    file.close();
+    Result result;
+    if (projection && std::strcmp(filename, projectedFilename) == 0) {
+      metadata = *projection->metadata;
+      projected = true;
+      result = Result::Ok;
+    } else {
+      struct ReadContext {
+        HalFile* file;
+        void* context;
+        bool (*proceed)(void*);
+        bool cancelled = false;
+      } readContext{&file, context, continueWork};
+      const auto read = [](void* opaque, void* bytes, size_t count) -> int {
+        auto& current = *static_cast<ReadContext*>(opaque);
+        if (current.proceed && !current.proceed(current.context)) {
+          current.cancelled = true;
+          return -1;
+        }
+        return current.file->read(bytes, count);
+      };
+      result = file.fileSize() > MAX_SOURCE_SIZE ? Result::TooLarge : inspector.inspect({&readContext, read}, metadata);
+      if (readContext.cancelled) result = Result::Cancelled;
+    }
+    const bool closed = file.close();
+    if (result == Result::Cancelled || (projection && (!closed || result == Result::Io || result == Result::Memory))) {
+      status = result == Result::Cancelled ? result : !closed ? Result::Io : result;
+      break;
+    }
     if (result != Result::Ok) {
       LOG_ERR("LANG", "%s: %s", filename, resultName(result));
       continue;
     }
-    size_t existing = 1;
-    while (existing < catalog.count && std::strcmp(catalog.code(existing), metadata.code) != 0) ++existing;
-    bool added = true;
-    if (existing < catalog.count) {
-      if (*catalog.file(existing)) {
-        catalog.entries[existing].duplicate = true;
-        LOG_ERR("LANG", "Duplicate language code %s", metadata.code);
-      } else {
-        added = catalog.source(existing, metadata.name, filename);
-      }
-    } else {
-      added = catalog.add(metadata.code, metadata.name, filename);
-    }
-    if (!added) {
+    if (!addSource(metadata, filename)) {
       status = Result::TooLarge;
       break;
     }
   }
-  directory.close();
+  if (status == Result::Ok && projection && !projected) {
+    if (++files > Catalog::MAX_SOURCE_FILES || !addSource(*projection->metadata, projectedFilename))
+      status = Result::TooLarge;
+  }
+  if (!directory.close() && projection) status = Result::Io;
+  if (continueWork && !continueWork(context)) status = Result::Cancelled;
   if (status != Result::Ok) {
     LOG_ERR("LANG", "Cannot show language catalog: %s (limit=%u text bytes, %u files)", resultName(status),
             unsigned(Catalog::TEXT_BYTES), unsigned(Catalog::MAX_SOURCE_FILES));
@@ -271,7 +330,41 @@ Result I18n::discover(Catalog& catalog) const {
             });
   return Result::Ok;
 }
+const char* I18n::sourceContract() { return i18n_strings::SOURCE_SHA256; }
+const char* I18n::keysetContract() { return i18n_strings::KEYSET_SHA256; }
+bool I18n::supportedDownload(const char* code) {
+  if (!code) return false;
+  for (size_t i = 1; i < getLanguageCount(); ++i)
+    if (!std::strcmp(code, LANGUAGE_CODES[i])) return true;
+  return false;
+}
+Result I18n::validateSource(const char* path, const char* code, const char* source, const char* keyset, void* context,
+                            bool (*continueWork)(void*)) const {
+  if (!supportedDownload(code) || !source || !keyset || std::strcmp(source, sourceContract()) ||
+      std::strcmp(keyset, keysetContract())) {
+    LOG_ERR("LANG", "Download source contract mismatch");
+    return Result::Invalid;
+  }
+  HalFile file;
+  if (!Storage.openFileForRead("LANG", path, file)) return Result::Io;
+  Metadata metadata;
+  ValidationOptions options;
+  options.expectedCode = code;
+  options.sourceSha256 = source;
+  options.keysetSha256 = keyset;
+  options.context = context;
+  options.continueWork = continueWork;
+  const auto result =
+      file.fileSize() > MAX_SOURCE_SIZE ? Result::TooLarge : validate({&file, readInput}, SCHEMA, metadata, options);
+  file.close();
+  if (result != Result::Ok) LOG_ERR("LANG", "Download validation: %s", resultName(result));
+  return result;
+}
 Result I18n::prepare(const char* path, Installed& result) {
+  if (prepared_) {
+    LOG_ERR("LANG", "Restart required before another language slot update");
+    return Result::RestartRequired;
+  }
   HalFile file;
   if (!Storage.openFileForRead("LANG", path, file)) return Result::Io;
   if (file.fileSize() > MAX_SOURCE_SIZE) {
@@ -286,9 +379,13 @@ Result I18n::prepare(const char* path, Installed& result) {
   }
   const uint64_t start = microseconds();
   const Flash flash{&flash_, flash_.size(), readFlash, writeFlash, eraseFlash};
-  const auto status = install({&file, readInput}, SCHEMA, flash, slot_, result);
+  const auto status = install({&file, readInput, [](void* context) { return static_cast<HalFile*>(context)->seek(0); }},
+                              SCHEMA, flash, slot_, result);
+  if (status == Result::Ok) prepared_ = true;
   file.close();
-  if (status != Result::Ok)
+  if (status == Result::Unchanged)
+    LOG_INF("LANG", "Language already active; no flash update required");
+  else if (status != Result::Ok)
     LOG_ERR("LANG", "Install failed: %s", resultName(status));
   else
     LOG_INF("LANG", "Prepared %s in %llu us, slot=%d generation=%llu", result.metadata.code,

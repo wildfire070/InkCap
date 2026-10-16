@@ -90,20 +90,78 @@ Store boot(Device& device) {
   assert(store.begin(device.flash(), supported) == Result::Ok);
   return store;
 }
+void sourceValidation() {
+  // Empty levels tape; leaf node at zero, root at one with one backward edge.
+  auto source = pack("de", 4);
+  source[24] = 0;
+  source[25] = 1;
+  source[26] = 'a';
+  source[27] = 255;
+  put32(source.data() + 12, 1);
+  const auto checksum = [](auto& bytes) {
+    put32(bytes.data() + 20, crc32(bytes.data() + PACK_HEADER_SIZE, bytes.size() - PACK_HEADER_SIZE));
+  };
+  checksum(source);
+  Entry entry;
+  assert(validate(input(source), supported, entry) == Result::Ok);
+  assert(!std::strcmp(entry.code, "de") && entry.rootOffset == 1);
+  ValidationOptions options;
+  options.expectedCode = "fr";
+  assert(validate(input(source), supported, entry, options) == Result::Invalid);
+  options = {};
+  options.maxPayloadSize = 3;
+  assert(validate(input(source), supported, entry, options) == Result::NoSpace);
+  options = {};
+  options.continueWork = [](void*) { return false; };
+  assert(validate(input(source), supported, entry, options) == Result::Cancelled);
+  auto bad = source;
+  bad[27] = 0;  // self-cycle, even with a correct CRC
+  checksum(bad);
+  assert(validate(input(bad), supported, entry) == Result::Invalid);
+  bad = source;
+  bad[27] = 1;  // forward edge into its own transition byte
+  checksum(bad);
+  assert(validate(input(bad), supported, entry) == Result::Invalid);
+  bad = source;
+  bad[24] = 128;  // levels pointer cannot fit before the parent
+  checksum(bad);
+  assert(validate(input(bad), supported, entry) == Result::Invalid);
+  bad = source;
+  bad[26] ^= 1;  // CRC mismatch
+  assert(validate(input(bad), supported, entry) == Result::Invalid);
+  for (const size_t offset : {size_t{4}, size_t{9}, size_t{10}, size_t{11}, size_t{12}, size_t{16}}) {
+    bad = source;
+    bad[offset] ^= 0x80;
+    assert(validate(input(bad), supported, entry) != Result::Ok);
+  }
+  bad = source;
+  bad.push_back(0);
+  assert(validate(input(bad), supported, entry) == Result::Invalid);
+  bad = pack("de", MAX_SOURCE_SIZE);
+  assert(validate(input(bad), supported, entry) == Result::NoSpace);
+  Input broken = input(source);
+  broken.read = [](void*, size_t, void*, size_t) { return false; };
+  assert(validate(broken, supported, entry) == Result::Io);
+  assert(validate({}, supported, entry) == Result::Invalid);
+}
 void storageTests() {
   assert(crc32("123456789", 9) == 0xcbf43926u);
   assert(crc32("56789", 5, crc32("1234", 4)) == 0xcbf43926u);
   Device device;
   auto store = boot(device);
   assert(store.count() == 0);
+  assert(store.availablePayloadBytes("de") == CAPACITY / 2 - SECTOR_SIZE);
   auto german = pack("de");
   assert(store.install(input(german)) == Result::Ok);
   assert(store.needsRestart());
+  assert(store.availablePayloadBytes("de") == 0);
   assert(store.count() == 0);  // publication never mutates the pinned bank
   assert(store.install(input(german)) == Result::RestartRequired);
   store = boot(device);
   Entry first;
   assert(store.find("de", first));
+  assert(store.availablePayloadBytes("de") == CAPACITY / 2 - SECTOR_SIZE);
+  assert(store.availablePayloadBytes("fr") == CAPACITY / 2 - SECTOR_SIZE - 2304);
   const auto identityBefore = identity(first);
   device.mutations = 0;
   assert(store.install(input(german)) == Result::Unchanged);
@@ -198,6 +256,7 @@ void storageTests() {
 }
 }  // namespace
 int main(int argc, char** argv) {
+  sourceValidation();
   storageTests();
   // Exercise release-generated real dictionaries through the production loader.
   Device device;
@@ -205,6 +264,22 @@ int main(int argc, char** argv) {
     std::ifstream stream(argv[i], std::ios::binary);
     assert(stream);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(stream)), {});
+    Entry checked;
+    size_t polls = 0;
+    ValidationOptions options;
+    options.context = &polls;
+    options.continueWork = [](void* context) {
+      ++*static_cast<size_t*>(context);
+      return true;
+    };
+    assert(validate(input(bytes), supported, checked, options) == Result::Ok);
+    // A yielding callback must not run once per trie node/edge. This bound
+    // catches the previous hundreds of thousands of calls for the German pack.
+    assert(polls <= bytes.size() / 16 + 64);
+    polls = 0;
+    options.continueWork = [](void* context) { return ++*static_cast<size_t*>(context) < 3; };
+    assert(validate(input(bytes), supported, checked, options) == Result::Cancelled);
+    assert(polls == 3 && !checked.code[0]);
     auto store = boot(device);
     assert(store.install(input(bytes)) == Result::Ok);
     device.checkUi();

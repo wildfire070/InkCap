@@ -47,9 +47,13 @@ struct Source {
     s.pos += n;
     return static_cast<int>(n);
   }
+  static bool rewind(void* ctx) {
+    static_cast<Source*>(ctx)->pos = 0;
+    return true;
+  }
   Input input() {
     pos = 0;
-    return {this, read};
+    return {this, read, rewind};
   }
 };
 struct Storage {
@@ -57,9 +61,11 @@ struct Storage {
   int failMutation = -1;
   int mutations = 0;
   bool torn = false;
+  int reads = 0;
+  int failRead = -1;
   static bool read(void* ctx, size_t off, void* dest, size_t n) {
     auto& s = *static_cast<Storage*>(ctx);
-    if (off > s.bytes.size() || n > s.bytes.size() - off) return false;
+    if (s.reads++ == s.failRead || off > s.bytes.size() || n > s.bytes.size() - off) return false;
     std::memcpy(dest, s.bytes.data() + off, n);
     return true;
   }
@@ -128,6 +134,86 @@ void basics() {
   CHECK(put(storage, document(), info, 1) == Result::Ok);
   CHECK(info.slot == 0 && info.generation == 3);
 }
+void unchanged() {
+  schemaInit();
+  Storage original;
+  Installed active, result;
+  CHECK(put(original, document(), active) == Result::Ok);
+  const auto unchanged = [&](const std::string& text) {
+    Storage trial = original;
+    trial.mutations = 0;
+    CHECK(put(trial, text, result, active.slot) == Result::Unchanged);
+    CHECK(trial.mutations == 0 && trial.bytes == original.bytes);
+    CHECK(result.slot == active.slot && result.generation == active.generation && result.checksum == active.checksum);
+    CHECK(std::strcmp(result.metadata.code, active.metadata.code) == 0);
+  };
+  unchanged(document());
+  unchanged(
+      "# Another source revision\r\n_language_code : \"fr\" # lowercase normalizes\r\n"
+      "_language_name: \"Français\"\n_direction: \"ltr\"\n_keyboard: \"FR\"\n"
+      "_template_source_sha256: \"changed source-only metadata\"\n"
+      "STR_HOME: \"Accueil\"\nSTR_MENU: \"Réglages\"\nSTR_TIME_FORMAT: \"%u minutes\"\n"
+      "STR_UNKNOWN: \"ignored\"\n");
+  // Reordering changes the serialized compiled image and uses the bounded linear path.
+  Storage reordered = original;
+  reordered.mutations = 0;
+  CHECK(put(reordered, document("STR_TIME_FORMAT: \"%u minutes\"\nSTR_MENU: \"Réglages\"\nSTR_HOME: \"Accueil\"\n"),
+            result, active.slot) == Result::Ok);
+  CHECK(reordered.mutations > 0 && result.generation == active.generation + 1);
+  // Equality itself needs no rewind callback and must not erase either slot.
+  Source same{document()};
+  const int before = original.mutations;
+  CHECK(install({&same, Source::read}, schema(), original.flash(), active.slot, result) == Result::Unchanged);
+  CHECK(original.mutations == before);
+  // Changed strings, missing translations, and each runtime metadata field are meaningful.
+  for (const auto& text :
+       {document("STR_HOME: \"Changed\"\n"), document("STR_HOME: \"Accueil\"\n"), document({}, "DE"),
+        std::string("_keyboard: \"HE\"\n") + document(), std::string("_direction: \"rtl\"\n") + document()}) {
+    Storage trial = original;
+    trial.mutations = 0;
+    CHECK(put(trial, text, result, active.slot) == Result::Ok);
+    CHECK(trial.mutations > 0 && result.generation == active.generation + 1 && result.slot != active.slot);
+    CHECK(std::memcmp(trial.slot(active.slot), original.slot(active.slot), SLOT_SIZE) == 0);
+  }
+  auto renamed = document();
+  renamed.replace(renamed.find("Français"), std::strlen("Français"), "French");
+  Storage renamedTrial = original;
+  CHECK(put(renamedTrial, renamed, result, active.slot) == Result::Ok);
+  // Identical inactive content must not hide a replacement of the active locale.
+  Storage inactive = original;
+  CHECK(put(inactive, document("STR_HOME: \"Changed\"\n"), result, active.slot) == Result::Ok);
+  CHECK(put(inactive, document(), result, result.slot) == Result::Ok && result.generation == 3);
+  // Long strings compare across scratch-buffer boundaries, including their tail.
+  Storage longSource;
+  const auto longText = document("STR_HOME: \"" + std::string(1800, 'x') + "\"\n");
+  CHECK(put(longSource, longText, active) == Result::Ok);
+  CHECK(put(longSource, longText, result, active.slot) == Result::Unchanged);
+  auto changedTail = longText;
+  changedTail[changedTail.size() - 3] = 'y';
+  CHECK(put(longSource, changedTail, result, active.slot) == Result::Ok);
+  // Every flash read in the equality path fails closed before mutation.
+  original.reads = 0;
+  CHECK(put(original, document(), result, 0) == Result::Unchanged);
+  const int readCount = original.reads;
+  for (int failure = 0; failure < readCount; ++failure) {
+    Storage trial = original;
+    trial.reads = trial.mutations = 0;
+    trial.failRead = failure;
+    CHECK(put(trial, document(), result, 0) == Result::Io);
+    CHECK(trial.mutations == 0 && trial.bytes == original.bytes);
+  }
+  Source broken{document()};
+  broken.failAt = 0;
+  CHECK(install(broken.input(), schema(), original.flash(), 0, result) == Result::Io);
+  CHECK(original.mutations == before);
+  for (bool missing : {false, true}) {
+    Source changed{document("STR_HOME: \"Changed\"\n")};
+    Input input = changed.input();
+    input.rewind = missing ? nullptr : +[](void*) { return false; };
+    CHECK(install(input, schema(), original.flash(), 0, result) == Result::Io);
+    CHECK(original.mutations == before);
+  }
+}
 void parser() {
   schemaInit();
   const auto result = [](const std::string& text) {
@@ -159,6 +245,44 @@ void parser() {
   metadata.bytes = "_language_code: \"foo\"\n_language_name: \"Foo\"\n_direction: \"rtl\"\n_keyboard: \"HE\"\n";
   CHECK(inspect(metadata.input(), m) == Result::Ok && m.rtl && std::strcmp(m.code, "FOO") == 0 &&
         std::strcmp(m.keyboard, "HE") == 0);
+}
+void validation() {
+  schemaInit();
+  Metadata metadata;
+  const auto check = [&](const std::string& text, const ValidationOptions& options = ValidationOptions{}) {
+    Source source{text};
+    return validate(source.input(), schema(), metadata, options);
+  };
+  CHECK(check(document()) == Result::Ok && std::strcmp(metadata.code, "FR") == 0);
+  CHECK(check(document("STR_HOME: \"x\"\nSTR_HOME: \"y\"\n")) == Result::Duplicate);
+  CHECK(check(document("STR_HOME: bare\n")) == Result::Invalid);
+  CHECK(check(document("STR_HOME: \"\xc0\xaf\"\n")) == Result::Invalid);
+  CHECK(check(document("STR_HOME: \"ok\"\n_direction: \"rtl\"\n")) == Result::Invalid);
+  CHECK(check(document("STR_HOME: \"ok\"\n" + std::string(MAX_SOURCE_SIZE, '#'))) == Result::TooLarge);
+  CHECK(check(document("STR_HOME: \"ok\"\nSTR_TIME_FORMAT: \"%n\"\nSTR_UNKNOWN: \"x\"\n")) == Result::Ok);
+  CHECK(check("STR_HOME: \"x\"\n") == Result::MetadataMissing);
+  ValidationOptions options;
+  options.expectedCode = "DE";
+  CHECK(check(document(), options) == Result::Invalid && !metadata.code[0]);
+  options.expectedCode = "FR";
+  options.sourceSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  options.keysetSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  CHECK(check(document(), options) == Result::Invalid);
+  std::string matched = "_template_source_sha256: \"" + std::string(options.sourceSha256) +
+                        "\"\n_template_keyset_sha256: \"" + options.keysetSha256 + "\"\n" + document();
+  CHECK(check(matched, options) == Result::Ok);
+  matched[matched.find(options.sourceSha256)] = 'b';
+  CHECK(check(matched, options) == Result::Invalid);
+  options = {};
+  size_t calls = 0;
+  options.context = &calls;
+  options.continueWork = [](void* context) { return ++*static_cast<size_t*>(context) < 3; };
+  CHECK(check(document("STR_HOME: \"" + std::string(1000, 'x') + "\"\n"), options) == Result::Cancelled);
+  CHECK(calls == 3);
+  Source io{document()};
+  io.failAt = 0;
+  CHECK(validate(io.input(), schema(), metadata) == Result::Io);
+  CHECK(validate({}, schema(), metadata) == Result::Invalid);
 }
 void formats() {
   CHECK(compatibleFormat("%u min", "%u minutes"));
@@ -205,6 +329,10 @@ void capacity() {
   std::sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) { return a.hash < b.hash; });
   Storage storage;
   Installed info;
+  Source source{text};
+  Metadata metadata;
+  CHECK(validate(source.input(), schema(), metadata) == Result::TooLarge);
+  CHECK(storage.mutations == 0);
   CHECK(put(storage, text, info) == Result::TooLarge);
   CHECK(!open(storage.slot(0), SLOT_SIZE, schema(), info));
   schemaInit();
@@ -258,7 +386,7 @@ void provisioningAndFailures() {
       CHECK(std::memcmp(trial.slot(0), committed.data() + SLOT_SIZE, SLOT_SIZE) == 0);
       CHECK(open(trial.slot(0), SLOT_SIZE, schema(), info));
       trial.failMutation = -1;
-      CHECK(put(trial, document(), info, 0) == Result::Ok);
+      CHECK(put(trial, document(), info, 0) == Result::Unchanged);
     }
   // First-ever provisioning can be retried after a torn ownership marker.
   Storage torn;
@@ -284,7 +412,9 @@ void provisioningAndFailures() {
 }  // namespace
 int main() {
   basics();
+  unchanged();
   parser();
+  validation();
   formats();
   capacity();
   provisioningAndFailures();

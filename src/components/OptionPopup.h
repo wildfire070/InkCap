@@ -21,6 +21,7 @@ class OptionPopup {
 #ifdef SIMULATOR
   Rect simulatorOptionRect(const int index) const { return layout.options.at(index); }
   bool simulatorOptionDisabled(const int index) const { return isDisabled(index); }
+  const char* simulatorOptionLabel(const int index) const { return labels()[index]; }
 #endif
 
   struct Note {
@@ -129,6 +130,9 @@ class OptionPopup {
   void setDividerAfterOption(const int index) { dividerAfterOption = index; }
   void setSelectionArrow(const bool enabled) { selectionArrow = enabled; }
 
+  // Informational rows keep their normal appearance without dismissing the popup.
+  void setInertOptionIndex(const int index) { inertOptionIndex = index; }
+
   void show(const char* titleStr, const std::vector<std::string>& options, int currentIndex,
             std::function<void(int)> onSelect, Note note = Note()) {
     title = titleStr;
@@ -180,7 +184,7 @@ class OptionPopup {
       for (int i = 0; i < static_cast<int>(hitLayout.options.size()); i++) {
         if (contains(hitLayout.options[i], tx, ty)) {
           const int optionIndex = hitLayout.firstOptionIndex + i;
-          if (isDisabled(optionIndex)) break;
+          if (isDisabled(optionIndex) || optionIndex == inertOptionIndex) break;
           touchDownOptionIndex = optionIndex;
           touchDownTarget = TouchTarget::Option;
           break;
@@ -228,7 +232,7 @@ class OptionPopup {
       for (int i = 0; i < static_cast<int>(hitLayout.options.size()); i++) {
         if (contains(hitLayout.options[i], tx, ty)) {
           const int optionIndex = hitLayout.firstOptionIndex + i;
-          if (!isDisabled(optionIndex)) {
+          if (!isDisabled(optionIndex) && optionIndex != inertOptionIndex) {
             selectedIndex = optionIndex;
             selectTouchOption(input, requestUpdate);
           }
@@ -514,6 +518,7 @@ class OptionPopup {
   std::vector<Note> optionNotes;
   bool skipPostSelectionUpdate_ = false;
   int primaryOptionIndex = -1;
+  int inertOptionIndex = -1;
   int dividerAfterOption = -1;
   bool selectionArrow = false;
   ButtonNavigator buttonNavigator;
@@ -526,6 +531,7 @@ class OptionPopup {
   }
 
   void activate(int currentIndex) {
+    inertOptionIndex = -1;
     optionNotes.clear();
     layoutValid = false;
     firstOptionIndex = -1;
@@ -565,6 +571,7 @@ class OptionPopup {
 
   void activateSelection(MappedInputManager& input, const std::function<void()>& requestUpdate,
                          const bool suppressRelease) {
+    if (selectedIndex == inertOptionIndex) return;
     active = false;
     suppressSelectionRelease(input, suppressRelease);
     if (onSelectCallback) onSelectCallback(selectedIndex);
@@ -579,7 +586,7 @@ class OptionPopup {
   }
 
   void save(MappedInputManager& input, const std::function<void()>& requestUpdate, const bool suppressRelease) {
-    if (isDisabled(selectedIndex)) return;
+    if (isDisabled(selectedIndex) || selectedIndex == inertOptionIndex) return;
     active = false;
     suppressSelectionRelease(input, suppressRelease);
     if (onSelectCallback) onSelectCallback(selectedIndex);
