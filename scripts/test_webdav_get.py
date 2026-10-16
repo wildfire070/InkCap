@@ -2,6 +2,7 @@
 """Run the production WebDAV GET body with the pinned SDK streamer and host I/O."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -41,7 +42,7 @@ class NetworkClient : public Print {
     socket->bytes.insert(socket->bytes.end(), data, data + written);
     return written;
   }
-  size_t write(uint8_t c) { ++socket->byteWrites; return write(&c, 1); }
+  size_t write(uint8_t c) override { ++socket->byteWrites; return write(&c, 1); }
   void stop() { socket->stopped = true; }
 };
 struct HalFile {
@@ -156,6 +157,27 @@ int main() {
 }
 '''
 
+# The vendored SDK's host-test Print stub only declares the array-write overload.
+# Production code's NetworkClientPrint (extracted from WebDAVHandler.cpp above) also
+# overrides the single-byte write(), matching the real Arduino Print class device builds
+# link against -- that overload just doesn't exist on this stub. We don't have push access
+# to freeink-sdk to fix it there, so complete it here. WString.h/esp_task_wdt.h in the same
+# stub directory pull Arduino.h in via a *quoted* #include, which resolves relative to their
+# own directory before any -I path is ever consulted -- patching a lone Arduino.h elsewhere
+# and putting it first on -I does not intercept that. So the whole stub directory is copied
+# (cheap; it's a handful of small headers) and only its Arduino.h is patched, leaving the
+# vendored SDK copy on disk untouched.
+def patched_stub_dir(directory):
+    stubs = Path(directory) / "patched_stubs"
+    shutil.copytree(SDK / "test/host/stubs", stubs)
+    arduino_h = stubs / "Arduino.h"
+    original = arduino_h.read_text()
+    needle = "  virtual size_t write(const uint8_t*, size_t) = 0;\n"
+    assert needle in original, "SDK's Print stub shape changed; update this patch"
+    arduino_h.write_text(original.replace(needle, needle + "  virtual size_t write(uint8_t c) { return write(&c, 1); }\n"))
+    return stubs
+
+
 with tempfile.TemporaryDirectory(prefix="crossink-webdav-") as directory:
     source = Path(directory) / "test.cpp"
     source.write_text(FIXTURE + method((ROOT / "src/network/WebDAVHandler.cpp").read_text(),
@@ -163,7 +185,7 @@ with tempfile.TemporaryDirectory(prefix="crossink-webdav-") as directory:
     binary = Path(directory) / "test"
     subprocess.run([os.environ.get("CXX", "c++"), "-std=c++20", "-Wall", "-Wextra", "-Werror",
                     "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                    "-I" + str(SDK / "test/host/stubs"), "-I" + str(SDK / "include"),
+                    "-I" + str(patched_stub_dir(directory)), "-I" + str(SDK / "include"),
                     str(source), str(SDK / "src/SDCardManager.cpp"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
 print("WebDAV GET: binary/empty/large/short-write/disconnect/read-failure/guards passed (ASan/UBSan)")
