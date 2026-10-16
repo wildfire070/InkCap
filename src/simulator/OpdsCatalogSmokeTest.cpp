@@ -6,10 +6,14 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 
 #include "activities/ActivityManager.h"
 #include "activities/browser/OpdsBookBrowserActivity.h"
+#include "activities/settings/OpdsSettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/OptionSelectionActivity.h"
 
 extern ActivityManager activityManager;
 extern GfxRenderer renderer;
@@ -102,8 +106,155 @@ struct OpdsCatalogSmokeTest {
     activityManager.simulatorCurrentActivity()->finish();
   }
 
+  static void capture(const char* name) {
+    const char* output = std::getenv("CROSSINK_SIMULATOR_OPDS_CAPTURES");
+    if (!output) return;
+    std::filesystem::create_directories(output);
+    const auto path = std::filesystem::path(output) / (std::string(name) + ".pgm");
+    FILE* image = std::fopen(path.c_str(), "wb");
+    require(image != nullptr, "cannot capture OPDS settings");
+    const int width = renderer.getScreenWidth(), height = renderer.getScreenHeight();
+    std::fprintf(image, "P5\n%d %d\n255\n", width, height);
+    for (int y = 0; y < height; ++y)
+      for (int x = 0; x < width; ++x) std::fputc(renderer.isPixelBlack(x, y) ? 0 : 255, image);
+    std::fclose(image);
+  }
+
+  static void finishWith(ActivityResult result) {
+    activityManager.simulatorCurrentActivity()->setResult(std::move(result));
+    activityManager.simulatorCurrentActivity()->finish();
+  }
+
+  static bool settingsTick() {
+    static int phase = 0;
+    static OpdsSettingsActivity* editor = nullptr;
+    switch (phase++) {
+      case 0: {
+        OpdsServer server;
+        server.name = "Calibre";
+        server.url = "https://calibre.example/opds";
+        require(OPDS_STORE.addServer(server), "cannot save folder fixture");
+        std::snprintf(SETTINGS.opdsDownloadFolder, sizeof(SETTINGS.opdsDownloadFolder), "/Books");
+        auto activity = std::make_unique<OpdsSettingsActivity>(renderer, mappedInputManager, OPDS_STORE.getCount() - 1);
+        editor = activity.get();
+        activityManager.replaceActivity(std::move(activity));
+        break;
+      }
+      case 1: {
+        require(activityManager.isCurrentActivity(editor), "folder editor did not open");
+        const auto originalScale = SETTINGS.uiScale;
+        const auto originalOrientation = renderer.getOrientation();
+        for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise}) {
+          renderer.setOrientation(orientation);
+          for (uint8_t scale = 0; scale < CrossPointSettings::UI_SCALE_COUNT; ++scale) {
+            SETTINGS.uiScale = scale;
+            // Fresh metrics/hit targets after changing UI scale.
+            editor->onEnter();
+            render();
+            for (int i = 0; i < 5; ++i) {
+              mappedInputManager.simulatorInjectPress(MappedInputManager::Button::Down);
+              editor->loop();
+              mappedInputManager.simulatorClearInputFrame();
+              render();
+            }
+            require(editor->selectedIndex == 5 && editor->topIndex <= 5 && editor->topIndex + editor->visibleRows > 5,
+                    "folder row unreachable with buttons");
+            char name[48];
+            std::snprintf(name, sizeof(name), "folder-editor-o%d-scale%d", orientation, scale);
+            capture(name);
+          }
+        }
+        SETTINGS.uiScale = originalScale;
+        renderer.setOrientation(originalOrientation);
+        editor->onEnter();
+        editor->selectedIndex = 5;
+        editor->topIndex = 5;
+        render();
+#if CROSSINK_APP_CAP_TOUCH
+        if (mappedInputManager.hasTouchHardware()) {
+          freeink::ui::Interaction hit;
+          bool found = false;
+          for (int y = 0; y < renderer.getScreenHeight(); ++y) {
+            if (editor->app.hitPublished(renderer.getScreenWidth() / 2, y, 1, hit) && hit.value == 5) {
+              found = true;
+              break;
+            }
+          }
+          require(found, "folder touch target missing");
+          const int x = hit.rect.x + hit.rect.width / 2;
+          const int y = hit.rect.y + hit.rect.height / 2;
+          mappedInputManager.simulatorInjectTouchDown(x, y);
+          editor->loop();
+          mappedInputManager.simulatorClearInputFrame();
+          mappedInputManager.simulatorInjectTouchRelease(x, y);
+          editor->loop();
+          mappedInputManager.simulatorClearInputFrame();
+        } else
+#endif
+        {
+          editor->handleSelection();
+        }
+        break;
+      }
+      case 2:
+        require(activityManager.isCurrentActivityNamed("OpdsFolder"), "folder picker missing");
+        render();
+        capture("folder-options");
+        finishWith(OptionSelectionResult{2});
+        break;
+      case 3:
+        require(activityManager.isCurrentActivityNamed("KeyboardEntry"), "custom folder keyboard missing");
+        render();
+        capture("folder-keyboard");
+        finishWith(KeyboardResult{" /Books//Calibre/ "});
+        break;
+      case 4:
+        require(activityManager.isCurrentActivity(editor), "custom path did not return to editor");
+        require(editor->editServer.downloadFolder == "/Books/Calibre", "custom path did not normalize/save");
+        require(OPDS_STORE.getServer(editor->serverIndex)->downloadFolder == "/Books/Calibre",
+                "custom path not stored");
+        editor->editDownloadFolder();
+        break;
+      case 5: {
+        ActivityResult result;
+        result.isCancelled = true;
+        finishWith(std::move(result));
+        break;
+      }
+      case 6:
+        require(editor->editServer.downloadFolder == "/Books/Calibre", "cancel changed folder");
+        editor->editDownloadFolder();
+        break;
+      case 7:
+        finishWith(OptionSelectionResult{1});
+        break;
+      case 8:
+        require(editor->editServer.downloadFolder == "/", "root override lost");
+        render();
+        capture("folder-root");
+        editor->editDownloadFolder();
+        break;
+      case 9:
+        finishWith(OptionSelectionResult{0});
+        break;
+      case 10:
+        require(editor->editServer.downloadFolder.empty(), "reset to default failed");
+        render();
+        capture("folder-inherited");
+        editor->finish();
+        break;
+      case 11:
+        LOG_INF("SMOKE", "OPDS folder settings: paths, default/root/custom, cancellation and button scrolling passed");
+        return false;
+      default:
+        return false;
+    }
+    return true;
+  }
+
   static bool tick() {
     if (!std::getenv("CROSSINK_SIMULATOR_SMOKE_OPDS_CATALOG")) return false;
+    if (settingsTick()) return true;
     static int phase = 0;
     static OpdsBookBrowserActivity* browser = nullptr;
     switch (phase++) {
@@ -169,16 +320,43 @@ struct OpdsCatalogSmokeTest {
         require(!browser->entries && browser->statusMessage == "The Time Machine", "local overwrite target lost");
         browser->finishDownload({}, HttpDownloader::ABORTED, "");
         restored(*browser);
+        require(Storage.remove("/books/The Time Machine - H. G. Wells.epub"), "remove inherited collision");
+        browser->server.downloadFolder = "/books/Calibre";
+        require(Storage.mkdir("/books/Calibre"), "custom folder fixture");
+        require(Storage.writeFile("/books/Calibre/The Time Machine - H. G. Wells.epub", "original"),
+                "custom collision");
+        browser->requestDownload(browser->entries[2]);
+        require(browser->entries != nullptr, "custom folder ignored for overwrite lookup");
+        break;
+      case 8:
+        closeConfirmation(true);
+        break;
+      case 9:
+        require(activityManager.isCurrentActivity(browser), "custom cancel did not restore browser");
+        restored(*browser);
+        require(Storage.remove("/books/Calibre/The Time Machine - H. G. Wells.epub"), "remove custom collision");
+        browser->server.downloadFolder = "/";
+        require(Storage.writeFile("/The Time Machine - H. G. Wells.epub", "original"), "root collision");
+        browser->requestDownload(browser->entries[2]);
+        require(browser->entries != nullptr, "root override ignored for overwrite lookup");
+        break;
+      case 10:
+        closeConfirmation(true);
+        break;
+      case 11:
+        require(activityManager.isCurrentActivity(browser), "root cancel did not restore browser");
+        restored(*browser);
         browser->server.filenameFormat = OpdsFilenameFormat::SERVER_FILENAME;
         start(*browser);
         browser->goHomeAfterCancel = true;
         browser->finishDownload({}, HttpDownloader::ABORTED, "");
         require(!browser->entries, "Home cancellation unnecessarily reloaded catalog");
         break;
-      case 8:
+      case 12:
         require(activityManager.isCurrentActivityNamed("Home"), "Home cancellation did not exit browser");
         render();
-        LOG_INF("SMOKE", "Simulator smoke test passed: OPDS catalog release, success/cancel/retry, overwrite and Home");
+        LOG_INF("SMOKE",
+                "Simulator smoke test passed: OPDS folders, catalog release, success/cancel/retry, overwrite and Home");
         std::_Exit(0);
     }
     return true;

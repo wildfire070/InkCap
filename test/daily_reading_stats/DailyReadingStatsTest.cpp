@@ -184,6 +184,51 @@ TEST(DailyReading, BoundedPayloadWithOptionalDailySeconds) {
   EXPECT_FALSE(StatsUploadPayload::global(payload, 20, "crossink-test", g, dayOf(21), 61));
 }
 
+TEST(DailyReading, BookBatchMatchesSingleBookPayloadAndRollsBackOverflow) {
+  BookReadingStats book;
+  book.sessionCount = 3;
+  book.totalReadingSeconds = 900;
+  const char* first = "0123456789abcdef0123456789abcdef";
+  const char* second = "fedcba9876543210fedcba9876543210";
+  char single[StatsUploadPayload::CAPACITY];
+  ASSERT_TRUE(StatsUploadPayload::book(single, sizeof(single), "crossink-test", first, book));
+
+  char buffer[StatsUploadPayload::CAPACITY];
+  StatsUploadPayload::BookBatch batch(buffer, sizeof(buffer));
+  ASSERT_TRUE(batch.begin("crossink-test"));
+  ASSERT_TRUE(batch.add(first, book));
+  ASSERT_TRUE(batch.finish());
+  EXPECT_STREQ(buffer, single);  // one item is byte-for-byte the single-book request
+
+  ASSERT_TRUE(batch.begin("crossink-test"));
+  ASSERT_TRUE(batch.add(first, book));
+  ASSERT_TRUE(batch.add(second, book));
+  EXPECT_FALSE(batch.add("not-a-document-id", book));
+  size_t added = batch.count();
+  while (batch.add(second, book)) ++added;  // fill until the buffer refuses an item
+  EXPECT_EQ(batch.count(), added);
+  ASSERT_TRUE(batch.finish());
+  const std::string json(buffer);
+  EXPECT_LE(json.size() + 1, sizeof(buffer));
+  EXPECT_EQ(json.substr(json.size() - 3), "}]}");
+  EXPECT_NE(json.find(std::string("},{\"document\":\"") + second), std::string::npos);
+  size_t items = 0;
+  for (size_t at = json.find("\"document\""); at != std::string::npos; at = json.find("\"document\"", at + 1)) ++items;
+  EXPECT_EQ(items, batch.count());
+  EXPECT_LE(batch.count(), StatsUploadPayload::BookBatch::MAX_ITEMS);
+}
+
+TEST(DailyReading, BookBatchCapsItemsPerRequest) {
+  BookReadingStats book;
+  static char buffer[16384];
+  StatsUploadPayload::BookBatch batch(buffer, sizeof(buffer));
+  ASSERT_TRUE(batch.begin("crossink-test"));
+  for (size_t i = 0; i < StatsUploadPayload::BookBatch::MAX_ITEMS; ++i)
+    ASSERT_TRUE(batch.add("0123456789abcdef0123456789abcdef", book));
+  EXPECT_FALSE(batch.add("0123456789abcdef0123456789abcdef", book));
+  EXPECT_TRUE(batch.finish());
+}
+
 TEST(DailyReading, KeepsDeferredShortSecondsAfterTransientStorageFault) {
   Session s;
   ASSERT_TRUE(record(dayOf(22), 11));

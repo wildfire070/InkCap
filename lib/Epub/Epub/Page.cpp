@@ -324,15 +324,15 @@ std::unique_ptr<PageHrSectRule> PageHrSectRule::deserialize(FsFile& file) {
 }
 
 PageDropCap::PageDropCap(const uint8_t fontSize, const uint16_t scale256, const EpdFontFamily::Style style,
-                         const char* utf8, const int16_t xPos, const int16_t yPos)
-    : PageElement(xPos, yPos), fontSize(fontSize), scale256(scale256), style(style) {
+                         const char* utf8, const int16_t xPos, const int16_t yPos, const uint32_t fontFamily)
+    : PageElement(xPos, yPos), fontSize(fontSize), fontFamily(fontFamily), scale256(scale256), style(style) {
   strncpy(text, utf8, MAX_TEXT_BYTES);
 }
 
 void PageDropCap::render(GfxRenderer& renderer, const int sectionFontId, const int xOffset, const int yOffset,
                          const bool foregroundBlack) {
   // A sized variant that can no longer be loaded draws from the section font instead.
-  const int drawFontId = renderer.getFontIdForSize(sectionFontId, fontSize);
+  const int drawFontId = renderer.resolveBookFont(sectionFontId, fontFamily, fontSize);
   int x = xPos + xOffset;
   const auto* cursor = reinterpret_cast<const unsigned char*>(text);
   while (const uint32_t cp = utf8NextCodepoint(&cursor)) {
@@ -361,6 +361,7 @@ bool PageDropCap::serialize(Print& file) {
     LOG_ERR("PGE", "Truncated decoration write");
     return false;
   }
+  if (!serialization::tryWritePod(file, fontFamily)) return false;
   const auto length = static_cast<uint8_t>(strnlen(text, MAX_TEXT_BYTES));
   if (!serialization::tryWritePod(file, length)) {
     LOG_ERR("PGE", "Truncated decoration write");
@@ -376,6 +377,7 @@ std::unique_ptr<PageDropCap> PageDropCap::deserialize(FsFile& file) {
   uint16_t scale256 = 0;
   uint8_t style = 0;
   uint8_t length = 0;
+  uint32_t fontFamily = 0;
   if (!serialization::tryReadPod(file, xPos)) {
     LOG_ERR("PGE", "Truncated decoration read");
     return nullptr;
@@ -396,7 +398,7 @@ std::unique_ptr<PageDropCap> PageDropCap::deserialize(FsFile& file) {
     LOG_ERR("PGE", "Truncated decoration read");
     return nullptr;
   }
-  if (!serialization::tryReadPod(file, length)) {
+  if (!serialization::tryReadPod(file, fontFamily) || !serialization::tryReadPod(file, length)) {
     LOG_ERR("PGE", "Truncated decoration read");
     return nullptr;
   }
@@ -405,8 +407,8 @@ std::unique_ptr<PageDropCap> PageDropCap::deserialize(FsFile& file) {
     LOG_ERR("PGE", "Deserialization failed: invalid drop cap");
     return nullptr;
   }
-  auto dropCap =
-      makeUniqueNoThrow<PageDropCap>(fontSize, scale256, static_cast<EpdFontFamily::Style>(style), text, xPos, yPos);
+  auto dropCap = makeUniqueNoThrow<PageDropCap>(fontSize, scale256, static_cast<EpdFontFamily::Style>(style), text,
+                                                xPos, yPos, fontFamily);
   if (!dropCap) LOG_ERR("PGE", "Deserialization failed: could not allocate PageDropCap");
   return dropCap;
 }

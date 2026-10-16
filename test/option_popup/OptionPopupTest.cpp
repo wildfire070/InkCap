@@ -153,6 +153,55 @@ TEST(OptionPopup, DisabledTouchOptionDoesNotSelect) {
   EXPECT_TRUE(popup.isActive());
 }
 
+TEST(OptionPopup, InertRowIgnoresTouchAndConfirmAndResetsOnReuse) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  PopupTouchHarness touch(input);
+  int selections = 0;
+  const char* options[] = {"English: Built in"};
+  popup.show("Packs", options, 1, 0, [&](int) { ++selections; });
+  popup.setInertOptionIndex(0);
+  touch.touchPopup(popup, 250, [] {});
+  EXPECT_TRUE(popup.isActive());
+  EXPECT_EQ(selections, 0);
+  input.injectPowerConfirmPress();
+  popup.handleInput(input, [] {});
+  EXPECT_TRUE(popup.isActive());
+  EXPECT_EQ(selections, 0);
+  input.injectPowerConfirmRelease();
+  input.advanceInputFrame();
+  popup.show("Other", options, 1, 0, [&](int) { ++selections; });
+  touch.touchPopup(popup, 250, [] {});
+  EXPECT_EQ(selections, 1);
+  EXPECT_FALSE(popup.isActive());
+}
+
+TEST(OptionPopup, InertTouchPreservesAnotherRowsHighlightAndConfirmAction) {
+  GfxRenderer renderer;
+  HalGPIO gpio;
+  MappedInputManager input(gpio, renderer);
+  OptionPopup popup;
+  int selected = -1;
+  const char* options[] = {"English: Built in", "German: Install"};
+  popup.show("Packs", options, 2, 1, [&](int value) { selected = value; });
+  popup.setInertOptionIndex(0);
+  popup.render(renderer);
+  EXPECT_FALSE(popup.simulatorOptionDisabled(0));
+  const auto row = popup.simulatorOptionRect(0);
+  input.injectTouchDown(row.x + row.width / 2, row.y + row.height / 2);
+  popup.handleInput(input, [] {});
+  input.injectTouchRelease(row.x + row.width / 2, row.y + row.height / 2);
+  popup.handleInput(input, [] {});
+  popup.render(renderer);
+  EXPECT_EQ(GUI.getLastSelectedIndex(), 1);
+  EXPECT_EQ(selected, -1);
+  input.injectPowerConfirmPress();
+  popup.handleInput(input, [] {});
+  EXPECT_EQ(selected, 1);
+}
+
 TEST(OptionPopup, OutsideTouchDismissesWhenEnabled) {
   GfxRenderer renderer;
   HalGPIO gpio;

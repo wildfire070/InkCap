@@ -17,20 +17,24 @@ class HyphenationManagerActivity final : public Activity {
 #ifdef SIMULATOR
   const char* simulatorLabel(size_t index) const { return catalog_->labels[index]; }
   bool simulatorOptionDisabled(int index) const { return popup_.simulatorOptionDisabled(index); }
+  const char* simulatorOptionLabel(int index) const { return popup_.simulatorOptionLabel(index); }
 #endif
 
  private:
+#ifdef SIMULATOR
+  friend struct AssetDownloadSmokeTest;
+#endif
   struct Catalog {
     char labels[10][128] = {};
-    bool disabled[10] = {};
   };
   std::unique_ptr<Catalog> catalog_;
   OptionPopup popup_;
   char wanted_[3] = {};
   int selected_ = 0;
-  enum class Pending { None, List, Actions, Install, Remove };
+  enum class Pending { None, List, Select, Remove, Connect, SaveError };
   Pending pending_ = Pending::None;
   void showLanguages();
-  void showActions();
+  void select();
   void apply(bool remove);
+  void connect();
 };

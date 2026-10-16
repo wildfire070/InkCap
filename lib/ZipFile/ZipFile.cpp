@@ -90,6 +90,8 @@ class CentralDirCursor final {
     off = 0;
   }
 
+  bool valid() const { return ok; }
+
   // File offset of the next unread entry.
   uint32_t position() const { return filePos - static_cast<uint32_t>(fill - off); }
 
@@ -607,8 +609,11 @@ bool ZipFile::loadZipDetails() {
     return false;
   }
 
-  file.seek(fileSize - scanRange);
-  file.read(buffer, scanRange);
+  if (!file.seek(fileSize - scanRange) || file.read(buffer, scanRange) != scanRange) {
+    LOG_ERR("ZIP", "Failed to read ZIP end-of-directory record");
+    free(buffer);
+    return false;
+  }
 
   // Scan backwards for the signature
   int foundOffset = -1;
@@ -719,9 +724,9 @@ int ZipFile::fillEntryIdentities(const EntryTarget* targets, const size_t target
   }
 
   const ScopedOpenClose zip{*this};
-  if (!zip) return 0;
+  if (!zip) return -1;
 
-  if (!loadZipDetails()) return 0;
+  if (!loadZipDetails()) return -1;
 
   int matched = 0;
   const auto expectedMatches = static_cast<int>(targetCount);
@@ -729,8 +734,16 @@ int ZipFile::fillEntryIdentities(const EntryTarget* targets, const size_t target
   char itemName[ZIP_MAX_STORED_NAME_LEN + 1];
   CentralDirCursor cursor(file, zipDetails.centralDirOffset);
   CentralDirEntry entry;
+  if (!cursor.valid()) {
+    LOG_ERR("ZIP", "Failed to seek ZIP central directory");
+    return -1;
+  }
 
-  while (cursor.next(entry, itemName)) {
+  for (uint32_t i = 0; i < zipDetails.totalEntries; ++i) {
+    if (!cursor.next(entry, itemName) || !cursor.valid()) {
+      LOG_ERR("ZIP", "Failed to read central directory entry %u", static_cast<unsigned>(i));
+      return -1;
+    }
     if (!entry.nameStored) continue;
 
     EntryIdentity identity;

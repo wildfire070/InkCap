@@ -1,4 +1,6 @@
 #pragma once
+#include <I18n.h>
+
 #include <functional>
 #include <string>
 
@@ -11,11 +13,19 @@ class ConfirmationActivity : public Activity {
   OptionPopup confirmPopup;
   bool ignoreConfirmRelease = false;
   bool overrideDisabledReaderTouchscreen = false;
+  StrId cancelLabel = StrId::STR_CANCEL;
+  StrId confirmLabel = StrId::STR_CONFIRM;
 
  public:
   ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& heading,
                        const std::string& body, bool ignoreInitialConfirmRelease = false,
                        bool overrideDisabledReaderTouchscreen = false);
+
+  // Replaces the Cancel / Confirm option labels. Call before the activity starts.
+  void setOptionLabels(StrId cancel, StrId confirm) {
+    cancelLabel = cancel;
+    confirmLabel = confirm;
+  }
 
   void onEnter() override;
   void onExit() override;

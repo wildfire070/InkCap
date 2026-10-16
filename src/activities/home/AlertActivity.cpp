@@ -37,9 +37,10 @@ void AlertActivity::render(RenderLock&&) {
   const auto x = metrics.contentSidePadding;
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, title.c_str());
+  const Rect header = UITheme::getHeaderRect(renderer, metrics.headerHeight);
+  GUI.drawHeader(renderer, header, title.c_str());
 
-  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  int y = header.y + header.height + metrics.verticalSpacing;
 
   auto bodyLines = renderer.wrappedText(UI_10_FONT_ID, body.c_str(), contentWidth, 10);
   for (const auto& line : bodyLines) {

@@ -22,7 +22,8 @@ using namespace library;
 std::vector<std::string> preservedCacheClears;
 bool preserveCacheState = true;
 
-bool clearBookCachePreservingUserState(const std::string& path) {
+bool clearBookCachePreservingUserState(const std::string& path, const bool sourceChanged) {
+  EXPECT_TRUE(sourceChanged);
   preservedCacheClears.push_back(path);
   return preserveCacheState;
 }

@@ -18,6 +18,7 @@
 #include "WifiSelectionActivity.h"
 #include "activities/ActivityManager.h"
 #include "activities/network/CalibreConnectActivity.h"
+#include "activities/network/StatsUploadActivity.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -156,11 +157,43 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     modeName = "Nearby Stats Sync";
   } else if (mode == NetworkMode::NEARBY_BOOK_RECEIVE) {
     modeName = "Receive File";
+  } else if (mode == NetworkMode::SYNC_BOOKS) {
+    modeName = "Sync Books";
+  } else if (mode == NetworkMode::SYNC_READING_STATS) {
+    modeName = "Sync Reading Stats";
+  } else if (mode == NetworkMode::SYNC_CLIPPINGS) {
+    modeName = "Sync Clippings";
   }
   LOG_DBG("WEBACT", "Network mode selected: %s", modeName);
 
   if (mode == NetworkMode::USB_DRIVE) {
     activityManager.goToUsbDrive();
+    return;
+  }
+
+  if (mode == NetworkMode::SYNC_BOOKS || mode == NetworkMode::SYNC_READING_STATS ||
+      mode == NetworkMode::SYNC_CLIPPINGS) {
+    // Sync Books asks first; the targeted uploads start straight away. Each
+    // brings up Wi-Fi itself, like Sync Folder.
+    const auto scope = mode == NetworkMode::SYNC_BOOKS           ? StatsUploadActivity::Scope::Library
+                       : mode == NetworkMode::SYNC_READING_STATS ? StatsUploadActivity::Scope::ReadingStats
+                                                                 : StatsUploadActivity::Scope::Clippings;
+    auto sync = makeUniqueNoThrow<StatsUploadActivity>(renderer, mappedInput, std::string{}, scope,
+                                                       scope != StatsUploadActivity::Scope::Library);
+    if (!sync) {
+      LOG_ERR("WEBACT", "Cannot allocate sync activity");
+      exitToOrigin();
+      return;
+    }
+    sync->setReturnToFileTransfer(returnBookPath, networkBootReady);
+    // Back here after a cancelled Join Network, the radio can still be on; drop
+    // it so leaving this screen does not reboot before the sync runs. The sync
+    // reboots on leave itself when this is the minimal network boot.
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect(false);
+      WiFi.mode(WIFI_OFF);
+    }
+    activityManager.replaceActivity(std::move(sync));
     return;
   }
 
@@ -192,6 +225,9 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
         break;
       case NetworkMode::NEARBY_STATS_SYNC:
       case NetworkMode::NEARBY_BOOK_RECEIVE:
+      case NetworkMode::SYNC_BOOKS:
+      case NetworkMode::SYNC_READING_STATS:
+      case NetworkMode::SYNC_CLIPPINGS:
         break;
     }
     return;

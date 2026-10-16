@@ -27,7 +27,7 @@ void renderPerBookStatsPage(GfxRenderer& renderer, const MappedInputManager* map
                             uint32_t estimatedTimeLeftSeconds, bool showButtonHints, bool showEditButton,
                             bool showMoreButton);
 
-// showSyncAction adds "Sync All Books": Confirm on button devices, a header icon on touch.
+// showSyncAction adds "Sync Reading Stats": Confirm on button devices, a header icon on touch.
 void renderGlobalStatsPage(GfxRenderer& renderer, const MappedInputManager* mappedInput, const char* screenTitle,
                            const GlobalReadingStats& stats, bool showButtonHints, bool showMoreButton,
                            const DailyReadingStats::Summary* daily = nullptr, bool showSyncAction = false);

@@ -40,6 +40,7 @@ struct Schema {
 struct Input {
   void* context;
   int (*read)(void*, void*, size_t);  // zero = EOF, negative = error
+  bool (*rewind)(void*) = nullptr;    // same open source; needed for changed pinned-slot installs
 };
 // The caller supplies firmware-owned storage. Installation may replace existing
 // data in its final two slots; the rest of the region is never modified.
@@ -51,7 +52,19 @@ struct Flash {
   bool (*erase)(void*, size_t, size_t);
 };
 
-enum class Result : uint8_t { Ok, Io, Memory, Invalid, TooLarge, Duplicate, MetadataMissing, StorageUnavailable };
+enum class Result : uint8_t {
+  Ok,
+  Io,
+  Memory,
+  Invalid,
+  TooLarge,
+  Duplicate,
+  MetadataMissing,
+  StorageUnavailable,
+  Cancelled,
+  RestartRequired,
+  Unchanged
+};
 const char* resultName(Result result);
 uint64_t hash(const char* text);
 bool validUtf8(const char* text, size_t length);
@@ -74,6 +87,19 @@ class Inspector {
 // Inspect metadata without reading beyond the first string. Metadata must precede strings.
 Result inspect(Input input, Metadata& metadata);
 
+// Optional online admission checks. Null expectations preserve manual-source semantics.
+// continueWork may yield and returns false to cancel; called at most every 256 input bytes.
+struct ValidationOptions {
+  const char* expectedCode = nullptr;
+  const char* sourceSha256 = nullptr;
+  const char* keysetSha256 = nullptr;
+  void* context = nullptr;
+  bool (*continueWork)(void*) = nullptr;
+};
+// Reads the entire source and checks compiled slot feasibility. No flash API is
+// accepted: validation cannot install or change the active language.
+Result validate(Input input, const Schema& schema, Metadata& metadata, const ValidationOptions& options = {});
+
 struct Installed {
   Metadata metadata;
   uint64_t generation = 0;
@@ -82,6 +108,9 @@ struct Installed {
 };
 
 // The caller pins the selected slot until restart. Installation never changes it.
+// Identical compiled content (including record order) and metadata returns
+// Unchanged with the pinned identity
+// and no writes. A changed source requires Input::rewind before any flash mutation.
 Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed);
 
 // Fully validates a committed mapped slot. Offsets are relative to the slot base.

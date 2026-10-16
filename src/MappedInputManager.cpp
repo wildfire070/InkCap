@@ -325,6 +325,11 @@ bool MappedInputManager::wasScreenTapped(int& x, int& y) const {
       simulatorTouch.longPressFired = false;
       return false;
     }
+    // Like the SDK InputManager, a release that moved as far as a swipe (60 px) is not also a tap.
+    constexpr int kTapReleaseSlopPx = 59;
+    if (std::abs(simulatorTouch.currentX - simulatorTouch.startX) > kTapReleaseSlopPx ||
+        std::abs(simulatorTouch.currentY - simulatorTouch.startY) > kTapReleaseSlopPx)
+      return false;
     x = simulatorTouch.startX;
     y = simulatorTouch.startY;
     rememberTouchHeldTime();

@@ -889,7 +889,10 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
       Storage.remove(tmpCssPath.c_str());
       continue;
     }
-    if (!cssParser->loadFromStream(tempCssFile)) {
+    const auto slash = cssPath.find_last_of('/');
+    const std::string_view baseDir =
+        slash == std::string::npos ? std::string_view{} : std::string_view(cssPath).substr(0, slash + 1);
+    if (!cssParser->loadFromStream(tempCssFile, baseDir)) {
       failedCssFileIndex = cssFileIndex + 1;
       failedCssPath = cssPath;
       LOG_ERR("EBP", "CSS parsing failed for file %zu/%zu after %zu parsed files: %s", failedCssFileIndex,
@@ -1983,14 +1986,19 @@ bool Epub::seedOptimizerImageCache(const std::string& itemHref, const int expect
 
 bool Epub::ensureOptimizerImageIndex() {
   if (optimizerIndexReady) return true;
+  if (optimizerManifestAbsent) return false;
   optimizerLastHit = {};
   const size_t length = strlen(kOptimizerManifestPath);
   ZipFile::EntryTarget target{ZipFile::fnvHash64(kOptimizerManifestPath, length), static_cast<uint16_t>(length), 0,
                               kOptimizerManifestPath};
   ZipFile::EntryIdentity identity;
-  if (ZipFile(filepath).fillEntryIdentities(&target, 1, &identity, 1) < 0 || !identity.found ||
-      !identity.uncompressedSize || identity.uncompressedSize > kOptimizerManifestMaxBytes)
+  if (ZipFile(filepath).fillEntryIdentities(&target, 1, &identity, 1) < 0) return false;
+  if (!identity.found) {
+    // Only a successful directory scan proves absence. I/O failures remain retryable.
+    optimizerManifestAbsent = true;
     return false;
+  }
+  if (!identity.uncompressedSize || identity.uncompressedSize > kOptimizerManifestMaxBytes) return false;
   const std::string path = cachePath + "/optimizer-images.idx";
   const std::string temp = path + ".tmp";
   const std::string manifest = path + ".manifest.tmp";

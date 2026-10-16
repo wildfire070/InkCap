@@ -671,7 +671,7 @@ bool findPrior(WalkState& st, const uint64_t pathHash, uint32_t& position, uint1
     const bool sourceChanged = modificationTime == 0 ||
                                (priorFound && (priorRecord.fileSize != fileSize || priorRecord.modificationTime == 0 ||
                                                priorRecord.modificationTime != modificationTime));
-    if (sourceChanged && !clearBookCachePreservingUserState(fullPath)) {
+    if (sourceChanged && !clearBookCachePreservingUserState(fullPath, true)) {
       LOG_ERR("LIBIDX", "Cannot invalidate stale EPUB cache while preserving reading state: %s", fullPath.c_str());
       st.failed = true;
       return false;

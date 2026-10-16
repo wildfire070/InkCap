@@ -4,3 +4,4 @@
 #   --sizes 32 --out src/components/icons/syncIcons.h
 # then clang-format -i the output.
 cloud-upload = cloud-upload
+blockquote = blockquote

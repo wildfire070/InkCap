@@ -454,7 +454,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 12
+### Version 13
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -479,6 +479,8 @@ Version 11 appends the image-grayscale toggle after the mask and moves the SD-fo
 mask bit from 18 to 19. Older records retain their existing overrides and inherit
 the global image-grayscale setting. This drawing-only setting does not invalidate
 EPUB layout or image caches.
+Version 13 appends `u8 publisherFonts` (0 Off, 1 Ignore Body Font, 2 All Text), with override bit 21. Versions 1–12 retain their previous fields and inherit the global publisher-font mode.
+
 Version 12 appends `u8 characterSpacing` (0–10 encodes -5–+5, default 5), with override bit 20. Existing field bits, including the SD font at bit 19, stay unchanged. Older records inherit global character spacing. Each displayed step adjusts inter-character gaps by half a pixel; spaces keep their word-spacing behavior.
 
 The file can preserve an auto-page-turn interval without forcing custom
@@ -523,6 +525,142 @@ struct ReaderSettingsBin {
     u8 characterSpacing; // 0..10 encodes -5..+5; override bit 20
 };
 ```
+
+## Sync files
+
+`sync_pending.bin`, `sync_state.bin` and each book's `sync.bin` share one
+crash-safe pattern (`src/sync/SyncFiles.cpp`). A change writes `<name>.tmp`,
+closes it, renames the current file to `<name>.bak`, then renames the temp file
+into place. When there is no current file (first write, or recovering from the
+backup) the temp file is renamed straight into place and `.bak` is kept. Every
+file ends with a little-endian `uint32` CRC32 (`uzlib_crc32`) of all bytes
+before it. A reader checks the CRC first. If the main file is missing but a
+CRC-valid `.tmp` exists (power lost between the two renames), that newest copy
+is renamed into place and used; otherwise it falls back to `.bak`. If nothing
+valid remains the file starts fresh (see below). Integers are little-endian.
+
+### `/.crosspoint/sync_pending.bin` (version 1)
+
+Books whose local state changed since their last successful upload.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| version | `uint8` | `1` |
+| entries | repeated | until the CRC |
+| entry.mask | `uint8` | `1` progress, `2` reading stats, `4` clippings |
+| entry.path | `uint16` length + bytes | absolute book path, at most 1024 bytes |
+| crc | `uint32` | |
+
+Entries are only added while a sync account exists, and stats/clippings bits
+only while their What to Sync toggle is on. An entry is removed when its mask is
+empty. The file is never deleted; an empty list is just the version byte. If it
+and its backup are both unreadable after a catch-up has completed, the catch-ups
+in `sync_state.bin` are reset so they run again.
+
+### `/.crosspoint/sync_state.bin` (version 2)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| version | `uint8` | `1` |
+| baseUrl | `uint16` length + bytes | account this state belongs to |
+| username | `uint16` length + bytes | |
+| flags | `uint8` | bit 0 stats caught up, bit 1 clippings caught up |
+| statsCatchupId | `uint32` | non-zero while a stats catch-up is unfinished |
+| clippingsCatchupId | `uint32` | same for clippings |
+| nextStampId | `uint32` | next catch-up/walk id; random start, never reused |
+| scopes | repeated | version 2: prepared sync scopes, until the CRC |
+| scope.path | `uint16` length + bytes | folder, or `/` for the whole card; at most 255 bytes |
+| scope.flags | `uint8` | bit 0 prepared, bit 1 stats caught up, bit 2 clippings caught up |
+| scope.cursor | `uint32` | change feed cursor for this scope |
+| scope.lastSynced | `uint32` | stamp id of the last sync; the oldest is dropped beyond 32 scopes |
+| scope.walkId | `uint32` | non-zero while the scope's first walk is unfinished |
+| scope.statsCatchupId | `uint32` | unfinished stats catch-up for this scope |
+| scope.clippingsCatchupId | `uint32` | unfinished clippings catch-up for this scope |
+| crc | `uint32` | |
+
+Version 1 files (no scopes) are read and rewritten as version 2. A different
+base URL or username reads as a fresh state (catch-ups and first walks run
+again). Scopes are streamed one at a time, so RAM use does not grow with the
+list.
+
+### `/.crosspoint/sync_ids.bin` (version 1)
+
+Document id -> book path for books with saved progress, stats or clippings on
+this reader, read by the progress pull. XTC books and finished books are never
+recorded. Unlike the other sync files it is appended to, so each record carries
+its own CRC and there is no trailing file CRC; rewrites (rename, removal,
+compaction) still use the `.tmp` swap. A confirmed Document Matching change
+deletes it, together with `sync_parked.bin` and every scope's cursor, first walk
+and catch-ups in `sync_state.bin`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| version | `uint8` | `1` |
+| method | `uint8` | `DocumentMatchMethod`; another method reads as an empty map |
+| generation | `uint32` | changes whenever the file is created anew, compacted, or rebuilt after a corrupt entry |
+| headerCrc | `uint32` | CRC32 of the 6 bytes above |
+| entry.id | 16 bytes | raw KOReader document MD5 |
+| entry.path | `uint8` length + bytes | absolute book path, at most 255 bytes |
+| entry.crc | `uint32` | CRC32 of the entry's id, length and path |
+
+A torn append only loses that entry: the next record finds the partial tail and
+rewrites the file before appending. If the main file is missing after a crash
+between the two renames, a `.tmp` with a valid header is promoted, else the
+`.bak`. Copies of a file in binary mode share an id, so an id can map to several
+paths.
+
+### `/.crosspoint/sync_parked.bin` (slot version 1)
+
+Remote positions from the change feed that the pull could not apply: books not
+on this reader (or not in `sync_ids.bin`), books never opened here, failed
+applies, and Ask on conflicts' Skip book. At most 32 fixed 384-byte slots; a
+change sharing a hash with a parked one replaces it in place, else the first
+empty slot is used, else the oldest (by remote timestamp) is overwritten. A slot
+whose CRC does not match (torn write, or zeroed by a removal) is empty. There is
+no file header or file CRC. Removing the last valid entry deletes the file, so
+opening a book with nothing kept stops at the missing file.
+
+| Offset | Field | Type | Notes |
+| --- | --- | --- | --- |
+| 0 | version | `uint8` | `1`; `0` = empty slot |
+| 1 | hashCount | `uint8` | 1-4 |
+| 2 | flags | `uint8` | bit 0: rich position present |
+| 3 | reserved | `uint8` | |
+| 4 | hashes | 4 x 16 bytes | raw document MD5s: canonical first, then aliases |
+| 68 | percentage | `float` | |
+| 72 | timestamp | `int64` | remote write time |
+| 80 | pctQ | `uint32` | rich position |
+| 84 | spine, page, pages, paragraph | 4 x `uint16` | rich position; paragraph 0 = none |
+| 92 | device | 32 bytes | remote device name, NUL-padded |
+| 124 | xpath length | `uint16` | at most 252; longer positions are not parked |
+| 126 | xpath | 252 bytes | |
+| 380 | crc | `uint32` | CRC32 of bytes 0-379 |
+
+### `<book cache>/sync.bin` (version 2)
+
+In the book's `epub_<hash>/` or `xtc_<hash>/` folder; only written when that
+folder already exists.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| version | `uint8` | `1` |
+| hasId | `uint8` | `1` when `id` is valid |
+| method | `uint8` | `DocumentMatchMethod` the id was computed with |
+| id | 16 bytes | raw KOReader document MD5 |
+| fileSize | `uint32` | book size when `id` was computed; a different size recomputes it |
+| statsStamp | `uint32` | stats catch-up id that last sent this book |
+| clippingsStamp | `uint32` | clippings catch-up id that last sent this book |
+| walkStamp | `uint32` | version 2: first-walk id that finished this book |
+| idsGeneration | `uint32` | version 2: `sync_ids.bin` generation the book was recorded in; 0 = not recorded |
+| crc | `uint32` | |
+
+Version 1 records are read with both new fields 0.
+
+Cache clears preserve `sync.bin` and its `.bak`/`.tmp` recovery files. File
+replacements clear the cached document id and map generation in both the main
+record and backup, retaining the catch-up and first-walk stamps. Saved data is
+queued for sync again; the next document lookup recalculates the id even when
+the replacement has the same file size. No binary format version changes.
 
 ## `/.crosspoint/clippings/<bookType>_<crc32(path)>.bin`
 
@@ -631,6 +769,65 @@ Binary layout:
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
 ## `section.bin`
+
+### Version 95
+
+Complete caches use `95`; suspended partial caches use `0xD0`. The payload is
+unchanged. Image-only paragraphs retain publisher alignment independently of
+the reader's prose alignment. Both cache types rebuild to refresh image positions.
+
+### Version 94
+
+Complete caches use `94`; suspended partial caches use `0xCF`. The payload is
+unchanged. Fieldset containers now have a default outline and padding, with
+publisher CSS taking precedence. Both cache types rebuild to apply the updated
+wrapping, box decorations, and pagination.
+
+### Version 93
+
+Complete caches use `93`; suspended caches use `0xCE`. After the render-mode
+byte, the header adds `u8 publisherFonts`, `u32 publisherFontSignature` (face
+manifest identity), `u32 publisherFontFaces` (requested face bitmask), and
+`u32 publisherFaceSignature` (loaded face fingerprints and fallback results),
+and `u32 publisherLoadedFaces` (successfully admitted faces). Reopening gives
+previously successful faces priority before retrying fallback faces.
+The face state is captured after page layout and patched when the complete or
+partial cache is committed. Reopening restores only requested families and
+rejects cached layout if their availability or fingerprints differ.
+Text blocks add a boolean byte after their packed arena, followed by one
+`u32` CSS family hash per word when present, before the ruby count. A zero
+family keeps the reader font. Drop caps add a `u32` family hash before their text length. All older complete and partial caches rebuild.
+
+CSS cache revision `23` adds a four-byte family hash to each style (96 bytes
+total); defined bit 29 marks an explicit family. After the descendant rules,
+the same CSS cache contains an 8-bit face count (maximum 32). Each face stores
+a 32-bit family hash, style flags (bit 0 bold, bit 1 italic), an 8-bit path
+length and that many UTF-8 path bytes. Paths are relative to the EPUB root.
+A final `u32` points to the face count for direct font-loader access. Empty
+manifests still store the count and footer. Cache validation checks this tail;
+rules and font metadata share the existing atomic cache replacement.
+
+
+### Version 91
+
+Complete caches use `91`; suspended partial caches use `0xCC`. The payload is
+unchanged. Figure containers now apply publisher alignment and spacing, so both
+cache types rebuild to center chapter ornaments and separate them from nearby text.
+
+### Version 90
+
+Complete caches use `90`; suspended partial caches use `0xCB`. The payload is
+unchanged. ESP32-S3 readers now apply installed bitmap sizes to EPUB text, so
+both cache types rebuild to use the updated wrapping and line heights.
+
+### Version 89
+
+Complete caches use `89`; suspended partial caches use `0xCA`. The payload is
+unchanged, but C3 EPUB headings and CSS font sizes now use available physical
+bitmap sizes. Both cache types rebuild to pick up the new wrapping and line
+heights. SD reader font identities include the content of the optional sizes
+that fit the memory budget, so a changed size file or a load under tighter
+memory also invalidates previously paginated sections.
 
 ### Version 88
 
@@ -1252,7 +1449,7 @@ limits and lifecycle.
 
 ## `/.crosspoint/font-catalog.bin`
 
-### Version 1
+### Versions 1–3
 
 Disposable font metadata cache, shared by reader, settings and web font controls.
 The 24-byte little-endian header contains magic `0x46434931`, version, a 64-bit
@@ -1285,6 +1482,10 @@ the card to the host. Manage Fonts performs a full rescan; alternatively remove
 this cache to force reinspection after external same-length font changes.
 
 EPUB layout cache versions and identities are unchanged by this catalog.
+
+Version 2 rescans static TrueType-outline `.ttf` and `.otf` files. Version 3
+rescans again so OpenType CFF faces rejected by earlier firmware enter the
+catalog without requiring a manual font refresh. The binary layout is unchanged.
 
 ### Daily reading counters (v1)
 
@@ -1400,3 +1601,7 @@ languages, invalid bounds, uncommitted banks and bad header/payload checksums
 are rejected. Boot selects the highest fully valid generation. Generations do
 not wrap; exhausting u32 rejects a further update. A successful update requires
 a restart before another operation or activation of its new mapping.
+
+## OPDS server download folders
+
+`/.crosspoint/opds.json` stores an optional `downloadFolder` string on each entry in `servers`. Missing or empty means inherit the global `opdsDownloadFolder` setting; `/` explicitly selects SD root. Other values are normalized absolute SD folder paths (at most 63 UTF-8 bytes). Existing files need no migration. No EPUB cache or settings binary format change is required.

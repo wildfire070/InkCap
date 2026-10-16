@@ -24,6 +24,7 @@
 #include "FilenameFontSystem.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "ReleaseNotes.h"
 #include "SilentRestart.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -45,6 +46,7 @@
 #include "reader/GlobalReadingStats.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
+#include "settings/ReleaseNotesActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -143,14 +145,14 @@ FrontlightPanelContext buildFrontlightPanelContext(Activity& activity, GfxRender
     statsTitle = tr(STR_READING_STATS);
     if (!context.activeReaderBook) context.bookTitle = statsTitle;
   }
-  if (GlobalReadingStats::hasSyncedStats()) {
-    context.readingStatsActivity =
-        makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress, false,
-                                             0, global, GlobalReadingStats::loadAggregated(global));
-  } else {
-    context.readingStatsActivity = makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath,
-                                                                        bookStats, progress, false, 0, global);
-  }
+  auto stats =
+      GlobalReadingStats::hasSyncedStats()
+          ? makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress,
+                                                 false, 0, global, GlobalReadingStats::loadAggregated(global))
+          : makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, statsTitle, cachePath, bookStats, progress,
+                                                 false, 0, global);
+  if (stats && !cachePath.empty()) stats->setSyncBookPath(context.bookPath);
+  context.readingStatsActivity = std::move(stats);
   return context;
 }
 
@@ -778,6 +780,20 @@ void ActivityManager::loop() {
     pushActivity(std::make_unique<AlertActivity>(renderer, mappedInput));
   }
 
+  // One-time What's New, only over Home so a wake into a book or a silent reboot into a network screen
+  // never shows it. The flag is set when the screen actually enters, so a push that Home's own navigation
+  // replaces before it applies is retried on the next visit to Home.
+  if (!releaseNotesShown && APP_STATE.releaseNotesSeen < RELEASE_NOTES_REVISION &&
+      pendingAction == PendingAction::None && currentActivity && currentActivity->isHomeActivity()) {
+    if (auto notes =
+            makeUniqueNoThrow<ReleaseNotesActivity>(renderer, mappedInput, ReleaseNotesActivity::Mode::FirstRun)) {
+      pushActivity(std::move(notes));
+    } else {
+      releaseNotesShown = true;  // Don't retry every loop; it shows again next boot.
+      LOG_ERR("ACT", "OOM: What's New activity; showing it next boot");
+    }
+  }
+
   if (requestedUpdate.exchange(false)) {
     // Using direct notification to signal the render task to update
     // Increment counter so multiple rapid calls won't be lost
@@ -1002,7 +1018,7 @@ void ActivityManager::goToNearbyStatsSync() {
   replaceActivity(std::make_unique<NearbyStatsSyncActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
+void ActivityManager::goToSettings(const bool dismissOnUpSwipe, const bool openLanguageDownloads) {
   preferredHomeBookPath.clear();
   returningHomeThroughSettings = false;
   if (currentActivity && currentActivity->isHomeActivity()) {
@@ -1012,7 +1028,9 @@ void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
     preferredHomeBookPath = stackActivities.back()->getCurrentBookPath();
     returningHomeThroughSettings = true;
   }
-  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe));
+  auto settings = std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe);
+  if (openLanguageDownloads) settings->openLanguageDownloadsOnEnter();
+  replaceActivity(std::move(settings));
 }
 
 void ActivityManager::goToFileBrowser(std::string path) {

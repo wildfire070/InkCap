@@ -4,6 +4,8 @@
 #include "EpubRenderMode.h"
 #include "FontSizeLadder.h"
 
+enum class PublisherFonts : uint8_t { Off, Accents, All };
+
 // The resolved text-rendering configuration a reader hands to the layout
 // engine. Section-cache validation keys on every field: a section file built
 // with a different spec is discarded and rebuilt.
@@ -28,6 +30,8 @@ struct ReaderRenderSpec {
   bool guideReadingEnabled = false;
   uint8_t wordSpacing = 0;
   int8_t characterSpacing = 0;  // -5..+5, each step a half pixel between adjacent non-space glyphs
+  PublisherFonts publisherFonts = PublisherFonts::Off;
+  uint32_t publisherFontSignature = 0;
   EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
   // Deliberately excluded from readerRenderSpecSignature() below: this is a
   // deterministic function of fontId (already part of the signature), so
@@ -56,5 +60,13 @@ inline uint32_t readerRenderSpecSignature(const ReaderRenderSpec& spec) {
   mix(spec.wordSpacing);
   mix(static_cast<uint8_t>(spec.characterSpacing));
   mix(static_cast<uint8_t>(spec.renderMode));
+  if (spec.publisherFonts != PublisherFonts::Off) {
+    mix(static_cast<uint8_t>(spec.publisherFonts));
+    mix(spec.publisherFontSignature);
+  }
+  if (spec.publisherFonts != PublisherFonts::Off) {
+    mix(static_cast<uint8_t>(spec.publisherFonts));
+    mix(spec.publisherFontSignature);
+  }
   return signature == 0 ? 1 : signature;
 }

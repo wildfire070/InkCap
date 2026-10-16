@@ -11,6 +11,8 @@
 #include <iterator>
 #include <vector>
 
+#include "sync/BookSyncFile.h"
+
 namespace {
 
 struct PreservedCacheFile {
@@ -27,11 +29,15 @@ constexpr PreservedCacheFile EPUB_USER_STATE_FILES[] = {
     {"book-ids.json", "upload_preserve_book-ids.json"},
     {"ao3-status.bin", "upload_preserve_ao3-status.bin"},
     {"reading_stats_off", "upload_preserve_reading_stats_off"},
+    {"sync.bin", "upload_preserve_sync.bin"},
+    {"sync.bin.bak", "upload_preserve_sync.bin.bak"},
+    {"sync.bin.tmp", "upload_preserve_sync.bin.tmp"},
 };
 
 constexpr PreservedCacheFile PAGE_PROGRESS_FILES[] = {
-    {"progress.bin", "upload_preserve_progress.bin"},
-    {"reading_stats_off", "upload_preserve_reading_stats_off"},
+    {"progress.bin", "upload_preserve_progress.bin"}, {"reading_stats_off", "upload_preserve_reading_stats_off"},
+    {"sync.bin", "upload_preserve_sync.bin"},         {"sync.bin.bak", "upload_preserve_sync.bin.bak"},
+    {"sync.bin.tmp", "upload_preserve_sync.bin.tmp"},
 };
 
 constexpr PreservedCacheFile CACHE_CLEAR_USER_STATE_FILES[] = {
@@ -40,6 +46,9 @@ constexpr PreservedCacheFile CACHE_CLEAR_USER_STATE_FILES[] = {
     {"book-ids.json", "clear_preserve_book-ids.json"},
     {"ao3-status.bin", "clear_preserve_ao3-status.bin"},
     {"reading_stats_off", "clear_preserve_reading_stats_off"},
+    {"sync.bin", "clear_preserve_sync.bin"},
+    {"sync.bin.bak", "clear_preserve_sync.bin.bak"},
+    {"sync.bin.tmp", "clear_preserve_sync.bin.tmp"},
 };
 
 struct ResolvedPreservedCacheFile {
@@ -430,11 +439,12 @@ bool isBookCacheDirectoryName(const char* name) {
 
 void clearBookCache(const std::string& path) { clearBookCachePreservingUserState(path); }
 
-bool clearBookCachePreservingUserState(const std::string& path) {
+bool clearBookCachePreservingUserState(const std::string& path, const bool sourceChanged) {
   size_t preservedCount = 0;
   const PreservedCacheFile* preservedFiles = preservedFilesForPath(path, preservedCount);
   if (!preservedFiles || preservedCount == 0) {
-    return clearBookCacheForPath(path);
+    // Non-book uploads have no reader cache or sync identity to invalidate.
+    return sourceChanged || clearBookCacheForPath(path);
   }
 
   const std::string cachePath = getBookCachePath(path);
@@ -445,6 +455,7 @@ bool clearBookCachePreservingUserState(const std::string& path) {
   const bool includeStatsFiles = FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path);
   if (!recoverInterruptedPreservation(cachePath, preservedFiles, preservedCount, includeStatsFiles, "upload_preserve_"))
     return false;
+  if (sourceChanged && !BookSyncFile::onFileChanged(path)) return false;
 
   std::vector<ResolvedPreservedCacheFile> resolvedFiles;
   if (!resolvePreservedFiles(cachePath, preservedFiles, preservedCount, includeStatsFiles, "upload_preserve_",

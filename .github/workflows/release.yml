@@ -103,6 +103,8 @@ jobs:
       - name: Build CrossInk
         env:
           CROSSINK_RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
+          CROSSINK_ASSET_BASE_URL: ${{ vars.CROSSINK_ASSET_BASE_URL }}
+          CROSSINK_FONT_BASE_URL: ${{ vars.CROSSINK_FONT_BASE_URL }}
         run: pio run -j1 -e ${{ matrix.environment }}
 
       - name: Upload firmware artifact

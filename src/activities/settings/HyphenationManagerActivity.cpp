@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "AssetDownloadActivity.h"
 #include "CrossPointState.h"
 #include "HyphenationPackStore.h"
 #include "SilentRestart.h"
@@ -19,7 +20,7 @@ HyphenationManagerActivity::HyphenationManagerActivity(GfxRenderer& renderer, Ma
 void HyphenationManagerActivity::onEnter() {
   Activity::onEnter();
   mappedInput.setReaderTouchscreenOverride(true);
-  // 1290 bytes, once per activity: labels outlive popup renders, but need not
+  // 1280 bytes, once per activity: labels outlive popup renders, but need not
   // consume permanent RAM or the small C3 main-task stack.
   catalog_ = makeUniqueNoThrow<Catalog>();
   if (!catalog_) {
@@ -43,6 +44,7 @@ void HyphenationManagerActivity::showLanguages() {
     finish();
     return;
   }
+  int builtInIndex = -1;
   for (size_t i = 0; i < languages.size; ++i) {
     const auto& entry = languages.data[i];
     char uiCode[] = {static_cast<char>(entry.primaryTag[0] - 'a' + 'A'),
@@ -50,10 +52,9 @@ void HyphenationManagerActivity::showLanguages() {
     const char* name = I18N.getLanguageName(I18n::languageFromCode(uiCode));
     const char* status = entry.hyphenator                                      ? tr(STR_HYPHENATION_BUILT_IN)
                          : HyphenationPackStore::isInstalled(entry.primaryTag) ? tr(STR_INSTALLED)
-                         : HyphenationPackStore::hasSource(entry.primaryTag)   ? tr(STR_SD_CARD)
-                                                                               : tr(STR_NOT_FOUND);
+                                                                               : tr(STR_HYPHENATION_INSTALL_ACTION);
     std::snprintf(catalog_->labels[i], sizeof(catalog_->labels[i]), "%s (%s): %s", name, entry.primaryTag, status);
-    catalog_->disabled[i] = entry.hyphenator != nullptr;
+    if (entry.hyphenator) builtInIndex = static_cast<int>(i);
     if (!std::strcmp(wanted_, entry.primaryTag)) selected_ = static_cast<int>(i);
   }
   wanted_[0] = '\0';
@@ -61,32 +62,50 @@ void HyphenationManagerActivity::showLanguages() {
       StrId::STR_HYPHENATION_PACKS,
       OptionLabels(
           catalog_.get(), languages.size,
-          [](const void* context, size_t index) { return static_cast<const Catalog*>(context)->labels[index]; },
-          [](const void* context, size_t index) { return static_cast<const Catalog*>(context)->disabled[index]; }),
+          [](const void* context, size_t index) { return static_cast<const Catalog*>(context)->labels[index]; }),
       selected_,
       [this](int index) {
         selected_ = index;
-        pending_ = Pending::Actions;
+        pending_ = Pending::Select;
       },
-      OptionPopup::Note(tr(STR_HYPHENATION_SD_HINT), tr(STR_HYPHENATION_APPLY_HINT)));
+      OptionPopup::Note(tr(STR_HYPHENATION_APPLY_HINT), ""));
+  popup_.setInertOptionIndex(builtInIndex);
   popup_.setCancelCallback([this] { finish(); });
   requestUpdate();
 }
-void HyphenationManagerActivity::showActions() {
-  RenderLock lock(*this);
+void HyphenationManagerActivity::select() {
   const auto languages = getLanguageEntries();
   if (selected_ < 0 || size_t(selected_) >= languages.size || languages.data[selected_].hyphenator) return;
   const char* code = languages.data[selected_].primaryTag;
-  const char* options[] = {tr(STR_CANCEL), tr(STR_HYPHENATION_INSTALL), tr(STR_DELETE)};
+  if (!HyphenationPackStore::isInstalled(code)) {
+    // An SD copy installs offline; otherwise the Wi-Fi screen downloads and installs it.
+    if (HyphenationPackStore::hasSource(code))
+      apply(false);
+    else
+      connect();
+    return;
+  }
+  RenderLock lock(*this);
+  const char* options[] = {tr(STR_UPDATE), tr(STR_DELETE), tr(STR_CANCEL)};
   popup_.show(
-      catalog_->labels[selected_], options, 3, 0,
-      [this](int index) { pending_ = index == 1   ? Pending::Install
-                                     : index == 2 ? Pending::Remove
+      catalog_->labels[selected_], options, 3, 2,
+      [this](int index) { pending_ = index == 0   ? Pending::Connect
+                                     : index == 1 ? Pending::Remove
                                                   : Pending::List; },
-      OptionPopup::Note(tr(STR_HYPHENATION_SD_HINT), tr(STR_HYPHENATION_APPLY_HINT)));
-  popup_.setDisabledOptions({false, !HyphenationPackStore::hasSource(code), !HyphenationPackStore::isInstalled(code)});
+      OptionPopup::Note(tr(STR_HYPHENATION_APPLY_HINT), ""));
   popup_.setCancelCallback([this] { pending_ = Pending::List; });
   requestUpdate();
+}
+void HyphenationManagerActivity::connect() {
+  APP_STATE.pendingOverlayResume.clear();
+  if (APP_STATE.saveToFile() && SETTINGS.saveToFile()) {
+    RenderLock restartLock(*this);
+    silentRestartToNetwork(NetworkBootTarget::DOWNLOAD_ASSETS,
+                           AssetDownloadActivity::bootPayload(AssetCatalog::Kind::Hyphenation, selected_));
+    return;
+  }
+  LOG_ERR("ASSET", "Cannot save state before network restart");
+  pending_ = Pending::SaveError;
 }
 void HyphenationManagerActivity::apply(bool remove) {
   RenderLock lock(*this);
@@ -97,6 +116,7 @@ void HyphenationManagerActivity::apply(bool remove) {
   GUI.drawPopup(renderer, tr(STR_LOADING), true);
   // Do not commit a pack if SD state cannot be saved for the following restart.
   auto result = hyphenation_pack::Result::Io;
+  APP_STATE.pendingOverlayResume.clear();
   if (APP_STATE.saveToFile())
     result = remove ? HyphenationPackStore::remove(code) : HyphenationPackStore::install(code);
   if (result == hyphenation_pack::Result::Ok) {
@@ -125,11 +145,21 @@ void HyphenationManagerActivity::loop() {
     case Pending::List:
       showLanguages();
       return;
-    case Pending::Actions:
-      showActions();
+    case Pending::Select:
+      select();
       return;
-    case Pending::Install:
-      apply(false);
+    case Pending::SaveError: {
+      RenderLock lock(*this);
+      const StrId options[] = {StrId::STR_OK};
+      popup_.show(
+          StrId::STR_HYPHENATION_PACKS, options, 1, 0, [this](int) { pending_ = Pending::List; },
+          OptionPopup::Note(tr(STR_ASSET_WIFI_DOWNLOAD), tr(STR_LANGUAGE_SAVE_FAILED)));
+      popup_.setCancelCallback([this] { pending_ = Pending::List; });
+      requestUpdate();
+      return;
+    }
+    case Pending::Connect:
+      connect();
       return;
     case Pending::Remove:
       apply(true);

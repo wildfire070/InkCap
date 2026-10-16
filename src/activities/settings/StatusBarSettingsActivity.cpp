@@ -187,6 +187,8 @@ int StatusBarSettingsActivity::previewHeight() const {
 }
 
 int StatusBarSettingsActivity::topPreviewOriginY() const {
+  // Calibrated: match the row every other screen and the reader use.
+  if (renderer.hasCustomViewableInsets()) return UITheme::getTopStatusBarY(renderer);
   int marginTop, marginRight, marginBottom, marginLeft;
   renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
   (void)marginRight;

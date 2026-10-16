@@ -104,6 +104,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "activities/reader/ReaderUtils.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "activities/reader/StatsBackup.h"
+#include "activities/settings/AssetDownloadActivity.h"
 #include "activities/settings/FontDownloadActivity.h"
 #include "activities/settings/KOReaderAuthActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
@@ -473,6 +474,9 @@ void silentRestartToReader(const bool cleanImageBaseOnEntry) { silentRestartToRe
 
 void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t payload) {
   if (deepSleepInProgress) return;
+#ifdef SIMULATOR
+  if (simulatorInterceptNetworkRestart(static_cast<uint32_t>(target), payload)) return;
+#endif
   clearSilentRestartReaderPageBuild();
   silentRebootTarget = static_cast<uint32_t>(target);
   silentRebootPayload = payload;
@@ -1201,14 +1205,14 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.setFontCacheManager(&fontCacheManager);
 
 #if !CROSSINK_SCALABLE_FONTS
-  renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily);
-  renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
-  renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
-  renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
-  renderer.insertFont(BITTER_10_FONT_ID, bitter10FontFamily);
-  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
-  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
-  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+  renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily.withSize(LEXENDDECA_10_FONT_ID, 10));
+  renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily.withSize(LEXENDDECA_10_FONT_ID, 12));
+  renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily.withSize(LEXENDDECA_10_FONT_ID, 14));
+  renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily.withSize(LEXENDDECA_10_FONT_ID, 16));
+  renderer.insertFont(BITTER_10_FONT_ID, bitter10FontFamily.withSize(BITTER_10_FONT_ID, 10));
+  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily.withSize(BITTER_10_FONT_ID, 12));
+  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily.withSize(BITTER_10_FONT_ID, 14));
+  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily.withSize(BITTER_10_FONT_ID, 16));
 #endif
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
@@ -1372,6 +1376,9 @@ void setup() {
   SETTINGS.loadFromFile();
   Storage.installDateTimeCallback(&SETTINGS.clockUtcOffsetQ);
   APP_STATE.loadFromFile();
+#ifdef SIMULATOR
+  prepareSimulatorSmokeState();
+#endif
   mirrorWakeShortPressToNvs();
   // Needs SETTINGS for the clock's UTC offset, so it cannot run any earlier.
   BatteryDiagnosticLog::record(BatteryDiagnosticLog::Event::Wake, BoardConfig::ACTIVE.name,
@@ -1566,6 +1573,17 @@ void setup() {
       case NetworkBootTarget::FILE_TRANSFER:
         launched = activityManager.resumeFileTransferFromNetworkBoot(snapshotPayload);
         break;
+      case NetworkBootTarget::DOWNLOAD_ASSETS: {
+        if (!AssetDownloadActivity::validBootPayload(snapshotPayload)) break;
+        auto assets = makeUniqueNoThrow<AssetDownloadActivity>(renderer, mappedInputManager, snapshotPayload);
+        if (assets) {
+          activityManager.replaceActivity(std::move(assets));
+          launched = true;
+        } else {
+          LOG_ERR("MAIN", "OOM: asset downloads after minimal boot");
+        }
+        break;
+      }
       case NetworkBootTarget::MANAGE_FONTS: {
         auto fontsActivity = makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInputManager);
         if (fontsActivity) {

@@ -62,16 +62,18 @@ static_assert(sizeof(Workspace) < 5120);
 
 class Reader {
   Input input;
+  const ValidationOptions* options;
   uint8_t* buffer;
   size_t cursor = 0, available = 0, total = 0;
 
  public:
-  Reader(Input in, uint8_t* buf) : input(in), buffer(buf) {}
+  Reader(Input in, uint8_t* buf, const ValidationOptions* opts = nullptr) : input(in), options(opts), buffer(buf) {}
   Result line(char* out, bool& eof) {
     size_t length = 0;
     eof = false;
     while (true) {
       if (cursor == available) {
+        if (options && options->continueWork && !options->continueWork(options->context)) return Result::Cancelled;
         const int n = input.read(input.context, buffer, 256);
         if (n < 0 || n > 256) return Result::Io;
         cursor = 0;
@@ -187,6 +189,107 @@ Result remember(Workspace& work, uint64_t h, const Key* known) {
   }
   return Result::Ok;
 }
+// Compare serialized compiled records in order, using existing header scratch.
+// This stays linear even for reordered input; a different record order is a
+// changed compiled image and follows the normal installation path.
+struct Comparison {
+  const Flash& flash;
+  size_t base, used, next = HEADER_SIZE;
+  bool equal = true;
+
+  Result record(const uint8_t* record, const char* value, size_t size, uint8_t* scratch) {
+    if (!equal) return Result::Ok;
+    if (next > used || used - next < RECORD_SIZE) {
+      equal = false;
+      return Result::Ok;
+    }
+    if (!flash.read(flash.context, base + next, scratch, RECORD_SIZE)) return Result::Io;
+    if (std::memcmp(scratch, record, RECORD_SIZE) != 0) {
+      equal = false;
+      return Result::Ok;
+    }
+    if (size > used - next - RECORD_SIZE) return Result::Invalid;
+    for (size_t offset = 0; offset < size; offset += HEADER_SIZE) {
+      const size_t n = std::min(HEADER_SIZE, size - offset);
+      if (!flash.read(flash.context, base + next + RECORD_SIZE + offset, scratch, n)) return Result::Io;
+      if (std::memcmp(scratch, value + offset, n) != 0) {
+        equal = false;
+        break;
+      }
+    }
+    next += RECORD_SIZE + size;
+    return Result::Ok;
+  }
+};
+bool writeVerified(const Flash& flash, size_t offset, const void* bytes, size_t size);
+// One parser serves dry-run validation and installation; only the installer
+// supplies the optional flash sink. Manual installation retains format fallback.
+Result parseDocument(Input input, const Schema& schema, Workspace* work, Metadata& metadata, size_t& end,
+                     uint16_t& count, const ValidationOptions* options, const Flash* flash = nullptr, size_t base = 0,
+                     Comparison* comparison = nullptr) {
+  Reader reader(input, work->inputBuffer, options);
+  Result result;
+  bool sourceMatched = !options || !options->sourceSha256;
+  bool keysetMatched = !options || !options->keysetSha256;
+  bool direction = false, haveStrings = false;
+  end = HEADER_SIZE;
+  count = 0;
+  while (true) {
+    bool eof;
+    result = reader.line(work->line, eof);
+    if (result != Result::Ok) return result;
+    if (eof) break;
+    char *key, *value;
+    result = parseLine(work->line, key, value);
+    if (result != Result::Ok) return result;
+    if (!key) continue;
+    Key known{};
+    const uint64_t h = hash(key);
+    const bool found = key[0] != '_' && findKey(schema, h, known) && std::strcmp(known.name, key) == 0;
+    result = remember(*work, h, found ? &known : nullptr);
+    if (result != Result::Ok) return result;
+    if (key[0] == '_') {
+      if (haveStrings) return Result::Invalid;
+      if (options && std::strcmp(key, "_template_source_sha256") == 0 && options->sourceSha256)
+        sourceMatched = std::strcmp(value, options->sourceSha256) == 0;
+      if (options && std::strcmp(key, "_template_keyset_sha256") == 0 && options->keysetSha256)
+        keysetMatched = std::strcmp(value, options->keysetSha256) == 0;
+      result = metadataLine(key, value, metadata, direction);
+      if (result != Result::Ok) return result;
+      continue;
+    }
+    if (std::strncmp(key, "STR_", 4) != 0) return Result::Invalid;
+    haveStrings = true;
+    if (!found || !*value) continue;
+    const char* english = schema.english(known.id);
+#if !defined(CROSSINK_LANGUAGE_BENCHMARK)
+    if (std::strcmp(english, value) == 0) continue;
+#endif
+    if (known.formatted && !compatibleFormat(english, value)) continue;
+    const size_t size = std::strlen(value) + 1;
+    if (end + RECORD_SIZE + size > SLOT_SIZE || end + RECORD_SIZE >= MISSING) return Result::TooLarge;
+    uint8_t record[RECORD_SIZE];
+    put64(record, h);
+    put64(record + 8, known.englishHash);
+    put16(record + 16, static_cast<uint16_t>(size));
+    if (comparison) {
+      result = comparison->record(record, value, size, work->header);
+      if (result != Result::Ok) return result;
+    }
+    if (flash && (!writeVerified(*flash, base + end, record, sizeof(record)) ||
+                  !writeVerified(*flash, base + end + RECORD_SIZE, value, size)))
+      return Result::Io;
+    end += RECORD_SIZE + size;
+    ++count;
+  }
+  result = finishMetadata(metadata, direction);
+  if (result != Result::Ok) return result;
+  if (!sourceMatched || !keysetMatched ||
+      (options && options->expectedCode && std::strcmp(metadata.code, options->expectedCode)))
+    return Result::Invalid;
+  return Result::Ok;
+}
+
 bool fieldString(const uint8_t* p, size_t size) {
   const auto* end = static_cast<const uint8_t*>(std::memchr(p, 0, size));
   return end && validUtf8(reinterpret_cast<const char*>(p), static_cast<size_t>(end - p));
@@ -374,6 +477,8 @@ const char* resultName(Result result) {
   switch (result) {
     case Result::Ok:
       return "ok";
+    case Result::Unchanged:
+      return "language already active";
     case Result::Io:
       return "read/write failed";
     case Result::Memory:
@@ -386,6 +491,10 @@ const char* resultName(Result result) {
       return "duplicate key";
     case Result::MetadataMissing:
       return "missing language metadata";
+    case Result::Cancelled:
+      return "cancelled";
+    case Result::RestartRequired:
+      return "restart required before another language update";
     case Result::StorageUnavailable:
       return "language cache partition unavailable";
   }
@@ -426,6 +535,19 @@ Result Inspector::inspect(Input input, Metadata& metadata) {
   return finishMetadata(metadata, direction);
 }
 
+Result validate(Input input, const Schema& schema, Metadata& metadata, const ValidationOptions& options) {
+  metadata = {};
+  if (!input.read || schema.count > MAX_KEYS || !schema.at || !schema.english) return Result::Invalid;
+  HeapObject<Workspace> storage;
+  if (!storage.init(MemoryPool::None)) return Result::Memory;
+  size_t end;
+  uint16_t count;
+  Metadata candidate;
+  const auto result = parseDocument(input, schema, storage.get(), candidate, end, count, &options);
+  if (result == Result::Ok) metadata = candidate;
+  return result;
+}
+
 Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed) {
   if (schema.count > MAX_KEYS || pinnedSlot < -1 || pinnedSlot > 1) return Result::Invalid;
   if (flash.size < 2 * SLOT_SIZE || flash.size % SLOT_SIZE != 0) return Result::StorageUnavailable;
@@ -437,6 +559,8 @@ Result install(Input input, const Schema& schema, const Flash& flash, int pinned
   // not prevent provisioning; only a committed language cache is reusable.
   uint64_t newest = 0;
   int latestSlot = -1;
+  size_t activeUsed = 0;
+  uint16_t activeCount = 0;
   for (int slot = 0; slot < 2; ++slot) {
     const size_t base = slotOffset(flash.size, slot);
     if (!flash.read(flash.context, base, work->header, HEADER_SIZE)) return Result::Io;
@@ -446,61 +570,42 @@ Result install(Input input, const Schema& schema, const Flash& flash, int pinned
     uint32_t crc;
     result = readCrc(flash, base, u32(work->header + 28), work->inputBuffer, crc);
     if (result != Result::Ok) return result;
+    if (crc == expected && slot == pinnedSlot) {
+      decodeHeader(work->header, installed);
+      installed.slot = slot;
+      activeUsed = u32(work->header + 28);
+      activeCount = u16(work->header + 32);
+    }
     if (crc == expected && gen > newest) {
       newest = gen;
       latestSlot = slot;
     }
   }
+  Metadata metadata;
+  size_t end;
+  uint16_t count;
+  if (pinnedSlot >= 0) {
+    if (!activeUsed) return Result::Invalid;
+    Comparison comparison{flash, slotOffset(flash.size, pinnedSlot), activeUsed};
+    result = parseDocument(input, schema, work, metadata, end, count, nullptr, nullptr, 0, &comparison);
+    if (result != Result::Ok) return result;
+    if (comparison.equal && end == activeUsed && count == activeCount &&
+        std::strcmp(metadata.code, installed.metadata.code) == 0 &&
+        std::strcmp(metadata.name, installed.metadata.name) == 0 &&
+        std::strcmp(metadata.keyboard, installed.metadata.keyboard) == 0 && metadata.rtl == installed.metadata.rtl)
+      return Result::Unchanged;
+    // Rewind the same open source before erasing: a missing/failed rewind must
+    // leave both flash slots untouched. No second reader of the SD path is opened.
+    if (!input.rewind || !input.rewind(input.context)) return Result::Io;
+    std::memset(work->seen, 0, sizeof(work->seen));
+    work->unknownCount = 0;
+    metadata = {};
+  }
   if (newest == std::numeric_limits<uint64_t>::max()) return Result::Invalid;
   const int target = pinnedSlot >= 0 ? 1 - pinnedSlot : (latestSlot >= 0 ? 1 - latestSlot : 0);
   const size_t base = slotOffset(flash.size, target);
   if (!flash.erase(flash.context, base, SLOT_SIZE) || !writeVerified(flash, base, OWNER, OWNER_SIZE)) return Result::Io;
-  Reader reader(input, work->inputBuffer);
-  Metadata metadata;
-  bool direction = false, haveStrings = false;
-  size_t end = HEADER_SIZE;
-  uint16_t count = 0;
-  while (true) {
-    bool eof;
-    result = reader.line(work->line, eof);
-    if (result != Result::Ok) return result;
-    if (eof) break;
-    char *key, *value;
-    result = parseLine(work->line, key, value);
-    if (result != Result::Ok) return result;
-    if (!key) continue;
-    Key known{};
-    const uint64_t h = hash(key);
-    const bool found = key[0] != '_' && findKey(schema, h, known) && std::strcmp(known.name, key) == 0;
-    result = remember(*work, h, found ? &known : nullptr);
-    if (result != Result::Ok) return result;
-    if (key[0] == '_') {
-      if (haveStrings) return Result::Invalid;
-      result = metadataLine(key, value, metadata, direction);
-      if (result != Result::Ok) return result;
-      continue;
-    }
-    if (std::strncmp(key, "STR_", 4) != 0) return Result::Invalid;
-    haveStrings = true;
-    if (!found || !*value) continue;
-    const char* english = schema.english(known.id);
-#if !defined(CROSSINK_LANGUAGE_BENCHMARK)
-    if (std::strcmp(english, value) == 0) continue;
-#endif
-    if (known.formatted && !compatibleFormat(english, value)) continue;
-    const size_t size = std::strlen(value) + 1;
-    if (end + RECORD_SIZE + size > SLOT_SIZE || end + RECORD_SIZE >= MISSING) return Result::TooLarge;
-    uint8_t record[RECORD_SIZE];
-    put64(record, h);
-    put64(record + 8, known.englishHash);
-    put16(record + 16, static_cast<uint16_t>(size));
-    if (!writeVerified(flash, base + end, record, sizeof(record)) ||
-        !writeVerified(flash, base + end + RECORD_SIZE, value, size))
-      return Result::Io;
-    end += RECORD_SIZE + size;
-    ++count;
-  }
-  result = finishMetadata(metadata, direction);
+  result = parseDocument(input, schema, work, metadata, end, count, nullptr, &flash, base);
   if (result != Result::Ok) return result;
   std::memset(work->header, 0, HEADER_SIZE);
   std::memcpy(work->header, OWNER, OWNER_SIZE);

@@ -86,20 +86,50 @@ bool global(char* out, size_t capacity, const char* deviceId, const GlobalReadin
 }
 
 bool book(char* out, size_t capacity, const char* deviceId, const char* document, const BookReadingStats& s) {
-  if (!out || !capacity || !validId(deviceId, 64) || !validId(document, 32) || strlen(document) != 32) return false;
+  BookBatch batch(out, capacity);
+  return batch.begin(deviceId) && batch.add(document, s) && batch.finish();
+}
+
+bool BookBatch::begin(const char* deviceId) {
+  length = 0;
+  items = 0;
+  if (!out || !capacity || !validId(deviceId, 64)) return false;
   Writer w(out, capacity);
+  w.add("{\"device_id\":\"%s\",\"items\":[", deviceId);
+  if (!w.ok()) return false;
+  length = strlen(out);
+  return true;
+}
+
+bool BookBatch::add(const char* document, const BookReadingStats& s) {
+  if (length == 0 || items >= MAX_ITEMS || !validId(document, 32) || strlen(document) != 32) return false;
+  // Leave room for the closing "]}".
+  if (capacity - length < 3) return false;
+  Writer w(out + length, capacity - length - 2);
   w.add(
-      "{\"device_id\":\"%s\",\"items\":[{\"document\":\"%s\",\"v\":5,\"sessions\":%u,\"seconds\":%lu,\"pages\":%lu,"
-      "\"completed\":%s,"
+      "%s{\"document\":\"%s\",\"v\":5,\"sessions\":%u,\"seconds\":%lu,\"pages\":%lu,\"completed\":%s,"
       "\"avg_fwd\":%u,\"pace_n\":%u,\"eta\":%lu,\"start_manual\":%s,\"finish_manual\":%s,\"start_date\":%llu,"
       "\"finished_date\":%llu",
-      deviceId, document, s.sessionCount, static_cast<unsigned long>(s.totalReadingSeconds),
+      items ? "," : "", document, s.sessionCount, static_cast<unsigned long>(s.totalReadingSeconds),
       static_cast<unsigned long>(s.totalPagesTurned), s.isCompleted ? "true" : "false", s.avgSecondsPerForwardPage,
       s.paceSampleCount, static_cast<unsigned long>(s.estimatedTimeLeftSeconds), s.startDateManual ? "true" : "false",
       s.finishedDateManual ? "true" : "false", unixDate(s.startDate), unixDate(s.finishedDate));
   w.array("tod", s.timeOfDaySeconds);
   w.array("dow", s.dayOfWeekSeconds);
-  w.add("}]}");
-  return w.ok();
+  w.add("}");
+  if (!w.ok()) {
+    out[length] = '\0';  // roll back the partial item
+    return false;
+  }
+  length += strlen(out + length);
+  ++items;
+  return true;
+}
+
+bool BookBatch::finish() {
+  if (length == 0 || items == 0 || capacity - length < 3) return false;
+  memcpy(out + length, "]}", 3);
+  length += 2;
+  return true;
 }
 }  // namespace StatsUploadPayload

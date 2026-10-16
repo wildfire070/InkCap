@@ -15,6 +15,7 @@
 // pages are loaded and discarded repeatedly on the ESP32-C3.
 class TextBlock final : public Block {
  private:
+  int baselineOffset(int baseline, int ascender, EpdFontFamily::Style style) const;
   BlockStyle blockStyle;
   int8_t characterSpacing = 0;
   uint16_t numWords = 0;
@@ -24,6 +25,7 @@ class TextBlock final : public Block {
   bool wordFlagsPresent = false;
   bool wordSpacesPresent = false;
   uint8_t initialLetterBytes = 0;  // logical prefix drawn separately as a drop cap
+  std::unique_ptr<uint32_t[]> wordFamilies;
   bool wordSizesPresent = false;
   const uint8_t* wordSizesArr = nullptr;
   bool isValid = true;
@@ -60,7 +62,7 @@ class TextBlock final : public Block {
                      const std::vector<uint8_t>& wordFlags, const std::vector<bool>& wordHasSpaceBefore,
                      const BlockStyle& blockStyle = BlockStyle(), std::vector<std::string> rubyTexts = {},
                      const std::vector<uint8_t>& wordSizes = {}, const char* initialLetter = "",
-                     int8_t characterSpacing = 0);
+                     int8_t characterSpacing = 0, const std::vector<uint32_t>& fontFamilies = {});
   ~TextBlock() override = default;
   TextBlock(const TextBlock&) = delete;
   TextBlock& operator=(const TextBlock&) = delete;

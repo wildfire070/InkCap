@@ -472,7 +472,11 @@ void WebDAVHandler::handlePut(WebServer& s) {
     return;
   }
 
-  clearBookCachePreservingUserState(path.c_str());
+  if (!clearBookCachePreservingUserState(path.c_str(), true)) {
+    LOG_ERR("DAV", "File saved but cache refresh failed: %s", path.c_str());
+    s.send(500, "text/plain", "File saved, but could not refresh cached reading/sync data");
+    return;
+  }
   ImageFolderIndex::invalidateForPath(path.c_str());
   sdFontSystem.markRegistryDirtyForPath(path.c_str());
   s.send(_putExisted ? 204 : 201);
@@ -718,8 +722,12 @@ void WebDAVHandler::handleMove(WebServer& s) {
   if (success) {
     if (!dstBackupPath.empty()) Storage.remove(dstBackupPath.c_str());
     if (srcIsEpub) {
-      BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle, epubAuthor,
-                                           /*keepInRecents=*/true);
+      if (!BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle,
+                                                epubAuthor, /*keepInRecents=*/true)) {
+        LOG_ERR("DAV", "File moved but cache refresh failed: %s", dstPath.c_str());
+        s.send(500, "text/plain", "File moved, but could not refresh cached reading/sync data");
+        return;
+      }
     } else if (srcIsDir) {
       const std::string srcStd = srcPath.c_str();
       const std::string dstStd = dstPath.c_str();
@@ -736,10 +744,15 @@ void WebDAVHandler::handleMove(WebServer& s) {
         // The epub file itself already moved with the directory, but its
         // cache dir lives in a separate, path-hash-keyed location that the
         // directory rename never touched -- migrateMovedEpubState still
-        // needs to relocate it explicitly.
+        // needs to relocate it explicitly. One book's failure here is logged
+        // but non-fatal, matching the bookmark/clipping migration failures
+        // inside migrateMovedEpubState itself -- it doesn't block the rest
+        // of the directory's books from migrating.
         const std::string oldChildCachePath = Epub::cachePathForFilePath(oldFullPath, "/.crosspoint");
-        BookMoveUtils::migrateMovedEpubState(oldFullPath, newFullPath, oldChildCachePath, title, author,
-                                             /*keepInRecents=*/true);
+        if (!BookMoveUtils::migrateMovedEpubState(oldFullPath, newFullPath, oldChildCachePath, title, author,
+                                                  /*keepInRecents=*/true)) {
+          LOG_ERR("DAV", "Failed to migrate cache for moved book %s -> %s", oldFullPath.c_str(), newFullPath.c_str());
+        }
       }
     }
     ImageFolderIndex::invalidateForPath(srcPath.c_str());
@@ -864,6 +877,11 @@ void WebDAVHandler::handleCopy(WebServer& s) {
 
   if (copyOk) {
     if (!dstBackupPath.empty()) Storage.remove(dstBackupPath.c_str());
+    if (!clearBookCachePreservingUserState(dstPath.c_str(), true)) {
+      LOG_ERR("DAV", "File copied but cache refresh failed: %s", dstPath.c_str());
+      s.send(500, "text/plain", "File copied, but could not refresh cached reading/sync data");
+      return;
+    }
     ImageFolderIndex::invalidateForPath(dstPath.c_str());
     sdFontSystem.markRegistryDirtyForPath(dstPath.c_str());
     s.send(dstExists ? 204 : 201);

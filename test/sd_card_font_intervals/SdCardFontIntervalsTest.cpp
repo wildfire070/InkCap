@@ -1,3 +1,4 @@
+#include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Memory.h>
 
@@ -12,9 +13,25 @@
 #include <vector>
 
 #include "EpdFont.h"
+#include "SdCardFontManager.h"
+#include "SdCardFontRegistry.h"
+#include "util/WordSelectNavigator.h"
+static_assert(sizeof(WordSelectNavigator::WordInfo) == 44, "C3 word records must retain their memory footprint");
 #define private public
 #include "SdCardFont.h"
 #undef private
+
+const SdCardFontFileInfo* SdCardFontFamilyInfo::findFile(uint8_t size, uint8_t) const {
+  for (const auto& file : files)
+    if (file.pointSize == size) return &file;
+  return nullptr;
+}
+const SdCardFontFileInfo* SdCardFontFamilyInfo::findClosestFile(uint8_t size, uint8_t) const {
+  const SdCardFontFileInfo* best = nullptr;
+  for (const auto& file : files)
+    if (!best || std::abs(int(file.pointSize) - int(size)) < std::abs(int(best->pointSize) - int(size))) best = &file;
+  return best;
+}
 
 // Intercept arrays only, with no allocating bookkeeping, to inject each resident-table OOM
 // and verify owner/alias cleanup. Both new[] variants and deletes use the same backing allocator.
@@ -324,6 +341,106 @@ void streamingChecks(const std::string& path) {
   assert(arrayBytes() == 0 && openFiles == 0);
 }
 
+void contentSizeChecks(const std::string& path) {
+  fixture(path, {{0, table({{0x41, 0x5A}})}, {1, table({{0x41, 0x5A}})}});
+  constexpr size_t limit = 12U * 1024U;
+  {
+    SdCardFont font;
+    assert(!font.load(path.c_str(), sizeof(font) + 4095));
+    clean(font);  // Reject before any interval or bitmap allocation.
+    assert(font.load(path.c_str(), limit));
+    assert(arrayBytes() + sizeof(font) <= limit);
+    const auto baseline = arrayBytes();
+    const auto allocationCalls = arrayCalls;
+    const uint32_t cps[] = {0x41, 0x42};
+    assert(font.buildAdvanceTable("ABCD", 3) == 0);
+    assert(font.buildAdvanceTableForCodepoints(cps, 2, false, false, 3) == 0);
+    assert(!font.hasAdvanceTable());
+    assert(font.prewarm("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 3) == 0);
+    const EpdFontFamily family(font.getEpdFont(), font.getEpdFont(1));
+    assert(family.getFallbackCodepoint('A', EpdFontFamily::REGULAR) == 'A');
+    assert(family.findGlyphData('B', EpdFontFamily::BOLD).glyph);
+    assert(!family.findGlyphData('?', EpdFontFamily::REGULAR).glyph);
+    for (unsigned pass = 0; pass < 100; ++pass) {
+      for (uint32_t cp = 0x41; cp <= 0x5A; ++cp) {
+        const auto* glyph = font.getEpdFont(pass % 2)->getGlyph(cp);
+        assert(glyph && font.getOverflowBitmap(glyph)[0] == 0x80);
+        assert(glyph->advanceX == advance(cp - 0x41, pass % 2));
+      }
+      font.clearCache();
+    }
+    assert(arrayBytes() == baseline && arrayCalls == allocationCalls);
+    font.releaseForLowMemory();
+    assert(font.prewarm("AB", 3) == 0);
+    const auto* glyph = font.getEpdFont()->getGlyph(0x41);
+    assert(glyph && font.getOverflowBitmap(glyph)[0] == 0x80);
+    font.freeAll();
+    clean(font);
+  }
+  // Scratch OOM and interval OOM must release the successful earlier allocations.
+  for (int failure = 0; failure < 2; ++failure) {
+    SdCardFont font;
+    arrayCalls = 0;
+    failArrayCall = failure;
+    assert(!font.load(path.c_str(), limit));
+    failArrayCall = -1;
+    clean(font);
+  }
+  // A supported file whose glyphs cannot fit scratch falls back before registration.
+  {
+    std::fstream out(path, std::ios::in | std::ios::out | std::ios::binary);
+    const uint16_t tooLarge = 4097;
+    out.seekp(96 + sizeof(EpdUnicodeInterval) + offsetof(EpdGlyph, dataLength));
+    out.write(reinterpret_cast<const char*>(&tooLarge), sizeof(tooLarge));
+  }
+  {
+    SdCardFont font;
+    assert(!font.load(path.c_str(), limit));
+    clean(font);
+  }
+  SdCardFontFamilyInfo family;
+  family.name = "Content";
+  for (const uint8_t size : {8, 12, 24}) {
+    const std::string file = path + std::to_string(size);
+    fixture(file, {{0, table({{0x41, 0x5A}})}});
+    family.files.push_back({file, size, 0});
+  }
+  GfxRenderer renderer;
+  SdCardFontManager manager;
+  assert(manager.loadFamilyClosest(family, renderer, 12));
+  const int highId = manager.getFontId(family.name);
+  assert(renderer.getFontMap().size() == 3 && renderer.getSdCardFonts().size() == 3);
+  for (const auto& [id, font] : renderer.getFontMap()) assert(font.sizeFamilyId() == highId);
+  manager.unloadAll(renderer);
+  assert(renderer.getFontMap().empty() && renderer.getSdCardFonts().empty());
+  assert(arrayBytes() == 0);
+  freeHeap = 100 * 1024;  // Enough for body, below the optional-size reserve.
+  assert(manager.loadFamilyClosest(family, renderer, 12));
+  const int lowId = manager.getFontId(family.name);
+  assert(lowId != highId && renderer.getFontMap().size() == 1);
+  manager.unloadAll(renderer);
+  freeHeap = 1024 * 1024;
+  maxAllocHeap = 52 * 1024;  // Fragmented heap must also decline optional sizes.
+  assert(manager.loadFamilyClosest(family, renderer, 12));
+  assert(manager.getFontId(family.name) == lowId && renderer.getFontMap().size() == 1);
+  manager.unloadAll(renderer);
+  maxAllocHeap = 1024 * 1024;
+  assert(manager.loadFamilyClosest(family, renderer, 12));
+  assert(manager.getFontId(family.name) == highId);
+  manager.unloadAll(renderer);
+  // Variant replacement must invalidate the body identity even at the same size.
+  {
+    std::fstream out(family.files.back().path, std::ios::in | std::ios::out | std::ios::binary);
+    out.seekp(32 + 12);
+    out.put(21);
+  }
+  assert(manager.loadFamilyClosest(family, renderer, 12));
+  assert(manager.getFontId(family.name) != highId);
+  manager.unloadAll(renderer);
+  assert(arrayBytes() == 0 && openFiles == 0);
+  for (const auto& file : family.files) std::filesystem::remove(file.path);
+}
+
 int main() {
   auto dir = std::filesystem::temp_directory_path() / "crossink-font-interval-tests";
   std::filesystem::create_directories(dir);
@@ -456,6 +573,7 @@ int main() {
     clean(font);
   }
   streamingChecks(path);
+  contentSizeChecks(path);
   std::filesystem::remove_all(dir);
   std::puts("SD font interval regression checks passed");
 }

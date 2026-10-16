@@ -85,6 +85,8 @@ class ActivityManager {
   std::unique_ptr<Activity> pendingActivity;
   enum class PendingAction { None, Push, Pop, Replace };
   PendingAction pendingAction = PendingAction::None;
+  // Set once What's New has entered this boot, so a dismissal whose save failed doesn't re-show it.
+  bool releaseNotesShown = false;
   // Set when an overlay is closed specifically to hand control back to the
   // reader's menu. It must wait until the reader is current again.
   int16_t pendingReaderMenuAction = -1;
@@ -155,7 +157,8 @@ class ActivityManager {
   void goToNearbyStatsSync();
   bool goToNearbyBookSend(std::string path, bool returnToReader);
   void goToNearbyBookReceive();
-  void goToSettings(bool dismissOnUpSwipe = false);
+  void goToSettings(bool dismissOnUpSwipe = false, bool openLanguageDownloads = false);
+  void markReleaseNotesShown() { releaseNotesShown = true; }
   void goToFileBrowser(std::string path = {});
   void goToLibrary();
   void goToBrowser();

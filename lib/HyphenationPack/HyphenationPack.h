@@ -10,6 +10,7 @@ constexpr size_t HEADER_SIZE = 256;
 constexpr size_t MAX_PACKS = 10;
 constexpr size_t SECTOR_SIZE = 4096;
 constexpr size_t PACK_HEADER_SIZE = 24;
+constexpr size_t MAX_SOURCE_SIZE = 256 * 1024;
 
 struct Input {
   void* context;
@@ -34,10 +35,23 @@ struct Entry {
   uint32_t checksum = 0;
 };
 using Supported = bool (*)(const char*, uint8_t, uint8_t);
-enum class Result { Ok, Unchanged, Invalid, Unsupported, Io, Memory, NoSpace, Unavailable, RestartRequired };
+enum class Result { Ok, Unchanged, Invalid, Unsupported, Io, Memory, NoSpace, Unavailable, RestartRequired, Cancelled };
 const char* resultName(Result result);
 uint32_t crc32(const void* bytes, size_t length, uint32_t previous = 0);
 uint32_t identity(const Entry& entry);
+
+struct ValidationOptions {
+  const char* expectedCode = nullptr;
+  // Available payload bytes in the destination bank, accounting for other packs.
+  size_t maxPayloadSize = MAX_SOURCE_SIZE - PACK_HEADER_SIZE;
+  void* context = nullptr;
+  // Checked every 64 bounded parse/cache operations; return false to cancel.
+  // Keep cancellation cheap and throttle any yielding by elapsed time.
+  bool (*continueWork)(void*) = nullptr;
+};
+// Full read-only CPHY source validation, including CRC and serialized trie
+// boundaries. No flash API is accepted and no bank can be mutated.
+Result validate(Input input, Supported supported, Entry& entry, const ValidationOptions& options = {});
 
 class Store {
  public:
@@ -48,6 +62,9 @@ class Store {
   size_t count() const;
   size_t bankOffset() const { return bank_ < 0 ? 0 : static_cast<size_t>(bank_) * bankSize_; }
   size_t usedBytes() const;
+  // Payload capacity after retaining every installed pack except this code.
+  // Zero when unavailable, restart is pending, or no entry slot remains.
+  size_t availablePayloadBytes(const char* replacementCode) const;
   bool needsRestart() const { return pending_; }
 
  private:

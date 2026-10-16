@@ -1,5 +1,7 @@
 #include "SettingsList.h"
 
+#include "sync/DocumentMatching.h"
+
 const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     std::vector<SettingInfo> v;
@@ -108,6 +110,11 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
         StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
         {StrId::STR_JUSTIFY, StrId::STR_DIR_LEFT, StrId::STR_CENTER, StrId::STR_DIR_RIGHT, StrId::STR_BOOK_S_STYLE},
         "paragraphAlignment", StrId::STR_CAT_READER));
+#if CROSSINK_SCALABLE_FONTS
+    add(SettingInfo::Enum(StrId::STR_PUBLISHER_FONTS, &CrossPointSettings::publisherFonts,
+                          {StrId::STR_OFF, StrId::STR_PUBLISHER_FONTS_ACCENTS, StrId::STR_PUBLISHER_FONTS_ALL},
+                          "publisherFonts", StrId::STR_CAT_READER));
+#endif
     add(SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                             StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
@@ -270,7 +277,7 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                             StrId::STR_CAT_SYSTEM));
     // Persisted and available to the web settings API, but category-less because
     // the on-device editor lives under System > OPDS Servers.
-    add(SettingInfo::String(StrId::STR_OPDS_DOWNLOAD_FOLDER, SETTINGS.opdsDownloadFolder,
+    add(SettingInfo::String(StrId::STR_OPDS_DEFAULT_FOLDER, SETTINGS.opdsDownloadFolder,
                             sizeof(SETTINGS.opdsDownloadFolder), "opdsDownloadFolder"));
     // Persisted here, but edited from BookFusion Settings' folder picker.
     add(SettingInfo::String(StrId::STR_BF_DOWNLOAD_FOLDER, SETTINGS.bookFusionDownloadFolder,
@@ -317,11 +324,9 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
     add(SettingInfo::DynamicEnum(
         StrId::STR_DOCUMENT_MATCHING, {StrId::STR_FILENAME, StrId::STR_BINARY},
         [] { return static_cast<uint8_t>(KOREADER_STORE.getMatchMethod()); },
-        [](uint8_t v) {
-          KOREADER_STORE.setMatchMethod(static_cast<DocumentMatchMethod>(v));
-          KOREADER_STORE.saveToFile();
-        },
-        "koMatchMethod", StrId::STR_SYNC_SERVER));
+        // The web settings page warns before saving a change.
+        [](uint8_t v) { DocumentMatching::set(static_cast<DocumentMatchMethod>(v)); }, "koMatchMethod",
+        StrId::STR_SYNC_SERVER));
     add(SettingInfo::DynamicEnum(
         StrId::STR_SEND_METADATA, {StrId::STR_OFF, StrId::STR_ON},
         [] { return static_cast<uint8_t>(KOREADER_STORE.getSendMetadata()); },

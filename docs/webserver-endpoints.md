@@ -354,6 +354,15 @@ curl -X POST \
   http://crosspoint.local/api/opds
 ```
 
+The `downloadFolder` field is returned by `GET /api/opds` and accepted by `POST /api/opds`:
+
+- Missing on an update: preserve the saved override for compatibility with older clients.
+- Empty string: use the shared `opdsDownloadFolder` setting.
+- `/`: explicitly use SD root.
+- Another path, such as `/Books/Calibre`: use that folder. Paths are normalized and limited to 63 UTF-8 bytes; invalid values or non-string fields return HTTP 400.
+
+Updates that cannot be persisted return HTTP 500. The shared default is still available through `/api/settings` under the unchanged `opdsDownloadFolder` key; blank means SD root.
+
 ### `POST /api/opds/delete`
 
 Deletes an OPDS server by index.

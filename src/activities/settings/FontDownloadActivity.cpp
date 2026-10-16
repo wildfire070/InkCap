@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
@@ -26,6 +27,7 @@
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "util/StringUtils.h"
 
 namespace fui = freeink::ui;
 
@@ -209,6 +211,19 @@ void FontDownloadActivity::onExit() {
     }
   }
 
+  // The catalog is no longer rendered. Free it before restoring the reader
+  // font so a full download list cannot starve the selected font of memory.
+  uiReady_ = false;
+  listItems_.reset();
+  listItemCapacity_ = 0;
+  retryFamily_ = {};
+  hasRetryFamily_ = false;
+  clearManifestFamilies();
+  manifestFiles_.reset();
+  manifestStringArena_.reset();
+  manifestStringArenaUsed_ = 0;
+  manifestStringArenaCapacity_ = 0;
+  sdFontSystem.releaseRegistry();
   sdFontSystem.ensureLoaded(renderer);
   sdFontSystem.releaseRegistry();
 }
@@ -290,6 +305,11 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   // retry delays do not swallow the press.
   HttpDownloader::DownloadOptions manifestOptions;
   manifestOptions.shouldCancel = [this]() { return pollCancelInput(false); };
+  // GitHub releases require HTTPS; use the existing streaming TLS transport
+  // rather than esp_http_client, which has stalled on C3 font downloads.
+  if (std::string_view(FONT_MANIFEST_URL).starts_with("https://")) {
+    manifestOptions.transport = HttpDownloader::Transport::WOLFSSL;
+  }
   // The font list is fetched again after individual updates. Release registry
   // memory on every manifest load, not only when entering Manage Fonts.
   sdFontSystem.releaseForNetwork(renderer);
@@ -408,7 +428,13 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     manifestStringArenaUsed_ = 1;
     manifestStringArenaCapacity_ = stringBytes;
 
+#ifdef FONT_DOWNLOAD_USE_GITHUB_RELEASES
+    // Published catalogs also serve S3 builds. A fallback build must keep the
+    // font payloads on GitHub even when that shared catalog advertises S3.
+    baseUrl_ = FONT_DOWNLOAD_CATALOG_BASE_URL;
+#else
     baseUrl_ = doc["baseUrl"] | "";
+#endif
     manifestFiles_ = makeUniqueNoThrow<ManifestFile[]>(retainedFileCount);
     if (retainedFileCount > 0 && !manifestFiles_) {
       LOG_ERR("FONT", "OOM: %zu-entry font manifest file table (free=%u maxAlloc=%u)", retainedFileCount,
@@ -554,6 +580,7 @@ bool FontDownloadActivity::installedFilesMatch(const ManifestFamily& family, boo
   if (resolvedFamilyName) {
     *resolvedFamilyName = installedFamily->name;
   }
+  installedFamily->releaseDetails();
   return true;
 }
 
@@ -696,7 +723,7 @@ bool FontDownloadActivity::rebuildListItems() {
   size_t itemIndex = 0;
   if (showUpdateAllRow()) {
     char sizeLabel[32];
-    formatSize(totalUpdateSize(), sizeLabel, sizeof(sizeLabel));
+    StringUtils::formatByteSize(totalUpdateSize(), sizeLabel, sizeof(sizeLabel));
     snprintf(updateAllLabel_, sizeof(updateAllLabel_), "%s (%s)", tr(STR_UPDATE_ALL), sizeLabel);
     listItems_[itemIndex] = fui::ListItem{};
     listItems_[itemIndex].label = updateAllLabel_;
@@ -874,6 +901,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     HttpDownloader::DownloadOptions downloadOptions;
     downloadOptions.preservePartial = true;
     downloadOptions.resumePartial = true;
+    if (std::string_view(url).starts_with("https://")) {
+      downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
+    }
     // Poll Back and the touch Cancel controls from shouldCancel, which
     // HttpDownloader checks at the top of every read-loop iteration. The
     // progress callback is throttled to every 64KB / 250ms, so polling input
@@ -1259,17 +1289,6 @@ void FontDownloadActivity::loop() {
 }
 
 // --- Rendering ---
-
-void FontDownloadActivity::formatSize(const size_t bytes, char* const buffer, const size_t bufferSize) {
-  if (bufferSize == 0) return;
-  if (bytes >= 1024 * 1024) {
-    snprintf(buffer, bufferSize, "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
-  } else if (bytes >= 1024) {
-    snprintf(buffer, bufferSize, "%.0f KB", static_cast<double>(bytes) / 1024.0);
-  } else {
-    snprintf(buffer, bufferSize, "%zu B", bytes);
-  }
-}
 
 void FontDownloadActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();

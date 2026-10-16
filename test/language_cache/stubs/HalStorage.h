@@ -45,6 +45,7 @@ class HalFile {
     const size_t n = std::fread(dest, 1, count, file_);
     return std::ferror(file_) ? -1 : int(n);
   }
+  bool seek(size_t offset) { return file_ && std::fseek(file_, static_cast<long>(offset), SEEK_SET) == 0; }
   size_t fileSize() const {
     std::error_code ec;
     return std::filesystem::file_size(path_, ec);

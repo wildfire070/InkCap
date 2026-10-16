@@ -1,41 +1,89 @@
-# SD language files
+---
+title: Languages
+nav_order: 11
+---
 
-CrossInk includes only English in the default firmware (`custom_i18n_builtin_langs = en`).
-Custom builds may embed an explicit comma-separated subset, or `all`. English is
-always included. Other languages come from editable SD files and are prepared
-once in internal flash. Opening menus, reading, and waking do not read translation
-files from the SD card.
+# Languages
+
+CrossInk ships with English built in. Other menu languages come as small text files that you copy to your SD card and then pick on the reader. You can also edit these files to fix a translation or make your own. The same download also contains hyphenation packs, which let CrossInk split long words at the end of a line for more languages.
 
 ## Install or edit a language
 
-1. Download the language ZIP for your firmware release and copy its
-   `.crosspoint/languages` folder to the root of your SD card. You can keep only
-   the files you need. Dot-prefixed folders may be hidden in your file manager.
-2. Open **Settings → System → Device → Language** and select the language. CrossInk displays a
-   loading screen, prepares the file, saves your choice, and restarts to Home.
-3. To apply edits, select that language again. Editing a file alone does not
-   change the installed copy. Keep the source file for future edits or reinstalling.
+1. Download the language ZIP for your firmware version from the [releases page](https://github.com/uxjulia/CrossInk/releases). Unzip it and copy its `.crosspoint/languages` folder to the top (root) folder of your SD card. You only need to keep the language files you want. Folders starting with a dot may be hidden in your file manager, so turn on "show hidden files" if you cannot see it.
+2. On the reader, open **Settings > System > Device > Language** and select the language. The reader shows a loading screen, prepares the language, saves your choice, and restarts to the Home screen.
+3. If you edit a language file later, select that language again to apply your changes. Editing the file alone does nothing, because the reader uses its own prepared copy. Keep the file on the SD card in case you want to reapply or reinstall it.
 
-The cached language remains available if its source file is removed and takes
-precedence over a built-in translation of the same code. A matching SD file in
-the picker reinstalls that language, even if it is also built in. Without a valid
-cache, a compiled-in translation is used; otherwise the UI falls back to English.
-English is always available. A file that fails validation does not replace the running
-language. The device log explains the failed check. Duplicate language codes in
-multiple SD files are disabled until you remove or rename the duplicate identity.
+Good to know:
 
-When upgrading from firmware with built-in translations, the saved language code
-is preserved. An English-only build initially uses English until you install its
-SD language file. A custom build with that translation embedded can use it immediately.
-Later firmware updates reuse compatible cached translations; missing keys
-or keys whose English reference changed use English until you reapply the file.
-The version label in a YAML file is informational, not an exact-version lock.
+- Anything missing from a translation shows in English.
+- A file with a mistake in it is rejected and your current language stays in use.
+- Two files with the same language code are both disabled until you rename or remove one.
+- When you update the firmware, your installed language keeps working. New or changed menu text shows in English until you reapply the file.
+- Translations change menu text only. They do not add fonts for new alphabets, new keyboards, or new writing styles.
+- Reapplying the same compiled language and metadata keeps the current generation without rewriting flash or restarting. Comments and formatting do not trigger an update; changing the order of compiled translation records does.
 
-## Create a translation
+> [!NOTE]
+> Advanced: the default firmware builds in English only (`custom_i18n_builtin_langs = en`). Custom builds can embed a comma-separated list of languages, or `all`. Installed languages are stored once in the reader's internal flash, so opening menus, reading, and waking never read translation files from the SD card. The prepared copy stays available if you remove the SD file, and it takes priority over a built-in translation of the same code. A matching SD file in the picker reinstalls that language even if it is also built in. Without a valid prepared copy, a built-in translation is used, otherwise English. The version label inside a YAML file is informational and not an exact-version lock. When upgrading from firmware that had built-in translations, your saved language code is kept. On an English-only build you see English until you install the SD file. The device log explains any failed check.
 
-Copy `english_template.yaml` (`english-template.yaml` remains an archive alias), choose a filename ending in lowercase `.yaml`, and
-change its language code and native name. You may remove untranslated entries.
-A new language identity does not require a firmware change.
+## Download on the reader
+
+Builds configured with a download endpoint provide **Settings > System >
+Device > Download Languages** and online installation in **Hyphenation Packs**.
+Without a configured endpoint, online requests display **Downloads unavailable**.
+
+Download Languages lists every language the firmware supports, each marked
+**Built in** (English), **Current** (the language in use), **Installed** (a copy
+is already on the reader or SD card), or **Install**. Selecting **Install**
+restarts into the Wi-Fi screen, downloads the verified language, and activates
+it with no further choices. Selecting an installed language offers **Activate**,
+**Update**, and **Cancel**; the current language offers **Update** and **Cancel**.
+**Update** downloads again the same way. Activation restarts to Home; your
+reading position is kept, and you reopen the book normally. Cancelling the Wi-Fi
+screen returns Home and changes nothing.
+
+After a firmware update, the one-time **What's New** screen offers **Update** when
+the active language pack is older than the firmware, so a single press downloads
+the matching pack. The same screen is available under **Settings > System >
+Release Notes**.
+
+In Hyphenation Packs, packs that are not installed show **Install**. Selecting
+one installs it right away: a pack already on SD is activated directly, otherwise
+the reader restarts into the Wi-Fi screen, downloads the pack, and activates it
+with no further choices. If your SD copy was edited, you are asked once before it
+is replaced. Installed packs show **Installed** and offer **Update**, **Delete**,
+and **Cancel**. Update goes straight to the Wi-Fi download and reinstall. Built-in
+English remains visible without a strike-through and does nothing when selected.
+
+A downloaded source is saved on SD before it is activated. If the SD file was
+edited or is not an official copy, you are asked before it is replaced; the old
+contents are discarded after successful publication. Cancel is selected first. Conflicting same-code files or case-only filename
+collisions must be resolved before downloading. No permanent backup is promised.
+
+Online translations must match the firmware's source and string contract. Updating
+or downgrading firmware may make a catalog incompatible; manual SD files retain
+their existing English-fallback behavior. Menu language and the language selected
+from EPUB metadata remain independent.
+
+## EPUB hyphenation packs
+
+Hyphenation splits long words across lines. English is always built in. For other languages, install a pack:
+
+1. Copy the `.crosspoint/hyphenation` folder from the language ZIP to the root of your SD card.
+2. Open **Settings > Reader > Page Layout > Hyphenation Packs**.
+3. Select the language marked **Activate**, then confirm **Activate**. The reader restarts to Home. Reopen your book afterward.
+
+Choose **Delete** to remove an installed pack (this also restarts). The files on the SD card stay there so you can reinstall later. Editing or deleting a file on the SD card alone changes nothing until you activate it. To replace an installed pack from SD without Wi-Fi, delete the active pack first, then activate its retained SD source.
+
+The initial packs cover French, German, Russian, Spanish, Italian, Polish, Portuguese, Swedish, and Ukrainian. A book uses the pack for its own language, whatever your menu language is. If a book needs a pack you have not installed, the reader offers once per reading session to open the manager. You can cancel and keep reading. Hyphens already in the text still work, and the **Hyphenation** setting still turns automatic hyphenation on or off.
+
+Books are laid out again automatically after a pack changes, so you do not need to clear the cache. Your bookmarks and reading position are kept.
+
+> [!NOTE]
+> Advanced: files must be named like `hyph-de.cphyph`, with the same language code inside. The manager accepts upstream CPHY v1 files for these nine languages with the existing 2/2 word-boundary rules. Unsupported scripts, flags, versions, truncated files, and checksum mismatches are rejected. A pack cannot supply font glyphs, keyboards, or handling for a new script. Installed packs are read straight from internal flash, with no whole-dictionary RAM allocation and no SD access per word. Hyphenation uses the first `0x340000` bytes of the `spiffs` partition, split into two `0x1a0000` banks. The final two 64 KiB UI-language slots are untouched. An update copies retained packs into the inactive bank, verifies checksums, then publishes a commit marker. The running copy stays in use until restart, and boot can fall back to the older valid bank after an interruption. Release packaging includes all nine packs with checksums and the original pattern sources and license notices. To build just the hyphenation archive: `python3 scripts/package_hyphenation.py --output /tmp/crossink-hyphenation.zip`. Keep `assets/hyphenation/patterns` and its notices matched to the generated tables when updating pattern data.
+
+## Create or edit a translation
+
+To make your own language, copy `english_template.yaml` (included in the language ZIP; `english-template.yaml` is an older name for the same file), give the copy a name ending in lowercase `.yaml`, and change its language code and native name. You may delete entries you do not want to translate. A new language does not need a firmware update. Browser-based translation editors such as Inky can also open and export these files.
 
 ```yaml
 _language_code: "MY-LANGUAGE"
@@ -67,7 +115,7 @@ STR_TIME_EXAMPLE: "Unknown keys are ignored"
   order, including length modifiers such as `%zu`. Unsafe/mismatched formats
   fall back to English for that entry. Positional arguments and `%n` are not
   supported. Do not translate placeholder syntax.
-- Limits: 256 KiB source file, 2,047 bytes per source line, 127-byte key names,
+- Limits (a file that goes over them is rejected): 256 KiB source file, 2,047 bytes per source line, 127-byte key names,
   256 unknown/metadata keys, and a 64 KiB compiled cache including its metadata.
   The picker scans at most 64 YAML files, with filenames below 127 bytes.
   Codes, names, and filenames share a 2 KiB catalog budget (all 27 starter files
@@ -76,24 +124,26 @@ STR_TIME_EXAMPLE: "Unknown keys are ignored"
 - Font glyph coverage and available keyboard layouts are unchanged. A new
   translation file cannot add missing font glyphs, shaping rules, or keyboards.
 
-## Filename fallback fonts (ESP32-S3)
+## Filename fallback fonts (X4 Classic, X4 Pro, Sticky)
 
-Open **Settings → System → Device → Filename Fallback Font**, directly below
-Language, to choose a font for missing characters in filenames and book titles.
+If your book titles or filenames use an alphabet the built-in font does not have (for example Chinese), they can show as blank boxes. You can add a font to fill in those characters.
+
+Open **Settings > System > Device > Filename Fallback Font**, directly below
+Language, to choose it.
 The built-in UI font continues to draw characters it supports, including Latin
 characters inside mixed-script titles. Menu labels keep their built-in fonts.
-Select **None** to disable filename fallback. This option is available on
-ESP32-S3 builds with scalable fonts, including Sticky and X4 Pro.
+Select **None** to disable filename fallback. This option is available on the
+X4 Classic, X4 Pro, and Sticky, but not on the X3 or X4.
 
-Copy static TrueType `.ttf` files into a family folder such as
+Copy static TrueType or OpenType CFF `.ttf` or `.otf` files into a family folder such as
 `/.crosspoint/languages/fonts/Noto Sans SC/`. The folder name is the picker label.
 Font metadata identifies the regular and bold faces; filenames are unrestricted.
 A regular face is required, bold is optional, and missing bold glyphs use regular.
 Italic faces and bitmap `.cpfont` packs are not offered. Each family must contain
-at most one regular and one bold face. Variable fonts, OpenType `.otf` files and
-font collections are unsupported. Keep reading fonts in `/fonts` or `/.fonts`.
+at most one regular and one bold face. Variable fonts and font collections are
+unsupported. Keep reading fonts in `/fonts` or `/.fonts`.
 
-Each filename TTF can be up to **32 MiB**. The same face supplies the 8, 10 and
+Each supported filename font can be up to **32 MiB**. The same face supplies the 8, 10 and
 12 point UI sizes. Compact faces can reside in PSRAM; larger faces stream from
 SD with bounded read and glyph caches. First use and newly visible characters
 can take longer than cached redraws. The UI font is independent of the reader
@@ -102,7 +152,11 @@ families recover to the built-in UI without changing the saved choice. Reopen
 the picker and select the family again after changing its files on a computer.
 A firmware restart also reloads the selected family.
 
-## Flash storage and recovery
+## Advanced and maintainer details
+
+The sections below are for people who build firmware, publish releases, or build translation tools. You do not need them to use a language.
+
+### Flash storage and recovery
 
 The existing `spiffs` data region is separate from the two firmware application
 slots. CrossInk uses its final 128 KiB as two 64 KiB language slots. It does not
@@ -127,7 +181,7 @@ synced temporary files with backup recovery, so an interrupted selection can
 return to the previous language. As with other SD operations, physical card or
 filesystem damage can still require recovery from a backup.
 
-## Maintaining firmware and releases
+### Maintaining firmware and releases
 
 The generator reads `english.yaml`, `languages.json`, and only the YAML files
 selected by `custom_i18n_builtin_langs`. `en` is the default; `en,es,fr` embeds
@@ -151,7 +205,7 @@ Community files remain starter assets and may be incomplete. Missing keys do not
 block firmware builds. The release template identifies the corresponding
 English source, and the ZIP manifest records checksums.
 
-### Automatic template for translation editors
+#### Automatic template for translation editors
 
 `scripts/generate_language_template.py` generates `english_template.yaml` and
 `language-template.json` from the same `english.yaml` and `gen_i18n.py` rules used
@@ -226,7 +280,7 @@ source commit, English-source hash and keyset hash as informational metadata; un
 All device scalar, UTF-8, format, source, line and cache limits still apply.
 Translations do not add CJK glyphs, font coverage, keyboards or shaping support.
 
-## Validation and timing
+### Validation and timing
 
 The installer uses less than 5 KiB of parser scratch. Catalog and parser heap
 allocations are fallible and together stay below 8 KiB; the catalog is released
@@ -266,50 +320,31 @@ Check that the cached selection survives and both firmware-slot behaviors remain
 intact. Interrupt installation only on a backed-up test device. No EPUB cache
 reset is needed for this feature.
 
-## EPUB hyphenation packs
+## Maintainer: configure S3 downloads
 
-The language ZIP also contains `.crosspoint/hyphenation`. Copy that folder to the
-SD root, then open **Settings → Reader → Page Layout → Hyphenation Packs**.
-Select a language and **Install / Update**. Successful changes restart to Home;
-reopen your book afterward. **Delete** removes its installed copy and also
-restarts. Source files remain on SD for reinstalling. Editing or deleting a source
-file alone does not change the installed pack. Reinstall explicitly after edits.
+The asset publisher targets the dedicated `crossink-languages` bucket in
+`us-east-1`. Its production prefix is `v1/`; manual test bundles use a separate
+`testing/<firmware-commit>/` prefix and include their exact endpoint.
 
-English hyphenation is always built in. The initial SD packs preserve the existing
-French, German, Russian, Spanish, Italian, Polish, Portuguese, Swedish and Ukrainian
-rules. Hyphenation follows the EPUB's language metadata, independently of the menu
-language. A supported book with a missing pack offers to open the manager once per
-reader session. You can cancel and keep reading: explicit and soft hyphens and
-existing oversized-word handling remain available. The Hyphenation setting still
-controls whether automatic hyphenation is enabled.
+For a local firmware build, set `CROSSINK_ASSET_BASE_URL` to the bundle's HTTPS
+base URL (with the final slash) before running the appropriate MCU-specific
+PlatformIO wrapper. This explicitly compiles the endpoint into the binary; it
+does not upload files or modify the bucket. Existing manual SD installation is
+unaffected. Clear any older `ASSET_DOWNLOAD_BASE_URL` override before using this
+variable. Build from the commit recorded by the bundle so the online translation
+source and keyset match.
 
-Files must have names such as `hyph-de.cphyph`, with the same language identity
-inside the file. The manager accepts upstream **CPHY v1** files for these nine
-languages with the existing 2/2 word-boundary rules. Unsupported scripts, flags,
-versions, truncated files and checksum mismatches are rejected. A pack cannot
-supply font glyphs, keyboards or a new script's character handling.
-
-The firmware reads installed dictionaries from mapped internal flash, with no
-whole-dictionary RAM allocation or SD access for each word. Hyphenation owns the
-first `0x340000` bytes of the existing `spiffs` partition, divided into two
-`0x1a0000` byte banks. The final two 64 KiB UI-language slots are unchanged.
-An update copies retained packs into the inactive bank, verifies their checksums,
-then publishes its commit marker. The running mapping stays pinned until restart.
-Boot checks both banks and can fall back to the older valid one after interruption
-or corruption. Firmware/OTA slots and the partition table are unchanged.
-
-Section caches record the effective pack identity, so installing, replacing or
-removing a pack automatically rebuilds affected complete and partial chapter
-layouts. Manual cache deletion is normally unnecessary. Bookmarks and saved
-reading positions use the reader's existing reflow recovery.
-
-Release packaging automatically includes all nine packs, checksums and original
-pattern sources/license notices. To create just the hyphenation archive locally:
+For example, in the dedicated C3 build worktree with matching source:
 
 ```sh
-python3 scripts/package_hyphenation.py --output /tmp/crossink-hyphenation.zip
+CROSSINK_ASSET_BASE_URL="https://crossink-languages.s3.us-east-1.amazonaws.com/testing/FULL_COMMIT/" \
+  /Users/home/.local/bin/codex-pio-c3 run -e default -j1
 ```
 
-Packaging derives the exact binary payload from the checked-in generated tables;
-it performs no network fetch. Keep `assets/hyphenation/patterns` and its notices
-matched to the generated tables when updating pattern data.
+The `Publish language download assets` workflow runs after a release is published,
+not when a draft is created. The reusable `scripts/release_assets.py` and detailed
+manual-upload/Actions setup instructions live in the shared asset repository's
+`docs/s3-language-releases.md`. Configure `LANGUAGE_ASSETS_TOOLS_REF`,
+`LANGUAGE_ASSETS_REVIEW_FILE`, `LANGUAGE_ASSETS_AWS_ROLE_ARN`, and (after endpoint
+qualification) `CROSSINK_ASSET_BASE_URL` in the firmware repository. No AWS or
+GitHub configuration is changed by committing the workflow.
