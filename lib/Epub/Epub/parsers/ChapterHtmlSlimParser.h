@@ -144,6 +144,12 @@ class ChapterHtmlSlimParser {
   };
   PendingFloatImage pendingFloatImage_;
   void attachPendingFloatImage(BlockStyle& bs);
+  // Raw pointer to the PageImage attachPendingFloatImage just placed (owned by
+  // currentPage->elements; stable across vector growth since only the unique_ptr moves, not the
+  // heap object it owns -- same pattern as BorderBoxScope::elem). Consumed once by makePages()'s
+  // originating-block re-anchor below, which must move the already-drawn image's yPos in lockstep
+  // with its float zone, or the two go out of sync whenever the block has its own top inset.
+  PageImage* pendingFloatImageElem_ = nullptr;
 
   // Depth-stack of currently-open float:left/right ancestors, so an <img> nested inside one is
   // recognised as floated (see startElement's IMAGE_TAGS branch) and so the matching close tag
