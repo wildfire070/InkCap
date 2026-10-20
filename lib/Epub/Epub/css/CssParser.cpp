@@ -75,10 +75,11 @@ constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
 // float, 8 bytes) with upstream's richer PageBorderBox fields (per-side width+style,
 // suppression/defined bitmasks, preserveWhitespace, shaded/floatLeft/initialLetter) -- the two
 // coexist (see Page.h) rather than one replacing the other.
+// +1 byte: style.cssFloat (float: left/right on a figleft/figright image wrapper -- see CssStyle.h).
 constexpr size_t CSS_FIXED_STYLE_BYTES = 5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) +
                                          4 * sizeof(uint8_t) + 19 * sizeof(uint8_t) + sizeof(uint64_t) +
-                                         4 * sizeof(uint8_t) + sizeof(float) + sizeof(uint32_t);
-static_assert(CSS_FIXED_STYLE_BYTES == 108,
+                                         4 * sizeof(uint8_t) + sizeof(float) + sizeof(uint32_t) + sizeof(uint8_t);
+static_assert(CSS_FIXED_STYLE_BYTES == 109,
               "CssStyle cache payload changed; update read/writeCssStylePayload and bump CSS_CACHE_VERSION");
 
 // Check if character is CSS whitespace
@@ -740,6 +741,18 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     if (iequalsAscii(mode, "left") || iequalsAscii(mode, "none")) {
       style.floatLeft = iequalsAscii(mode, "left");
       style.defined.floatLeft = 1;
+    }
+    // Separate from floatLeft above (kept untouched for the drop-cap-span heuristic): this is the
+    // general box float that wraps a following paragraph's lines beside a floated image.
+    if (iequalsAscii(mode, "left")) {
+      style.cssFloat = CssFloat::Left;
+      style.defined.cssFloat = 1;
+    } else if (iequalsAscii(mode, "right")) {
+      style.cssFloat = CssFloat::Right;
+      style.defined.cssFloat = 1;
+    } else if (iequalsAscii(mode, "none")) {
+      style.cssFloat = CssFloat::None;
+      style.defined.cssFloat = 1;
     }
   } else if (iequalsAscii(name, "initial-letter") || iequalsAscii(name, "-webkit-initial-letter")) {
     float lines = 0;
@@ -1557,7 +1570,9 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   for (const auto& side : style.borders) {
     if (!writeByte(side.width) || !writeByte(static_cast<uint8_t>(side.style))) return false;
   }
-  if (!writeByte(style.shaded) || !writeByte(style.floatLeft) || !writeByte(style.initialLetter)) return false;
+  if (!writeByte(style.shaded) || !writeByte(style.floatLeft) || !writeByte(style.initialLetter) ||
+      !writeByte(static_cast<uint8_t>(style.cssFloat)))
+    return false;
   uint64_t definedBits = 0;
   if (style.defined.textAlign) definedBits |= 1 << 0;
   if (style.defined.fontStyle) definedBits |= 1 << 1;
@@ -1594,6 +1609,7 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   if (style.defined.borderLeft) definedBits |= 1ull << 32;
   if (style.defined.fontSizeMultiplier) definedBits |= 1ull << 33;
   if (style.defined.fontFamily) definedBits |= 1ull << 34;
+  if (style.defined.cssFloat) definedBits |= 1ull << 35;
   return writeBytes(&definedBits, sizeof(definedBits)) && writeBytes(&style.fontFamily, sizeof(style.fontFamily));
 }
 
@@ -1672,12 +1688,14 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
     if (file.read(&side.width, 1) != 1 || side.width > 8 || file.read(&raw, 1) != 1 || raw > 4) return false;
     side.style = static_cast<CssBorderStyle>(raw);
   }
-  uint8_t shaded = 0, floated = 0;
+  uint8_t shaded = 0, floated = 0, cssFloatVal = 0;
   if (file.read(&shaded, 1) != 1 || shaded > 1 || file.read(&floated, 1) != 1 || floated > 1 ||
-      file.read(&style.initialLetter, 1) != 1 || style.initialLetter > 4)
+      file.read(&style.initialLetter, 1) != 1 || style.initialLetter > 4 || file.read(&cssFloatVal, 1) != 1 ||
+      cssFloatVal > static_cast<uint8_t>(CssFloat::Right))
     return false;
   style.shaded = shaded;
   style.floatLeft = floated;
+  style.cssFloat = static_cast<CssFloat>(cssFloatVal);
   uint64_t definedBits = 0;
   if (file.read(&definedBits, sizeof(definedBits)) != sizeof(definedBits)) return false;
   style.defined.textAlign = (definedBits & 1 << 0) != 0;
@@ -1715,6 +1733,7 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.defined.borderLeft = (definedBits & 1ull << 32) != 0;
   style.defined.fontSizeMultiplier = (definedBits & 1ull << 33) != 0;
   style.defined.fontFamily = (definedBits & 1ull << 34) != 0;
+  style.defined.cssFloat = (definedBits & 1ull << 35) != 0;
   if (file.read(&style.fontFamily, sizeof(style.fontFamily)) != sizeof(style.fontFamily)) return false;
   if (style.hasFontSize() && (!std::isfinite(style.fontSize.value) || style.fontSize.value <= 0 ||
                               static_cast<uint8_t>(style.fontSize.unit) > static_cast<uint8_t>(CssUnit::Percent)))

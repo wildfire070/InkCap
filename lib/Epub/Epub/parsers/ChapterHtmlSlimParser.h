@@ -129,6 +129,46 @@ class ChapterHtmlSlimParser {
   };
   std::vector<PendingInlineImage> pendingInlineImages;
   uint16_t nextInlineImageId = 1;
+
+  // A floated image (figleft/figright: float:left/right on a div wrapping an <img>, e.g. a
+  // Gutenberg chapter-opener ornament) is deferred until the paragraph that is to wrap beside
+  // it is known, unlike pendingInlineImages above, which flows a small image into the SAME
+  // block's own line as same-paragraph content. See attachPendingFloatImage/makePages.
+  struct PendingFloatImage {
+    bool active = false;
+    std::string cachedImagePath;
+    std::string sourcePath;
+    int16_t width = 0;
+    int16_t height = 0;
+    bool isRight = false;
+  };
+  PendingFloatImage pendingFloatImage_;
+  void attachPendingFloatImage(BlockStyle& bs);
+
+  // Depth-stack of currently-open float:left/right ancestors, so an <img> nested inside one is
+  // recognised as floated (see startElement's IMAGE_TAGS branch) and so the matching close tag
+  // (endElement) knows when the float has ended. Separate from blockStyleBuf_'s own depth
+  // tracking: a float wrapper's only child is often just the <img>, with no block-style entry
+  // of its own.
+  static constexpr int kMaxFloatDepth = 4;
+  int floatDepth_ = 0;
+  int floatOpenDepths_[kMaxFloatDepth] = {};
+  bool floatOpenSides_[kMaxFloatDepth] = {};  // true = right float
+
+  // The float zone currently in effect: injected into every block that overlaps it vertically
+  // until layout passes its bottom (makePages()). Coordinates are page-relative and are
+  // corrected to the originating block's real first-line position once that is known (the
+  // provisional guess made when the image is placed, in attachPendingFloatImage, assumes no
+  // further top margin intervenes). activeFloatBottom_ == 0 means no float is active.
+  int16_t activeFloatTop_ = 0;
+  int16_t activeFloatBottom_ = 0;
+  int16_t activeFloatWidth_ = 0;
+  bool activeFloatIsRight_ = false;
+  // Set by attachPendingFloatImage when it attaches a zone to currentTextBlock; read and cleared
+  // at the top of makePages() so it knows whether the block it is about to lay out is the one the
+  // image was just placed beside (whose zone needs re-anchoring to the block's real first-line
+  // position) or a later block the float is merely still propagating into (see makePages()).
+  bool floatZoneJustAttached_ = false;
   bool lowMemoryImageFallback = false;
   bool lowMemoryAbort = false;
   bool attemptedTextLayoutFontCacheRelease = false;
