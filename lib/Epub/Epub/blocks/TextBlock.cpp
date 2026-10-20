@@ -299,6 +299,17 @@ int TextBlock::baselineOffset(int baseline, int ascender, EpdFontFamily::Style s
 }
 
 int TextBlock::resolvedFontId(const GfxRenderer& renderer, const int fontId) const {
+  // blockStyle.headingFontId (see ChapterHtmlSlimParser::resolveBlockFont and
+  // FontSizeLadder.h) is already the deliberately-chosen, real font resource
+  // for this block -- the same `layoutFont` ChapterHtmlSlimParser::layoutText
+  // used to measure every word width. blockStyle.fontSize is the OLDER,
+  // separate exact-point-size mechanism for plain (non-heading-ladder) CSS
+  // font-size; snapping a headingFontId through it too stacks both
+  // mechanisms, silently swapping the ladder's approximated rung for the
+  // CSS-exact sibling at blockStyle.fontSize (which does exist, since
+  // scalable builds pre-register every size, not just the 4 ladder rungs) --
+  // a font layout never measured against, so words overlap or gap.
+  if (blockStyle.headingFontId != 0) return blockStyle.headingFontId;
   return renderer.getFontIdForSize(fontId, blockStyle.fontSize);
 }
 
