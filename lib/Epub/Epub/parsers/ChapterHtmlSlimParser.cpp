@@ -1582,17 +1582,36 @@ void ChapterHtmlSlimParser::beginCssBorderBoxIfNeeded(const BlockStyle& blockSty
 
 // Marks the border box (if any) opened by the block whose close tag was just
 // reached as ready to close -- mirrors blockStyleBuf_'s own depth-matched pop
-// a few lines above every call site of this function, EXCEPT the actual pop
-// is deferred (see finalizePendingCloseBorderBoxes): this block's text is
-// still sitting unflushed in currentTextBlock right now (ChapterHtmlSlimParser
-// only lays buffered text out into pages lazily, at the next
-// startNewTextBlock() call's makePages()), so popping here would discard the
-// scope before addLineToPage() ever gets a chance to materialize/size its box.
+// a few lines above every call site of this function.
+//
+// If this block's own content hasn't been laid out yet (scope.elem is still
+// null -- ChapterHtmlSlimParser only lays buffered text out into pages
+// lazily, normally at the next startNewTextBlock() call's makePages()), the
+// pop is deferred to finalizePendingCloseBorderBoxes(): popping here would
+// discard the scope before addLineToPage() ever gets a chance to
+// materialize/size its box.
+//
+// If it HAS already been laid out (scope.elem set, e.g. by an earlier
+// makePages() call this same element triggered for its own buffered text),
+// finalize and pop it right now, using currentPageNextY as it stands at this
+// close. Leaving it pendingClose and waiting for "the next makePages()" is
+// not safe in that case: an intervening sibling with no text of its own (an
+// image-only block, or one that closes with an empty/absent currentTextBlock)
+// can close without ever calling makePages(), so the box would otherwise
+// sit open until whatever LATER block finally does -- inheriting all of that
+// intervening content's height. (Reported as the sidenote/.figleft case: an
+// empty-bordered box stretching down through the next paragraph.)
 void ChapterHtmlSlimParser::endCssBorderBoxIfNeeded() {
   if (borderBoxCount_ == 0 || borderBoxStack_[borderBoxCount_ - 1].depth != depth) {
     return;
   }
-  borderBoxStack_[borderBoxCount_ - 1].pendingClose = true;
+  BorderBoxScope& scope = borderBoxStack_[borderBoxCount_ - 1];
+  if (scope.elem) {
+    scope.elem->setHeight(std::max<int16_t>(1, static_cast<int16_t>(currentPageNextY - scope.y)));
+    borderBoxCount_--;
+    return;
+  }
+  scope.pendingClose = true;
 }
 
 // Called at the end of makePages(), once this block's buffered text has been
