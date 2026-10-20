@@ -946,7 +946,12 @@ bool ChapterHtmlSlimParser::layoutText(const bool includeLastLine) {
     if (!ok) return false;
     currentPageNextY = static_cast<int16_t>(std::max(int(currentPageNextY), top + cap.lines * lineHeight));
   }
-  return currentTextBlock->layoutAndExtractLines(renderer, layoutFont, width, emitLine, includeLastLine);
+  // Beside a floated image (style.floatZoneCount > 0), lines overlapping its vertical span need
+  // to know their actual page position to narrow correctly -- see ParsedText::widthForLine. Left
+  // at 0 otherwise, which skips that narrowing entirely for the ordinary (non-floated) block.
+  const int floatLineHeight = style.floatZoneCount > 0 ? effectiveLineHeight() : 0;
+  return currentTextBlock->layoutAndExtractLines(renderer, layoutFont, width, emitLine, includeLastLine, SIZE_MAX,
+                                                 currentPageNextY, floatLineHeight);
 }
 
 void ChapterHtmlSlimParser::completeCurrentPage() {
@@ -1204,6 +1209,14 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     return;
   }
 
+  // If a float image is pending and the block is still empty, attach it now so the first
+  // word (and all subsequent words) are laid out beside the image. Covers
+  // <p><img style="float:left"/>text...</p>: pendingFloatImage_ is set while the block is
+  // still empty, but startNewTextBlock() never fired to flush it (no block boundary opened).
+  if (pendingFloatImage_.active && currentTextBlock->isEmpty()) {
+    attachPendingFloatImage(currentTextBlock->getBlockStyle());
+  }
+
   // flush the buffer
   partWordBuffer[partWordBufferIndex] = '\0';
   currentTextBlock->addWord(
@@ -1345,6 +1358,15 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       currentTextBlockListItemIndex = xpathListItemIndex;
 
       flushPendingAnchor();
+      // Deliberately not attaching a pending float image here: this reuse branch also fires when
+      // a closing tag resets the insertion point to an ancestor's style (endElement's "reset
+      // after a popped block style" block), which can run between the float's wrapper closing and
+      // the paragraph that is actually meant to wrap beside it opening. Attaching on one of those
+      // intermediate, still-empty reuses would attach to the wrong (too-early) block, and the
+      // following CombineAxis::Vertical merge -- which does not carry floatZoneCount/floatZones,
+      // like it does for e.g. textIndentDefined -- would then silently drop it again on the very
+      // next reuse. The flushPartWordBuffer and "fresh block" hooks below attach at the point
+      // content actually lands, which is unambiguous.
       return;
     }
 
@@ -1367,6 +1389,10 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   currentTextBlockParagraphIndex = xpathParagraphIndex;
   currentTextBlockListItemIndex = xpathListItemIndex;
   wordsExtractedInBlock = 0;
+  // A fresh block starts out empty, exactly where a still-pending float image belongs.
+  if (pendingFloatImage_.active) {
+    attachPendingFloatImage(currentTextBlock->getBlockStyle());
+  }
 }
 
 void ChapterHtmlSlimParser::pushCssAncestor(const int depth, const char* tag, const std::string_view classAttr,
@@ -2433,6 +2459,79 @@ bool ChapterHtmlSlimParser::appendMalformedMarkupWarningPage() {
   return true;
 }
 
+// Places a deferred floated image (pendingFloatImage_) on the page and attaches its FloatZone to
+// `bs`, the block that is to wrap beside it -- the paragraph's own block style when called from
+// the first-word hook, or the new block's style when called from startNewTextBlock. The zone's
+// top/bottom are provisional here (image top == currentPageNextY, before any of the block's own
+// top margin is applied); makePages() re-anchors both the zone and activeFloatTop_/Bottom_ to the
+// block's real first-line position once that is known.
+void ChapterHtmlSlimParser::attachPendingFloatImage(BlockStyle& bs) {
+  if (!pendingFloatImage_.active) return;
+
+  const int16_t imgW = pendingFloatImage_.width;
+  const int16_t imgH = pendingFloatImage_.height;
+  const bool imgIsRight = pendingFloatImage_.isRight;
+
+  // A floated image is never split across a page boundary. isFloatCandidate already capped its
+  // height at one viewport, so if it doesn't fit what's left of this page, breaking to a fresh
+  // one always leaves enough room -- the image (and the text beside it) start there together.
+  if (currentPage && !currentPage->elements.empty() &&
+      imgH > static_cast<int16_t>(viewportHeight - currentPageNextY)) {
+    completeCurrentPage();
+    completedPageCount++;
+    stopPreviewIfPageLimitReached();
+    if (previewStopRequested) {
+      pendingFloatImage_ = PendingFloatImage{};
+      return;
+    }
+    if (!startNewPage("float image page break")) {
+      pendingFloatImage_ = PendingFloatImage{};
+      return;
+    }
+  } else if (!currentPage) {
+    if (!startNewPage("float image page")) {
+      pendingFloatImage_ = PendingFloatImage{};
+      return;
+    }
+  }
+
+  const int16_t imgX = imgIsRight ? static_cast<int16_t>(viewportWidth - imgW) : static_cast<int16_t>(0);
+  const int16_t top = static_cast<int16_t>(currentPageNextY);
+
+  auto imageBlock = makeUniqueNoThrow<ImageBlock>(std::move(pendingFloatImage_.cachedImagePath),
+                                                   std::move(pendingFloatImage_.sourcePath), imgW, imgH);
+  if (!imageBlock) {
+    LOG_ERR("EHP", "Float image dropped: ImageBlock allocation failed");
+    pendingFloatImage_ = PendingFloatImage{};
+    return;
+  }
+  auto pageImage = makeUniqueNoThrow<PageImage>(std::move(imageBlock), imgX, top);
+  if (!pageImage) {
+    LOG_ERR("EHP", "Float image dropped: PageImage allocation failed");
+    pendingFloatImage_ = PendingFloatImage{};
+    return;
+  }
+  currentPage->elements.push_back(std::move(pageImage));
+  setCurrentPageVisibleOffset(visibleTextOffset);
+  markCurrentPageFromCurrentElement();
+  noteContent(top, static_cast<int>(top) + imgH);
+
+  if (bs.floatZoneCount < BlockStyle::kMaxFloatZones) {
+    auto& z = bs.floatZones[bs.floatZoneCount++];
+    z.top = top;
+    z.bottom = static_cast<int16_t>(top + imgH);
+    z.width = static_cast<int16_t>(imgW + 4);
+    z.isRight = imgIsRight;
+  }
+  activeFloatTop_ = top;
+  activeFloatBottom_ = static_cast<int16_t>(top + imgH);
+  activeFloatWidth_ = static_cast<int16_t>(imgW + 4);
+  activeFloatIsRight_ = imgIsRight;
+  floatZoneJustAttached_ = true;
+
+  pendingFloatImage_ = PendingFloatImage{};
+}
+
 void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
   if (self->isScanningForPreviewAnchor()) {
@@ -3220,6 +3319,28 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   return;
                 }
 
+                // An <img> inside a still-open float:left/right wrapper (figleft/figright --
+                // e.g. a chapter-opener ornament) is deferred rather than placed now: the
+                // paragraph it should wrap beside is whichever text comes after the wrapper
+                // closes, not known yet. Width must leave a usable text column (at least half);
+                // height is capped at one viewport, same bound attachPendingFloatImage's
+                // page-break check relies on. Takes priority over inlineImage/block placement
+                // below, including when the image would otherwise also qualify as inline.
+                const bool isFloatCandidate = self->floatDepth_ > 0 && displayWidth > 0 && displayHeight > 0 &&
+                                              displayWidth <= containerWidth / 2 &&
+                                              displayHeight <= self->viewportHeight && !displayBlockImage;
+                if (isFloatCandidate) {
+                  self->pendingFloatImage_.cachedImagePath = std::move(cachedImagePath);
+                  self->pendingFloatImage_.sourcePath = std::move(sourcePath);
+                  self->pendingFloatImage_.width = static_cast<int16_t>(displayWidth);
+                  self->pendingFloatImage_.height = static_cast<int16_t>(displayHeight);
+                  self->pendingFloatImage_.isRight = self->floatOpenSides_[self->floatDepth_ - 1];
+                  self->pendingFloatImage_.active = true;
+                  self->pushCssAncestor(self->depth, name, classAttr, idAttr);
+                  self->depth += 1;
+                  return;
+                }
+
                 // Small images participate in the text line's width and height.
                 // Full-width art and explicit block images retain the existing
                 // centered, page-breaking placement below.
@@ -3640,6 +3761,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       brStyle.fromBrElement = true;
       self->startNewTextBlock(brStyle);
     } else {
+      // float: left/right (figleft/figright-style image wrappers): track the depth it opened
+      // at so an <img> inside is recognised as floated, and so the matching close tag below
+      // knows to pop it. A separate stack from blockStyleBuf_'s own depth tracking because a
+      // float's content (often just the <img>, no further block children) doesn't always push
+      // its own block-style entry.
+      if (cssStyle.hasCssFloat() && cssStyle.cssFloat != CssFloat::None &&
+          self->floatDepth_ < ChapterHtmlSlimParser::kMaxFloatDepth) {
+        self->floatOpenDepths_[self->floatDepth_] = self->depth;
+        self->floatOpenSides_[self->floatDepth_] = cssStyle.cssFloat == CssFloat::Right;
+        self->floatDepth_++;
+      }
       self->currentCssStyle = cssStyle;
       self->openBoxScope(userAlignmentBlockStyle, cssStyle);
       auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
@@ -3870,6 +4002,22 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     // Handle span and other inline elements for CSS styling. The display:inline
     // check catches a BLOCK_TAGS member (e.g. <dd>) explicitly marked inline by
     // its own CSS -- see the matching skip on the block-starting branch above.
+
+    // margin-left on an inline span acts as a per-line indent (poem stanza pattern), e.g.
+    // Alice's "Mouse's Tale": each line is `<span style="margin-left: Xem">...</span><br/>`.
+    // The span closes before the trailing <br/>, so the indent is applied immediately to the
+    // block that is collecting the line's text -- everything reaching this branch is already
+    // non-block (BLOCK_TAGS/HEADER_TAGS are handled above), so no container tags need excluding.
+    if (cssStyle.hasMarginLeft()) {
+      const int16_t marginPx = cssStyle.marginLeft.toPixelsInt16(emSize, static_cast<float>(self->viewportWidth));
+      if (marginPx > 0 && self->currentTextBlock) {
+        BlockStyle& bs = self->currentTextBlock->getBlockStyle();
+        bs.textIndent = marginPx;
+        bs.textIndentDefined = true;
+        bs.textIndentYields = true;
+      }
+    }
+
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
         cssStyle.hasBackgroundBlack() || cssStyle.hasVerticalAlign() || cssStyle.hasDirection() ||
         cssStyle.hasFontVariantCaps() || cssStyle.hasWhiteSpace() || cssStyle.hasFontSize() ||
@@ -4282,6 +4430,12 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
       self->skipEndElementStateUntilDepth = INT_MAX;
     }
     return;
+  }
+
+  // Pop any float:left/right wrapper(s) this close tag ends, regardless of its own name --
+  // mirrors every other depth-tagged stack here (blockStyleBuf_, ancestorStack_, ...).
+  while (self->floatDepth_ > 0 && self->floatOpenDepths_[self->floatDepth_ - 1] >= self->depth) {
+    self->floatDepth_--;
   }
 
   // Ruby text: </rt> distributes ruby to base words, </ruby> resets ruby state
@@ -5088,8 +5242,20 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
   pendingFootnotes.erase(pendingFootnotes.begin(), footnoteIt);
   attachPendingPublisherPageMarkers(currentPageNextY);
 
-  // Apply horizontal left inset (margin + padding) as x position offset
-  const int16_t xOffset = line->getBlockStyle().leftInset();
+  // Apply horizontal left inset (margin + padding) as x position offset. A line overlapping an
+  // active LEFT float zone also shifts right by the zone's width so text starts after the image
+  // rather than under it; a RIGHT float only narrows the line (already done in widthForLine) and
+  // needs no shift, since the line still starts at the left edge.
+  int16_t xOffset = line->getBlockStyle().leftInset();
+  {
+    const auto& lstyle = line->getBlockStyle();
+    for (int zi = 0; zi < lstyle.floatZoneCount; ++zi) {
+      const auto& z = lstyle.floatZones[zi];
+      if (!z.isRight && currentPageNextY < z.bottom && currentPageNextY + lineHeight > z.top) {
+        xOffset = static_cast<int16_t>(xOffset + z.width);
+      }
+    }
+  }
   if (!line->isEmpty()) {
     // A taller inline image raises the line's top edge; keep the text beside
     // its lower edge instead of leaving it stranded above the image.
@@ -5181,6 +5347,44 @@ void ChapterHtmlSlimParser::makePages(const bool completeBlock) {
     if (!startNewPage("page layout")) {
       return;
     }
+  }
+
+  // Active-float propagation. A tall floated image can span the paragraph it was placed beside
+  // plus one or more that follow it (isFloatCandidate caps a float's height at one viewport, so
+  // in practice this is rarely more than a couple of short paragraphs). attachPendingFloatImage
+  // attaches the zone to the first such block; here the same zone is re-injected into every later
+  // block that still overlaps it vertically, so each one also wraps beside it -- then dropped
+  // once layout has passed the image's bottom.
+  const bool isOriginatingFloatBlock = floatZoneJustAttached_;
+  floatZoneJustAttached_ = false;
+  if (activeFloatBottom_ > 0 && currentPageNextY >= activeFloatBottom_) {
+    activeFloatBottom_ = 0;  // layout has moved past the image; float no longer applies
+  }
+  if (!isOriginatingFloatBlock && activeFloatBottom_ > 0 && currentPageNextY < activeFloatBottom_ &&
+      currentTextBlock->getBlockStyle().floatZoneCount == 0) {
+    BlockStyle& mbs = currentTextBlock->getBlockStyle();
+    auto& z = mbs.floatZones[mbs.floatZoneCount++];
+    z.top = activeFloatTop_;  // absolute (already-anchored) image coordinates
+    z.bottom = activeFloatBottom_;
+    z.width = activeFloatWidth_;
+    z.isRight = activeFloatIsRight_;
+  }
+  // Re-anchor only the originating block's own zone to its real first-line position:
+  // attachPendingFloatImage guessed image top == currentPageNextY before this block's top
+  // margin/padding (applied lazily, in addLineToPage, once its first line is actually placed) was
+  // accounted for. A later, merely-overlapping block's injected zone above already carries
+  // absolute image coordinates and must not be moved again.
+  if (isOriginatingFloatBlock && currentTextBlock->getBlockStyle().floatZoneCount > 0) {
+    BlockStyle& mbs = currentTextBlock->getBlockStyle();
+    const int16_t realTop = static_cast<int16_t>(currentPageNextY + mbs.topInset());
+    for (int zi = 0; zi < mbs.floatZoneCount; ++zi) {
+      const int imgH = mbs.floatZones[zi].bottom - mbs.floatZones[zi].top;
+      mbs.floatZones[zi].top = realTop;
+      mbs.floatZones[zi].bottom = static_cast<int16_t>(realTop + imgH);
+    }
+    activeFloatTop_ = realTop;
+    activeFloatBottom_ =
+        static_cast<int16_t>(realTop + (mbs.floatZones[0].bottom - mbs.floatZones[0].top));
   }
 
   // An entire image-only block is artwork, not prose. Keep its source alignment
