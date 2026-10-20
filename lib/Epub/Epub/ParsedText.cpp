@@ -895,7 +895,12 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
     return 0;
   }
   if (blockStyle.textIndentDefined) {
-    if (blockStyle.textIndent < 0 || !extraParagraphSpacing || forceParagraphIndents) {
+    // A span-driven indent (poem stanza pattern, see BlockStyle::textIndentYields) draws the
+    // shape of the content itself, not first-line paragraph typography: unlike a CSS text-indent,
+    // it applies regardless of "extra paragraph spacing", which otherwise suppresses a positive
+    // first-line indent once blank-line paragraph separation makes it typographically redundant.
+    if (blockStyle.textIndentYields || blockStyle.textIndent < 0 || !extraParagraphSpacing ||
+        forceParagraphIndents) {
       return blockStyle.textIndent;
     }
     return 0;
@@ -903,11 +908,35 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
   return 0;
 }
 
+int ParsedText::yieldIndentToFit(const int baseIndent, const int pageWidth, const int naturalWidth) const {
+  if (!blockStyle.textIndentYields || baseIndent <= 0 || naturalWidth > pageWidth) {
+    return baseIndent;
+  }
+  if (naturalWidth + baseIndent > pageWidth) {
+    return std::max(0, pageWidth - naturalWidth);
+  }
+  return baseIndent;
+}
+
+int ParsedText::widthForLine(const int lineIndex, const int lineHeight, const int16_t blockStartY,
+                             const int pageWidth) const {
+  if (lineHeight == 0 || blockStyle.floatZoneCount == 0) return pageWidth;
+  const int lineTop = blockStartY + lineIndex * lineHeight;
+  int indent = 0;
+  for (int i = 0; i < blockStyle.floatZoneCount; ++i) {
+    const auto& z = blockStyle.floatZones[i];
+    if (lineTop < z.bottom && lineTop + lineHeight > z.top) {
+      indent += z.width;
+    }
+  }
+  return std::max(1, pageWidth - indent);
+}
+
 // Consumes data to minimize memory usage
 bool ParsedText::layoutAndExtractLines(
     const GfxRenderer& renderer, const int fontId, const uint16_t viewportWidth,
     const std::function<void(std::shared_ptr<TextBlock>, uint32_t, uint32_t)>& processLine, const bool includeLastLine,
-    const size_t maxLines) {
+    const size_t maxLines, const int16_t blockStartY, const int lineHeight) {
   if (words.empty()) {
     return true;
   }
@@ -973,13 +1002,13 @@ bool ParsedText::layoutAndExtractLines(
   if (hyphenationEnabled) {
     // Use greedy layout that can split words mid-loop when a hyphenated prefix fits.
     breaksOk = computeHyphenatedLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore,
-                                           lineBreakIndices);
+                                           lineBreakIndices, blockStartY, lineHeight);
     if (breaksOk) {
       breaksOk = calculateGapMetrics(naturalGaps, gapSlots, renderer, fontId);
     }
   } else {
     breaksOk = computeLineBreaks(layoutArena, renderer, fontId, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore,
-                                 naturalGaps, gapSlots, lineBreakIndices);
+                                 naturalGaps, gapSlots, lineBreakIndices, blockStartY, lineHeight);
   }
   if (!breaksOk || lineBreakIndices.empty()) {
     return false;
@@ -988,7 +1017,7 @@ bool ParsedText::layoutAndExtractLines(
 
   for (size_t i = 0; i < lineCount; ++i) {
     if (!extractLine(layoutArena, i, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore, naturalGaps, gapSlots,
-                     lineBreakIndices, processLine, renderer, fontId)) {
+                     lineBreakIndices, processLine, renderer, fontId, blockStartY, lineHeight)) {
       return false;
     }
   }
@@ -1236,7 +1265,8 @@ bool ParsedText::computeLineBreaks(Arena& scratchArena, const GfxRenderer& rende
                                    const int pageWidth, ArenaVector<uint16_t>& wordWidths,
                                    std::vector<bool>& continuesVec, std::vector<bool>& noSpaceBeforeVec,
                                    ArenaVector<int16_t>& naturalGaps, ArenaVector<uint8_t>& gapSlots,
-                                   ArenaVector<size_t>& lineBreakIndices) {
+                                   ArenaVector<size_t>& lineBreakIndices, const int16_t blockStartY,
+                                   const int lineHeight) {
   if (words.empty()) {
     return false;
   }
@@ -1245,7 +1275,7 @@ bool ParsedText::computeLineBreaks(Arena& scratchArena, const GfxRenderer& rende
     return index + 1 < totalWordCount && continuesVec[index + 1];
   };
 
-  const int firstLineIndent = resolveFirstLineIndent(true, renderer, fontId);
+  int firstLineIndent = resolveFirstLineIndent(true, renderer, fontId);
 
   // Ensure any word that would overflow even as the first entry on a line is split using fallback hyphenation.
   for (size_t i = 0; i < wordWidths.size(); ++i) {
@@ -1263,7 +1293,50 @@ bool ParsedText::computeLineBreaks(Arena& scratchArena, const GfxRenderer& rende
     return false;
   }
 
+  // A span-indent (poem line) gives way before the line does: if the block's whole content
+  // already fits the column unindented, shrink the indent rather than wrap it onto a second line.
+  if (blockStyle.textIndentYields && firstLineIndent > 0 && !wordWidths.empty()) {
+    int natural = wordWidths[0];
+    for (size_t i = 1; i < wordWidths.size(); ++i) natural += wordWidths[i] + naturalGaps[i];
+    firstLineIndent = yieldIndentToFit(firstLineIndent, pageWidth, natural);
+  }
+
   const size_t totalWordCount = words.size();
+
+  // Beside a floated image, width varies by actual line number, not just "first vs rest" --
+  // approximate which line each word starts on with one greedy forward pass (using the same
+  // per-line width the DP below will use), so the backward DP can look up a width bound in O(1)
+  // per word instead of re-deriving it. Greedy and DP-optimal line breaks rarely disagree by more
+  // than a word near a boundary, and a float zone is narrow enough (a few lines) that this never
+  // visibly matters. Skipped entirely (lineIndexForWord stays empty) for the vast majority of
+  // blocks, which have no float.
+  ArenaVector<int> lineIndexForWord(scratchArena);
+  if (lineHeight > 0 && blockStyle.floatZoneCount > 0) {
+    if (!lineIndexForWord.resize(totalWordCount)) {
+      LOG_ERR("PTX", "OOM allocating float line-index scratch (%u words)", static_cast<unsigned>(totalWordCount));
+      return false;
+    }
+    int lineIdx = 0;
+    size_t cur = 0;
+    while (cur < totalWordCount) {
+      const int lineW = widthForLine(lineIdx, lineHeight, blockStartY, pageWidth) - (lineIdx == 0 ? firstLineIndent : 0);
+      int w = 0;
+      const size_t start = cur;
+      while (cur < totalWordCount) {
+        const int gap = (cur > start) ? naturalGaps[cur] : 0;
+        if (w + gap + wordWidths[cur] > lineW && cur > start) break;
+        lineIndexForWord[cur] = lineIdx;
+        w += gap + wordWidths[cur];
+        ++cur;
+      }
+      if (cur == start) {
+        // Single oversized word: advance anyway rather than loop forever.
+        lineIndexForWord[cur] = lineIdx;
+        ++cur;
+      }
+      ++lineIdx;
+    }
+  }
 
   // DP table to store the minimum badness (cost) of lines starting at index i
   ArenaVector<int> dp(scratchArena);
@@ -1282,8 +1355,12 @@ bool ParsedText::computeLineBreaks(Arena& scratchArena, const GfxRenderer& rende
     int currlen = 0;
     dp[i] = MAX_COST;
 
-    // First line has reduced width due to text-indent
-    const int effectivePageWidth = i == 0 ? pageWidth - firstLineIndent : pageWidth;
+    // First line has reduced width due to text-indent; beside a float, every line's width
+    // depends on whether it falls within the float's vertical span (see lineIndexForWord above).
+    const int effectivePageWidth = lineIndexForWord.size() > static_cast<size_t>(i)
+                                        ? widthForLine(lineIndexForWord[i], lineHeight, blockStartY, pageWidth) -
+                                              (i == 0 ? firstLineIndent : 0)
+                                        : (i == 0 ? pageWidth - firstLineIndent : pageWidth);
 
     for (size_t j = i; j < totalWordCount; ++j) {
       // Add space before word j, unless it's the first word on the line or a continuation
@@ -1372,19 +1449,36 @@ bool ParsedText::computeLineBreaks(Arena& scratchArena, const GfxRenderer& rende
 bool ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& renderer, const int fontId, const int pageWidth,
                                              ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
                                              std::vector<bool>& noSpaceBeforeVec,
-                                             ArenaVector<size_t>& lineBreakIndices) {
-  const int firstLineIndent = resolveFirstLineIndent(true, renderer, fontId);
+                                             ArenaVector<size_t>& lineBreakIndices, const int16_t blockStartY,
+                                             const int lineHeight) {
+  int firstLineIndent = resolveFirstLineIndent(true, renderer, fontId);
+
+  // A span-indent (poem line) gives way before the line does: see computeLineBreaks.
+  if (blockStyle.textIndentYields && firstLineIndent > 0 && !wordWidths.empty()) {
+    int natural = wordWidths[0];
+    for (size_t i = 1; i < wordWidths.size(); ++i) {
+      natural += wordWidths[i] + naturalGapBeforeToken(renderer, fontId, words[i - 1], words[i], wordStyles[i - 1],
+                                                        continuesVec[i], noSpaceBeforeVec[i], wordGuideDotBefore[i],
+                                                        wordSpacing, characterSpacing);
+    }
+    firstLineIndent = yieldIndentToFit(firstLineIndent, pageWidth, natural);
+  }
 
   size_t currentIndex = 0;
   bool isFirstLine = true;
+  int lineIdx = 0;
   auto currentTokenAttaches = [&](const size_t index) { return index < wordWidths.size() && continuesVec[index]; };
 
   while (currentIndex < wordWidths.size()) {
     const size_t lineStart = currentIndex;
     int lineWidth = 0;
 
-    // First line has reduced width due to text-indent
-    const int effectivePageWidth = isFirstLine ? pageWidth - firstLineIndent : pageWidth;
+    // First line has reduced width due to text-indent; beside a float, every line's width also
+    // depends on whether it falls within the float's vertical span (widthForLine). Unlike
+    // computeLineBreaks's backward DP, this is a forward greedy pass, so the real line index is
+    // already known exactly -- no approximation pre-pass needed.
+    const int effectivePageWidth =
+        widthForLine(lineIdx, lineHeight, blockStartY, pageWidth) - (isFirstLine ? firstLineIndent : 0);
 
     // Consume as many words as possible for current line, splitting when prefixes fit
     while (currentIndex < wordWidths.size()) {
@@ -1437,6 +1531,7 @@ bool ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& renderer, const 
       return false;
     }
     isFirstLine = false;
+    ++lineIdx;
   }
 
   return !lineBreakIndices.empty();
@@ -1694,7 +1789,8 @@ bool ParsedText::extractLine(Arena& scratchArena, const size_t breakIndex, const
                              const std::vector<bool>& noSpaceBeforeVec, const ArenaVector<int16_t>& naturalGaps,
                              const ArenaVector<uint8_t>& gapSlots, const ArenaVector<size_t>& lineBreakIndices,
                              const std::function<void(std::shared_ptr<TextBlock>, uint32_t, uint32_t)>& processLine,
-                             const GfxRenderer& renderer, const int fontId) {
+                             const GfxRenderer& renderer, const int fontId, const int16_t blockStartY,
+                             const int lineHeight) {
   const size_t lineBreak = lineBreakIndices[breakIndex];
   const size_t lastBreakAt = breakIndex > 0 ? lineBreakIndices[breakIndex - 1] : 0;
   const uint32_t lineVisibleOffset = visibleOffsetAt(lastBreakAt);
@@ -1702,7 +1798,7 @@ bool ParsedText::extractLine(Arena& scratchArena, const size_t breakIndex, const
       trackReferenceOffsets && lastBreakAt < wordReferenceOffsets.size() ? wordReferenceOffsets[lastBreakAt] : 0;
   size_t lineWordCount = lineBreak - lastBreakAt;
 
-  const int firstLineIndent = resolveFirstLineIndent(breakIndex == 0, renderer, fontId);
+  int firstLineIndent = resolveFirstLineIndent(breakIndex == 0, renderer, fontId);
 
   auto& lineWords = lineWordsScratch;
   auto& lineWordStyles = lineStylesScratch;
@@ -1763,8 +1859,15 @@ bool ParsedText::extractLine(Arena& scratchArena, const size_t breakIndex, const
     }
   }
 
-  // Calculate spacing (account for indent reducing effective page width on first line)
-  const int effectivePageWidth = pageWidth - firstLineIndent;
+  // A span-indent (poem line) gives way before the line does: see computeLineBreaks.
+  if (breakIndex == 0 && blockStyle.textIndentYields && firstLineIndent > 0) {
+    firstLineIndent = yieldIndentToFit(firstLineIndent, pageWidth, lineWordWidthSum + totalNaturalGaps);
+  }
+
+  // Calculate spacing (account for indent reducing effective page width on first line, and for
+  // this line's width narrowing if it falls within an active float's vertical span)
+  const int effectivePageWidth = widthForLine(static_cast<int>(breakIndex), lineHeight, blockStartY, pageWidth) -
+                                 firstLineIndent;
   const bool isLastLine = breakIndex == lineBreakIndices.size() - 1;
   const CssTextAlign effectiveAlignment =
       (blockStyle.isRtl && !blockStyle.textAlignDefined && blockStyle.alignment == CssTextAlign::Left)

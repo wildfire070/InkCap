@@ -5,10 +5,27 @@
 
 #include "Epub/css/CssStyle.h"
 
+// Vertical exclusion zone created by a left- or right-floated inline image (figleft/figright).
+// Lines whose vertical extent overlaps [top, bottom) have their available width reduced by
+// `width` pixels so text wraps correctly beside the image. Coordinates are relative to the page
+// top, corrected to the block's real position once its first line is placed (see
+// ChapterHtmlSlimParser::attachPendingFloatImage/makePages).
+// NOT serialised (BlockStyle's fields are written individually in TextBlock.cpp -- this is never
+// one of them): computed at parse time and discarded after layout, like textIndentYields above.
+struct FloatZone {
+  int16_t top = 0;     // y of image top relative to page top
+  int16_t bottom = 0;  // top + imageHeight
+  int16_t width = 0;   // imageWidth + a small gap
+  bool isRight = false;  // true = image floated right (narrows from the right, no left xOffset shift)
+};
+
 /**
  * BlockStyle - Block-level styling properties
  */
 struct BlockStyle {
+  static constexpr int kMaxFloatZones = 2;
+  FloatZone floatZones[kMaxFloatZones];
+  int8_t floatZoneCount = 0;
   // XML nesting depth at which this entry was pushed onto
   // ChapterHtmlSlimParser's block-style stack (0 elsewhere/unused). Lets the
   // matching close tag verify it's popping the entry IT pushed, mirroring
@@ -45,6 +62,9 @@ struct BlockStyle {
   int16_t paddingRight = 0;   // treated same as margin for rendering
   int16_t textIndent = 0;
   bool textIndentDefined = false;  // true if text-indent was explicitly set in CSS
+  // The indent came from margin-left on an inline span (one poem line drawn indented), and gives
+  // way before the line does: see ParsedText::resolveFirstLineIndent.
+  bool textIndentYields = false;
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
   bool isRtl = false;              // true if resolved direction is RTL
   bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
@@ -140,6 +160,7 @@ struct BlockStyle {
       if (!child.textIndentDefined && textIndentDefined) {
         result.textIndent = textIndent;
         result.textIndentDefined = true;
+        result.textIndentYields = textIndentYields;
       }
       if (child.publisherAlignment == CssTextAlign::None) {
         result.publisherAlignment = publisherAlignment;
