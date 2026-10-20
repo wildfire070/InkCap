@@ -950,9 +950,17 @@ bool ChapterHtmlSlimParser::layoutText(const bool includeLastLine) {
   // Beside a floated image (style.floatZoneCount > 0), lines overlapping its vertical span need
   // to know their actual page position to narrow correctly -- see ParsedText::widthForLine. Left
   // at 0 otherwise, which skips that narrowing entirely for the ordinary (non-floated) block.
+  // blockStartY must add topInset() to land in the same coordinate space as the float zone itself
+  // (makePages()'s originating-block re-anchor shifts the zone by this same topInset, since the
+  // image's real top -- and the block's own first line -- both land after it, applied lazily in
+  // addLineToPage): passing raw currentPageNextY here under-counted by topInset, so the zone
+  // compared as taller than it really is and narrowed one line more than it should (reported: a
+  // drop cap's first paragraph wrapping narrow for 3 lines when the image only spans 2).
   const int floatLineHeight = style.floatZoneCount > 0 ? effectiveLineHeight() : 0;
+  const int16_t blockStartY =
+      style.floatZoneCount > 0 ? static_cast<int16_t>(currentPageNextY + style.topInset()) : currentPageNextY;
   return currentTextBlock->layoutAndExtractLines(renderer, layoutFont, width, emitLine, includeLastLine, SIZE_MAX,
-                                                 currentPageNextY, floatLineHeight);
+                                                 blockStartY, floatLineHeight);
 }
 
 void ChapterHtmlSlimParser::completeCurrentPage() {
@@ -2531,6 +2539,7 @@ void ChapterHtmlSlimParser::attachPendingFloatImage(BlockStyle& bs) {
     pendingFloatImage_ = PendingFloatImage{};
     return;
   }
+  pendingFloatImageElem_ = pageImage.get();
   currentPage->elements.push_back(std::move(pageImage));
   setCurrentPageVisibleOffset(visibleTextOffset);
   markCurrentPageFromCurrentElement();
@@ -5388,11 +5397,17 @@ void ChapterHtmlSlimParser::makePages(const bool completeBlock) {
     z.width = activeFloatWidth_;
     z.isRight = activeFloatIsRight_;
   }
-  // Re-anchor only the originating block's own zone to its real first-line position:
+  // Re-anchor the originating block's own zone to its real first-line position:
   // attachPendingFloatImage guessed image top == currentPageNextY before this block's top
   // margin/padding (applied lazily, in addLineToPage, once its first line is actually placed) was
   // accounted for. A later, merely-overlapping block's injected zone above already carries
   // absolute image coordinates and must not be moved again.
+  //
+  // The image itself was already drawn at that same provisional top (attachPendingFloatImage
+  // creates its PageImage immediately, before any block style is known) -- pendingFloatImageElem_
+  // must move with the zone, or text wrapping ends up keyed to a vertical position the image was
+  // never actually drawn at (reported: a drop cap's wrap narrowed one line too many/few relative
+  // to its real, unshifted position).
   if (isOriginatingFloatBlock && currentTextBlock->getBlockStyle().floatZoneCount > 0) {
     BlockStyle& mbs = currentTextBlock->getBlockStyle();
     const int16_t realTop = static_cast<int16_t>(currentPageNextY + mbs.topInset());
@@ -5400,6 +5415,10 @@ void ChapterHtmlSlimParser::makePages(const bool completeBlock) {
       const int imgH = mbs.floatZones[zi].bottom - mbs.floatZones[zi].top;
       mbs.floatZones[zi].top = realTop;
       mbs.floatZones[zi].bottom = static_cast<int16_t>(realTop + imgH);
+    }
+    if (pendingFloatImageElem_) {
+      pendingFloatImageElem_->yPos = realTop;
+      pendingFloatImageElem_ = nullptr;
     }
     activeFloatTop_ = realTop;
     activeFloatBottom_ =
