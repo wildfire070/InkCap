@@ -69,6 +69,13 @@ constexpr CssTextDecoration operator&(const CssTextDecoration a, const CssTextDe
 constexpr uint8_t CSS_TEXT_DECORATION_MASK =
     static_cast<uint8_t>(CssTextDecoration::Underline) | static_cast<uint8_t>(CssTextDecoration::LineThrough);
 
+// float: left/right on a block that wraps an <img> (figleft/figright-style chapter decorations
+// and plates). Distinct from the pre-existing `floatLeft` flag, which only ever marked a
+// hand-styled first-letter/initial-letter span for the drop-cap heuristic below and is left
+// untouched: an image float narrows and offsets the following paragraph's lines (see
+// BlockStyle::FloatZone), which a drop-cap span never needed.
+enum class CssFloat : uint8_t { None = 0, Left = 1, Right = 2 };
+
 // Display options relevant for e-ink rendering. Inline does not create a new
 // block/line -- it's used to tell apart elements like <dt>/<dd> that FanFicFare
 // (and similar EPUB generators) mark `display: inline` in specific contexts
@@ -127,6 +134,7 @@ struct CssPropertyFlags {
   uint64_t floatLeft : 1;
   uint64_t initialLetter : 1;
   uint64_t fontFamily : 1;
+  uint64_t cssFloat : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -163,7 +171,8 @@ struct CssPropertyFlags {
         shaded(0),
         floatLeft(0),
         initialLetter(0),
-        fontFamily(0) {}
+        fontFamily(0),
+        cssFloat(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
@@ -171,7 +180,7 @@ struct CssPropertyFlags {
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
            pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
            fontSizeMultiplier || listStyleType || fontSize || border || whiteSpace || shaded || floatLeft ||
-           initialLetter || fontFamily;
+           initialLetter || fontFamily || cssFloat;
   }
 
   void clearAll() {
@@ -184,6 +193,7 @@ struct CssPropertyFlags {
     fontSizeMultiplier = 0;
     listStyleType = 0;
     fontSize = border = whiteSpace = shaded = floatLeft = initialLetter = fontFamily = 0;
+    cssFloat = 0;
   }
 };
 
@@ -219,6 +229,7 @@ struct CssStyle {
   bool shaded = false;
   bool floatLeft = false;
   uint8_t initialLetter = 0;
+  CssFloat cssFloat = CssFloat::None;
   bool hasVisibleBorder() const {
     for (const auto& side : borders)
       if (side.visible()) return true;
@@ -271,6 +282,10 @@ struct CssStyle {
     if (base.defined.floatLeft) {
       floatLeft = base.floatLeft;
       defined.floatLeft = 1;
+    }
+    if (base.hasCssFloat()) {
+      cssFloat = base.cssFloat;
+      defined.cssFloat = 1;
     }
     if (base.defined.initialLetter) {
       initialLetter = base.initialLetter;
@@ -439,6 +454,7 @@ struct CssStyle {
   [[nodiscard]] bool hasBorderLeft() const { return defined.borderLeft; }
   [[nodiscard]] bool hasFontSizeMultiplier() const { return defined.fontSizeMultiplier; }
   [[nodiscard]] bool hasListStyleType() const { return defined.listStyleType; }
+  [[nodiscard]] bool hasCssFloat() const { return defined.cssFloat; }
 
   void reset() { *this = CssStyle{}; }
 };

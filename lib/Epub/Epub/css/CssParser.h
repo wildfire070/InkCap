@@ -77,7 +77,9 @@ class CssParser {
   // under either lineage are invalidated.
   // 23: upstream's own further bump to 22 (border/white-space/float/initial-letter
   // CSS parsing) landed alongside this branch's 21 above; bumped past both again.
-  static constexpr uint8_t CSS_CACHE_VERSION = 23;
+  // 24: added style.cssFloat (float: left/right driving image-wrap layout, distinct from the
+  // existing floatLeft drop-cap heuristic).
+  static constexpr uint8_t CSS_CACHE_VERSION = 24;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers
   // can admit larger publisher stylesheets; rule-count and internal-heap

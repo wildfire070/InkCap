@@ -104,15 +104,23 @@ class ParsedText {
 
   void reserveTokenCapacity(size_t additionalTokens);
   int resolveFirstLineIndent(bool isFirstLine, const GfxRenderer& renderer, int fontId) const;
+  // A span-driven indent (poem stanza pattern, see BlockStyle::textIndentYields) gives way before
+  // the line does: if the whole block's content already fits pageWidth unindented, but doesn't
+  // once the indent is added, the indent shrinks just enough to keep the block on one line rather
+  // than wrapping it. Returns baseIndent unchanged when textIndentYields is not set, or the block
+  // doesn't fit even without it.
+  int yieldIndentToFit(int baseIndent, int pageWidth, int naturalWidth) const;
   bool calculateGapMetrics(ArenaVector<int16_t>& naturalGaps, ArenaVector<uint8_t>& gapSlots,
                            const GfxRenderer& renderer, int fontId);
   bool computeLineBreaks(Arena& scratchArena, const GfxRenderer& renderer, int fontId, int pageWidth,
                          ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
                          std::vector<bool>& noSpaceBeforeVec, ArenaVector<int16_t>& naturalGaps,
-                         ArenaVector<uint8_t>& gapSlots, ArenaVector<size_t>& lineBreakIndices);
+                         ArenaVector<uint8_t>& gapSlots, ArenaVector<size_t>& lineBreakIndices,
+                         int16_t blockStartY = 0, int lineHeight = 0);
   bool computeHyphenatedLineBreaks(const GfxRenderer& renderer, int fontId, int pageWidth,
                                    ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
-                                   std::vector<bool>& noSpaceBeforeVec, ArenaVector<size_t>& lineBreakIndices);
+                                   std::vector<bool>& noSpaceBeforeVec, ArenaVector<size_t>& lineBreakIndices,
+                                   int16_t blockStartY = 0, int lineHeight = 0);
   bool hyphenateWordAtIndex(size_t wordIndex, int availableWidth, const GfxRenderer& renderer, int fontId,
                             ArenaVector<uint16_t>& wordWidths, bool allowFallbackBreaks);
   bool splitTokenAtCodepointBoundary(size_t wordIndex, int availableWidth, const GfxRenderer& renderer, int fontId,
@@ -133,7 +141,7 @@ class ParsedText {
                    const ArenaVector<int16_t>& naturalGaps, const ArenaVector<uint8_t>& gapSlots,
                    const ArenaVector<size_t>& lineBreakIndices,
                    const std::function<void(std::shared_ptr<TextBlock>, uint32_t, uint32_t)>& processLine,
-                   const GfxRenderer& renderer, int fontId);
+                   const GfxRenderer& renderer, int fontId, int16_t blockStartY = 0, int lineHeight = 0);
   bool calculateWordWidths(ArenaVector<uint16_t>& wordWidths, const GfxRenderer& renderer, int fontId);
 
  public:
@@ -174,9 +182,18 @@ class ParsedText {
   bool isEmpty() const { return words.empty(); }
   bool isContinuation() const { return isContinuation_; }
   void setContinuation(bool continuation) { isContinuation_ = continuation; }
+  // blockStartY/lineHeight are only needed when blockStyle.floatZoneCount > 0 (a paragraph
+  // wrapping beside a floated image): they let widthForLine narrow the lines that fall within
+  // the float's vertical span. Left at 0 for an ordinary block, which skips that entirely.
   bool layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                              const std::function<void(std::shared_ptr<TextBlock>, uint32_t, uint32_t)>& processLine,
-                             bool includeLastLine = true, size_t maxLines = SIZE_MAX);
+                             bool includeLastLine = true, size_t maxLines = SIZE_MAX, int16_t blockStartY = 0,
+                             int lineHeight = 0);
+  // Per-line available width: pageWidth narrowed by any float zone overlapping that line's
+  // vertical extent (blockStartY + lineIndex*lineHeight .. +lineHeight). Returns pageWidth
+  // unchanged when there is no active float (lineHeight == 0 or floatZoneCount == 0) -- the
+  // common case, checked first so it costs nothing for the vast majority of blocks.
+  int widthForLine(int lineIndex, int lineHeight, int16_t blockStartY, int pageWidth) const;
   bool layoutAndExtractLinesPreservingSource(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                                              const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
                                              bool allowCharacterBreaks = false) const;
