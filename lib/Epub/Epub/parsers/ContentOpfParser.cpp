@@ -813,10 +813,6 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
-  if (self->state == IN_BOOK_IDENTIFIER) {
-    appendMetadataText(self->identifierText, s, len, self->metadataSpacePending, self->identifierTruncated);
-    return;
-  }
   if (self->state == IN_BOOK_LANGUAGE) {
     appendMetadataText(self->language, s, len, self->metadataSpacePending, self->languageTruncated);
     return;
@@ -835,8 +831,14 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
-  // AO3 support
-  if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
+  // Fed to both consumers of IN_DC_IDENTIFIER's text: identifierBuffer for BookFusion/AO3
+  // scheme handling, identifierText for upstream's ISBN/ASIN extraction.
+  if (self->state == IN_DC_IDENTIFIER) {
+    appendBounded(self->identifierBuffer, s, len);
+    appendMetadataText(self->identifierText, s, len, self->metadataSpacePending, self->identifierTruncated);
+    return;
+  }
+  if (self->state == IN_DC_SOURCE) {
     appendBounded(self->identifierBuffer, s, len);
     return;
   }
