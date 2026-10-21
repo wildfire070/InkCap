@@ -1294,6 +1294,11 @@ TEST_F(ChapterHtmlSlimParserTest, HiddenImageDoesNotReadImageDataWithoutCss) {
 }
 
 TEST_F(ChapterHtmlSlimParserTest, BlockquoteBorderLeftProducesOneBorderBoxWithOnlyThatSide) {
+  // This test targets beginCssBorderBoxIfNeeded/PageCssBorderBox specifically. With
+  // embeddedStyle left at its default (true), openBoxScope's PageBorderBox mechanism would claim
+  // this border instead (see beginCssBorderBoxIfNeeded's doc comment) -- the two mechanisms must
+  // never both fire for the same element, so only one of them is under test at a time here.
+  parser.embeddedStyle = false;
   const XML_Char* attributes[] = {"style", "border-left: 0.5px solid #9b9b9b", nullptr};
   ChapterHtmlSlimParser::startElement(&parser, "blockquote", attributes);
   ChapterHtmlSlimParser::characterData(&parser, "Quoted text", 11);
@@ -1316,6 +1321,9 @@ TEST_F(ChapterHtmlSlimParserTest, BlockquoteBorderLeftProducesOneBorderBoxWithOn
 }
 
 TEST_F(ChapterHtmlSlimParserTest, AllFourBorderSidesProduceOneBoxWithAllSidesSet) {
+  // See the comment on BlockquoteBorderLeftProducesOneBorderBoxWithOnlyThatSide above: isolates
+  // the beginCssBorderBoxIfNeeded/PageCssBorderBox mechanism from openBoxScope's PageBorderBox.
+  parser.embeddedStyle = false;
   const XML_Char* attributes[] = {"style", "border: 1px solid #000", nullptr};
   ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
   ChapterHtmlSlimParser::characterData(&parser, "Boxed text", 10);
@@ -1348,11 +1356,38 @@ TEST_F(ChapterHtmlSlimParserTest, BlockWithoutBorderProducesNoBorderBox) {
   }
 }
 
+// openBoxScope's PageBorderBox (publisher-decoration border/shading) and
+// beginCssBorderBoxIfNeeded's PageCssBorderBox (generic CSS border support) are two
+// independent mechanisms that both key off the same CSS `border` property. In the default
+// reading configuration (embeddedStyle true, non-Light renderMode -- this fixture's default,
+// and the common case in practice), only ONE of them may draw a box for a given bordered
+// element, or every bordered block renders two overlapping boxes (regression: both fired
+// unconditionally until this test was added).
+TEST_F(ChapterHtmlSlimParserTest, BorderedBlockProducesExactlyOneBoxInDefaultConfig) {
+  const XML_Char* attributes[] = {"style", "border: 1px solid #000", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Boxed text", 10);
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  int totalBoxCount = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() == TAG_PageCssBorderBox || element->getTag() == TAG_PageBorderBox) {
+      ++totalBoxCount;
+    }
+  }
+  EXPECT_EQ(totalBoxCount, 1);
+}
+
 // A bordered block whose content is forced to split across a page break must
 // produce two independent PageCssBorderBox fragments (one per page), each
 // covering only that page's portion of the block -- not one box that somehow
 // spans the break, and not a crash/corruption from the depth-matched stack.
 TEST_F(ChapterHtmlSlimParserTest, BorderBoxSplitAcrossAPageBreakProducesTwoIndependentFragments) {
+  // See the comment on BlockquoteBorderLeftProducesOneBorderBoxWithOnlyThatSide above: isolates
+  // the beginCssBorderBoxIfNeeded/PageCssBorderBox mechanism from openBoxScope's PageBorderBox.
+  parser.embeddedStyle = false;
   std::vector<std::unique_ptr<Page>> completedPages;
   parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
     completedPages.push_back(std::move(page));
