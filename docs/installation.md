@@ -15,6 +15,18 @@ Don't have a device yet? Get one directly from [Xteink](https://go.sjv.io/X4RGBb
 
 Note: Your purchases using the above affiliate links help support ongoing development of Crossink.
 
+## Factory partition layouts
+
+CrossInk's language and hyphenation packs work on PSRAM-equipped devices such as
+the X4 Pro even when an app-only installation keeps the smaller factory data
+partition. No bootloader flash or repartitioning is required for these packs.
+SD and Wi-Fi updates can continue to preserve the existing firmware slots.
+
+On these devices CrossInk automatically keeps its prepared pack cache at
+`/.crosspoint/asset-cache.bin` on the SD card and loads the active data into PSRAM
+at boot. Keep this cache on the SD card; see [Languages](languages.md) for details.
+Devices with a compatible internal data partition continue to use it.
+
 ## Web Installation via USB
 
 #### For new installs and updates.

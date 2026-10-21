@@ -488,23 +488,31 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_METADATA && isDcElement(name, "language")) {
-    self->state = IN_BOOK_LANGUAGE;
-    self->metadataSpacePending = false;
-    return;
-  }
-
-  // AO3 support
   if (self->state == IN_METADATA && isDcElement(name, "identifier")) {
+    self->state = IN_DC_IDENTIFIER;
+    self->identifierText.clear();
+    self->identifierKind = 0;
+    self->identifierTruncated = false;
     self->identifierIsBookFusion = false;
+    self->metadataSpacePending = false;
     for (int i = 0; atts && atts[i]; i += 2) {
       // isOpfElement does plain name matching, so it works for the opf:scheme
       // attribute too: expat expands it to the same namespace-prefixed form.
-      if (isOpfElement(atts[i], "scheme") && atts[i + 1] && strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
+      if (!isOpfElement(atts[i], "scheme") || !atts[i + 1]) continue;
+      if (strcasecmp(atts[i + 1], "ISBN") == 0)
+        self->identifierKind = 1;
+      else if (strcasecmp(atts[i + 1], "ASIN") == 0 || strcasecmp(atts[i + 1], "MOBI-ASIN") == 0 ||
+               strcasecmp(atts[i + 1], "AMAZON") == 0)
+        self->identifierKind = 2;
+      else if (strcasecmp(atts[i + 1], "BOOKFUSION") == 0)
         self->identifierIsBookFusion = true;
-      }
     }
-    self->state = IN_DC_IDENTIFIER;
+    return;
+  }
+
+  if (self->state == IN_METADATA && isDcElement(name, "language")) {
+    self->state = IN_BOOK_LANGUAGE;
+    self->metadataSpacePending = false;
     return;
   }
 
@@ -832,8 +840,14 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
-  // AO3 support
-  if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
+  // Fed to both consumers of IN_DC_IDENTIFIER's text: identifierBuffer for BookFusion/AO3
+  // scheme handling, identifierText for upstream's ISBN/ASIN extraction.
+  if (self->state == IN_DC_IDENTIFIER) {
+    appendBounded(self->identifierBuffer, s, len);
+    appendMetadataText(self->identifierText, s, len, self->metadataSpacePending, self->identifierTruncated);
+    return;
+  }
+  if (self->state == IN_DC_SOURCE) {
     appendBounded(self->identifierBuffer, s, len);
     return;
   }
@@ -884,7 +898,10 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  // AO3 support
+  // IN_DC_IDENTIFIER covers both this branch's BookFusion/AO3 dc:identifier scheme detection and
+  // upstream's ISBN/ASIN extraction -- both bodies run on the exact same closing tag now; see
+  // IN_DC_IDENTIFIER's declaration in the header for why they were unified instead of kept as two
+  // separate states.
   if (self->state == IN_DC_IDENTIFIER && isDcElement(name, "identifier")) {
     if (self->identifierIsBookFusion) {
       const uint32_t bookFusionId = BookIds::parseBookFusionId(self->identifierBuffer);
@@ -899,6 +916,26 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     }
     self->identifierIsBookFusion = false;
     self->identifierBuffer.clear();
+
+    const char* value = self->identifierText.c_str();
+    if (strncasecmp(value, "urn:", 4) == 0) value += 4;
+    if (strncasecmp(value, "isbn:", 5) == 0) {
+      self->identifierKind = 1;
+      value += 5;
+    } else if (strncasecmp(value, "asin:", 5) == 0) {
+      self->identifierKind = 2;
+      value += 5;
+    } else
+      value = self->identifierText.c_str();
+    while (*value == ' ') ++value;
+    if (!self->identifierTruncated) {
+      if (self->identifierKind == 1 && self->isbn.empty()) self->isbn = value;
+      if (self->identifierKind == 2 && self->asin.empty()) self->asin = value;
+    }
+    self->state = IN_METADATA;
+    return;
+  }
+  if (self->state == IN_BOOK_LANGUAGE && isDcElement(name, "language")) {
     self->state = IN_METADATA;
     return;
   }

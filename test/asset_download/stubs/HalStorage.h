@@ -1,4 +1,6 @@
 #pragma once
+#include <fcntl.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -12,13 +14,14 @@ inline std::set<std::string> directories;
 inline std::set<std::string> failRemove, failRename;
 inline bool failClose = false, failRead = false, failIteration = false;
 inline std::map<std::string, int> openReaders;
-struct FsFile {
+class HalFile {
+ public:
   std::string path;
-  size_t position = 0, child = 0;
+  size_t position_ = 0, child = 0;
   bool opened = false, directory = false;
   std::vector<std::string> children;
-  FsFile() = default;
-  explicit FsFile(const std::string& p)
+  HalFile() = default;
+  explicit HalFile(const std::string& p)
       : path(p), opened(files.count(p) || directories.count(p)), directory(directories.count(p)) {
     if (directory) {
       for (const auto& kv : files)
@@ -35,24 +38,24 @@ struct FsFile {
         ++openReaders[p];
     }
   }
-  FsFile(const FsFile&) = delete;
-  FsFile(FsFile&& o) { *this = std::move(o); }
-  FsFile& operator=(FsFile&& o) {
+  HalFile(const HalFile&) = delete;
+  HalFile(HalFile&& o) { *this = std::move(o); }
+  HalFile& operator=(HalFile&& o) {
     close();
     path = std::move(o.path);
-    position = o.position;
+    position_ = o.position_;
     child = o.child;
     opened = std::exchange(o.opened, false);
     directory = o.directory;
     children = std::move(o.children);
     return *this;
   }
-  ~FsFile() { close(); }
+  ~HalFile() { close(); }
   operator bool() const { return opened; }
   bool isDirectory() const { return directory; }
   bool allocationFailed() const { return false; }
   bool iterationFailed() const { return failIteration; }
-  FsFile openNextFile() { return !failIteration && child < children.size() ? FsFile(children[child++]) : FsFile(); }
+  HalFile openNextFile() { return !failIteration && child < children.size() ? HalFile(children[child++]) : HalFile(); }
   size_t getName(char* out, size_t size) {
     const auto name = path.substr(path.find_last_of('/') + 1);
     std::snprintf(out, size, "%s", name.c_str());
@@ -60,18 +63,27 @@ struct FsFile {
   }
   size_t fileSize() const { return files.at(path).size(); }
   uint64_t fileSize64() const { return files.at(path).size(); }
+  size_t position() const { return position_; }
   bool seek(size_t offset) {
     if (!opened || directory || offset > files.at(path).size()) return false;
-    position = offset;
+    position_ = offset;
     return true;
   }
   int read(void* out, size_t size) {
     if (failRead || !opened || directory) return -1;
-    size = std::min(size, files[path].size() - position);
-    std::memcpy(out, files[path].data() + position, size);
-    position += size;
+    size = std::min(size, files[path].size() - position_);
+    std::memcpy(out, files[path].data() + position_, size);
+    position_ += size;
     return int(size);
   }
+  size_t write(const void* bytes, size_t size) {
+    if (!opened || directory) return 0;
+    files[path].resize(std::max(files[path].size(), position_ + size));
+    std::memcpy(files[path].data() + position_, bytes, size);
+    position_ += size;
+    return size;
+  }
+  bool sync() { return opened && !failClose; }
   bool close() {
     if (opened && !directory) --openReaders[path];
     opened = false;
@@ -80,9 +92,15 @@ struct FsFile {
 };
 struct StorageFake {
   bool exists(const char* p) { return files.count(p) || directories.count(p); }
-  FsFile open(const char* p) { return FsFile(p); }
-  bool openFileForRead(const char*, const char* p, FsFile& f) {
-    f = FsFile(p);
+  HalFile open(const char* p, int flags = O_RDONLY) {
+    if (flags & O_CREAT) {
+      if ((flags & O_EXCL) && exists(p)) return {};
+      files.try_emplace(p);
+    }
+    return HalFile(p);
+  }
+  bool openFileForRead(const char*, const char* p, HalFile& f) {
+    f = HalFile(p);
     return bool(f);
   }
   bool ensureDirectoryExists(const char* p) {
@@ -99,4 +117,4 @@ struct StorageFake {
 };
 inline StorageFake Storage;
 
-using HalFile = FsFile;
+using FsFile = HalFile;

@@ -14,6 +14,7 @@ class HalFlashPartition {
     size_t size = 0;
   };
   bool begin(bool create = false);
+  bool incompatibleLayout() const { return incompatibleLayout_; }
   size_t size() const { return size_; }
   bool read(size_t offset, void* bytes, size_t length) const;
   bool write(size_t offset, const void* bytes, size_t length);
@@ -27,6 +28,7 @@ class HalFlashPartition {
 
  private:
   bool contains(size_t offset, size_t length) const { return offset <= size_ && length <= size_ - offset; }
+  bool incompatibleLayout_ = false;
   size_t size_ = 0;
 #if defined(SIMULATOR)
   int descriptor_ = -1;

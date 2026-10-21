@@ -1,7 +1,8 @@
 #include "HyphenationPackStore.h"
 
 #include <Arduino.h>
-#include <HalFlashPartition.h>
+#include <AssetCacheReadSession.h>
+#include <AssetCacheStorage.h>
 #include <HalStorage.h>
 #include <LanguageCache.h>
 #include <Logging.h>
@@ -11,8 +12,8 @@
 
 namespace HyphenationPackStore {
 namespace {
-HalFlashPartition flash;
-HalFlashPartition::Mapping mapping;
+AssetCacheStorage flash;
+AssetCacheStorage::Mapping mapping;
 hyphenation_pack::Store store;
 bool initialized = false;
 
@@ -37,6 +38,11 @@ bool initialize(bool create) {
   // image. Only an explicit install may create its backing storage later.
   if (initialized) return !create || flash.begin(true);
   if (!flash.begin(create)) return false;
+  AssetCacheReadSession reads(flash);
+  if (!reads) {
+    LOG_ERR("HYPH", "Cannot read installed pack cache");
+    return false;
+  }
   const auto result =
       store.begin({nullptr, capacity(), readFlash, writeFlash, eraseFlash, [] { delay(1); }}, supported);
   if (result != hyphenation_pack::Result::Ok && result != hyphenation_pack::Result::Unchanged) {

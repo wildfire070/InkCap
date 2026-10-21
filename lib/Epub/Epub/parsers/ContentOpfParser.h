@@ -19,6 +19,12 @@ class ContentOpfParser final : public Print {
     IN_BOOK_TITLE,
     IN_BOOK_AUTHOR,
     IN_BOOK_LANGUAGE,
+    // IN_DC_IDENTIFIER covers both this branch's BookFusion/AO3 dc:identifier scheme detection
+    // and upstream's ISBN/ASIN extraction (3d815cf3) -- kept as one state, not two, since both
+    // trigger on the exact same <dc:identifier> element; see the merged open/characterData/close
+    // handlers below for why that matters (a second IN_BOOK_IDENTIFIER state here would silently
+    // never be observed at the closing tag, since this branch's own identifier-open handler runs
+    // immediately after and overwrites it every time).
     IN_DC_IDENTIFIER,
     IN_DC_PUBLISHER,
     IN_DC_SUBJECT,
@@ -53,6 +59,10 @@ class ContentOpfParser final : public Print {
   bool titleTruncated = false;
   bool authorTruncated = false;
   bool languageTruncated = false;
+  bool identifierTruncated = false;
+  std::string identifierText;  // raw dc:identifier text, used for upstream's ISBN/ASIN extraction
+  uint8_t identifierKind = 0;
+  bool subjectTruncated = false;  // declared upstream but not yet read anywhere in this range
   bool seriesTruncated = false;
   bool collectionTypeTruncated = false;
   bool collectionPositionTruncated = false;
@@ -136,6 +146,8 @@ class ContentOpfParser final : public Print {
   std::string title;
   std::string author;
   std::string language;
+  std::string isbn;
+  std::string asin;
   std::string subject;
   std::string series;
   std::string tocNcxPath;

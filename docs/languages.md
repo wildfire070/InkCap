@@ -7,6 +7,28 @@ nav_order: 11
 
 CrossInk ships with English built in. Other menu languages come as small text files that you copy to your SD card and then pick on the reader. You can also edit these files to fix a translation or make your own. The same download also contains hyphenation packs, which let CrossInk split long words at the end of a line for more languages.
 
+## Storage on devices with a small factory partition
+
+On a PSRAM-equipped reader such as the X4 Pro, CrossInk can keep languages and
+hyphenation packs on SD without changing the factory partition table or
+bootloader. Installation and updates use the same menus as usual.
+
+When the internal data partition is too small, CrossInk creates a prepared cache
+at `/.crosspoint/asset-cache.bin` (about 3.4 MiB). Keep it on the SD card. At each
+boot, the active language and hyphenation patterns are copied into PSRAM; menus
+and page layout then use that memory without reading the SD cache repeatedly.
+Removing the original YAML or pack source after installation is fine, but a new
+SD card needs its own installed cache. Missing/unreadable cache data or insufficient
+PSRAM causes a fallback to built-in languages and hyphenation. To recover from a
+truncated cache, remove only `/.crosspoint/asset-cache.bin` and reinstall your
+language and packs; this resets both installed resources, not your books.
+
+Readers with a compatible internal data partition keep using flash. The SD
+fallback never uses the limited internal RAM of devices without PSRAM. No
+repartitioning, full USB flash, or book-cache clearing is required for the X4 Pro
+factory-layout fallback. Switching firmware may require reinstalling packs if
+the other firmware removes CrossInk's SD cache.
+
 ## Install or edit a language
 
 1. Download the language ZIP for your firmware version from the [releases page](https://github.com/uxjulia/CrossInk/releases). Unzip it and copy its `.crosspoint/languages` folder to the top (root) folder of your SD card. You only need to keep the language files you want. Folders starting with a dot may be hidden in your file manager, so turn on "show hidden files" if you cannot see it.
@@ -23,7 +45,7 @@ Good to know:
 - Reapplying the same compiled language and metadata keeps the current generation without rewriting flash or restarting. Comments and formatting do not trigger an update; changing the order of compiled translation records does.
 
 > [!NOTE]
-> Advanced: the default firmware builds in English only (`custom_i18n_builtin_langs = en`). Custom builds can embed a comma-separated list of languages, or `all`. Installed languages are stored once in the reader's internal flash, so opening menus, reading, and waking never read translation files from the SD card. The prepared copy stays available if you remove the SD file, and it takes priority over a built-in translation of the same code. A matching SD file in the picker reinstalls that language even if it is also built in. Without a valid prepared copy, a built-in translation is used, otherwise English. The version label inside a YAML file is informational and not an exact-version lock. When upgrading from firmware that had built-in translations, your saved language code is kept. On an English-only build you see English until you install the SD file. The device log explains any failed check.
+> Advanced: the default firmware builds in English only (`custom_i18n_builtin_langs = en`). Custom builds can embed a comma-separated list of languages, or `all`. Installed languages normally use internal flash. On PSRAM-equipped readers with an undersized factory partition, the prepared SD cache is read at boot instead; opening menus and reading do not access translation files. The prepared copy stays available if you remove the source YAML file, and it takes priority over a built-in translation of the same code. A matching SD file in the picker reinstalls that language even if it is also built in. Without a valid prepared copy, a built-in translation is used, otherwise English. The version label inside a YAML file is informational and not an exact-version lock. When upgrading from firmware that had built-in translations, your saved language code is kept. On an English-only build you see English until you install the SD file. The device log explains any failed check.
 
 ## Download on the reader
 
@@ -124,14 +146,21 @@ STR_TIME_EXAMPLE: "Unknown keys are ignored"
 - Font glyph coverage and available keyboard layouts are unchanged. A new
   translation file cannot add missing font glyphs, shaping rules, or keyboards.
 
-## Filename fallback fonts (X4 Classic, X4 Pro, Sticky)
+## UI Font (X4 Classic, X4 Pro, Sticky)
+
+The selected font fills missing characters throughout the interface, including
+translated menu labels, dialogs, and keyboards. It also covers EPUB/XTC chapter
+lists, reader-menu book and chapter titles, bookmark labels, clipping
+previews/details, reading-statistics titles, and the
+frontlight panel’s book details. It fills only missing glyphs, keeping
+built-in glyphs and your reading font unchanged. No script-detection list is used.
 
 If your book titles or filenames use an alphabet the built-in font does not have (for example Chinese), they can show as blank boxes. You can add a font to fill in those characters.
 
-Open **Settings > System > Device > Filename Fallback Font**, directly below
-Language, to choose it.
+Open **Settings > System > Device > UI Font** to choose it.
 The built-in UI font continues to draw characters it supports, including Latin
-characters inside mixed-script titles. Menu labels keep their built-in fonts.
+characters inside mixed-script titles and translated menus. Selecting a UI Font
+does not replace characters already supported by the built-in font.
 Select **None** to disable filename fallback. This option is available on the
 X4 Classic, X4 Pro, and Sticky, but not on the X3 or X4.
 
@@ -151,6 +180,11 @@ font, but shares the bounded font-rendering workspace. Missing or unreadable
 families recover to the built-in UI without changing the saved choice. Reopen
 the picker and select the family again after changing its files on a computer.
 A firmware restart also reloads the selected family.
+
+The UI font remains available on ordinary Wi-Fi screens. File Transfer and its
+child screens temporarily use built-in fonts because HTTP/WebDAV can replace
+the font files. USB Drive also releases the font before handing the card to
+your computer. The selected UI font reloads when you return to another screen.
 
 ## Advanced and maintainer details
 
