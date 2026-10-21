@@ -18,7 +18,7 @@
 - Sync Books from the new Sync Server section in File Transfer to sync progress, reading stats, and clippings for every book on the SD card in one pass, without needing a Library refresh. Sync Reading Stats and Sync Clippings, shown there when that data is turned on under What to Sync, upload only stats or only clippings without touching reading positions; after a one-time catch-up they send only books changed since the last sync.
 - Render publisher drop caps, bordered and shaded blocks, preserved whitespace, and more CSS selectors in EPUBs; scalable fonts also support mixed sizes within a line (CrossPoint #3891).
 - Install and edit interface languages from SD files, including community languages, with English fallback for missing translations. Browser translation editors and release downloads use an automatically generated, versioned English template and compatibility catalog.
-- Choose a Filename Fallback Font on ESP32-S3 devices to display missing characters in book titles and filenames while retaining the built-in font for supported text.
+- Choose a UI Font on ESP32-S3 devices to display missing characters in book titles and filenames while retaining the built-in font for supported text.
 - Install, update, and remove EPUB hyphenation packs from SD; English remains built in, and book layouts refresh when their packs change.
 - Show the current chapter title under the book title in the reader menu on button devices and in the X4 Pro pull-down drawer; the drawer tightens its spacing to keep the handle on screen in landscape.
 - Tighten or widen Word Spacing with a -4 to +4 slider and live preview.
@@ -30,8 +30,15 @@
 - Render EPUB fieldsets as outlined boxes with padding, honoring publisher border styles and continuing across pages.
 - Show a one-time What's New screen after updating, with a one-click Update for an outdated language pack; reopen it anytime in Settings → System → Release Notes.
 - Choose a download folder for each OPDS server on the device or web portal, with options to use the shared default or SD root.
+- Choose a sync server type and custom authentication headers; compatible servers can receive ISBN, ASIN, and series metadata when sharing metadata is enabled.
+- Swipe left on File Browser, Library list, and bookmark rows to reveal a delete button, with confirmation before removal (adapted from Uri Tauber, CrossPoint #3712).
+- Fill missing characters throughout the UI, including translated menu labels and dialogs, using the selected UI Font while preserving built-in characters and the reading font.
+
+- Assign Rotate Page 180° to Power, Home, front-button long presses, and button chords as well as side buttons, from device or web settings.
 
 ### Fixed
+
+- Keep font upload and delete feedback visible while scrolling on the web portal, including mobile, and prevent older notification timers from hiding newer messages (adapted from CrossPoint #3984).
 
 - Keep web dialogs open when a text-selection drag ends outside the dialog, while preserving backdrop clicks and upload-in-progress protection (adapted from Crestwave, CrossPoint #3931).
 - Normalize new web-upload filenames to composed Unicode (NFC), including duplicate checks, so accented filenames remain accessible across platforms (adapted from serialx, CrossPoint #3961).
@@ -83,6 +90,19 @@
 - Preserve the selected SD reader font when font details temporarily cannot load, and free Download Fonts catalog memory before restoring it (#855).
 - Preserve fine detail when fitting oversized high-color BMP sleep wallpapers and boot images by averaging pixels before dithering.
 - Use GitHub Releases for font downloads in builds without a configured custom font host.
+- Make Chapter Progress Percentage available in both reader status-bar slot pickers and web settings (#859).
+- Restore bottom-edge swipe up to Home outside books on touch devices, including X4 Pro; ordinary list swipes still scroll and reader gestures stay unchanged.
+- Accept percentage-only sync positions from compatible servers, including for optimized EPUBs.
+- Keep serial logs flowing after low-power USB interruptions (Sung-jin Brian Hong, CrossPoint #3737), disable tilt page turning for accelerometer-only sensors (Justin Mitchell, CrossPoint `8fc2b66`), and discard image caches when their final write fails (Uri Tauber, CrossPoint #3918).
+- Include currency and letterlike symbols and the minus sign in newly converted latin-ext SD fonts (Stefan VanBuren, CrossPoint #3801).
+- Select the current subchapter when opening EPUB Contents, including chapters with many headings (adapted from Uri Tauber, CrossPoint #3946).
+- Allow EPUB lines to wrap after dashes without adding spaces or splitting dash runs (adapted from Phạm Bình An, CrossPoint #3883).
+- Center footer button hints using their actual font height (Uri Tauber, CrossPoint #3865).
+- Avoid extra temporary allocations when navigating Home’s cover grid (adapted from Sung-jin Brian Hong, CrossPoint #3848).
+- Clear the retained sleep image when X3 wakes to Home without a restored Quick Resume frame, including with Sunlight Fading Fix enabled.
+- Restore Touch Reader Controls in Settings → Controls → Taps & Gestures so reader touch gestures can be re-enabled on the device after being turned off in the web portal (#871).
+
+- Show all button shortcut settings on the web portal, including option lists too long for the previous response buffer.
 
 ### Changed
 
@@ -108,6 +128,8 @@
 - Sync Books and Sync Folder stay on one screen with the current book, a progress bar, and the running counts, instead of flashing a screen for every book. Failed books no longer stop the sync: the final screen lists each one with what failed ("Progress sync failed", "Stats sync failed", or "Clippings sync failed") and why. Use Up and Down to scroll a long list. In Ask on conflicts, choices wait until every book is done and are then shown one after another.
 - Sync Book on a single book shows which part failed with the book's title underneath and a result line for its progress, reading stats, and clippings.
 - Reduce repeated SD reads when opening EPUBs, browsing Library rows, and preserving reading position through layout changes; reuse temporary TXT indexing scratch without retaining it while reading.
+- Exclude unused Arduino libraries and Bluetooth/Zigbee components from tuned firmware builds (adapted from Uri Tauber, CrossPoint #3857).
+- Install SD languages and hyphenation packs on PSRAM-equipped readers with small factory data partitions, including X4 Pro, using an SD cache loaded into PSRAM. Startup reuses an open cache file for sequential validation reads. The bootloader, partition table, and firmware slots remain unchanged.
 
 ## [v1.6.1] - 2026-10-03
 

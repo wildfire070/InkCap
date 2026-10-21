@@ -218,6 +218,11 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        factory_flash = None
+        if args.factory_flash:
+            factory_flash = temp_root / "language-flash.bin"
+            factory_flash.write_bytes(b"\xa5" * 0x14000)
+            env["CROSSINK_LANGUAGE_FLASH"] = str(factory_flash)
         if args.asset_downloads:
             env["CROSSINK_SIMULATOR_SMOKE_ASSET_DOWNLOADS"] = "1"
             env["CROSSINK_ASSET_SMOKE_STAGE"] = "0"
@@ -295,6 +300,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_CALIBRATION_PATH"] = str(temp_root / "device-calibration.nvs")
         if args.status_bar_lifecycle:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_LIFECYCLE"] = "1"
+        if args.chapter_percentage:
+            env["CROSSINK_SIMULATOR_SMOKE_CHAPTER_PERCENTAGE"] = "1"
         if args.status_bar_feature:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_FEATURE"] = "1"
         if args.status_bar_captures:
@@ -362,6 +369,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.sync_server_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sync_server_captures).resolve())
             env["CROSSINK_SIMULATOR_SMOKE_SYNC_SERVER_CAPTURES"] = "1"
+        if args.home_swipe:
+            env["CROSSINK_SIMULATOR_SMOKE_HOME_SWIPE"] = "1"
         if args.home_themes:
             env["CROSSINK_SIMULATOR_SMOKE_HOME_THEMES"] = "1"
         if args.theme:
@@ -390,6 +399,9 @@ def run_smoke(args: argparse.Namespace) -> int:
                 for shot in shots_dir.glob("*.bmp"):
                     shutil.copy2(shot, out_dir / shot.name)
                     print(f"Saved screenshot: {out_dir / shot.name}", flush=True)
+
+        if factory_flash and factory_flash.read_bytes() != b"\xa5" * 0x14000:
+            raise AssertionError("Factory partition was modified")
 
     print(proc.stdout, end="")
 
@@ -449,10 +461,13 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--factory-flash", action="store_true",
+                        help="Use the reported 80 KiB factory partition; verify it remains unchanged (S3 profiles)")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
     parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")
+    parser.add_argument("--chapter-percentage", action="store_true", help="Check chapter percentage slot selection, removal, reload and rendered formats")
     parser.add_argument("--status-bar-feature", action="store_true", help="Check status bar visibility, independent sizes, disk reload and rendered theme/orientation matrix")
     parser.add_argument("--screen-calibration", action="store_true", help="Check screen calibration button/touch editing, save, cancel, reset and rotations")
     parser.add_argument("--receive-folder", action="store_true", help="Check receive folder selection, navigation and cancellation")
@@ -496,6 +511,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-notes", action="store_true", help="Check the one-time What's New screen (Download, Update, touch Later vs swipe, landscape hints) and the Settings Release Notes entry; captures via --about-captures")
     parser.add_argument("--about-captures", help="Directory for About framebuffer captures (PGM)")
     parser.add_argument("--sync-server-captures", help="Directory for Sync Server settings captures (PGM)")
+    parser.add_argument("--home-swipe", action="store_true", help="Check bottom-edge Home swipes, ordinary list swipes, and reader menu gestures on touch devices")
     parser.add_argument("--home-themes", action="store_true", help="Compare drawer theme changes with fresh Home renders (X4 Pro)")
     parser.add_argument("--no-build", dest="build", action="store_false", help="Run the existing simulator binary")
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")

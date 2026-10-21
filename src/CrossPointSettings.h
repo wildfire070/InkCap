@@ -291,6 +291,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     HOME_READER = 36,
     BACK_HOME = 37,
     SELECT_CHAPTER = 38,
+    ROTATE_FLIP = 39,
     SHORT_PWRBTN_COUNT
   };
 
@@ -333,6 +334,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CHORD_HOME_READER = 32,
     CHORD_BACK_HOME = 33,
     CHORD_SELECT_CHAPTER = 34,
+    CHORD_ROTATE_FLIP = 35,
     POWER_CHORD_ACTION_COUNT
   };
 
@@ -356,6 +358,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CHAPTER_SKIP = 1,
     ORIENTATION_CHANGE = 2,
     FONT_SIZE_CHANGE = 3,
+    ORIENTATION_FLIP = 4,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
@@ -427,6 +430,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_MENU_HOME_READER = 25,
     LONG_MENU_BACK_HOME = 26,
     LONG_MENU_SELECT_CHAPTER = 27,
+    LONG_MENU_ROTATE_FLIP = 28,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 

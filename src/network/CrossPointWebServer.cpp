@@ -207,6 +207,17 @@ class WebJsonWriter {
     }
   }
 
+  // ArduinoJson writer interface: serialize without a full-size output copy.
+  size_t write(const uint8_t value) {
+    append(reinterpret_cast<const char*>(&value), 1);
+    return 1;
+  }
+
+  size_t write(const uint8_t* data, const size_t length) {
+    append(reinterpret_cast<const char*>(data), length);
+    return length;
+  }
+
   void appendUnsigned(unsigned long value) {
     char number[16];
     const int length = snprintf(number, sizeof(number), "%lu", value);
@@ -1652,6 +1663,7 @@ void CrossPointWebServer::handleGetStatusBars() const {
   addOption(ReaderStatusBarItem::ChapterPageCount, tr(STR_CHAPTER_PAGE_COUNT));
   addOption(ReaderStatusBarItem::StablePageNumber, tr(STR_STABLE_PAGE_NUMBERS));
   addOption(ReaderStatusBarItem::BookProgressPercentage, tr(STR_BOOK_PROGRESS_PERCENTAGE));
+  addOption(ReaderStatusBarItem::ChapterProgressPercentage, tr(STR_CHAPTER_PROGRESS_PERCENTAGE));
   addOption(ReaderStatusBarItem::TitleBook, combined(tr(STR_TITLE), tr(STR_BOOK)).c_str());
   addOption(ReaderStatusBarItem::TitleChapter, combined(tr(STR_TITLE), tr(STR_CHAPTER)).c_str());
   addOption(ReaderStatusBarItem::Empty, tr(STR_STATUS_BAR_EMPTY));
@@ -1746,8 +1758,7 @@ void CrossPointWebServer::handleGetSettings() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
+  WebJsonWriter output(*server);
   bool seenFirst = false;
   JsonDocument doc;
 
@@ -1860,16 +1871,10 @@ void CrossPointWebServer::handleGetSettings() const {
         continue;
     }
 
-    const size_t prefixSize = seenFirst ? 1 : 0;
-    if (prefixSize != 0) output[0] = ',';
-    const size_t written = serializeJson(doc, output + prefixSize, outputSize - prefixSize);
-    if (written >= outputSize - prefixSize) {
-      LOG_DBG("WEB", "Skipping oversized setting JSON for: %s", s.key);
-      continue;
-    }
-
+    if (seenFirst) output.append(",");
+    serializeJson(doc, output);
+    output.flush();
     seenFirst = true;
-    server->sendContent(output, written + prefixSize);
     yield();  // Allow WiFi and other tasks to run during a slow send.
   }
 

@@ -554,7 +554,8 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
 }
 
 bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const bool writeSpineEntries,
-                           const bool collectCssFiles, const bool metadataOnly, std::string* seriesIndex) {
+                           const bool collectCssFiles, const bool metadataOnly, std::string* seriesIndex,
+                           SyncMetadata* syncMetadata) {
   std::string contentOpfFilePath;
   if (!findContentOpfFile(&contentOpfFilePath)) {
     LOG_ERR("EBP", "Could not find content.opf in zip");
@@ -615,6 +616,12 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // whichever branch/feature ends up wanting it. Skipped when the book has no cache dir yet.
   BookIds::record(filepath, opfParser.ao3WorkId, opfParser.bookFusionId);
   bookMetadata.series = utf8ComposeNfc(opfParser.series);
+  if (syncMetadata) {
+    syncMetadata->isbn = std::move(opfParser.isbn);
+    syncMetadata->asin = std::move(opfParser.asin);
+    syncMetadata->series = bookMetadata.series;
+    syncMetadata->seriesIndex = opfParser.seriesIndex;
+  }
   if (seriesIndex) *seriesIndex = std::move(opfParser.seriesIndex);
   bookMetadata.subject = utf8ComposeNfc(opfParser.subject);
 
@@ -1191,6 +1198,12 @@ void Epub::backfillBookIds() {
   // A native AO3 download's ID (ao3-info.bin) and a downloaded BookFusion book's ID (bookfusion.json)
   // aren't in the OPF; pick up what earlier indexing/downloading already stored.
   BookIds::importLegacySidecars(filepath);
+}
+
+bool Epub::loadSyncMetadata(SyncMetadata& metadata) {
+  metadata = {};
+  BookMetadataCache::BookMetadata bookMetadata;
+  return parseContentOpf(bookMetadata, false, false, true, nullptr, &metadata);
 }
 
 bool Epub::clearCache() const {

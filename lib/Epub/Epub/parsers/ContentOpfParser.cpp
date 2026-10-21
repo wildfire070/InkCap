@@ -483,6 +483,31 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
+  if (self->state == IN_METADATA && isDcElement(name, "identifier")) {
+    // Combines this branch's BookFusion/AO3 scheme detection with upstream's ISBN/ASIN
+    // extraction (3d815cf3): both read the same <dc:identifier> element's scheme attribute and
+    // text content, so they share one state/one pass over atts instead of two, which would
+    // otherwise just overwrite each other's `state` assignment with no effect (see IN_DC_IDENTIFIER's
+    // declaration in the header for the full explanation).
+    self->identifierText.clear();
+    self->identifierKind = 0;
+    self->identifierTruncated = false;
+    self->identifierIsBookFusion = false;
+    self->metadataSpacePending = false;
+    for (int i = 0; atts && atts[i]; i += 2) {
+      if (!isOpfElement(atts[i], "scheme") || !atts[i + 1]) continue;
+      if (strcasecmp(atts[i + 1], "ISBN") == 0)
+        self->identifierKind = 1;
+      else if (strcasecmp(atts[i + 1], "ASIN") == 0 || strcasecmp(atts[i + 1], "MOBI-ASIN") == 0 ||
+               strcasecmp(atts[i + 1], "AMAZON") == 0)
+        self->identifierKind = 2;
+      else if (strcasecmp(atts[i + 1], "BOOKFUSION") == 0)
+        self->identifierIsBookFusion = true;
+    }
+    self->state = IN_DC_IDENTIFIER;
+    return;
+  }
+
   if (self->state == IN_METADATA && isDcElement(name, "language")) {
     self->state = IN_BOOK_LANGUAGE;
     self->metadataSpacePending = false;
@@ -491,17 +516,6 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == IN_METADATA && isDcElement(name, "subject")) {
     self->state = IN_DC_SUBJECT;
-    return;
-  }
-
-  if (self->state == IN_METADATA && isDcElement(name, "identifier")) {
-    self->identifierIsBookFusion = false;
-    for (int i = 0; atts && atts[i]; i += 2) {
-      if (isOpfElement(atts[i], "scheme") && atts[i + 1] && strcasecmp(atts[i + 1], "BOOKFUSION") == 0) {
-        self->identifierIsBookFusion = true;
-      }
-    }
-    self->state = IN_DC_IDENTIFIER;
     return;
   }
 
@@ -824,7 +838,14 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
-  if (self->state == IN_DC_IDENTIFIER || self->state == IN_DC_SOURCE) {
+  if (self->state == IN_DC_IDENTIFIER) {
+    // Fed to both consumers of this element's text: identifierBuffer for this branch's
+    // BookFusion/AO3 scheme handling, identifierText for upstream's ISBN/ASIN extraction.
+    appendBounded(self->identifierBuffer, s, len);
+    appendMetadataText(self->identifierText, s, len, self->metadataSpacePending, self->identifierTruncated);
+    return;
+  }
+  if (self->state == IN_DC_SOURCE) {
     appendBounded(self->identifierBuffer, s, len);
     return;
   }
@@ -889,8 +910,30 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     self->state = IN_METADATA;
     return;
   }
+  if (self->state == IN_BOOK_LANGUAGE && isDcElement(name, "language")) {
+    self->state = IN_METADATA;
+    return;
+  }
 
   if (self->state == IN_DC_IDENTIFIER && isDcElement(name, "identifier")) {
+    // ISBN/ASIN extraction (upstream, 3d815cf3) alongside this branch's BookFusion/AO3 scheme
+    // handling -- both read this same closing tag now; see IN_DC_IDENTIFIER's declaration in the
+    // header for why they were unified into one state instead of two.
+    const char* value = self->identifierText.c_str();
+    if (strncasecmp(value, "urn:", 4) == 0) value += 4;
+    if (strncasecmp(value, "isbn:", 5) == 0) {
+      self->identifierKind = 1;
+      value += 5;
+    } else if (strncasecmp(value, "asin:", 5) == 0) {
+      self->identifierKind = 2;
+      value += 5;
+    } else
+      value = self->identifierText.c_str();
+    while (*value == ' ') ++value;
+    if (!self->identifierTruncated) {
+      if (self->identifierKind == 1 && self->isbn.empty()) self->isbn = value;
+      if (self->identifierKind == 2 && self->asin.empty()) self->asin = value;
+    }
     if (self->identifierIsBookFusion) {
       const uint32_t bookFusionId = BookIds::parseBookFusionId(self->identifierBuffer);
       if (bookFusionId != 0) self->bookFusionId = bookFusionId;

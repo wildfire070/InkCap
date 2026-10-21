@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -63,6 +64,10 @@ std::vector<XtcReaderMenuActivity::MenuItem> XtcReaderMenuActivity::buildMenuIte
 
 void XtcReaderMenuActivity::onEnter() {
   Activity::onEnter();
+  {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
   mappedInput.setReaderTouchscreenOverride(true);
   selectedIndex = 0;
   topIndex = 0;
@@ -209,9 +214,10 @@ void XtcReaderMenuActivity::render(RenderLock&&) {
                                                     : standardHeader.x + metrics.contentSidePadding;
   const int titleMaxWidth = std::max(
       0, standardHeader.x + standardHeader.width - titleX - metrics.contentSidePadding - kBatteryTextReserveWidth);
+  const int titleFontId = renderer.filenameFontId(kTitleFontId);
   const auto titleLines =
-      renderer.wrappedText(kTitleFontId, title.c_str(), titleMaxWidth, kTitleMaxLines, EpdFontFamily::BOLD);
-  const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
+      renderer.wrappedText(titleFontId, title.c_str(), titleMaxWidth, kTitleMaxLines, EpdFontFamily::BOLD);
+  const int titleLineHeight = renderer.getLineHeight(titleFontId);
   const int titleBlockHeight = static_cast<int>(titleLines.size()) * titleLineHeight +
                                std::max(0, static_cast<int>(titleLines.size()) - 1) * kTitleLineGap;
   const int headerHeight = std::max(metrics.headerHeight, metrics.batteryBarHeight + titleBlockHeight + 16);
@@ -225,7 +231,7 @@ void XtcReaderMenuActivity::render(RenderLock&&) {
 
   const int titleY = header.y + metrics.batteryBarHeight + 3;
   for (int i = 0; i < static_cast<int>(titleLines.size()); ++i) {
-    renderer.drawText(kTitleFontId, titleX, titleY + i * (titleLineHeight + kTitleLineGap), titleLines[i].c_str(), true,
+    renderer.drawText(titleFontId, titleX, titleY + i * (titleLineHeight + kTitleLineGap), titleLines[i].c_str(), true,
                       EpdFontFamily::BOLD);
   }
 

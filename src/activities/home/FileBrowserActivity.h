@@ -16,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "components/SortPopup.h"
+#include "components/SwipeDeleteRow.h"
 #include "util/ButtonNavigator.h"
 
 class FileBrowserActivity final : public Activity {
@@ -97,6 +98,7 @@ class FileBrowserActivity final : public Activity {
 
   freeink::ui::GfxRendererTarget uiTarget;  // must precede `app`: the app holds a reference to it
   UiApp app;
+  SwipeDeleteRow swipeDelete;
   // render() rebuilds the app's interaction table; loop() only routes touch
   // snapshots against it while this is true (the two run on different tasks).
   std::atomic<bool> uiReady{false};
@@ -114,6 +116,7 @@ class FileBrowserActivity final : public Activity {
   bool isFinishedBook(const std::string& entry, const std::string& fullPath);
 
   static void listScreen(UiApp::ScreenType& screen, void* user);
+  static void onDeleteEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onSettingsEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onSelectDirectoryEvent(const freeink::ui::ActionEvent& event, void* user);

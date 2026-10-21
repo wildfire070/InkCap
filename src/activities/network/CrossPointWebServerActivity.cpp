@@ -11,6 +11,7 @@
 #include <cstddef>
 
 #include "CrossPointState.h"
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
 #include "SdCardFontSystem.h"
@@ -68,6 +69,9 @@ int barsForRssi(int rssi, int currentBars) {
 }  // namespace
 
 void CrossPointWebServerActivity::onEnter() {
+  // The server can replace the selected font through HTTP/WebDAV. Keep it
+  // closed throughout this activity and its Wi-Fi/password child screens.
+  filenameFontSystem.suspend(renderer);
   Activity::onEnter();
   // Build or refresh the compact on-disk font index before Wi-Fi starts. The
   // C3 has substantially more contiguous heap here than while serving HTTP.
@@ -145,6 +149,7 @@ void CrossPointWebServerActivity::onExit() {
   }
 
   LOG_DBG("WEBACT", "Free heap at onExit end: %d bytes", ESP.getFreeHeap());
+  filenameFontSystem.resume();
 }
 
 void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) {

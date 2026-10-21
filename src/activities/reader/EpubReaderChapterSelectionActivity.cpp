@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -22,11 +23,11 @@ EpubReaderChapterSelectionActivity::EpubReaderChapterSelectionActivity(GfxRender
                                                                        MappedInputManager& mappedInput,
                                                                        const std::shared_ptr<Epub>& epub,
                                                                        const std::string& epubPath,
-                                                                       const int currentSpineIndex)
+                                                                       const int currentTocIndex)
     : Activity("EpubReaderChapterSelection", renderer, mappedInput),
       epub(epub),
       epubPath(epubPath),
-      currentSpineIndex(currentSpineIndex),
+      currentTocIndex(currentTocIndex),
       uiTarget(makeUiTarget(renderer)),
       app(uiTarget, uiTarget.deviceContext()) {}
 
@@ -34,13 +35,17 @@ int EpubReaderChapterSelectionActivity::getTotalItems() const { return epub->get
 
 void EpubReaderChapterSelectionActivity::onEnter() {
   Activity::onEnter();
+  {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
   ignoreInitialUpRelease = mappedInput.isPhysicalPressed(MappedInputManager::Button::Up);
   ignoreInitialDownRelease = mappedInput.isPhysicalPressed(MappedInputManager::Button::Down);
   mappedInput.setReaderTouchscreenOverride(true);
 
   // epub is a required collaborator: the caller dereferences it before constructing
   // this activity, and loop()/render() use it unguarded on every frame.
-  selectorIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
+  selectorIndex = currentTocIndex;
   if (selectorIndex < 0) selectorIndex = 0;
   topIndex = 0;
   visibleRows = 1;
@@ -153,6 +158,7 @@ void EpubReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& s
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   const int totalItems = getTotalItems();
+  FilenameUiFontScope fonts(uiTarget, renderer);
   fui::ListProps props;
   props.labelText = screen.theme().bodyText;
   // screen.list() would otherwise also draw its own default-styled scroll

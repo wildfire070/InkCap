@@ -22,6 +22,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "DeviceCapabilities.h"
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "ReaderFontLoading.h"
 #include "ReaderUtils.h"
@@ -501,6 +502,11 @@ EpubReaderDrawerActivity::EpubReaderDrawerActivity(
 
 void EpubReaderDrawerActivity::onEnter() {
   Activity::onEnter();
+  // Only the full-screen button drawer displays the book/chapter summary.
+  if (!mappedInput.hasTouchHardware()) {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
   if (mappedInput.hasTouchHardware()) mappedInput.setReaderTouchscreenOverride(true);
 
   const ReaderDrawerCatalog catalog = makeReaderDrawerCatalog(
@@ -1057,7 +1063,7 @@ void EpubReaderDrawerActivity::buildDrawer(UiApp::ScreenType& screen) {
 void EpubReaderDrawerActivity::drawButtonBookHeader() {
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput, safe);
-  GUI.drawHeader(renderer, header, epub ? epub->getTitle().c_str() : "", nullptr, false, false);
+  GUI.drawHeader(renderer, header, epub ? epub->getTitle().c_str() : "", nullptr, false, false, true);
   GUI.drawDisplayStatusBar(renderer, header.y, &header);
 
   char progress[96];

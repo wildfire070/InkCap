@@ -32,6 +32,9 @@ enum Row : uint8_t {
   ROW_USERNAME,
   ROW_PASSWORD,
   ROW_SERVER_URL,
+  ROW_SERVER_TYPE,
+  ROW_CUSTOM_HEADER_1,
+  ROW_CUSTOM_HEADER_2,
   ROW_SIGN_UP,
   ROW_AUTHENTICATE,
   ROW_SYNC_ALL,
@@ -43,11 +46,18 @@ enum Row : uint8_t {
   ROW_SEND_METADATA,
   ROW_COUNT
 };
+// Positional: must match the Row enum above entry-for-entry. ROW_SYNC_ALL/ROW_KOREADER_AUTOSYNC
+// are this branch's own rows (STR_SYNC_ALL_BOOKS, STR_KOREADER_AUTOSYNC); ROW_SERVER_TYPE/
+// ROW_CUSTOM_HEADER_1/ROW_CUSTOM_HEADER_2 are upstream's (3d815cf3, custom HTTP headers +
+// server-type selector) -- combined here since the enum itself already has all 15 (auto-merged
+// clean), but this array hadn't been updated to match on either side.
 constexpr StrId ROW_LABELS[ROW_COUNT] = {
-    StrId::STR_USERNAME,         StrId::STR_PASSWORD,          StrId::STR_SYNC_SERVER_URL,
-    StrId::STR_SIGN_UP,          StrId::STR_AUTHENTICATE,      StrId::STR_SYNC_ALL_BOOKS,
-    StrId::STR_READING_STATS,    StrId::STR_CLIPPINGS,         StrId::STR_SYNC_BEHAVIOR,
+    StrId::STR_USERNAME,          StrId::STR_PASSWORD,          StrId::STR_SYNC_SERVER_URL,
+    StrId::STR_SERVER_TYPE,       StrId::STR_CUSTOM_HEADER_1,   StrId::STR_CUSTOM_HEADER_2,
+    StrId::STR_SIGN_UP,           StrId::STR_AUTHENTICATE,      StrId::STR_SYNC_ALL_BOOKS,
+    StrId::STR_READING_STATS,     StrId::STR_CLIPPINGS,         StrId::STR_SYNC_BEHAVIOR,
     StrId::STR_KOREADER_AUTOSYNC, StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA};
+constexpr StrId SERVER_TYPES[] = {StrId::STR_CROSSPOINT, StrId::STR_KOSYNC_SERVER, StrId::STR_OTHER};
 // Reuses the same generic value labels BookFusionSettingsActivity's Auto-Sync row uses --
 // "Every Chapter"/"Every 5%"/etc. aren't BookFusion-specific wording.
 constexpr StrId autosyncLabels[CrossPointSettings::AUTOSYNC_COUNT] = {
@@ -112,6 +122,7 @@ void KOReaderSettingsActivity::moveSelection(const size_t next) {
 }
 
 void KOReaderSettingsActivity::loop() {
+  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (InputReleaseGuard::consumeInitialRelease(mappedInput, MappedInputManager::Button::Confirm,
                                                ignoreInitialConfirmRelease)) {
     return;
@@ -160,6 +171,7 @@ void KOReaderSettingsActivity::loop() {
 }
 
 void KOReaderSettingsActivity::handleSelection() {
+  if (optionPopup.isActive()) return;
   // Stats and clippings need the CrossPoint extension API.
   if (isExtensionRow(static_cast<int>(selectedIndex)) && serverLacksExtensions()) return;
 
@@ -201,6 +213,39 @@ void KOReaderSettingsActivity::handleSelection() {
                                  KOREADER_STORE.saveToFile();
                                }
                              });
+      break;
+    }
+    case ROW_SERVER_TYPE:
+      optionPopup.show(StrId::STR_SERVER_TYPE, SERVER_TYPES, 3, static_cast<int>(KOREADER_STORE.getServerType()),
+                       [this](int selected) {
+                         if (selected == static_cast<int>(KOREADER_STORE.getServerType())) return;
+                         KOREADER_STORE.setServerType(static_cast<KOReaderServerType>(selected));
+                         KOREADER_STORE.saveToFile();
+                       });
+      requestUpdate();
+      break;
+    case ROW_CUSTOM_HEADER_1:
+    case ROW_CUSTOM_HEADER_2: {
+      headerErrorRow = -1;
+      const size_t slot = selectedIndex == ROW_CUSTOM_HEADER_1 ? 0 : 1;
+      auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(
+          renderer, mappedInput, I18N.get(ROW_LABELS[selectedIndex]),
+          formatHttpHeaderLine(KOREADER_STORE.getCustomHeaders()[slot]), 160, InputType::Text);
+      if (!keyboard) {
+        LOG_ERR("KOSync", "Cannot allocate header keyboard");
+        break;
+      }
+      startActivityForResult(std::move(keyboard), [this, slot](const ActivityResult& result) {
+        if (result.isCancelled) return;
+        HttpHeader header;
+        if (!parseHttpHeaderLine(std::get<KeyboardResult>(result.data).text, header)) {
+          headerErrorRow = slot == 0 ? ROW_CUSTOM_HEADER_1 : ROW_CUSTOM_HEADER_2;
+          requestUpdate();
+          LOG_ERR("KOSync", "Invalid HTTP header");
+          return;
+        }
+        if (KOREADER_STORE.setCustomHeader(slot, header.name, header.value)) KOREADER_STORE.saveToFile();
+      });
       break;
     }
     case ROW_SIGN_UP:
@@ -318,6 +363,14 @@ void KOReaderSettingsActivity::fillRow(const uint16_t row, fui::ListItem& item) 
         rowValue = std::string(tr(STR_DEFAULT_VALUE)) + ": " + defaultUrl;
       }
       break;
+    case ROW_SERVER_TYPE:
+      rowValue = I18N.get(SERVER_TYPES[static_cast<int>(KOREADER_STORE.getServerType())]);
+      break;
+    case ROW_CUSTOM_HEADER_1:
+    case ROW_CUSTOM_HEADER_2:
+      rowValue = KOREADER_STORE.getCustomHeaders()[row == ROW_CUSTOM_HEADER_1 ? 0 : 1].name;
+      if (rowValue.empty()) rowValue = tr(STR_NOT_SET);
+      break;
     case ROW_SIGN_UP:
     case ROW_AUTHENTICATE:
     case ROW_SYNC_ALL:
@@ -355,6 +408,7 @@ void KOReaderSettingsActivity::fillRow(const uint16_t row, fui::ListItem& item) 
     default:
       break;
   }
+  if (row == headerErrorRow) rowValue = tr(STR_FAILED_LOWER);
   if (!rowValue.empty()) item.value = rowValue.c_str();
 }
 
@@ -410,5 +464,6 @@ void KOReaderSettingsActivity::render(RenderLock&&) {
       mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
+  if (optionPopup.processRender(renderer, mappedInput)) return;
   renderer.displayBuffer();
 }

@@ -56,6 +56,7 @@ This is for people who browse the SD card on a computer. You do not need it for 
 ├── global_stats.bin.bak    # Backup used if the main global stats file is corrupt
 ├── daily_reading/          # Device-local daily reading seconds and sync acknowledgments
 ├── synced_stats/           # Stats snapshots received from other readers
+├── asset-cache.bin         # Language/hyphenation cache on PSRAM devices with small factory flash
 ├── crossink-settings.json  # CrossInk device settings
 ├── settings.json           # Legacy settings fallback, if present
 ├── settings.bin.bak        # Legacy binary settings file after migration, if present

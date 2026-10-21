@@ -17,6 +17,7 @@
 #endif
 
 bool HalFlashPartition::begin(bool create) {
+  incompatibleLayout_ = false;
 #if defined(SIMULATOR)
   if (size_ && (!create || descriptor_ >= 0)) return true;
   // A host flash image is separate from the simulated SD card. Tests can
@@ -59,7 +60,13 @@ bool HalFlashPartition::begin(bool create) {
   (void)create;
   const auto* partition =
       esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
-  if (!partition || partition->encrypted || partition->readonly) {
+  if (!partition) {
+    incompatibleLayout_ = true;
+    LOG_ERR("LANG", "Missing spiffs partition");
+    return false;
+  }
+  LOG_INF("LANG", "spiffs offset=0x%x size=0x%x", unsigned(partition->address), unsigned(partition->size));
+  if (partition->encrypted || partition->readonly) {
     LOG_ERR("LANG", "Language data partition unavailable");
     return false;
   }
@@ -67,6 +74,7 @@ bool HalFlashPartition::begin(bool create) {
   size_ = partition->size;
 #endif
   if (size_ < 2 * 65536 || size_ % 65536 != 0) {
+    incompatibleLayout_ = true;
     LOG_ERR("LANG", "Unexpected language partition size: %u", static_cast<unsigned>(size_));
     size_ = 0;
 #if defined(SIMULATOR)

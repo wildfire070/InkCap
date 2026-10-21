@@ -359,8 +359,8 @@ void drawPerBookStatsCard(GfxRenderer& renderer, const int x, const int y, const
   renderer.drawRect(x, y, w, h);
   renderer.drawLine(x, y + layout.topCardTitleH, x + w, y + layout.topCardTitleH);
   const std::string visibleTitle =
-      renderer.truncatedText(UI_10_FONT_ID, bookTitle.c_str(), w - 20, EpdFontFamily::BOLD);
-  drawCenteredLabel(renderer, UI_10_FONT_ID, x, w,
+      renderer.truncatedText(renderer.filenameFontId(UI_10_FONT_ID), bookTitle.c_str(), w - 20, EpdFontFamily::BOLD);
+  drawCenteredLabel(renderer, renderer.filenameFontId(UI_10_FONT_ID), x, w,
                     y + (layout.topCardTitleH - renderer.getLineHeight(UI_10_FONT_ID)) / 2, visibleTitle.c_str(), true);
 
   const bool showRtcStats = shouldShowRtcBasedStats();
@@ -811,9 +811,10 @@ void renderEditBookDatesPage(GfxRenderer& renderer, const MappedInputManager* ma
   const int cardW = safe.width - 120;
   const int cardH = std::min(250, contentBottom - cardY);
   const int cardX = safe.x + (safe.width - cardW) / 2;
-  const std::string visibleTitle =
-      renderer.truncatedText(UI_12_FONT_ID, bookTitle.c_str(), safe.width - 80, EpdFontFamily::BOLD);
-  drawCenteredLabel(renderer, UI_12_FONT_ID, safe.x, safe.width, titleY, visibleTitle.c_str(), true);
+  const std::string visibleTitle = renderer.truncatedText(renderer.filenameFontId(UI_12_FONT_ID), bookTitle.c_str(),
+                                                          safe.width - 80, EpdFontFamily::BOLD);
+  drawCenteredLabel(renderer, renderer.filenameFontId(UI_12_FONT_ID), safe.x, safe.width, titleY, visibleTitle.c_str(),
+                    true);
   renderer.drawRect(cardX, cardY, cardW, cardH);
 
   const int sectionGap = std::min(104, cardH - 126);

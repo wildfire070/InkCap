@@ -45,6 +45,7 @@ namespace fui = freeink::ui;
 
 namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
+constexpr fui::ActionId ACTION_DELETE = 3;
 constexpr fui::ActionId ACTION_CONTROL = 2;
 constexpr unsigned long LONG_PRESS_MS = 1000;
 constexpr unsigned long ACTION_FEEDBACK_MS = 1000;
@@ -128,6 +129,7 @@ void LibraryActivity::onEnter() {
       query = std::move(resume.libraryQuery);
     }
     app.on(ACTION_ROW, &LibraryActivity::onRowEvent, this);
+    app.on(ACTION_DELETE, &LibraryActivity::onDeleteEvent, this);
     app.on(ACTION_CONTROL, &LibraryActivity::onControlEvent, this);
     app.setScreen(&LibraryActivity::listScreen, this);
     // The index survives a firmware reflash, but its first boot reconciliation
@@ -577,6 +579,7 @@ void LibraryActivity::applyFilter() {
 }
 
 void LibraryActivity::resetViewport() {
+  swipeDelete.close();
   selection = rowCount() || !mappedInput.hasTouchHardware() ? CONTROL_COUNT : 3;
   showSelection = !mappedInput.hasTouchHardware();
   topIndex = 0;
@@ -590,6 +593,7 @@ void LibraryActivity::resetViewport() {
 }
 
 void LibraryActivity::reloadAfterBookAction() {
+  swipeDelete.close();
   refreshIndexIfNeeded(true);
   selection = std::min(selection, std::max(CONTROL_COUNT, CONTROL_COUNT + rowCount() - 1));
   listNav.selected = selection - CONTROL_COUNT;
@@ -730,6 +734,17 @@ void LibraryActivity::activateControl(const int control) {
   }
 }
 
+void LibraryActivity::onDeleteEvent(const fui::ActionEvent& event, void* user) {
+  auto* self = static_cast<LibraryActivity*>(user);
+  if (event.value < 0 || event.value != self->swipeDelete.index || event.value >= self->rowCount()) return;
+  RecentBook book;
+  if (!self->readBook(event.value, book)) return;
+  self->swipeDelete.close();
+  self->app.clearTapFlash();
+  self->selection = event.value + CONTROL_COUNT;
+  self->promptDeleteBook(book);
+}
+
 void LibraryActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<LibraryActivity*>(user);
   if (event.value < 0 || event.value >= self->rowCount()) return;
@@ -802,7 +817,9 @@ void LibraryActivity::latchInput() {
   if (snap.touchReleased)
     queueInput(snap.longPress ? Type::TouchLongPress : Type::TouchRelease, snap.touchX, snap.touchY);
 
-  auto swipe = mappedInput.wasSwipe();
+  MappedInputManager::SwipeDir swipe = MappedInputManager::SwipeDir::None;
+  int swipeX = 0, swipeY = 0, endX = 0, endY = 0;
+  mappedInput.wasSwipeWithPoints(swipe, swipeX, swipeY, endX, endY);
   // Preserve the SDK's tap tolerance. Only a genuine vertical drag past its
   // swipe distance scrolls when it is slower than the flick window.
   if (swipe == MappedInputManager::SwipeDir::None && released && touchTracking && travelY >= DRAG_SCROLL_PX &&
@@ -818,10 +835,10 @@ void LibraryActivity::latchInput() {
       queueInput(Type::SwipeDown);
       break;
     case MappedInputManager::SwipeDir::Left:
-      queueInput(Type::SwipeLeft);
+      queueInput(Type::SwipeLeft, swipeX, swipeY);
       break;
     case MappedInputManager::SwipeDir::Right:
-      queueInput(Type::SwipeRight);
+      queueInput(Type::SwipeRight, swipeX, swipeY);
       break;
     default:
       break;
@@ -912,6 +929,10 @@ void LibraryActivity::handleInput(const LibraryInputBuffer::Event& input) {
     snap.longPress = input.type == Type::TouchLongPress;
     snap.touchX = input.x;
     snap.touchY = input.y;
+    if (swipeDelete.dismissTap(app, snap, ACTION_DELETE)) {
+      requestUpdate();
+      return;
+    }
     const auto event = app.route(snap);
     if (app.invalidated()) requestUpdate();
     if (event) {
@@ -943,6 +964,13 @@ void LibraryActivity::handleInput(const LibraryInputBuffer::Event& input) {
                      : input.type == Type::SwipeLeft  ? MappedInputManager::SwipeDir::Left
                      : input.type == Type::SwipeRight ? MappedInputManager::SwipeDir::Right
                                                       : MappedInputManager::SwipeDir::None;
+  if (!gridEnabled() && uiReady &&
+      (swipe == MappedInputManager::SwipeDir::Left || swipe == MappedInputManager::SwipeDir::Right)) {
+    swipeDelete.swipe(app, swipe, input.x, input.y, ACTION_ROW);
+    requestUpdate();
+    return;
+  }
+  if (swipe != MappedInputManager::SwipeDir::None) swipeDelete.close();
   if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down ||
       (gridEnabled() &&
        (swipe == MappedInputManager::SwipeDir::Left || swipe == MappedInputManager::SwipeDir::Right))) {
@@ -979,6 +1007,7 @@ void LibraryActivity::handleInput(const LibraryInputBuffer::Event& input) {
   }
   const int count = rowCount() + CONTROL_COUNT;
   const auto move = [this](const int next) {
+    swipeDelete.close();
     if (!showSelection) {
       showSelection = true;
       loadGridProgress();
@@ -1306,6 +1335,8 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.rowProviderCtx = this;
   props.count = static_cast<uint16_t>(rowCount());
   props.selectedIndex = showSelection ? static_cast<int16_t>(selection - CONTROL_COUNT) : -1;
+  const auto reveal = swipeDelete.reveal(ACTION_DELETE);
+  props.reveal = &reveal;
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch | fui::InputLongPress;
   props.iconSize = 28;

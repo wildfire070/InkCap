@@ -43,6 +43,34 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
     sample = languages / "custom.yaml"
     sample.write_text('_language_code: "ZZ-CUSTOM"\n_language_name: "My language"\n_direction: "rtl"\n'
                       '_keyboard: "HE"\nSTR_SETTINGS_TITLE: "Custom settings"\n', encoding="utf-8")
+    # The reported factory layout uses an SD cache, leaving every flash byte
+    # untouched. Cached strings survive source removal and never read SD in get().
+    factory_flash = b"\xa5" * 0x14000
+    (base / "flash.bin").write_bytes(factory_flash)
+    assert run("boot", "ZZ-CUSTOM").startswith("EN|English|Settings|")
+    sd_cache = base / "sd/.crosspoint/asset-cache.bin"
+    assert not sd_cache.exists()
+    assert run("install", "EN", 0, "/.crosspoint/languages/custom.yaml") == "ZZ-CUSTOM|1"
+    assert (base / "flash.bin").read_bytes() == factory_flash
+    assert run("boot", "ZZ-CUSTOM", 1) == "ZZ-CUSTOM|My language|Custom settings|1"
+    original_source = sample.read_text()
+    sample.unlink()
+    assert run("boot", "ZZ-CUSTOM", 1) == "ZZ-CUSTOM|My language|Custom settings|1"
+    sample.write_text(original_source)
+    old_sd = sd_cache.read_bytes()
+    run("unchanged", "ZZ-CUSTOM", 1, "/.crosspoint/languages/custom.yaml")
+    assert sd_cache.read_bytes() == old_sd
+    # A missing cache falls back to English; corrupt/truncated images are not
+    # overwritten by a failed install.
+    sd_cache.write_bytes(b"truncated")
+    assert run("boot", "ZZ-CUSTOM", 1).startswith("EN|English|Settings|")
+    rejected = subprocess.run([binary, "install", "EN", "0", "/.crosspoint/languages/custom.yaml"],
+                              env=env, capture_output=True)
+    assert rejected.returncode == 5 and sd_cache.read_bytes() == b"truncated"
+    sd_cache.unlink()
+    assert run("boot", "ZZ-CUSTOM", 1).startswith("EN|English|Settings|")
+    assert not sd_cache.exists()
+    assert (base / "flash.bin").read_bytes() == factory_flash
     # Legacy filesystem data must not block installation through the real HAL.
     # The preceding data region and unselected slot stay untouched.
     old_flash = bytearray(b"\xff" * 0x360000)

@@ -254,6 +254,13 @@ void TxtReaderActivity::loop() {
     return;
   }
 
+  if (SETTINGS.longPressMenuAction == CrossPointSettings::LONG_MENU_ROTATE_FLIP &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
+    longPressMenuHandled = true;
+    applyReaderOrientation(ReaderUtils::flippedOrientation(SETTINGS.orientation));
+    return;
+  }
+
   if (SETTINGS.longPressMenuAction == CrossPointSettings::LONG_MENU_CHANGE_FONT &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MENU_MS) {
     longPressMenuHandled = true;
@@ -342,7 +349,8 @@ void TxtReaderActivity::loop() {
   }
 
   const bool frontLongPressChangesFont = SETTINGS.longPressButtonBehavior == CrossPointSettings::FONT_SIZE_CHANGE;
-  if (SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE || frontLongPressChangesFont) {
+  if (SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE ||
+      SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_FLIP || frontLongPressChangesFont) {
     const bool leftReleased = mappedInput.wasReleased(MappedInputManager::Button::Left);
     const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
     if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
@@ -357,6 +365,11 @@ void TxtReaderActivity::loop() {
       frontButtonLongPressHandled = true;
       if (frontLongPressChangesFont) {
         changeReaderFontSize(/*larger=*/nextLongPressed);
+        return;
+      }
+
+      if (SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_FLIP) {
+        applyReaderOrientation(ReaderUtils::flippedOrientation(SETTINGS.orientation));
         return;
       }
 
@@ -536,6 +549,8 @@ bool TxtReaderActivity::supportsQuickAction(const CrossPointSettings::SHORT_PWRB
 
 bool TxtReaderActivity::executeReaderShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
   switch (action) {
+    case CrossPointSettings::SHORT_PWRBTN::ROTATE_FLIP:
+      return applyReaderOrientation(ReaderUtils::flippedOrientation(SETTINGS.orientation));
     case CrossPointSettings::SHORT_PWRBTN::PREVIOUS_PAGE:
       if (currentPage > 0) {
         currentPage--;
@@ -616,6 +631,8 @@ void TxtReaderActivity::toggleHomeButtonInReader() {
 bool TxtReaderActivity::executeLongPressBackAction() {
   if (ReaderUtils::dispatchNavigationLongPressAction(SETTINGS.longPressBackAction)) return true;
   switch (static_cast<CrossPointSettings::LONG_PRESS_MENU_ACTION>(SETTINGS.longPressBackAction)) {
+    case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_ROTATE_FLIP:
+      return applyReaderOrientation(ReaderUtils::flippedOrientation(SETTINGS.orientation));
     case CrossPointSettings::LONG_PRESS_MENU_ACTION::LONG_MENU_SLEEP:
       enterDeepSleep();
       return true;

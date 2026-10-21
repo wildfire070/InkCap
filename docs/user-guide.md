@@ -449,6 +449,18 @@ CrossInk can sync your reading progress between devices using a sync server. It 
 
 **Most people only need Option A.** It is free, needs no extra software, and everything is done on the device. Options B and C are advanced: use B only if you already sync KOReader against the public KOReader server, and C only if you want to run your own server (this needs a computer or home server running Docker and a terminal).
 
+**Server Type** controls optional progress fields, independently of the server URL:
+
+- **CrossPoint**: standard KOReader sync plus rich book positions, including self-hosted CrossPoint servers.
+- **KOSync**: standard progress without rich positions or extended metadata. Use this for `sync.koreader.rocks` and standard KOSync servers.
+- **Other**: rich positions plus ISBN, ASIN, series, and series number for custom servers that accept these fields. Book metadata is only sent when **Send Metadata** is on.
+
+Upgrades preserve the previous behavior: the default hosted server uses CrossPoint; existing custom URLs use KOSync. Choose the matching type after changing the URL. Stats and clippings still require separately detected server support and their own opt-in.
+
+Percentage-only positions from compatible servers are supported as an approximate position in the local book, including optimized EPUBs. XPath positions still use the source-document map.
+
+**Custom Header 1/2** accept `Header-Name: value` for authentication proxies, such as Cloudflare Access. Values are masked in settings and obfuscated on the SD card like passwords. Clear a row to remove it. In the web portal, replace the masked value with the complete header when editing. HTTP framing headers and built-in sync authentication headers cannot be overridden.
+
 ##### Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)
 
 When **Sync Server URL** is left empty, CrossInk uses the free CrossPoint sync server at `https://sync.crosspointreader.com`. It speaks the standard KOReader sync protocol (so KOReader apps can use it too) and additionally stores an exact spine/page position for lossless CrossInk-to-CrossInk sync.

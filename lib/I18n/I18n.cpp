@@ -1,5 +1,6 @@
 #include "I18n.h"
 
+#include <AssetCacheReadSession.h>
 #include <HalStorage.h>
 #include <I18nStrings.h>
 #include <Logging.h>
@@ -29,13 +30,13 @@ const char* english(uint16_t id) { return i18n_strings::STRINGS_EN_DATA + i18n_s
 const Schema SCHEMA{KEY_COUNT, keyAt, english};
 int readInput(void* context, void* bytes, size_t count) { return static_cast<HalFile*>(context)->read(bytes, count); }
 bool readFlash(void* context, size_t offset, void* bytes, size_t count) {
-  return static_cast<HalFlashPartition*>(context)->read(offset, bytes, count);
+  return static_cast<AssetCacheStorage*>(context)->read(offset, bytes, count);
 }
 bool writeFlash(void* context, size_t offset, const void* bytes, size_t count) {
-  return static_cast<HalFlashPartition*>(context)->write(offset, bytes, count);
+  return static_cast<AssetCacheStorage*>(context)->write(offset, bytes, count);
 }
 bool eraseFlash(void* context, size_t offset, size_t count) {
-  return static_cast<HalFlashPartition*>(context)->erase(offset, count);
+  return static_cast<AssetCacheStorage*>(context)->erase(offset, count);
 }
 uint64_t microseconds() {
 #if defined(SIMULATOR)
@@ -90,9 +91,14 @@ void I18n::begin(const char* preferredCode, uint64_t generation) {
     LOG_ERR("LANG", "Cannot open cached language %s; using %s", preferredCode, active_.name);
     return;
   }
+  AssetCacheReadSession reads(flash_);
+  if (!reads) {
+    LOG_ERR("LANG", "Cannot read cached language %s; using %s", preferredCode, active_.name);
+    return;
+  }
   Installed selected;
   for (int slot = 0; slot < 2; ++slot) {
-    HalFlashPartition::Mapping candidate;
+    AssetCacheStorage::Mapping candidate;
     if (!flash_.map(slotOffset(flash_.size(), slot), SLOT_SIZE, candidate)) {
       LOG_ERR("LANG", "Cannot map language slot %d", slot);
       continue;
@@ -101,16 +107,16 @@ void I18n::begin(const char* preferredCode, uint64_t generation) {
     if (language_cache::open(candidate.data, candidate.size, SCHEMA, info) &&
         std::strcmp(info.metadata.code, preferredCode) == 0 && (!generation || info.generation == generation) &&
         info.generation > selected.generation) {
-      HalFlashPartition::unmap(mapping_);
+      AssetCacheStorage::unmap(mapping_);
       mapping_ = candidate;
       candidate = {};
       selected = info;
       slot_ = slot;
     }
-    HalFlashPartition::unmap(candidate);
+    AssetCacheStorage::unmap(candidate);
   }
   if (!mapping_.data || !language_cache::open(mapping_.data, mapping_.size, SCHEMA, selected, offsets_)) {
-    HalFlashPartition::unmap(mapping_);
+    AssetCacheStorage::unmap(mapping_);
     slot_ = -1;
     LOG_ERR("LANG", "Cached language %s unavailable; using %s", preferredCode, active_.name);
     return;
