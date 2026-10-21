@@ -2,11 +2,17 @@
 
 #include "ActivityManager.h"
 #include "CrossPointState.h"
+#include "FilenameFontSystem.h"
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
 #include "reader/EpubReaderMenuModel.h"
 
-void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
+void Activity::onEnter() {
+  LOG_DBG("ACT", "Entering activity: %s", name.c_str());
+  // Load on the main task before the screen measures or renders translated
+  // labels. The service is cache-first and refuses loads during SD handoff.
+  filenameFontSystem.ensureLoaded(renderer);
+}
 
 void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }
 

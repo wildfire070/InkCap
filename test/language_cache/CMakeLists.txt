@@ -36,14 +36,14 @@ add_custom_command(OUTPUT ${LANGUAGE_GENERATED}/I18nKeys.h ${LANGUAGE_GENERATED}
 add_custom_target(LanguageTestSchema DEPENDS ${LANGUAGE_GENERATED}/I18nKeys.h
   ${LANGUAGE_GENERATED}/I18nStrings.h ${LANGUAGE_GENERATED}/I18nStrings.cpp)
 add_executable(I18nIntegrationTool I18nIntegrationTool.cpp
-  ${REPO_ROOT}/lib/I18n/I18n.cpp ${LANGUAGE_GENERATED}/I18nStrings.cpp
+  ${REPO_ROOT}/lib/I18n/I18n.cpp ${REPO_ROOT}/lib/AssetCacheStorage/AssetCacheStorage.cpp ${LANGUAGE_GENERATED}/I18nStrings.cpp
   ${REPO_ROOT}/lib/LanguageCache/LanguageCache.cpp
   ${REPO_ROOT}/lib/HalFlashPartition/HalFlashPartition.cpp)
 add_dependencies(I18nIntegrationTool LanguageTestSchema)
 target_include_directories(I18nIntegrationTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${LANGUAGE_GENERATED} ${REPO_ROOT}/lib/I18n ${REPO_ROOT}/lib/LanguageCache
-  ${REPO_ROOT}/lib/HalFlashPartition ${REPO_ROOT}/lib/Memory)
-target_compile_definitions(I18nIntegrationTool PRIVATE SIMULATOR CROSSINK_LANGUAGE_BENCHMARK CROSSINK_LANGUAGE_BACKEND_PSRAM)
+  ${REPO_ROOT}/lib/HalFlashPartition ${REPO_ROOT}/lib/AssetCacheStorage ${REPO_ROOT}/lib/Memory)
+target_compile_definitions(I18nIntegrationTool PRIVATE SIMULATOR CROSSINK_ASSET_CACHE_TEST_PSRAM CROSSINK_LANGUAGE_BENCHMARK CROSSINK_LANGUAGE_BACKEND_PSRAM)
 target_compile_features(I18nIntegrationTool PRIVATE cxx_std_20)
 target_compile_options(I18nIntegrationTool PRIVATE -Wall -Wextra -Werror)
 add_test(NAME I18nIntegrationTest COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration_test.py
@@ -61,7 +61,7 @@ add_test(NAME I18nTranslationTest COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/tes
 add_executable(LanguageAllocationTest LanguageAllocationTest.cpp ${REPO_ROOT}/lib/LanguageCache/LanguageCache.cpp)
 add_dependencies(LanguageAllocationTest LanguageTestSchema)
 target_include_directories(LanguageAllocationTest PRIVATE ${REPO_ROOT}/test/memory_policy/stubs
-  ${LANGUAGE_GENERATED} ${REPO_ROOT}/lib/I18n ${REPO_ROOT}/lib/HalFlashPartition
+  ${LANGUAGE_GENERATED} ${REPO_ROOT}/lib/I18n ${REPO_ROOT}/lib/AssetCacheStorage ${REPO_ROOT}/lib/HalFlashPartition
   ${REPO_ROOT}/lib/LanguageCache ${REPO_ROOT}/lib/Memory)
 target_compile_definitions(LanguageAllocationTest PRIVATE ARDUINO_ARCH_ESP32 CROSSINK_MEMORY_TEST)
 target_compile_features(LanguageAllocationTest PRIVATE cxx_std_20)

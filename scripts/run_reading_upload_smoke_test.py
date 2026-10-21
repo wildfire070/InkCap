@@ -93,7 +93,7 @@ def main():
                 expected = json.loads((fs / 'expected-progress.json').read_text())
                 if mode == 'current-menu-cold':
                     expected['document'] = hashlib.md5(b'unread.epub').hexdigest()
-                if self.path.endswith(expected['document']):
+                if self.path.split('?', 1)[0].endswith(expected['document']):
                     reply = expected
                     if mode == 'folder-local-ahead':
                         reply['percentage'] *= 0.1

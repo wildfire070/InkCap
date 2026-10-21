@@ -45,6 +45,24 @@ bool prepareReadingUploadSmokeTest() {
   require(!KOREADER_STORE.getSyncStats() && !KOREADER_STORE.getSyncClippings(), "missing flags stay off");
   load(R"({"cfgVersion":2,"syncStats":false,"syncClippings":true})");
   require(!KOREADER_STORE.getSyncStats() && KOREADER_STORE.getSyncClippings(), "saved flags are kept as chosen");
+  require(KOREADER_STORE.getServerType() == KOReaderServerType::CROSSPOINT, "v2 default profile migration");
+  load(R"({"cfgVersion":2,"serverUrl":"http://custom.invalid"})");
+  require(KOREADER_STORE.getServerType() == KOReaderServerType::KOSYNC, "custom URL keeps strict profile");
+  load(R"({"cfgVersion":3,"serverType":999})");
+  require(KOREADER_STORE.getServerType() == KOReaderServerType::KOSYNC, "invalid profile is strict");
+  load(R"({"cfgVersion":3,"serverType":2})");
+  require(KOREADER_STORE.supportsRichProgress() && KOREADER_STORE.supportsExtendedMetadata(),
+          "other profile capabilities");
+  require(KOREADER_STORE.setCustomHeader(0, "CF-Access-Client-Secret", "fixture-secret"),
+          "custom header accepts token");
+  require(!KOREADER_STORE.setCustomHeader(1, "Host", "elsewhere"), "reject framing override");
+  require(!KOREADER_STORE.setCustomHeader(1, "X-Test", "a\r\nb"), "reject header injection");
+  JsonDocument roundtrip;
+  KOREADER_STORE.toJson(roundtrip);
+  require(roundtrip["headers"][0]["value"].isNull(), "no plaintext header value persisted");
+  KOREADER_STORE.fromJson(roundtrip.as<JsonVariantConst>());
+  require(KOREADER_STORE.getCustomHeaders()[0].value == "fixture-secret", "header secret roundtrip");
+  require(KOREADER_STORE.getServerType() == KOReaderServerType::OTHER, "profile roundtrip");
   // Learned support is tied to the server URL it was learned for.
   load(R"({"cfgVersion":2,"serverUrl":"http://a.invalid","serverSupport":2,"serverSupportUrl":"http://b.invalid"})");
   require(KOREADER_STORE.getServerSupport() == SyncServerSupport::UNKNOWN, "support resets for another URL");
@@ -66,6 +84,31 @@ bool prepareReadingUploadSmokeTest() {
   KOREADER_STORE.setSyncClippings(!std::getenv("CROSSINK_READING_TEST_DISABLED"));
   SETTINGS.trackReadingStats = 1;
 
+  if (std::getenv("CROSSINK_KOSYNC_SETTINGS_TEST")) {
+    KOREADER_STORE.setCustomHeader(0, "X-Proxy-Token", "fixture-secret");
+    require(KOReaderSyncClient::authenticate() == KOReaderSyncClient::OK, "proxy authentication");
+    KOReaderProgress remote;
+    require(KOReaderSyncClient::getProgress("percentage-fixture", remote) == KOReaderSyncClient::OK &&
+                remote.progress.empty() && remote.percentage == 0.625f,
+            "percentage-only record");
+    require(KOReaderSyncClient::getProgress("hint-fixture", remote) == KOReaderSyncClient::NOT_FOUND,
+            "hint is not a position");
+    KOReaderProgress upload;
+    upload.document = "profile-fixture";
+    upload.progress = "/body/p[1]";
+    upload.percentage = 0.25f;
+    upload.metadata.emplace();
+    upload.metadata->isbn = "9781234567890";
+    upload.metadata->series = "Fixture";
+    upload.metadata->seriesIndex = 2.5f;
+    upload.position.emplace();
+    for (auto type : {KOReaderServerType::KOSYNC, KOReaderServerType::CROSSPOINT, KOReaderServerType::OTHER}) {
+      KOREADER_STORE.setServerType(type);
+      require(KOReaderSyncClient::updateProgress(upload) == KOReaderSyncClient::OK, "profile upload");
+    }
+    LOG_INF("SMOKE", "KOReader server settings passed");
+    std::_Exit(0);
+  }
   std::set<std::string> paths;
   FolderBookIterator iterator("/read/");
   for (int i = 0; i < 100; ++i) {

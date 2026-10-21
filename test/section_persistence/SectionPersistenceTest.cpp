@@ -20,6 +20,7 @@
 #include <GfxRenderer.h>
 
 extern uint32_t testHyphenationIdentity;
+extern std::vector<BookMetadataCache::TocEntry> testTocEntries;
 
 namespace {
 // Mirrors Section.cpp's SECTION_FILE_VERSION/SECTION_FILE_PARTIAL_VERSION,
@@ -35,8 +36,12 @@ namespace {
 // do -- every distinct byte either side ever used as a sentinel is listed
 // below and must still be rejected, regardless of which branch originally
 // produced it (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 95;
-constexpr uint8_t kPartialVersion = 0xD0;
+constexpr uint8_t kFullVersion = 97;
+constexpr uint8_t kPartialVersion = 0xD2;
+constexpr uint8_t kPreHyphenJustifyFullVersion = 96;
+constexpr uint8_t kPreHyphenJustifyPartialVersion = 0xD1;
+constexpr uint8_t kPreHyphenBreakFullVersion = 95;
+constexpr uint8_t kPreHyphenBreakPartialVersion = 0xD0;
 constexpr uint8_t kPreImageAlignmentFullVersion = 94;
 constexpr uint8_t kPreImageAlignmentPartialVersion = 0xCF;
 constexpr uint8_t kPreFieldsetFullVersion = 93;
@@ -137,6 +142,7 @@ class SectionPersistenceTest : public testing::Test {
  protected:
   void SetUp() override {
     Storage.reset();
+    testTocEntries.clear();
     testHyphenationIdentity = 1;
   }
 };
@@ -214,15 +220,17 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreUpstreamCatchupFullVersion, kPreUpstreamCatchupPartialVersion, kPreImageAlignmentFullVersion,
-        kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion, kPreFieldsetPartialVersion, kS3BitmapFullVersion,
-        kS3BitmapPartialVersion, kC3BitmapFullVersion, kC3BitmapPartialVersion, kPreviousFullVersion,
-        kPreviousPartialVersion, kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion,
-        kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion, kOlderFullVersion, kOlderPartialVersion,
-        kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamHangulFullVersion, kUpstreamHangulPartialVersion,
-        kAncientFullVersion, kAncientPartialVersion, kUpstreamPaddingFullVersion, kUpstreamPaddingPartialVersion,
-        kEarlierFullVersion, kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion,
-        kLastReleaseFullVersion, kLastReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {
+       {kPreHyphenJustifyFullVersion, kPreHyphenJustifyPartialVersion, kPreHyphenBreakFullVersion,
+        kPreHyphenBreakPartialVersion, kPreUpstreamCatchupFullVersion, kPreUpstreamCatchupPartialVersion,
+        kPreImageAlignmentFullVersion, kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion,
+        kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion, kC3BitmapFullVersion,
+        kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion, kParagraphSpacingFullVersion,
+        kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion,
+        kOlderFullVersion, kOlderPartialVersion, kEvenOlderFullVersion, kEvenOlderPartialVersion,
+        kUpstreamHangulFullVersion, kUpstreamHangulPartialVersion, kAncientFullVersion, kAncientPartialVersion,
+        kUpstreamPaddingFullVersion, kUpstreamPaddingPartialVersion, kEarlierFullVersion, kEarlierPartialVersion,
+        kEvenEarlierFullVersion, kEvenEarlierPartialVersion, kLastReleaseFullVersion, kLastReleasePartialVersion,
+        kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
     harness.appendPages(1);
@@ -330,6 +338,7 @@ TEST_F(SectionPersistenceTest, SyncLookupsUseTheSelectedRenderModesCache) {
 TEST_F(SectionPersistenceTest, ChangedPatternsInvalidateCompleteAndPartialSections) {
   for (const auto version : {kFullVersion, kPartialVersion}) {
     Storage.reset();
+    testTocEntries.clear();
     testHyphenationIdentity = 41;
     SectionHarness harness;
     harness.begin();
@@ -357,6 +366,7 @@ TEST_F(SectionPersistenceTest, PatternChangesDoNotInvalidateDisabledHyphenation)
 TEST_F(SectionPersistenceTest, CharacterSpacingInvalidatesCompleteAndPartialSections) {
   for (const auto version : {kFullVersion, kPartialVersion}) {
     Storage.reset();
+    testTocEntries.clear();
     SectionHarness harness;
     harness.spec.characterSpacing = -5;
     harness.begin();
@@ -445,6 +455,7 @@ TEST_F(SectionPersistenceTest, ParagraphPositionUsesLivePrefixAndRejectsInvalidD
 TEST_F(SectionPersistenceTest, PublisherFaceStateSurvivesCompleteAndPartialCommits) {
   for (const uint8_t version : {kFullVersion, kPartialVersion}) {
     Storage.reset();
+    testTocEntries.clear();
     SectionHarness harness;
     harness.spec.publisherFonts = PublisherFonts::Accents;
     harness.begin();
@@ -471,4 +482,24 @@ TEST_F(SectionPersistenceTest, PublisherFaceStateSurvivesCompleteAndPartialCommi
     harness.renderer.publisherSignature = 5678;
     EXPECT_FALSE(reopened.loadSectionFile(harness.spec));
   }
+}
+
+TEST_F(SectionPersistenceTest, ContentsSelectsLatestSubchapterAcrossAnchorBatches) {
+  SectionHarness h;
+  std::vector<std::pair<std::string, uint16_t>> anchors;
+  for (int i = 0; i < 70; ++i) {
+    BookMetadataCache::TocEntry entry{};
+    entry.spineIndex = 0;
+    entry.anchor = "chapter" + std::to_string(i);
+    anchors.emplace_back(entry.anchor, i);
+    testTocEntries.push_back(entry);
+  }
+  h.begin(anchors);
+  EXPECT_EQ(h.section.getTocIndexForPage(65), 65);
+  h.appendPages(70);
+  ASSERT_TRUE(h.commit(kFullVersion));
+  h.finishSuccessfulCommit();
+  EXPECT_EQ(h.section.getTocIndexForPage(65), 65);
+  EXPECT_EQ(h.section.getTocIndexForPage(0), 0);
+  EXPECT_EQ(h.section.getTocIndexForPage(100), 69);
 }

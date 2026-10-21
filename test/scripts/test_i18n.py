@@ -63,7 +63,7 @@ class I18nTest(unittest.TestCase):
             executable = output / "check"
             include_dirs = [
                 output, ROOT / "test/language_cache/stubs", ROOT / "lib/I18n",
-                ROOT / "lib/LanguageCache", ROOT / "lib/HalFlashPartition", ROOT / "lib/Memory",
+                ROOT / "lib/LanguageCache", ROOT / "lib/AssetCacheStorage", ROOT / "lib/HalFlashPartition", ROOT / "lib/Memory",
             ]
             subprocess.run(
                 ["c++", "-std=c++20", "-DSIMULATOR", "-Wall", "-Wextra", "-Werror",
@@ -71,7 +71,7 @@ class I18nTest(unittest.TestCase):
                  str(output / "check.cpp"), str(output / "I18nStrings.cpp"),
                  str(ROOT / "lib/I18n/I18n.cpp"),
                  str(ROOT / "lib/LanguageCache/LanguageCache.cpp"),
-                 str(ROOT / "lib/HalFlashPartition/HalFlashPartition.cpp"),
+                 str(ROOT / "lib/AssetCacheStorage/AssetCacheStorage.cpp"), str(ROOT / "lib/HalFlashPartition/HalFlashPartition.cpp"),
                  "-o", str(executable)],
                 check=True,
             )

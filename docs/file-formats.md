@@ -1474,16 +1474,61 @@ Version 2 rescans static TrueType-outline `.ttf` and `.otf` files. Version 3
 rescans again so OpenType CFF faces rejected by earlier firmware enter the
 catalog without requiring a manual font refresh. The binary layout is unchanged.
 
-### Daily reading counters (v1)
+### Daily reading counters (v2)
 
-Device-local counters live in `/.crosspoint/daily_reading/NNNNN.bin`, where NNNNN
-is the zero-padded day index since 2000-01-01 (2000–2099). Each file is 13 bytes:
-version byte 1; uint32 LE cumulative seconds at offset 1; uint32 LE acknowledged
-seconds at offset 5; uint32 LE FNV-1a checksum at offset 9. The checksum starts at
-`2166136261 XOR day_index` and covers bytes 0–8. Saves write and sync a `.tmp`,
-rotate the previous `.bin` to `.bin.bak`, then publish the temp file. Recovery
-keeps the maximum verified seconds and acknowledgment from all three files.
-Unknown newer formats and unrecoverable corruption are preserved and rejected.
+Device-local counters live in `/.crosspoint/daily_reading/YYYY-MM.a.bin` and
+`YYYY-MM.b.bin`. Each month uses at most two 264-byte snapshots, regardless of
+how many days were read (dates support 2000–2099). All integers are little-endian:
+
+| Offset | Size | Meaning |
+| --- | --- | --- |
+| 0 | 4 | Version 2, ASCII `D`, ASCII `R`, reserved zero |
+| 4 | 4 | Month's first day index since 2000-01-01 |
+| 8 | 4 | Generation, incremented for each snapshot (wrap-safe comparison) |
+| 12 | 248 | 31 pairs of uint32 cumulative seconds and acknowledged seconds |
+| 260 | 4 | FNV-1a checksum of bytes 0–259, initial hash 2166136261 |
+
+Records after the month's last day must be zero. Acknowledged seconds must not
+exceed cumulative seconds. Saves overwrite the older/invalid slot, sync and close
+it, then reopen and validate it. Reads choose the newest valid generation. A torn
+write falls back to the other slot. New months first establish an empty generation-0
+`b` snapshot before creating `a`; a lone torn `b` is an unfinished initialization
+and can be retried. Unknown newer formats and two corrupt copies
+are preserved and rejected. Unchanged counters do not cause writes. A complete
+write whose sync/close reports failure may be recovered on retry.
+
+Tester v1 files (`NNNNN.bin`, `.bin.bak`, `.bin.tmp`) are converted when their month is first
+accessed for reading or sync, using fixed memory. A damaged legacy month blocks
+that month only; unrelated months can continue recording. Each v1 file is 13 bytes: version
+1; uint32 cumulative seconds at offset 1; uint32 acknowledged seconds at offset 5;
+uint32 FNV-1a checksum at offset 9, seeded with `2166136261 XOR day_index` over bytes
+0–8. Conversion takes the maximum totals and acknowledgments across valid legacy
+copies and existing monthly records. Both monthly slots are written and verified
+before deleting any originals. Corrupt legacy siblings are deleted before valid
+ones, so interrupted cleanup leaves a recoverable source. Failed conversion is
+retried; unknown formats or wholly corrupt legacy days remain untouched. SD read
+errors stop the operation rather than selecting older data or deleting sources. Once
+converted, normal operation only reads/writes monthly snapshots. Do not downgrade
+to firmware that only understands v1 after conversion.
+
+Directory scans close before conversion or uploads. Months are visited in date
+order by rescanning filenames, avoiding an unbounded file list and directory
+cursor invalidation during migration. Checkpoint work uses one 256-byte month
+buffer plus small serialized chunks, with no new heap allocation or retained
+history buffer. The sync payload and server API are unchanged.
+
+After successful daily stats sync, the reader removes fully acknowledged months
+older than the previous calendar month. Current, previous, and future months stay,
+as does any month with unuploaded seconds. Cleanup requires a valid local date,
+flushes accepted in-memory time first, and validates every existing snapshot;
+corrupt, unknown, or unreadable data is retained. The newest acknowledgments must
+cover every total in either snapshot. Older snapshots are deleted first so an
+interrupted cleanup retains the newest acknowledged copy for retry. Cleanup errors
+are logged and retried on a later successful sync without marking the completed
+upload as failed. This only removes local daily-time files: uploaded server history,
+book progress, and separate global/book statistics are unchanged. Deleted local
+history is not downloaded again, so it cannot be re-uploaded to a different server
+or account later. Unsynced offline history has no age-based cutoff.
 
 Only accepted page intervals in the existing EPUB/XTC stats paths contribute.
 Idle intervals over the configured threshold are rejected in full; menus,
@@ -1548,6 +1593,34 @@ legacy preference to find the newest matching valid slot. Normal saves use a
 synced `.tmp` and recoverable `.bak`; a remaining backup denotes an unfinished
 publication and is restored before settings are loaded or saved.
 
+### SD-backed cache on PSRAM devices
+
+When `spiffs` is missing or fails the language storage size check, PSRAM-equipped
+devices use `/.crosspoint/asset-cache.bin` instead. Its fixed size is `0x360000`;
+the same language slots occupy its last 128 KiB and the same hyphenation banks
+occupy the preceding bytes. This is a new backing store, not a format-version
+change. Compatible flash layouts keep their original backend; flash I/O failures
+do not silently select SD. No partition-table or application-slot writes occur.
+
+Read-only startup treats an absent image as erased storage. Explicit installation
+creates and fills the image with `0xff`. Writes sync and close before returning,
+so the existing checksum and commit-last protocols still apply. A truncated
+image is rejected rather than overwritten. An incomplete initial creation can
+be removed and the packs reinstalled; SD filesystem durability still depends on
+the card. The cache holds installed resources, not book progress or settings.
+
+Startup validation and mapping share a scoped read-only SD handle per consumer.
+Consecutive chunks read at the current file position without seeking; bank/slot
+changes seek only when necessary. The handle closes on every return path before
+normal reader or USB activity, and writes are rejected while a read session is
+active. No additional PSRAM buffer is needed for this read optimization.
+
+Each selected mapping is copied to a fallible PSRAM allocation and kept immutable
+until reboot, without retaining an SD file handle. Language slots are 64 KiB;
+the active hyphenation mapping uses only the bank's used bytes, bounded by
+`0x1a0000`. There is no internal-RAM allocation fallback. Missing/corrupt data or
+allocation failure leaves the built-in language/patterns available.
+
 ## SD hyphenation packs and flash banks
 
 SD path: `/.crosspoint/hyphenation/hyph-<code>.cphyph`. The upstream CPHY v1
@@ -1592,3 +1665,13 @@ a restart before another operation or activation of its new mapping.
 ## OPDS server download folders
 
 `/.crosspoint/opds.json` stores an optional `downloadFolder` string on each entry in `servers`. Missing or empty means inherit the global `opdsDownloadFolder` setting; `/` explicitly selects SD root. Other values are normalized absolute SD folder paths (at most 63 UTF-8 bytes). Existing files need no migration. No EPUB cache or settings binary format change is required.
+
+### KOReader server configuration v3
+
+`/.crosspoint/koreader.json` adds `serverType` (0: CrossPoint, 1: KOSync, 2: Other) and up to two `headers` entries with `name` and device-obfuscated `value_obf`. Version 2 configurations retain their URL and opt-ins; the hosted default maps to CrossPoint and custom URLs to KOSync. The pre-v2 legacy-server migration remains separate. No EPUB cache layout changes.
+
+### EPUB explicit-dash wrapping
+
+Section cache version 96 (partial version `0xD1`) adds breakable, space-free token boundaries after visible hyphens and dashes. Both complete and suspended caches from earlier versions rebuild automatically.
+
+Section cache version 97 (partial version `0xD2`) prevents justification from stretching boundaries inside hyphenated words. Complete and suspended layouts from earlier versions rebuild automatically; the binary payload is unchanged.

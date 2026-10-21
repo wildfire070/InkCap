@@ -19,9 +19,14 @@ int main(int argc, char** argv) {
   const uint64_t generation = argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 0;
   I18N.begin(code, generation);
   if (std::strcmp(argv[1], "boot") == 0) {
-    if (HalStorage::opens || HalFile::reads) return 3;
+    // SD-backed cache reads happen only at boot. Lookups must never do I/O.
+    // Startup may probe and open the SD image once each, regardless of chunk
+    // count. Both language mappings must release the shared reader on return.
+    if (HalFile::liveFiles || HalStorage::opens > 2) return 3;
+    const auto bootOpens = HalStorage::opens;
+    const auto bootReads = HalFile::reads;
     for (int i = 0; i < 10000; ++i) (void)I18N.get(StrId::STR_SETTINGS_TITLE);
-    if (HalStorage::opens || HalFile::reads) return 4;
+    if (HalStorage::opens != bootOpens || HalFile::reads != bootReads) return 4;
     std::printf("%s|%s|%s|%u\n", I18N.getCode(), I18N.getName(), tr(STR_SETTINGS_TITLE), I18N.isRightToLeft());
     I18N.benchmark();
   } else if (std::strcmp(argv[1], "lookup") == 0) {

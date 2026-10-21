@@ -1,6 +1,6 @@
 #pragma once
 
-#include <HalFlashPartition.h>
+#include <AssetCacheStorage.h>
 #include <I18nKeys.h>
 #include <LanguageCache.h>
 
@@ -89,8 +89,8 @@ class I18n {
   I18n();
   void selectBuiltin(Language language);
   LangStrings builtin_;
-  HalFlashPartition flash_;
-  HalFlashPartition::Mapping mapping_;
+  AssetCacheStorage flash_;
+  AssetCacheStorage::Mapping mapping_;
   language_cache::Metadata active_;
   const uint8_t* activeData_ = nullptr;
 #if defined(CROSSINK_LANGUAGE_BACKEND_PSRAM)

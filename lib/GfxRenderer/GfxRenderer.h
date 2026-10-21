@@ -191,7 +191,8 @@ class GfxRenderer {
   void clearSdCardFonts() { sdCardFonts_.clear(); }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
-  // Only filename/book metadata surfaces opt into these composite UI fonts.
+  // Shared UI families fill missing characters; legacy metadata aliases use
+  // the same composites. Clear all borrowed pointers before releasing faces.
   int filenameFontId(int primaryFontId) const;
   bool setFilenameFallback(int primaryFontId, int compositeFontId, const EpdFont* regular, const EpdFont* bold);
   void clearFilenameFallbacks();

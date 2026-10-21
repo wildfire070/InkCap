@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include "CrossPointSettings.h"
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
@@ -72,6 +73,10 @@ FrontlightPanelActivity::FrontlightPanelActivity(GfxRenderer& renderer, MappedIn
 
 void FrontlightPanelActivity::onEnter() {
   Activity::onEnter();
+  if (context.activeReaderBook) {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
 
   // The HAL is the live source of truth; SETTINGS only mirrors it for boot.
   brightness = Frontlight.brightness();
@@ -428,11 +433,12 @@ void FrontlightPanelActivity::prepareReaderDetailsLayout() {
   const auto tokens = uiThemeTokens(uiTarget);
   const int16_t sideInset = static_cast<int16_t>(tokens.spaceLg * 2);
   const int width = std::max<int>(1, renderer.getScreenWidth() - sideInset * 2);
-  readerTitleLines =
-      renderer.wrappedText(UI_12_FONT_ID, context.bookDetails.title.c_str(), width, 2, EpdFontFamily::BOLD);
+  readerTitleLines = renderer.wrappedText(renderer.filenameFontId(uiScaleSpec().titleFontId),
+                                          context.bookDetails.title.c_str(), width, 2, EpdFontFamily::BOLD);
 }
 
 void FrontlightPanelActivity::drawReaderDetails(fui::Screen<20>& screen) {
+  FilenameUiFontScope fonts(uiTarget, renderer);
   const auto& theme = screen.theme();
   const fui::Insets sideInset{0, static_cast<int16_t>(theme.spaceLg * 2), 0, static_cast<int16_t>(theme.spaceLg * 2)};
   screen.spacer(static_cast<int16_t>(theme.spaceLg * 2));
@@ -452,8 +458,8 @@ void FrontlightPanelActivity::drawReaderDetails(fui::Screen<20>& screen) {
   body.align = fui::TextAlign::Center;
   const int16_t bodyLh = screen.target().lineHeight(body.font);
   if (subtitle[0] != '\0') {
-    const std::string visible =
-        renderer.truncatedText(UI_10_FONT_ID, subtitle, screen.body().width - sideInset.left - sideInset.right);
+    const std::string visible = renderer.truncatedText(renderer.filenameFontId(uiScaleSpec().bodyFontId), subtitle,
+                                                       screen.body().width - sideInset.left - sideInset.right);
     screen.target().text(screen.takeTop(bodyLh, theme.spaceLg).inset(sideInset), visible.c_str(), body);
   }
 
@@ -566,7 +572,7 @@ void FrontlightPanelActivity::drawHeader() {
     titleFontId = UI_10_FONT_ID;
   } else if (context.activeReaderBook && !context.bookTitle.empty()) {
     title = context.bookTitle.c_str();
-    titleFontId = UI_10_FONT_ID;
+    titleFontId = renderer.filenameFontId(UI_10_FONT_ID);
   } else if (formatHeaderDateText(date, sizeof(date))) {
     title = date;
     titleFontId = UI_10_FONT_ID;
