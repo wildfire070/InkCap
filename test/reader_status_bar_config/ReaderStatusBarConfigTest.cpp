@@ -439,3 +439,26 @@ TEST(ReaderStatusBarConfig, DisplaySlotsKeepBatteryStyle) {
   EXPECT_EQ(display.batteryStyle, ReaderStatusBarBatteryStyle::PercentOnly);
   EXPECT_EQ(display.asReaderConfig().batteryStyle, ReaderStatusBarBatteryStyle::PercentOnly);
 }
+
+TEST(ReaderStatusBarConfig, ChapterPercentageKeepsSavedItemIdsAndRoundTripsBothBars) {
+  EXPECT_EQ(static_cast<int>(ReaderStatusBarItem::BookProgressPercentage), 7);
+  EXPECT_EQ(static_cast<int>(ReaderStatusBarItem::Date), 10);
+  const auto item = ReaderStatusBarItem::ChapterProgressPercentage;
+  EXPECT_TRUE(validReaderStatusBarItemValue(static_cast<int>(item), false));
+  EXPECT_FALSE(validDisplayStatusBarItemValue(static_cast<int>(item), true));
+  ReaderStatusBarsPayload outgoing;
+  outgoing.top.slots[0] = item;
+  outgoing.bottom.slots[6] = item;
+  outgoing.top.percentageFormat = 2;
+  outgoing.bottom.percentageFormat = 1;
+  JsonDocument saved;
+  writeReaderStatusBarJson(saved["top"].to<JsonObject>(), outgoing.top);
+  writeReaderStatusBarJson(saved["bottom"].to<JsonObject>(), outgoing.bottom);
+  saved["xtcMode"] = 3;
+  ReaderStatusBarsPayload loaded;
+  ASSERT_TRUE(readReaderStatusBarsPayload(saved.as<JsonVariantConst>(), loaded, false, 3, 3, 3, 4));
+  EXPECT_EQ(loaded.top.slots, outgoing.top.slots);
+  EXPECT_EQ(loaded.bottom.slots, outgoing.bottom.slots);
+  EXPECT_EQ(loaded.top.percentageFormat, 2);
+  EXPECT_EQ(loaded.bottom.percentageFormat, 1);
+}

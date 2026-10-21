@@ -82,9 +82,9 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
   // otherwise be silently dropped (e.g. Sticky).
   esp_rom_printf("%s", buf);
 #else
-  if (logSerial) {
-    logSerial.print(buf);
-  }
+  // HWCDC can briefly report disconnected at the low-power clock. Writing
+  // still queues the log and re-arms transmission after that transient.
+  logSerial.print(buf);
 #endif
   addToLogRingBuffer(buf);
 }

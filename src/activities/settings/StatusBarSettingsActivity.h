@@ -34,6 +34,7 @@ class StatusBarSettingsActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  bool allowGlobalHomeSwipeGesture() const override { return !optionPopup.isActive(); }
   bool handleHomeGesture() override;
 
  private:

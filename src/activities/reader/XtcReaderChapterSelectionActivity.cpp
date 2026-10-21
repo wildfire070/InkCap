@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -40,6 +41,10 @@ int XtcReaderChapterSelectionActivity::findChapterIndexForPage(const uint32_t pa
 
 void XtcReaderChapterSelectionActivity::onEnter() {
   Activity::onEnter();
+  {
+    RenderLock lock(*this);
+    filenameFontSystem.ensureLoaded(renderer);
+  }
   ignoreInitialUpRelease = mappedInput.isPhysicalPressed(MappedInputManager::Button::Up);
   ignoreInitialDownRelease = mappedInput.isPhysicalPressed(MappedInputManager::Button::Down);
   mappedInput.setReaderTouchscreenOverride(true);
@@ -153,6 +158,7 @@ void XtcReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& sc
     screen.centeredText(tr(STR_NO_CHAPTERS), screen.theme().bodyText);
     return;
   }
+  FilenameUiFontScope fonts(uiTarget, renderer);
   fui::ListProps props;
   props.labelText = screen.theme().bodyText;
   // screen.list() would otherwise also draw its own default-styled scroll

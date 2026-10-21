@@ -17,10 +17,11 @@ let allSettings = [];
 
   function showMessage(text, isError) {
     const msg = document.getElementById('message');
+    clearTimeout(msg.hideTimer);
     msg.textContent = text;
     msg.className = 'message ' + (isError ? 'error' : 'success');
     msg.style.display = 'block';
-    setTimeout(function() { msg.style.display = 'none'; }, 4000);
+    msg.hideTimer = setTimeout(function() { msg.style.display = 'none'; }, 4000);
   }
 
   function renderControl(setting) {
@@ -402,7 +403,8 @@ let allSettings = [];
     }
     const battery = ['\u25AD 85%', '\u25AD', '85%'][bar.battery] || '85%';
     const examples = ['', '10:30', battery, '2h 15m', '12m', '4/12', '27',
-      (64.12).toFixed(bar.percentageFormat) + '%', 'Book title', 'Chapter title', statusBars.datePreview];
+      (64.12).toFixed(bar.percentageFormat) + '%', 'Book title', 'Chapter title', statusBars.datePreview,
+      (35.25).toFixed(bar.percentageFormat) + '%'];
     const slot = function(index) { return escapeHtml(examples[bar.slots[index]] || ''); };
     const right = [4, 5, 6].map(slot).filter(Boolean).join(' &nbsp; ');
     const progressValue = bar.progressBar === 0 ? 64 : 35;

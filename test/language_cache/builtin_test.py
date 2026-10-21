@@ -37,10 +37,10 @@ with tempfile.TemporaryDirectory(prefix="crossink-builtins-") as temporary:
         binary = build / "i18n"
         subprocess.run([os.environ.get("CXX", "c++"), "-std=c++20", "-DSIMULATOR", "-Wall", "-Wextra", "-Werror",
                         *["-I" + str(p) for p in [root / "test/language_cache/stubs", build, root / "lib/I18n",
-                          root / "lib/LanguageCache", root / "lib/HalFlashPartition", root / "lib/Memory"]],
+                          root / "lib/LanguageCache", root / "lib/AssetCacheStorage", root / "lib/HalFlashPartition", root / "lib/Memory"]],
                         str(root / "test/language_cache/I18nIntegrationTool.cpp"), str(root / "lib/I18n/I18n.cpp"),
                         str(build / "I18nStrings.cpp"), str(root / "lib/LanguageCache/LanguageCache.cpp"),
-                        str(root / "lib/HalFlashPartition/HalFlashPartition.cpp"), "-o", str(binary)],
+                        str(root / "lib/AssetCacheStorage/AssetCacheStorage.cpp"), str(root / "lib/HalFlashPartition/HalFlashPartition.cpp"), "-o", str(binary)],
                        check=True, capture_output=True)
         sd = build / "sd/.crosspoint/languages"
         sd.mkdir(parents=True)

@@ -14,7 +14,7 @@ class AboutActivity final : public Activity {
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool allowGlobalHomeSwipeGesture() const override { return false; }
+  bool allowGlobalHomeSwipeGesture() const override { return !scopePopup.isActive(); }
 #ifdef SIMULATOR
   int simulatorVisibleRows() const { return visibleRows; }
   int simulatorRowCount() const;

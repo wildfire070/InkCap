@@ -26,7 +26,6 @@ class ReleaseNotesActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool allowGlobalHomeSwipeGesture() const override { return false; }
 
 #ifdef SIMULATOR
   bool simulatorUpdateOffered() const { return updateOffered; }

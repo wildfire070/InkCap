@@ -12,6 +12,10 @@ bool read(uint32_t day, Counter& counter);
 bool write(uint32_t day, const Counter& counter);
 bool record(uint32_t day, uint32_t seconds);
 bool flush();
+// Streams cumulative daily totals; acknowledges only successful callbacks. No file stays open during upload.
+bool uploadPending(bool (*upload)(void*, uint32_t day, uint32_t seconds), void* context);
+// Call after successful sync. Keeps current/previous/future months and any unsynced or uncertain data.
+bool pruneSyncedMonths(const ReadingStatsDate& today);
 // Seconds for one day, including accepted seconds not yet checkpointed to SD.
 bool secondsFor(uint32_t day, uint32_t& seconds);
 

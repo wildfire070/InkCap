@@ -133,6 +133,7 @@ add_test(NAME WebDavGetRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_webdav_get.py)
 add_test(NAME ImageProbeFramebufferRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_image_probe_framebuffer.py)
+add_subdirectory(asset_cache_storage)
 add_subdirectory(language_cache)
 add_subdirectory(hyphenation_pack)
 add_test(NAME UploadFailureRegression
@@ -150,3 +151,7 @@ add_subdirectory(asset_catalog)
 add_subdirectory(asset_download)
 add_subdirectory(asset_companion_index)
 add_subdirectory(asset_companion_store)
+
+add_subdirectory(http_header)
+
+add_subdirectory(swipe_delete)
