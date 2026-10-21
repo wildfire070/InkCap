@@ -1639,21 +1639,43 @@ void ChapterHtmlSlimParser::finalizePendingCloseBorderBoxes() {
   }
 }
 
-// Resolves a block's CSS font-size (if any) to a real font resource via
-// fontSizeLadder_, once per block. Deliberately does NOT implement residual
-// glyph scaling (GfxRenderer has no scaled-text-rendering primitive at all
-// today; see the block-level-only note in FontSizeLadder.h) -- when the
-// nearest rung isn't a real match (ladder empty, or too far from the
-// requested size to matter) or the chapter's one auxiliary font slot is
-// already claimed by an earlier, differently-sized block, blockStyle.headingFontId
-// simply stays 0 (render with the body font, no visual change) rather than
-// approximating via scaling. See FontDecompressor::MAX_PAGE_SLOTS=4 for why
-// only one non-body font can be resident per chapter (body regular/bold/
-// italic + one auxiliary is exactly that budget).
+// Resolves a block's CSS font-size (if any) to a real font resource, once per
+// block.
+//
+// Scalable builds pre-register every point size at boot (see
+// ensureScalableBuiltinFamily in ScalableBuiltins.cpp) -- every size from
+// ScalableContentMinPointSize to ScalableContentMaxPointSize is already a
+// resident, real font resource, so there is no "only one non-body font can
+// be resident" memory budget to respect for them (that constraint is about
+// FontDecompressor's glyph-bitmap cache, the legacy embedded-bitmap-font
+// path below, which genuinely only holds body regular/bold/italic + one
+// auxiliary page at a time -- see FontDecompressor::MAX_PAGE_SLOTS). So for
+// scalable builds, request the CSS-exact size directly instead of snapping
+// to the ladder's 4 fixed rungs, which could silently under/oversize a
+// heading (e.g. font-size:150% against a 14pt body snapped to the nearest
+// rung, 16pt/~114%, instead of the true 150%/21pt).
+//
+// Legacy (non-scalable) builds keep the ladder: only 4 bitmap sizes are
+// physically pre-rendered, and FontDecompressor's page-slot budget means
+// only one of them can be resident alongside the body font per chapter.
 void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
   if (blockStyle.fontResolved) return;
   blockStyle.fontResolved = true;
   if (blockStyle.fontSizeMultiplier == 1.0f) return;
+
+#if CROSSINK_SCALABLE_FONTS
+  const uint8_t basePoints = renderer.getFontPointSize(fontId);
+  if (basePoints) {
+    const uint8_t desiredPoints = static_cast<uint8_t>(
+        std::clamp(std::lround(basePoints * blockStyle.fontSizeMultiplier),
+                   long(ScalableContentMinPointSize), long(ScalableContentMaxPointSize)));
+    const int exact = renderer.getFontIdForSize(fontId, desiredPoints);
+    if (exact != fontId) {
+      blockStyle.headingFontId = exact;
+      return;
+    }
+  }
+#endif
 
   const FontSizeLadder::Resolved resolved = fontSizeLadder_.resolve(blockStyle.fontSizeMultiplier * 100.0f);
   if (resolved.fontId == 0) {
