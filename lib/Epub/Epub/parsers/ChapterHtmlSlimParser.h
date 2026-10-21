@@ -302,7 +302,12 @@ class ChapterHtmlSlimParser {
   std::array<BoxScope, MAX_BOX_SCOPES> boxScopes{};
   size_t boxScopeCount = 0;
   void noteContent(int top, int bottom);
-  void openBoxScope(BlockStyle& style, const CssStyle& css);
+  // Returns true iff a BoxScope was actually pushed AND it included a CSS border (not just
+  // shading) -- i.e. this element's border has already been taken over by the publisher-styling
+  // box mechanism (PageBorderBox), so beginCssBorderBoxIfNeeded's own, independent CSS-border
+  // mechanism (PageCssBorderBox) must skip it to avoid drawing two overlapping boxes for the same
+  // element. See beginCssBorderBoxIfNeeded's doc comment for the other half of this.
+  bool openBoxScope(BlockStyle& style, const CssStyle& css);
   void closeBoxScope();
   void emitBoxSegment(const BoxScope& box, bool closing);
   static constexpr size_t MAX_DROP_CAP_BYTES = 12;

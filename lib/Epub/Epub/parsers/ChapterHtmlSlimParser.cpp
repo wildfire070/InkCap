@@ -727,17 +727,18 @@ void ChapterHtmlSlimParser::noteContent(const int top, const int bottom) {
   }
 }
 
-void ChapterHtmlSlimParser::openBoxScope(BlockStyle& ownStyle, const CssStyle& cssStyle) {
-  if (!embeddedStyle || !honorsPublisherDecorations()) return;
+bool ChapterHtmlSlimParser::openBoxScope(BlockStyle& ownStyle, const CssStyle& cssStyle) {
+  if (!embeddedStyle || !honorsPublisherDecorations()) return false;
   const bool shaded = cssStyle.defined.shaded && cssStyle.shaded;
-  if (tableDepth > 0 || boxScopeCount >= MAX_BOX_SCOPES || (!cssStyle.hasVisibleBorder() && !shaded)) return;
+  const bool hasBorder = cssStyle.hasVisibleBorder();
+  if (tableDepth > 0 || boxScopeCount >= MAX_BOX_SCOPES || (!hasBorder && !shaded)) return false;
 
   if (partWordBufferIndex) flushPartWordBuffer();
   if (currentTextBlock && !currentTextBlock->isEmpty()) {
     makePages();
     currentTextBlock.reset();
   }
-  if (lowMemoryAbort) return;
+  if (lowMemoryAbort) return false;
   BoxScope box;
   box.depth = depth;
   box.shaded = shaded;
@@ -749,7 +750,7 @@ void ChapterHtmlSlimParser::openBoxScope(BlockStyle& ownStyle, const CssStyle& c
   const BlockStyle& parent = blockStyleBuf_[blockStyleCount_ - 1];
   box.left = static_cast<int16_t>(parent.leftInset() + ownStyle.marginLeft);
   box.right = static_cast<int16_t>(viewportWidth - parent.rightInset() - ownStyle.marginRight);
-  if (box.right - box.left < 8) return;
+  if (box.right - box.left < 8) return false;
 
   // The border sits between margin and padding, so it joins the padding. Text also
   // keeps a small gap from the frame even when the book sets no padding.
@@ -765,6 +766,7 @@ void ChapterHtmlSlimParser::openBoxScope(BlockStyle& ownStyle, const CssStyle& c
   box.padTop = ownStyle.paddingTop;
   box.padBottom = ownStyle.paddingBottom;
   boxScopes[boxScopeCount++] = box;
+  return hasBorder;
 }
 
 void ChapterHtmlSlimParser::closeBoxScope() {
@@ -1566,6 +1568,15 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle, con
 // is already at MAX_BORDER_BOX_DEPTH (an overflow here just means the
 // block's border is silently skipped, not a correctness bug -- borders are
 // decorative).
+//
+// Every call site must skip this when openBoxScope() already drew the same
+// border via its own, independent PageBorderBox mechanism (its return value
+// says so) -- both this function and openBoxScope key off the exact same CSS
+// `border` property, and openBoxScope is active by default (any non-Light
+// reading mode), so without that guard every bordered element renders two
+// overlapping boxes. This one remains the sole renderer for the cases
+// openBoxScope doesn't reach (Light mode, a box too narrow to draw, a table
+// cell, or the BoxScope stack already full).
 void ChapterHtmlSlimParser::beginCssBorderBoxIfNeeded(const BlockStyle& blockStyle) {
   if (!blockStyle.borderTop && !blockStyle.borderRight && !blockStyle.borderBottom && !blockStyle.borderLeft) {
     return;
@@ -3774,7 +3785,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (!self->embeddedStyle || self->isLightMode()) {
       stripPublisherSpacing(headerBlockStyle);
     }
-    self->openBoxScope(headerBlockStyle, cssStyle);
+    const bool publisherBorderDrawn = self->openBoxScope(headerBlockStyle, cssStyle);
     auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
         headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
     self->resolveBlockFont(accumulated);
@@ -3785,7 +3796,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       LOG_ERR("EHP", "block style stack overflow (header)");
     }
     self->startNewTextBlock(accumulated.withoutBottom());
-    self->beginCssBorderBoxIfNeeded(accumulated);
+    if (!publisherBorderDrawn) self->beginCssBorderBoxIfNeeded(accumulated);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
   } else if ((matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS)) || strcmp(name, "caption") == 0) &&
@@ -3823,7 +3834,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         self->floatDepth_++;
       }
       self->currentCssStyle = cssStyle;
-      self->openBoxScope(userAlignmentBlockStyle, cssStyle);
+      const bool publisherBorderDrawn = self->openBoxScope(userAlignmentBlockStyle, cssStyle);
       auto accumulated = self->blockStyleBuf_[self->blockStyleCount_ - 1].getCombinedBlockStyle(
           userAlignmentBlockStyle, BlockStyle::CombineAxis::Horizontal);
       accumulated.hrSectDivider = hasClassToken(classAttr, "hr-sect");
@@ -3846,7 +3857,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       } else {
         self->startNewTextBlock(accumulated.withoutBottom());
       }
-      self->beginCssBorderBoxIfNeeded(accumulated);
+      if (!publisherBorderDrawn) self->beginCssBorderBoxIfNeeded(accumulated);
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
