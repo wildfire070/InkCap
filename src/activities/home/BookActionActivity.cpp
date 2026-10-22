@@ -15,6 +15,7 @@
 #include "../util/ConfirmationActivity.h"
 #include "Ao3IndexActivity.h"
 #include "BookActions.h"
+#include "CrossPointState.h"
 
 BookActionActivity::BookActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string filePath,
                                        std::string fileName)
@@ -180,12 +181,17 @@ void BookActionActivity::loop() {
               bookIsArchived = false;
               wasRestored = true;
             } else {
-              char body[256];
-              snprintf(body, sizeof(body), tr(STR_RESTORE_FAILED_BODY), fileName.c_str());
-              startActivityForResult(
-                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_FAILED_TITLE), body),
-                  [this](const ActivityResult&) { requestUpdate(true); });
-              return;
+              // AlertActivity (via the pendingAlert flags) rather than another ConfirmationActivity --
+              // this is a pure error notice with nothing to confirm, and ActivityManager already shows
+              // it the same way for every other archive/restore failure (see
+              // EpubReaderActivity.cpp's showArchiveMoveFailedAlert(), which can't be reused directly:
+              // it's file-local to that activity, not declared in any shared header).
+              snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+                       tr(STR_RESTORE_FAILED_TITLE));
+              snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_RESTORE_FAILED_BODY),
+                       fileName.c_str());
+              APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+              APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
             }
           }
           requestUpdate(true);
