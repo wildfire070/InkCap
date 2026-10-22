@@ -4,6 +4,8 @@
 #include <HalStorage.h>
 #include <I18n.h>
 
+#include <cstdio>
+
 #include "../../Ao3Librarian.h"
 #include "../../Ao3MarkedForLaterStore.h"
 #include "../../components/TouchHeaderBackButton.h"
@@ -123,24 +125,33 @@ void BookActionActivity::loop() {
       currentStatus = static_cast<BookStatus>(s);
       requestUpdate(true);
     } else if (selectorIndex == 1) {
-      // Launch Ao3IndexActivity in SINGLE mode
-      saveStatusIfModified();
-      auto handler = [this](const ActivityResult& res) {
-        if (const auto* indexRes = std::get_if<Ao3IndexResult>(&res.data)) {
-          if (indexRes->successfullyIndexed) {
-            BookActionResult result;
-            result.modified = true;
-            result.newStatus = currentStatus;
-            result.indexingCompleted = true;
-            setResult(ActivityResult(std::move(result)));
-            finish();
-            return;
-          }
-        }
+      if (bookIsArchived) {
+        // Reindexing an archived fic would write a live CompactIndexRecord for a path
+        // Ao3ArchiveUtils deliberately keeps un-indexed (see its isArchived() comment) --
+        // block it here rather than relying solely on Ao3Librarian::scrape()'s own guard.
+        RenderLock lock(*this);
+        BookActions::drawToast(renderer, "Can't reindex an archived book");
         requestUpdate(true);
-      };
-      startActivityForResult(std::make_unique<Ao3IndexActivity>(renderer, mappedInput, Ao3IndexMode::SINGLE, filePath),
-                             handler);
+      } else {
+        // Launch Ao3IndexActivity in SINGLE mode
+        saveStatusIfModified();
+        auto handler = [this](const ActivityResult& res) {
+          if (const auto* indexRes = std::get_if<Ao3IndexResult>(&res.data)) {
+            if (indexRes->successfullyIndexed) {
+              BookActionResult result;
+              result.modified = true;
+              result.newStatus = currentStatus;
+              result.indexingCompleted = true;
+              setResult(ActivityResult(std::move(result)));
+              finish();
+              return;
+            }
+          }
+          requestUpdate(true);
+        };
+        startActivityForResult(
+            std::make_unique<Ao3IndexActivity>(renderer, mappedInput, Ao3IndexMode::SINGLE, filePath), handler);
+      }
     } else if (selectorIndex == 2) {
       if (AO3_MARKED_FOR_LATER_STORE.contains(filePath)) {
         AO3_MARKED_FOR_LATER_STORE.removeByPath(filePath);
@@ -168,6 +179,13 @@ void BookActionActivity::loop() {
               filePath = restoredPath;
               bookIsArchived = false;
               wasRestored = true;
+            } else {
+              char body[256];
+              snprintf(body, sizeof(body), tr(STR_RESTORE_FAILED_BODY), fileName.c_str());
+              startActivityForResult(
+                  std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_FAILED_TITLE), body),
+                  [this](const ActivityResult&) { requestUpdate(true); });
+              return;
             }
           }
           requestUpdate(true);
