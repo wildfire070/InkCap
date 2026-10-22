@@ -8,7 +8,7 @@
 #include <Serialization.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 
-#include "util/Ao3ArchiveUtils.h"
+#include "util/BookMoveUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -962,10 +962,20 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
   // Archived fics are intentionally left out of the index -- Ao3ArchiveUtils::isArchived()
   // defines "archived" as "has a valid sidecar but no live index record", and restoreFic()
   // relies on that staying true. Writing a fresh CompactIndexRecord here (as a normal scrape
-  // would) breaks that invariant with no conflict/error to signal it. Return true (not an
-  // error) so callers -- explicit Reindex, background auto-index scans -- don't surface this
-  // as a failure.
-  if (Ao3ArchiveUtils::isArchived(epub.getPath())) return true;
+  // would) breaks that invariant with no conflict/error to signal it.
+  //
+  // Deliberately checking physical location (cheap, non-allocating) rather than calling
+  // isArchived() itself (an O(index-size) scan) here: scrape() runs in BATCH-index hot loops
+  // over every file in the AO3 folder, so isArchived()'s cost would turn a full-library
+  // reindex into O(n^2). It would also be WRONG here, not just slow -- restoreFic() moves a
+  // fic OUT of ARCHIVE_FOLDER and then calls scrape(force=true) on it to recreate its live
+  // record, at a moment when isArchived() is still transiently true (sidecar restored, live
+  // record not written yet). isInArchiveFolder() correctly reads false there (the file has
+  // already moved out), letting that call through, while still catching the actual
+  // guard target: a fic sitting untouched in ARCHIVE_FOLDER. Return true (not an error) so
+  // callers -- explicit Reindex, background auto-index scans -- don't surface this as a
+  // failure.
+  if (BookMoveUtils::isInArchiveFolder(epub.getPath())) return true;
 
   const std::string infoPath = epub.getCachePath() + "/ao3_library_info";
 
