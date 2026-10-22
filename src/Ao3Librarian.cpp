@@ -8,6 +8,8 @@
 #include <Serialization.h>
 #include <ZipFile.h>  // ZipFile::fnvHash64 — must match the epub cache dir naming
 
+#include "util/Ao3ArchiveUtils.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -957,6 +959,14 @@ uint32_t Ao3Librarian::estimateWordCount(const Epub& epub) {
 }
 
 bool Ao3Librarian::scrape(const Epub& epub, bool force) {
+  // Archived fics are intentionally left out of the index -- Ao3ArchiveUtils::isArchived()
+  // defines "archived" as "has a valid sidecar but no live index record", and restoreFic()
+  // relies on that staying true. Writing a fresh CompactIndexRecord here (as a normal scrape
+  // would) breaks that invariant with no conflict/error to signal it. Return true (not an
+  // error) so callers -- explicit Reindex, background auto-index scans -- don't surface this
+  // as a failure.
+  if (Ao3ArchiveUtils::isArchived(epub.getPath())) return true;
+
   const std::string infoPath = epub.getCachePath() + "/ao3_library_info";
 
   if (!force && Storage.exists(infoPath.c_str())) {
