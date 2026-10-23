@@ -2825,9 +2825,14 @@ void HomeActivity::render(RenderLock&&) {
   // Only Dashboard's override reads the context, and Dashboard never reaches
   // this branch (it goes through usesMinimalHomeInteraction() instead), so
   // the default (empty) context is enough here.
-  const auto companion = GUI.getHomeCompanionLayout(renderer, menuRect, coverRect, static_cast<int>(menuItems.size()),
-                                                    labelAt, pageHeight - metrics.buttonHintsHeight,
-                                                    HomeCompanionContext{});
+  // Skipped (default-constructed, zero width) when the companion won't actually be
+  // drawn: narrowing menuRect for a companion that drawCompanion() then declines to
+  // draw shrank the menu's touch zone to a dead strip nothing visible marked off.
+  const auto companion = (SETTINGS.companionEnabled && SETTINGS.companionOnHome)
+                             ? GUI.getHomeCompanionLayout(renderer, menuRect, coverRect,
+                                                          static_cast<int>(menuItems.size()), labelAt,
+                                                          pageHeight - metrics.buttonHintsHeight, HomeCompanionContext{})
+                             : HomeCompanionLayout{};
   if (companion.menuWidth > 0) menuRect.width = companion.menuWidth;
   companionMenuWidth = menuRect.width;
 
