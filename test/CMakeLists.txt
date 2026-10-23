@@ -156,3 +156,5 @@ add_subdirectory(asset_companion_store)
 add_subdirectory(http_header)
 
 add_subdirectory(swipe_delete)
+
+add_subdirectory(cover_tone_curve)
