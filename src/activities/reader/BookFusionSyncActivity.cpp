@@ -359,15 +359,18 @@ void BookFusionSyncActivity::loop() {
   }
 
   if (state == NO_BOOK_LINK || state == SYNC_FAILED) {
+    const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+        TouchHeaderBackButton::wasTapped(mappedInput, header)) {
       returnToReader();
     }
     return;
   }
 
   if (state == SHOWING_RESULT) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || TouchHeaderBackButton::wasTapped(mappedInput, header)) {
       returnToReader();
       return;
     }
@@ -391,11 +394,13 @@ void BookFusionSyncActivity::loop() {
 void BookFusionSyncActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
-  const Rect header{0, metrics.topPadding, pageWidth, TouchHeaderBackButton::height(metrics, mappedInput)};
-  GUI.drawHeader(renderer, header, tr(STR_BF_SYNC));
+  const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+  if (mappedInput.hasTouchHardware()) {
+    TouchHeaderBackButton::draw(renderer, header, tr(STR_BF_SYNC), true);
+  } else {
+    GUI.drawHeader(renderer, header, tr(STR_BF_SYNC));
+  }
 
   const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
   const int top = (pageHeight - lineH) / 2;
