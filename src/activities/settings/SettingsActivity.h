@@ -24,6 +24,7 @@ enum class SettingAction {
   RemapFrontButtonsReader,
   CustomiseStatusBar,
   DisplayStatusBar,
+  CustomiseReaderMenu,
   ScreenCalibration,
   KOReaderSync,
   OPDSBrowser,
@@ -230,7 +231,7 @@ inline std::string settingEnumOptionLabel(const SettingInfo& setting, const uint
 inline bool settingShowsNavigationCaret(const SettingInfo& setting) {
   return setting.type == SettingType::SUBMENU || setting.action == SettingAction::CustomiseStatusBar ||
          setting.action == SettingAction::DisplayStatusBar || setting.action == SettingAction::QuickActions ||
-         setting.action == SettingAction::TtfRendering;
+         setting.action == SettingAction::TtfRendering || setting.action == SettingAction::CustomiseReaderMenu;
 }
 
 class SettingsActivity final : public Activity {

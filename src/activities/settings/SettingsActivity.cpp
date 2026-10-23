@@ -40,6 +40,7 @@
 #include "OpdsServerListActivity.h"
 #include "QuickActions.h"
 #include "QuickActionsActivity.h"
+#include "ReaderMenuVisibilityActivity.h"
 #include "ReleaseNotesActivity.h"
 #include "ScreenCalibrationActivity.h"
 #include "SdCardFontSystem.h"
@@ -1529,6 +1530,9 @@ void SettingsActivity::toggleCurrentSetting() {
       }
       case SettingAction::CustomiseStatusBar:
         startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::CustomiseReaderMenu:
+        startActivityForResult(std::make_unique<ReaderMenuVisibilityActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::KOReaderSync:
         startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);

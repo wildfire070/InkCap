@@ -730,6 +730,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char filenameFallbackFont[64] = "";  // Folder name under /.crosspoint/languages/fonts; empty disables fallback.
   char languageCode[32] = "EN";        // Preferred identity survives temporary English fallback.
   uint64_t languageCacheGeneration = 0;
+  // Per-item veto over the reader drawer's More/Location/Settings tabs (Font/Layout tab items
+  // are always shown -- those are settings pickers, not optional menu actions). 1 bit per
+  // ReaderDrawerCatalogItem, indexed by readerDrawerItemVisibilityBit() in
+  // EpubReaderMenuModel.h; 0 = visible. Every bit defaults to 0 (visible), including ones no
+  // item claims yet, so a row added in a later firmware needs no migration to stay visible.
+  uint64_t readerMenuHiddenRows = 0;
   // Enabled keyboard layouts. Zero derives a default from the UI language;
   // non-zero bits follow KeyboardLayoutSet::ALL table order.
   uint16_t keyboardLayouts = 0;

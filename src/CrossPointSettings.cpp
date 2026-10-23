@@ -523,6 +523,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["filenameFallbackFont"] = filenameFallbackFont;
   doc["language"] = languageCode;
   doc["languageCacheGeneration"] = languageCacheGeneration;
+  if (readerMenuHiddenRows != 0) doc["readerMenuHiddenRows"] = readerMenuHiddenRows;
   if (keyboardLayouts != 0) doc["keyboardLayouts"] = keyboardLayouts;
   doc["tiltPageTurnDirectionSchema"] = TILT_DIRECTION_SCHEMA_CURRENT;
   doc["clockDateHasBeenSynced"] = clockDateHasBeenSynced;
@@ -962,6 +963,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc, bool importingCrossPoint
     if (legacy < getLanguageCount()) std::strcpy(languageCode, LANGUAGE_CODES[legacy]);
   }
   languageCacheGeneration = doc["languageCacheGeneration"] | uint64_t{0};
+  readerMenuHiddenRows = doc["readerMenuHiddenRows"] | uint64_t{0};
   const char* filenameFont = doc["filenameFallbackFont"] | "";
   if (std::strlen(filenameFont) < sizeof(filenameFallbackFont) && !std::strchr(filenameFont, '/') &&
       !std::strchr(filenameFont, '\\') && std::strcmp(filenameFont, ".") != 0 && std::strcmp(filenameFont, "..") != 0) {
