@@ -16,6 +16,10 @@ struct Bookmark {
   // Optional 1-based paragraph anchor from the section cache. UINT16_MAX means unavailable.
   uint16_t paragraphIndex = UINT16_MAX;
   char snippet[BOOKMARK_SNIPPET_MAX] = {};
+  // BookFusion's id for this bookmark once pushed (POST /api/v2/library/books/{id}/bookmarks);
+  // 0 means never pushed. BookFusion has no delete/rename endpoint for bookmarks, so this is
+  // write-once per bookmark -- removing the bookmark locally does not reach the server.
+  uint32_t bookFusionId = 0;
 };
 
 struct BookmarkedBookEntry {
@@ -59,6 +63,9 @@ class BookmarkStore {
   bool removeBookmarkAt(size_t index);
   bool hasBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount);
   const std::vector<Bookmark>& getBookmarks() const { return bookmarks; }
+  // Records the BookFusion id a push just created for an already-loaded bookmark. Marks the
+  // store dirty; caller still calls saveToFile() (matching every other mutator here).
+  bool setBookmarkFusionId(size_t index, uint32_t bookFusionId);
 
   // Flush to disk if dirty. Called automatically by add/remove; also call from reader onExit().
   void saveToFile();
