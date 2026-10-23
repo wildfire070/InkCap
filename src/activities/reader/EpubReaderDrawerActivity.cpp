@@ -512,7 +512,8 @@ void EpubReaderDrawerActivity::onEnter() {
 
   const ReaderDrawerCatalog catalog = makeReaderDrawerCatalog(
       {hasFootnotes, hasDictionary, hasBookmarks, hasClippings, showReadingPaceReset, stablePageCount > 0,
-       !mappedInput.hasTouchHardware(), isAo3Book, globalStatsEnabled, bookStatsEnabled});
+       !mappedInput.hasTouchHardware(), isAo3Book, globalStatsEnabled, bookStatsEnabled},
+      SETTINGS.readerMenuHiddenRows);
   for (size_t tab = 0; tab < rootRows.size(); ++tab) {
     rootRows[tab].reserve(catalog[tab].count);
     rootRows[tab].assign(catalog[tab].items.begin(), catalog[tab].items.begin() + catalog[tab].count);

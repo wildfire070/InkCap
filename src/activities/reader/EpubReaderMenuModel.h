@@ -196,8 +196,98 @@ struct ReaderDrawerTabCatalog {
 
 using ReaderDrawerCatalog = std::array<ReaderDrawerTabCatalog, READER_DRAWER_TAB_COUNT>;
 
-constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailability available) {
+// Stable bit index per hideable row, for CrossPointSettings::readerMenuHiddenRows. Only the
+// More/Location/Settings tabs' action rows are hideable -- Font/Layout tab items are settings
+// pickers, not optional menu actions, and are never gated here. -1 means "always shown".
+// Append new entries at the next free bit; never renumber or reuse one (an old settings.json
+// stores the raw bits). Bits 0-30 are shared with InkCap's non-AO3 catalog; CycleStatus is this
+// branch's own AO3-only addition, so it gets the next free bit (31) rather than one of those.
+constexpr int readerDrawerItemVisibilityBit(const ReaderDrawerCatalogItem item) {
+  switch (item) {
+    // More tab.
+    case ReaderDrawerCatalogItem::Lookup:
+      return 0;
+    case ReaderDrawerCatalogItem::LookupHistory:
+      return 1;
+    case ReaderDrawerCatalogItem::SelectChapter:
+      return 2;
+    case ReaderDrawerCatalogItem::GoToPercent:
+      return 3;
+    case ReaderDrawerCatalogItem::GoToStablePage:
+      return 4;
+    case ReaderDrawerCatalogItem::AutoPageTurn:
+      return 5;
+    case ReaderDrawerCatalogItem::ReadingStats:
+      return 6;
+    case ReaderDrawerCatalogItem::Footnotes:
+      return 7;
+    // Location tab.
+    case ReaderDrawerCatalogItem::BookmarkToggle:
+      return 8;
+    case ReaderDrawerCatalogItem::ViewBookmarks:
+      return 9;
+    case ReaderDrawerCatalogItem::DeleteBookmarks:
+      return 10;
+    case ReaderDrawerCatalogItem::SaveClipping:
+      return 11;
+    case ReaderDrawerCatalogItem::ViewClippings:
+      return 12;
+    case ReaderDrawerCatalogItem::SyncProgress:
+      return 13;
+    case ReaderDrawerCatalogItem::BookFusionSync:
+      return 14;
+    case ReaderDrawerCatalogItem::NearbyPositionSync:
+      return 15;
+    case ReaderDrawerCatalogItem::SendNearbyBook:
+      return 16;
+    case ReaderDrawerCatalogItem::Screenshot:
+      return 17;
+    case ReaderDrawerCatalogItem::DisplayQr:
+      return 18;
+    // Settings tab.
+    case ReaderDrawerCatalogItem::StatusBar:
+      return 19;
+    case ReaderDrawerCatalogItem::Controls:
+      return 20;
+    case ReaderDrawerCatalogItem::BookDictionary:
+      return 21;
+    case ReaderDrawerCatalogItem::RenderMode:
+      return 22;
+    case ReaderDrawerCatalogItem::IndexingMethod:
+      return 23;
+    case ReaderDrawerCatalogItem::ToggleCompleted:
+      return 24;
+    case ReaderDrawerCatalogItem::ToggleArchived:
+      return 25;
+    case ReaderDrawerCatalogItem::TrackBookStats:
+      return 26;
+    case ReaderDrawerCatalogItem::ResetReadingPace:
+      return 27;
+    case ReaderDrawerCatalogItem::DeleteCache:
+      return 28;
+    case ReaderDrawerCatalogItem::DeleteStats:
+      return 29;
+    case ReaderDrawerCatalogItem::ResetBookReaderSettings:
+      return 30;
+    case ReaderDrawerCatalogItem::CycleStatus:
+      return 31;
+    default:
+      return -1;
+  }
+}
+
+constexpr bool readerDrawerItemVisible(const ReaderDrawerCatalogItem item, const uint64_t hiddenRows) {
+  const int bit = readerDrawerItemVisibilityBit(item);
+  return bit < 0 || (hiddenRows & (1ULL << bit)) == 0;
+}
+
+constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailability available,
+                                                      const uint64_t hiddenRows = 0) {
   ReaderDrawerCatalog catalog{};
+  // Font/Layout tabs never go through this -- only the action tabs below are user-hideable.
+  auto addIfVisible = [hiddenRows](ReaderDrawerTabCatalog& tab, const ReaderDrawerCatalogItem item) {
+    if (readerDrawerItemVisible(item, hiddenRows)) tab.add(item);
+  };
   auto& font = catalog[static_cast<size_t>(ReaderDrawerTab::Font)];
   font.add(ReaderDrawerCatalogItem::ReaderFont);
 #if CROSSINK_SCALABLE_FONTS
@@ -224,51 +314,52 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
 
   auto& more = catalog[static_cast<size_t>(ReaderDrawerTab::More)];
   if (available.hasDictionary) {
-    more.add(ReaderDrawerCatalogItem::Lookup);
-    more.add(ReaderDrawerCatalogItem::LookupHistory);
+    addIfVisible(more, ReaderDrawerCatalogItem::Lookup);
+    addIfVisible(more, ReaderDrawerCatalogItem::LookupHistory);
   }
-  more.add(ReaderDrawerCatalogItem::SelectChapter);
-  more.add(ReaderDrawerCatalogItem::GoToPercent);
-  if (available.hasStablePageNumbers) more.add(ReaderDrawerCatalogItem::GoToStablePage);
-  more.add(ReaderDrawerCatalogItem::AutoPageTurn);
+  addIfVisible(more, ReaderDrawerCatalogItem::SelectChapter);
+  addIfVisible(more, ReaderDrawerCatalogItem::GoToPercent);
+  if (available.hasStablePageNumbers) addIfVisible(more, ReaderDrawerCatalogItem::GoToStablePage);
+  addIfVisible(more, ReaderDrawerCatalogItem::AutoPageTurn);
   if (available.buttonDevice && available.globalStatsEnabled && available.bookStatsEnabled)
-    more.add(ReaderDrawerCatalogItem::ReadingStats);
-  if (available.hasFootnotes) more.add(ReaderDrawerCatalogItem::Footnotes);
+    addIfVisible(more, ReaderDrawerCatalogItem::ReadingStats);
+  if (available.hasFootnotes) addIfVisible(more, ReaderDrawerCatalogItem::Footnotes);
 
   auto& location = catalog[static_cast<size_t>(ReaderDrawerTab::Location)];
-  location.add(ReaderDrawerCatalogItem::BookmarkToggle);
+  addIfVisible(location, ReaderDrawerCatalogItem::BookmarkToggle);
   if (available.hasBookmarks) {
-    location.add(ReaderDrawerCatalogItem::ViewBookmarks);
-    location.add(ReaderDrawerCatalogItem::DeleteBookmarks);
+    addIfVisible(location, ReaderDrawerCatalogItem::ViewBookmarks);
+    addIfVisible(location, ReaderDrawerCatalogItem::DeleteBookmarks);
   }
-  location.add(ReaderDrawerCatalogItem::SaveClipping);
-  if (available.hasClippings) location.add(ReaderDrawerCatalogItem::ViewClippings);
+  addIfVisible(location, ReaderDrawerCatalogItem::SaveClipping);
+  if (available.hasClippings) addIfVisible(location, ReaderDrawerCatalogItem::ViewClippings);
   if (available.buttonDevice) {
-    location.add(ReaderDrawerCatalogItem::SyncProgress);
-    location.add(ReaderDrawerCatalogItem::BookFusionSync);
-    location.add(ReaderDrawerCatalogItem::NearbyPositionSync);
-    location.add(ReaderDrawerCatalogItem::SendNearbyBook);
+    addIfVisible(location, ReaderDrawerCatalogItem::SyncProgress);
+    addIfVisible(location, ReaderDrawerCatalogItem::BookFusionSync);
+    addIfVisible(location, ReaderDrawerCatalogItem::NearbyPositionSync);
+    addIfVisible(location, ReaderDrawerCatalogItem::SendNearbyBook);
   }
-  location.add(ReaderDrawerCatalogItem::Screenshot);
-  location.add(ReaderDrawerCatalogItem::DisplayQr);
+  addIfVisible(location, ReaderDrawerCatalogItem::Screenshot);
+  addIfVisible(location, ReaderDrawerCatalogItem::DisplayQr);
 
   auto& settings = catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
-  settings.add(ReaderDrawerCatalogItem::StatusBar);
-  settings.add(ReaderDrawerCatalogItem::Controls);
-  settings.add(ReaderDrawerCatalogItem::BookDictionary);
-  settings.add(ReaderDrawerCatalogItem::RenderMode);
-  settings.add(ReaderDrawerCatalogItem::IndexingMethod);
+  addIfVisible(settings, ReaderDrawerCatalogItem::StatusBar);
+  addIfVisible(settings, ReaderDrawerCatalogItem::Controls);
+  addIfVisible(settings, ReaderDrawerCatalogItem::BookDictionary);
+  addIfVisible(settings, ReaderDrawerCatalogItem::RenderMode);
+  addIfVisible(settings, ReaderDrawerCatalogItem::IndexingMethod);
   if (available.isAo3Book) {
-    settings.add(ReaderDrawerCatalogItem::CycleStatus);
+    addIfVisible(settings, ReaderDrawerCatalogItem::CycleStatus);
   } else {
-    settings.add(ReaderDrawerCatalogItem::ToggleCompleted);
-    settings.add(ReaderDrawerCatalogItem::ToggleArchived);
+    addIfVisible(settings, ReaderDrawerCatalogItem::ToggleCompleted);
+    addIfVisible(settings, ReaderDrawerCatalogItem::ToggleArchived);
   }
-  if (available.globalStatsEnabled) settings.add(ReaderDrawerCatalogItem::TrackBookStats);
-  if (available.showReadingPaceReset) settings.add(ReaderDrawerCatalogItem::ResetReadingPace);
-  settings.add(ReaderDrawerCatalogItem::DeleteCache);
-  if (available.globalStatsEnabled && available.bookStatsEnabled) settings.add(ReaderDrawerCatalogItem::DeleteStats);
-  settings.add(ReaderDrawerCatalogItem::ResetBookReaderSettings);
+  if (available.globalStatsEnabled) addIfVisible(settings, ReaderDrawerCatalogItem::TrackBookStats);
+  if (available.showReadingPaceReset) addIfVisible(settings, ReaderDrawerCatalogItem::ResetReadingPace);
+  addIfVisible(settings, ReaderDrawerCatalogItem::DeleteCache);
+  if (available.globalStatsEnabled && available.bookStatsEnabled)
+    addIfVisible(settings, ReaderDrawerCatalogItem::DeleteStats);
+  addIfVisible(settings, ReaderDrawerCatalogItem::ResetBookReaderSettings);
   return catalog;
 }
 
