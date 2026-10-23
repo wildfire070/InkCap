@@ -13,7 +13,8 @@ int downloads = 0;
 bool cancel = false;
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& dest,
                                                              ProgressCallback progress, bool*, const std::string&,
-                                                             const std::string&, DownloadOptions options) {
+                                                             const std::string&, DownloadOptions options,
+                                                             HttpRequestDiagnostics*) {
   ++downloads;
   assert(options.transport == Transport::ESP_HTTP && options.bufferSize == 1024 && options.maxBytes == 2097152);
   assert(options.maxRedirects == 2 && options.checkFreeSpace && options.stageAsPart && options.requireBackupCleanup);

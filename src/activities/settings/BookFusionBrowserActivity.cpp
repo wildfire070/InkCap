@@ -8,6 +8,7 @@
 #include <InflateStream.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <ZipFile.h>
 #include <strings.h>
 
 #include "BookFusionBookIdStore.h"
@@ -96,6 +97,39 @@ bool bookFusionFormatIsEpub(const BookFusionBook& book) {
 // renderer. Above this size, confirm before spending the download on it.
 constexpr uint32_t LARGE_BOOK_WARN_BYTES = 10u * 1024 * 1024;  // 10 MB
 bool bookFusionBookIsLarge(const BookFusionBook& book) { return book.downloadSize >= LARGE_BOOK_WARN_BYTES; }
+
+// Passed as HttpDownloader::DownloadOptions.validate: every download this
+// activity makes is an EPUB (bookFusionFormatIsEpub() already refused
+// anything else before downloadBook() gets here), so a structural ZIP check
+// catches a body that transferred complete-and-correctly-sized but isn't
+// actually a usable book -- BookFusion's own API has been observed to serve
+// an HTML error page with a 200 status for some failures. Cheap and bounded
+// (ZipFile::isStructurallyValid() never parses the full central directory),
+// safe to run on the freshly written file before it replaces anything.
+bool downloadedFileIsValidEpub(const std::string& path) {
+  ZipFile zip(path);
+  return zip.isStructurallyValid();
+}
+
+// HttpDownloader::OK/ABORTED are handled by their own branches before this
+// runs; everything else used to collapse into one generic "Download failed"
+// regardless of cause. diagnostics reflects the final attempt only (see
+// HttpDownloader::downloadToFile's own doc comment).
+StrId bookFusionDownloadFailureMessage(const HttpDownloader::DownloadError result,
+                                       const HttpRequestDiagnostics& diagnostics) {
+  if (result == HttpDownloader::INSUFFICIENT_SPACE) return StrId::STR_BF_DOWNLOAD_SD_FULL;
+  if (result == HttpDownloader::FILE_ERROR) return StrId::STR_BF_DOWNLOAD_SD_ERROR;
+  // downloadedFileIsValidEpub() only runs after a complete, correctly-sized
+  // transfer, so a 2xx/3xx status reaching this branch is the ZIP check
+  // having rejected the body, not a transport failure.
+  if (diagnostics.status >= 200 && diagnostics.status < 400) return StrId::STR_BF_DOWNLOAD_INVALID_FILE;
+  if (!diagnostics.attempted || diagnostics.status == 0) return StrId::STR_BF_DOWNLOAD_CONNECT_FAILED;
+  if (diagnostics.status == 401 || diagnostics.status == 403 || diagnostics.status == 416)
+    return StrId::STR_BF_DOWNLOAD_LINK_REJECTED;
+  if (diagnostics.status == 404) return StrId::STR_BF_DOWNLOAD_NOT_FOUND;
+  if (diagnostics.status >= 500) return StrId::STR_BF_DOWNLOAD_SERVER_ERROR;
+  return StrId::STR_DOWNLOAD_FAILED;
+}
 
 // Same path construction downloadBook() uses to save the file, so the
 // "already downloaded" row icon (see buildBrowsingScreen()) reflects exactly
@@ -1373,8 +1407,10 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
   // pre-signed, and this header is only ever sent same-origin with it (see
   // HttpDownloader's redirect gating), so it's a no-op if the URL doesn't need it.
   downloadOptions.bearerToken = BookFusionSyncClient::getBearerToken();
+  downloadOptions.validate = &downloadedFileIsValidEpub;
   int lastRenderedPercent = -1;
   unsigned long lastProgressUpdateMs = 0;
+  HttpRequestDiagnostics downloadDiagnostics;
 
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
@@ -1414,7 +1450,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
           renderer.releaseFrameBuffersForNetwork();
         }
       },
-      &cancelRequested, "", "", downloadOptions);
+      &cancelRequested, "", "", downloadOptions, &downloadDiagnostics);
 
   // The buffer is left released by the loop above (every progress render
   // re-releases it after drawing) regardless of how the transfer ended;
@@ -1474,7 +1510,7 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     state = BrowserState::BROWSING;
   } else {
     state = BrowserState::ERROR;
-    errorMessage = tr(STR_DOWNLOAD_FAILED);
+    errorMessage = I18n::getInstance().get(bookFusionDownloadFailureMessage(result, downloadDiagnostics));
   }
   requestUpdate();
 }

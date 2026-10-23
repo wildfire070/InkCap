@@ -137,10 +137,14 @@ class HttpDownloader {
                                  HttpRequestDiagnostics* diagnostics = nullptr);
 
   /**
-   * Download a file to the SD card with optional credentials.
+   * Download a file to the SD card with optional credentials. When supplied,
+   * diagnostics reflects the final attempt only (earlier retries overwrite
+   * it) -- enough for a caller to tell a connect failure from a rejected
+   * link from a server error once the transfer has given up for good.
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
                                       const std::string& username = "", const std::string& password = "",
-                                      DownloadOptions options = DownloadOptions());
+                                      DownloadOptions options = DownloadOptions(),
+                                      HttpRequestDiagnostics* diagnostics = nullptr);
 };

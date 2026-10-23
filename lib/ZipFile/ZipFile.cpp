@@ -645,6 +645,26 @@ bool ZipFile::loadZipDetails() {
   return true;
 }
 
+bool ZipFile::isStructurallyValid() {
+  const ScopedOpenClose zip{*this};
+  if (!zip) return false;
+
+  constexpr uint32_t LOCAL_HEADER_SIGNATURE = 0x04034b50;  // "PK\x03\x04", little-endian
+  uint8_t header[sizeof(uint32_t)];
+  if (!file.seek(0) || file.read(header, sizeof(header)) != sizeof(header)) {
+    LOG_ERR("ZIP", "Could not read local file header");
+    return false;
+  }
+  uint32_t signature = 0;
+  memcpy(&signature, header, sizeof(signature));
+  if (signature != LOCAL_HEADER_SIGNATURE) {
+    LOG_ERR("ZIP", "Local file header signature missing");
+    return false;
+  }
+
+  return loadZipDetails();
+}
+
 bool ZipFile::open() {
   if (!Storage.openFileForRead("ZIP", filePath, file)) {
     return false;

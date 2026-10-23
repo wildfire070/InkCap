@@ -670,9 +670,11 @@ HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
                                                              const std::string& username, const std::string& password,
-                                                             DownloadOptions options) {
+                                                             DownloadOptions options,
+                                                             HttpRequestDiagnostics* diagnostics) {
   WifiPowerSaveGuard wifiPowerSaveGuard;
   (void)wifiPowerSaveGuard;
+  if (diagnostics) *diagnostics = {};
 
   const size_t bufferSize = options.bufferSize > 0 ? options.bufferSize : DEFAULT_DOWNLOAD_BUFFER_SIZE;
   if (options.useServerFilename && !options.stageAsPart) {
@@ -699,6 +701,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
 
   Sink sink;
   sink.options = &options;
+  sink.diagnostics = diagnostics;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
   sink.shouldCancel = std::move(options.shouldCancel);

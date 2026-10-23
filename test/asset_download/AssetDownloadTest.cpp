@@ -24,7 +24,8 @@ Result AssetCompanionStore::prepare(const AssetCatalog::Catalog&, const AssetCat
 }
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destination,
                                                              ProgressCallback progress, bool*, const std::string&,
-                                                             const std::string&, DownloadOptions options) {
+                                                             const std::string&, DownloadOptions options,
+                                                             HttpRequestDiagnostics*) {
   ++downloads;
   assert(companionPreparations > 0 && companionResult == Result::Ok);
   assert(options.transport == Transport::ESP_HTTP);

@@ -122,6 +122,12 @@ class ZipFile {
   bool isOpen() const { return !!file; }
   bool open();
   bool close();
+  // Cheap structural check for an untrusted file (e.g. a freshly downloaded
+  // book, before it replaces anything): local file header magic at offset 0
+  // plus the EOCD record loadZipDetails() already scans for in the last 1KB.
+  // Does NOT parse the full central directory -- safe to call on a large
+  // real EPUB, unlike loadAllFileStatSlims() (see its own OOM warning).
+  bool isStructurallyValid();
   bool loadAllFileStatSlims();
   bool getInflatedFileSize(const char* filename, size_t* size);
   // Batch lookup: scan ZIP central dir once and fill sizes for matching targets.
