@@ -22,7 +22,8 @@ namespace {
 constexpr uint8_t LEGACY_VERSION = 1;
 constexpr uint8_t TEXT_OFFSET_VERSION = 2;
 constexpr uint8_t LAYOUT_SIGNATURE_VERSION = 3;
-constexpr uint8_t VERSION = 4;
+constexpr uint8_t TABLE_SELECTION_VERSION = 4;
+constexpr uint8_t VERSION = 5;
 constexpr size_t INITIAL_CLIPPING_RESERVE = 4;
 constexpr char CLIPPINGS_DIR[] = "/.crosspoint/clippings";
 constexpr size_t TEXT_COPY_BUFFER_SIZE = 128;
@@ -81,7 +82,7 @@ bool readClippingFileHeader(const std::string& fullPath, const char* name, Clipp
   uint16_t count = 0;
   if (!serialization::tryReadPod(f, version) ||
       (version != LEGACY_VERSION && version != TEXT_OFFSET_VERSION && version != LAYOUT_SIGNATURE_VERSION &&
-       version != VERSION) ||
+       version != TABLE_SELECTION_VERSION && version != VERSION) ||
       !serialization::tryReadPod(f, count) || !serialization::tryReadString(f, header.title) ||
       !serialization::tryReadString(f, header.author) || !serialization::tryReadString(f, header.path)) {
     f.close();
@@ -210,6 +211,23 @@ bool ClippingStore::removeClippingAt(const size_t index) {
   return true;
 }
 
+bool ClippingStore::setClippingFusionId(const size_t index, const uint32_t bookFusionId) {
+  if (index >= clippings.size()) return false;
+
+  // Not a KOReader-sync-relevant change, so unlike removeClippingAt() this
+  // never calls pendingSync.mark() -- recording BookFusion's own id has
+  // nothing to do with that sync target.
+  const uint32_t previous = clippings[index].bookFusionId;
+  clippings[index].bookFusionId = bookFusionId;
+  dirty = true;
+  if (!saveToFile()) {
+    clippings[index].bookFusionId = previous;
+    dirty = true;
+    return false;
+  }
+  return true;
+}
+
 const Clipping* ClippingStore::clippingAt(const size_t index) const {
   if (index >= clippings.size()) return nullptr;
   return &clippings[index];
@@ -312,7 +330,7 @@ bool ClippingStore::readFromFile(const std::string& path, std::vector<Clipping>&
   std::string storedPath;
   if (!serialization::tryReadPod(f, version) ||
       (version != LEGACY_VERSION && version != TEXT_OFFSET_VERSION && version != LAYOUT_SIGNATURE_VERSION &&
-       version != VERSION) ||
+       version != TABLE_SELECTION_VERSION && version != VERSION) ||
       !serialization::tryReadPod(f, count) || !serialization::tryReadString(f, title) ||
       !serialization::tryReadString(f, author) || !serialization::tryReadString(f, storedPath)) {
     f.close();
@@ -347,9 +365,14 @@ bool ClippingStore::readFromFile(const std::string& path, std::vector<Clipping>&
       LOG_ERR("CLIP", "Clipping file truncated at layout signature, record %u: %s", i, path.c_str());
       return false;
     }
-    if (version >= VERSION && !serialization::tryReadPod(f, clipping.tableSelection)) {
+    if (version >= TABLE_SELECTION_VERSION && !serialization::tryReadPod(f, clipping.tableSelection)) {
       f.close();
       LOG_ERR("CLIP", "Clipping file truncated at table selection, record %u: %s", i, path.c_str());
+      return false;
+    }
+    if (version >= VERSION && !serialization::tryReadPod(f, clipping.bookFusionId)) {
+      f.close();
+      LOG_ERR("CLIP", "Clipping file truncated at bookFusionId, record %u: %s", i, path.c_str());
       return false;
     }
     if (f.read(reinterpret_cast<uint8_t*>(clipping.chapterTitle), sizeof(clipping.chapterTitle)) !=
@@ -479,6 +502,7 @@ bool ClippingStore::writeToFile(const std::string* replacementText, const size_t
         !serialization::tryWritePod(f, clipping.paragraphIndex) || !serialization::tryWritePod(f, clipping.timestamp) ||
         !serialization::tryWritePod(f, clipping.layoutSignature) ||
         !serialization::tryWritePod(f, clipping.tableSelection) ||
+        !serialization::tryWritePod(f, clipping.bookFusionId) ||
         f.write(reinterpret_cast<const uint8_t*>(clipping.chapterTitle), sizeof(clipping.chapterTitle)) !=
             sizeof(clipping.chapterTitle)) {
       LOG_ERR("CLIP", "Failed to write clipping record %u: %s", i, storeFilePath.c_str());

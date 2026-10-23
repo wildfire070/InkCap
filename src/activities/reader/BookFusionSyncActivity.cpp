@@ -1,15 +1,22 @@
 #include "BookFusionSyncActivity.h"
 
+#include <DateFormatting.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <WiFi.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <ctime>
+#include <vector>
 
 #include "BookFusionBookIdStore.h"
 #include "BookFusionSyncClient.h"
+#include "BookmarkStore.h"
+#include "ClippingStore.h"
+#include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
@@ -176,6 +183,85 @@ void BookFusionSyncActivity::onWifiSelectionComplete(const bool success) {
   performSync();
 }
 
+namespace {
+// Bounds the heap/network time this adds to a sync; the rest stay pending for next time.
+constexpr int MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC = 8;
+// Sentinel for "pushed, but the response carried no id" -- BookFusion has no bookmark
+// update/delete endpoint anyway, so there is nothing a real id would be used for later;
+// this just has to read back as "not 0" so the bookmark is never pushed a second time.
+constexpr uint32_t BOOKMARK_PUSHED_WITHOUT_ID = UINT32_MAX;
+
+// Formats a server "YYYY-MM-DD..." timestamp (BookFusionSyncBaseline::syncedAtUtcIso) using
+// the user's own date format/separator settings. Returns false (buf untouched) for anything
+// that doesn't start with a parseable date, same as a missing baseline.
+bool formatLastSyncedDate(const std::string& iso, char* buf, size_t bufSize) {
+  unsigned year = 0, month = 0, day = 0;
+  if (iso.size() < 10 || sscanf(iso.c_str(), "%4u-%2u-%2u", &year, &month, &day) != 3) return false;
+  const char separator = SETTINGS.dateSeparator == CrossPointSettings::DATE_SEPARATOR_PERIOD  ? '.'
+                         : SETTINGS.dateSeparator == CrossPointSettings::DATE_SEPARATOR_HYPHEN ? '-'
+                                                                                               : '/';
+  return formatDateParts(buf, bufSize, static_cast<uint16_t>(year), static_cast<uint8_t>(month),
+                         static_cast<uint8_t>(day), SETTINGS.dateFormat, separator);
+}
+}  // namespace
+
+void BookFusionSyncActivity::pushBookmarksAndHighlights() {
+  if (!epub) return;
+  const int spineCount = epub->getSpineItemsCount();
+  if (spineCount <= 0) return;
+
+  int pushed = 0;
+
+  const auto& bookmarks = BOOKMARKS.getBookmarks();
+  for (size_t i = 0; i < bookmarks.size() && pushed < MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC; i++) {
+    const Bookmark& bookmark = bookmarks[i];
+    if (bookmark.bookFusionId != 0 || bookmark.spineIndex >= spineCount) continue;
+
+    BookFusionBookmark remoteBookmark;
+    remoteBookmark.title = bookmark.chapterTitle;  // No user-given bookmark name in this format yet.
+    remoteBookmark.chapterIndex = bookmark.spineIndex;
+    remoteBookmark.pagePositionInChapter = bookmark.progress;
+    remoteBookmark.pagePositionInBook = epub->calculateProgress(bookmark.spineIndex, bookmark.progress);
+
+    uint32_t remoteId = 0;
+    const auto result = BookFusionSyncClient::createBookmark(bookId, remoteBookmark, &remoteId);
+    if (result == BookFusionSyncClient::AUTH_FAILED || result == BookFusionSyncClient::NETWORK_ERROR) {
+      LOG_INF("BFSync", "Bookmark push stopped: %s", BookFusionSyncClient::errorString(result).c_str());
+      return;  // Also skips the highlight loop below -- same failure would hit it too.
+    }
+    if (result != BookFusionSyncClient::OK) continue;  // Leave bookFusionId at 0; retried next sync.
+    BOOKMARKS.setBookmarkFusionId(i, remoteId != 0 ? remoteId : BOOKMARK_PUSHED_WITHOUT_ID);
+    pushed++;
+  }
+
+  const auto& clippings = CLIPPINGS.getClippings();
+  for (size_t i = 0; i < clippings.size() && pushed < MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC; i++) {
+    const Clipping& clipping = clippings[i];
+    if (clipping.bookFusionId != 0 || clipping.spineIndex >= spineCount || clipping.pageCount == 0) continue;
+
+    std::string text;
+    if (!CLIPPINGS.readClippingText(i, text) || text.empty()) continue;
+
+    BookFusionHighlight highlight;
+    highlight.bookId = bookId;
+    highlight.chapterIndex = clipping.spineIndex;
+    highlight.quoteText = text;
+    highlight.chapterTitle = clipping.chapterTitle;
+    const float chapterFraction = static_cast<float>(clipping.startPage) / static_cast<float>(clipping.pageCount);
+    highlight.positionPercentage = epub->calculateProgress(clipping.spineIndex, chapterFraction) * 100.0f;
+
+    uint32_t remoteId = 0;
+    const auto result = BookFusionSyncClient::createHighlight(highlight, &remoteId);
+    if (result == BookFusionSyncClient::AUTH_FAILED || result == BookFusionSyncClient::NETWORK_ERROR) {
+      LOG_INF("BFSync", "Highlight push stopped: %s", BookFusionSyncClient::errorString(result).c_str());
+      return;
+    }
+    if (result != BookFusionSyncClient::OK || remoteId == 0) continue;  // Retried next sync.
+    CLIPPINGS.setClippingFusionId(i, remoteId);
+    pushed++;
+  }
+}
+
 void BookFusionSyncActivity::performSync() {
   if (!ensureEpubLoaded()) {
     RenderLock lock(*this);
@@ -184,6 +270,18 @@ void BookFusionSyncActivity::performSync() {
     requestUpdate();
     return;
   }
+
+  // Independent of the progress comparison below: never blocks or fails this sync.
+  pushBookmarksAndHighlights();
+
+  localBookmarkCount = static_cast<int>(BOOKMARKS.getBookmarks().size());
+  syncedBookmarkCount = static_cast<int>(std::count_if(
+      BOOKMARKS.getBookmarks().begin(), BOOKMARKS.getBookmarks().end(),
+      [](const Bookmark& bookmark) { return bookmark.bookFusionId != 0; }));
+  localHighlightCount = static_cast<int>(CLIPPINGS.getClippings().size());
+  syncedHighlightCount = static_cast<int>(std::count_if(
+      CLIPPINGS.getClippings().begin(), CLIPPINGS.getClippings().end(),
+      [](const Clipping& clipping) { return clipping.bookFusionId != 0; }));
 
   localSyncProgress = BookFusionProgress{};
   localSyncProgress.bookId = bookId;
@@ -230,6 +328,7 @@ void BookFusionSyncActivity::performSync() {
   // case where local/remote don't match each other exactly (rounding,
   // chapter-boundary drift) but both still match what was last synced.
   const auto baseline = BookFusionBookIdStore::loadSyncBaseline(epubPath);
+  lastSyncedAtUtcIso = baseline.hasBaseline ? baseline.syncedAtUtcIso : std::string();
   const bool alreadySynced = std::fabs(localPercent - remotePercent) < SAME_PROGRESS_EPSILON ||
                              (matchesBaseline(baseline, localSyncProgress) && matchesBaseline(baseline, remoteSyncProgress));
   if (alreadySynced) {
@@ -412,14 +511,54 @@ void BookFusionSyncActivity::render(RenderLock&&) {
       renderer.drawCenteredText(UI_10_FONT_ID, top, statusMessage.c_str());
       break;
     case SHOWING_RESULT: {
-      char localBuf[32];
-      char remoteBuf[32];
+      // Variable line count (bookmark/highlight/last-synced lines only appear when there's
+      // something to say), so the whole block is built first and centred as one unit rather
+      // than hand-placing each line at a fixed offset from `top`.
+      struct ResultLine {
+        std::string text;
+        bool bold;
+      };
+      std::vector<ResultLine> lines;
+
+      char localBuf[48];
       snprintf(localBuf, sizeof(localBuf), tr(STR_BF_LOCAL_PROGRESS_FORMAT), localPercent * 100.0f);
+      if (localPercent > remotePercent + SAME_PROGRESS_EPSILON) strncat(localBuf, tr(STR_BF_AHEAD_SUFFIX), 15);
+      lines.push_back({localBuf, false});
+
+      char remoteBuf[48];
       snprintf(remoteBuf, sizeof(remoteBuf), tr(STR_BF_REMOTE_PROGRESS_FORMAT), remotePercent * 100.0f);
-      renderer.drawCenteredText(UI_10_FONT_ID, top - lineH - 8, localBuf);
-      renderer.drawCenteredText(UI_10_FONT_ID, top, remoteBuf);
-      const char* optionText = selectedOption == 0 ? tr(STR_BF_APPLY_REMOTE) : tr(STR_BF_UPLOAD_LOCAL);
-      renderer.drawCenteredText(UI_10_FONT_ID, top + lineH + 8, optionText, true, EpdFontFamily::BOLD);
+      if (remotePercent > localPercent + SAME_PROGRESS_EPSILON) strncat(remoteBuf, tr(STR_BF_AHEAD_SUFFIX), 15);
+      lines.push_back({remoteBuf, false});
+
+      char countBuf[48];
+      if (localBookmarkCount > 0) {
+        snprintf(countBuf, sizeof(countBuf), tr(STR_BF_BOOKMARKS_SYNCED_FORMAT), syncedBookmarkCount,
+                 localBookmarkCount);
+        lines.push_back({countBuf, false});
+      }
+      if (localHighlightCount > 0) {
+        snprintf(countBuf, sizeof(countBuf), tr(STR_BF_HIGHLIGHTS_SYNCED_FORMAT), syncedHighlightCount,
+                 localHighlightCount);
+        lines.push_back({countBuf, false});
+      }
+
+      char dateBuf[24];
+      if (!lastSyncedAtUtcIso.empty() && formatLastSyncedDate(lastSyncedAtUtcIso, dateBuf, sizeof(dateBuf))) {
+        char lastSyncedBuf[48];
+        snprintf(lastSyncedBuf, sizeof(lastSyncedBuf), tr(STR_BF_LAST_SYNCED_FORMAT), dateBuf);
+        lines.push_back({lastSyncedBuf, false});
+      }
+
+      lines.push_back({selectedOption == 0 ? tr(STR_BF_APPLY_REMOTE) : tr(STR_BF_UPLOAD_LOCAL), true});
+
+      constexpr int LINE_GAP = 8;
+      const int blockHeight = static_cast<int>(lines.size()) * lineH + (static_cast<int>(lines.size()) - 1) * LINE_GAP;
+      int y = (pageHeight - blockHeight) / 2;
+      for (const auto& line : lines) {
+        renderer.drawCenteredText(UI_10_FONT_ID, y, line.text.c_str(), true,
+                                  line.bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+        y += lineH + LINE_GAP;
+      }
       break;
     }
     case SYNC_COMPLETE:

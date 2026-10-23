@@ -50,6 +50,9 @@ struct Clipping {
   // record.
   uint8_t resolvedLayoutBoundaries = 0;
   char chapterTitle[CLIPPING_CHAPTER_TITLE_MAX] = {};
+  // BookFusion's id for this clipping once pushed as a highlight (POST
+  // /api/user/highlights); 0 means never pushed.
+  uint32_t bookFusionId = 0;
 };
 
 struct ClippedBookEntry {
@@ -87,6 +90,9 @@ class ClippingStore {
                         uint16_t paragraphIndex, const std::string& text, uint16_t tableSelection,
                         uint32_t layoutSignature);
   bool removeClippingAt(size_t index);
+  // Records the BookFusion id a push just created for an already-loaded clipping. Marks the
+  // store dirty; caller still calls saveToFile() (matching every other mutator here).
+  bool setClippingFusionId(size_t index, uint32_t bookFusionId);
   bool saveToFile();
   void clearAll();
 
