@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "BitmapHelpers.h"
+#include "CoverToneCurve.h"
 #include "Memory.h"
 
 // ============================================================================
@@ -611,6 +612,8 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   // Scan for PLTE chunk (palette) and first IDAT chunk
   // We need to read chunks until we find IDAT, collecting PLTE along the way
   bool foundIdat = false;
+  size_t firstIdatDataPos = 0;
+  uint32_t firstIdatLen = 0;
   while (!foundIdat) {
     uint32_t chunkLen;
     if (!readBE32(pngFile, chunkLen)) break;
@@ -630,6 +633,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
     } else if (memcmp(chunkType, "IDAT", 4) == 0) {
       ctx.chunkBytesRemaining = chunkLen;
       foundIdat = true;
+      // Rewind point for the cover-tone-curve pre-pass below: the file cursor
+      // sits at the first IDAT chunk's payload start right now, and chunkLen
+      // is that chunk's untouched size.
+      firstIdatDataPos = pngFile.position();
+      firstIdatLen = chunkLen;
     } else if (memcmp(chunkType, "IEND", 4) == 0) {
       break;
     } else {
@@ -688,6 +696,45 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   uint8_t* rowBuffer = rowScratch.get();
   uint8_t* grayRow = rowBuffer + bytesPerRow;
 
+  // Luminance pre-pass for the cover tone curve (see CoverToneCurve.h). PNG has
+  // no cheap reduced decode, so this is a full first inflate of the image --
+  // covers convert once and are cached, so the one-time cost is accepted. A
+  // failure here is not fatal: the cover converts with the identity curve.
+  LumaHistogram coverLumaHist;
+  for (uint32_t y = 0; y < height; y++) {
+    if (!decodeScanline(ctx)) {
+      LOG_ERR("PNG", "Cover tone pre-pass failed at scanline %u; converting without tone curve", y);
+      coverLumaHist.reset();
+      break;
+    }
+    convertScanlineToGray(ctx, grayRow);
+    coverLumaHist.addRow(grayRow, width);
+    std::swap(ctx.currentRow, ctx.previousRow);
+  }
+  CoverToneCurve& toneCurve = sharedCoverToneCurve();
+  toneCurve.build(coverLumaHist);
+  const uint8_t* toneLut = toneCurve.table();
+  LOG_DBG("PNG", "Cover luma: mean=%u gain=%u/256 black=%u%s", (unsigned)coverLumaHist.mean(),
+          (unsigned)toneCurve.gain256(), (unsigned)toneCurve.blackPoint(), toneCurve.isIdentity() ? " (identity)" : "");
+
+  // Rewind to the first IDAT chunk's payload for the real pass: same file
+  // position and chunk-remaining count the reader started from above, so the
+  // fill callback reproduces the exact same byte stream.
+  if (!pngFile.seek(firstIdatDataPos)) {
+    LOG_ERR("PNG", "Failed to rewind IDAT stream for the real pass");
+    return false;
+  }
+  ctx.chunkBytesRemaining = firstIdatLen;
+  ctx.idatFinished = false;
+  memset(ctx.previousRow, 0, scanlineRowBytes);
+  memset(ctx.currentRow, 0, scanlineRowBytes);
+  if (!ctx.reader.init(true)) {
+    LOG_ERR("PNG", "Failed to re-init inflate stream for the real pass");
+    return false;
+  }
+  ctx.reader.setFill(pngIdatFillCallback, &ctx);
+  ctx.reader.setZlibWrapped();
+
   // Create ditherers (same as JpegToBmpConverter)
   std::unique_ptr<AtkinsonDitherer> atkinsonDitherer;
   std::unique_ptr<FloydSteinbergDitherer> fsDitherer;
@@ -745,6 +792,9 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
 
     // Batch-convert entire scanline to grayscale (one branch, tight loop)
     convertScanlineToGray(ctx, grayRow);
+    // Per-cover tone table (CoverToneCurve), applied to every pixel ahead of
+    // dithering -- identity for light covers.
+    for (uint32_t x = 0; x < width; x++) grayRow[x] = toneLut[grayRow[x]];
 
     if (!needsScaling) {
       // Direct output (no scaling)
