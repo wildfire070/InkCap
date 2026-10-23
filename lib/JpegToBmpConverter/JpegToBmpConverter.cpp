@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "BitmapHelpers.h"
+#include "CoverToneCurve.h"
 
 // ============================================================================
 // IMAGE PROCESSING OPTIONS - Toggle these to test different configurations
@@ -234,6 +235,10 @@ struct BmpConvertCtx {
 
   uint8_t* bmpRow;
 
+  // Per-cover tone table (CoverToneCurve), applied to every source gray ahead
+  // of the ditherer. Always valid; identity for light covers.
+  const uint8_t* toneLut;
+
   std::unique_ptr<AtkinsonDitherer> atkinsonDitherer;
   std::unique_ptr<FloydSteinbergDitherer> fsDitherer;
   std::unique_ptr<Atkinson1BitDitherer> atkinson1BitDitherer;
@@ -333,18 +338,19 @@ static void writeOutputRow(BmpConvertCtx* ctx, const uint8_t* srcRow, int outY) 
 
   if (USE_8BIT_OUTPUT && !ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
-      ctx->bmpRow[x] = adjustPixel(srcRow[x]);
+      ctx->bmpRow[x] = adjustPixel(ctx->toneLut[srcRow[x]]);
     }
   } else if (ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
-      const uint8_t bit = ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(srcRow[x], x)
-                                                    : quantize1bit(srcRow[x], x, outY);
+      const uint8_t gray = ctx->toneLut[srcRow[x]];
+      const uint8_t bit =
+          ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(gray, x) : quantize1bit(gray, x, outY);
       ctx->bmpRow[x / 8] |= (bit << (7 - (x % 8)));
     }
     if (ctx->atkinson1BitDitherer) ctx->atkinson1BitDitherer->nextRow();
   } else {
     for (int x = 0; x < ctx->outWidth; x++) {
-      const uint8_t gray = adjustPixel(srcRow[x]);
+      const uint8_t gray = adjustPixel(ctx->toneLut[srcRow[x]]);
       uint8_t twoBit;
       if (ctx->atkinsonDitherer) {
         twoBit = ctx->atkinsonDitherer->processPixel(gray, x);
@@ -473,6 +479,16 @@ static void flushScaledRow(BmpConvertCtx* ctx) {
 
   ctx->bmpOut->write(ctx->bmpRow, ctx->bytesPerRow);
   ctx->currentOutY++;
+}
+
+// Draw callback for the cover-tone-curve luminance pre-pass (see
+// CoverToneCurve.h): the 1/8-scale decode lands here one block at a time and
+// only feeds the histogram.
+int lumaStatsCallback(JPEGDRAW* pDraw) {
+  auto* hist = reinterpret_cast<LumaHistogram*>(pDraw->pUser);
+  const auto* pixels = reinterpret_cast<const uint8_t*>(pDraw->pPixels);
+  for (int r = 0; r < pDraw->iHeight; r++) hist->addRow(pixels + r * pDraw->iWidth, pDraw->iWidthUsed);
+  return 1;
 }
 
 // JPEGDEC draw callback — receives one MCU-width × MCU-height block at a time,
@@ -612,7 +628,31 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
     return false;
   }
 
-  int rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, bmpDrawCallback);
+  // Luminance pre-pass for the cover tone curve (see CoverToneCurve.h): a
+  // 1/8-scale decode -- JPEGDEC skips the IDCT for all but the DC terms, so it
+  // costs a fraction of the real pass -- into a histogram, then the decoder is
+  // closed and reopened below for the real pass (bmpJpegOpen reseeks the file
+  // to 0 on every open). A failure here is not fatal: the cover simply
+  // converts with the identity curve.
+  LumaHistogram coverLumaHist;
+  int rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, lumaStatsCallback);
+  if (rc != 1) {
+    LOG_ERR("JPG", "JPEG open failed (err=%d)", jpeg->getLastError());
+    return false;
+  }
+  jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
+  jpeg->setUserPointer(&coverLumaHist);
+  if (jpeg->decode(0, 0, JPEG_SCALE_EIGHTH) != 1) {
+    LOG_ERR("JPG", "Cover tone pre-pass failed (err=%d); converting without tone curve", jpeg->getLastError());
+    coverLumaHist.reset();
+  }
+  jpeg->close();
+  CoverToneCurve& toneCurve = sharedCoverToneCurve();
+  toneCurve.build(coverLumaHist);
+  LOG_DBG("JPG", "Cover luma: mean=%u gain=%u/256 black=%u%s", (unsigned)coverLumaHist.mean(),
+          (unsigned)toneCurve.gain256(), (unsigned)toneCurve.blackPoint(), toneCurve.isIdentity() ? " (identity)" : "");
+
+  rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, bmpDrawCallback);
   if (rc != 1) {
     LOG_ERR("JPG", "JPEG open failed (err=%d)", jpeg->getLastError());
     return false;
@@ -680,6 +720,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   ctx.smoothNextOutY = 0;
   ctx.smoothPrevY = -1;
   ctx.error = false;
+  ctx.toneLut = toneCurve.table();
 
   const size_t mcuBufBytes = static_cast<size_t>(MAX_MCU_HEIGHT) * effectiveSrcW;
   size_t scratchBytes = mcuBufBytes + static_cast<size_t>(bytesPerRow);
