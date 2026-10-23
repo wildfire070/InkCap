@@ -381,3 +381,70 @@ TEST(ReaderDrawerModelTest, CharacterSpacingReservesPreviewAndUsesSliderInput) {
                                              ReaderDrawerCatalogItem::CharacterSpacing));
   EXPECT_TRUE(readerDrawerSliderPreviewsText(ReaderDrawerPane::CharacterSpacing));
 }
+
+TEST(ReaderDrawerModel, HiddenRowVetoSkipsOnlyThatItem) {
+  const ReaderDrawerCatalog complete = makeReaderDrawerCatalog({true, true, true, true, true, true});
+  const auto& baselineMore = complete[static_cast<size_t>(ReaderDrawerTab::More)];
+  ASSERT_EQ(baselineMore.items[3], ReaderDrawerCatalogItem::GoToPercent);
+  const int goToPercentBit = readerDrawerItemVisibilityBit(ReaderDrawerCatalogItem::GoToPercent);
+  ASSERT_GE(goToPercentBit, 0);
+
+  const ReaderDrawerCatalog withHidden =
+      makeReaderDrawerCatalog({true, true, true, true, true, true}, 1ULL << goToPercentBit);
+  const auto& more = withHidden[static_cast<size_t>(ReaderDrawerTab::More)];
+  EXPECT_EQ(more.count, baselineMore.count - 1);
+  for (uint8_t i = 0; i < more.count; ++i) {
+    EXPECT_NE(more.items[i], ReaderDrawerCatalogItem::GoToPercent);
+  }
+  // Nothing else in the same tab moved out of its relative order.
+  EXPECT_EQ(more.items[0], ReaderDrawerCatalogItem::Lookup);
+  EXPECT_EQ(more.items[2], ReaderDrawerCatalogItem::SelectChapter);
+  EXPECT_EQ(more.items[3], ReaderDrawerCatalogItem::GoToStablePage);
+}
+
+TEST(ReaderDrawerModel, HiddenRowVetoNeverTouchesFontOrLayoutTabs) {
+  // All bits set: if any Font/Layout item carried a bit, hiding "everything" would empty
+  // those tabs too. They must be fully unaffected -- those are settings pickers, not
+  // optional menu actions.
+  const ReaderDrawerCatalog allHidden = makeReaderDrawerCatalog({true, true, true, true, true, true}, ~0ULL);
+  const ReaderDrawerCatalog none = makeReaderDrawerCatalog({true, true, true, true, true, true});
+  const auto& font = allHidden[static_cast<size_t>(ReaderDrawerTab::Font)];
+  const auto& layout = allHidden[static_cast<size_t>(ReaderDrawerTab::Layout)];
+  EXPECT_EQ(font.count, none[static_cast<size_t>(ReaderDrawerTab::Font)].count);
+  EXPECT_EQ(layout.count, none[static_cast<size_t>(ReaderDrawerTab::Layout)].count);
+  // The action tabs, by contrast, are emptied entirely.
+  EXPECT_EQ(allHidden[static_cast<size_t>(ReaderDrawerTab::More)].count, 0);
+  EXPECT_EQ(allHidden[static_cast<size_t>(ReaderDrawerTab::Location)].count, 0);
+  EXPECT_EQ(allHidden[static_cast<size_t>(ReaderDrawerTab::Settings)].count, 0);
+}
+
+TEST(ReaderDrawerModel, VisibilityBitsAreStableAndUniqueAcrossEveryHideableItem) {
+  // Every item the real catalog can ever add (full availability) either opts out (-1,
+  // Font/Layout only) or claims a bit no other item claims -- a duplicate would silently
+  // hide two unrelated rows together. Covers both the shared catalog and this branch's own
+  // AO3-only CycleStatus item.
+  const ReaderDrawerCatalog complete = makeReaderDrawerCatalog({true, true, true, true, true, true});
+  ReaderDrawerAvailability ao3Available = {true, true, true, true, true, true};
+  ao3Available.isAo3Book = true;
+  const ReaderDrawerCatalog ao3Complete = makeReaderDrawerCatalog(ao3Available);
+  // The two catalogs legitimately re-list the same shared items under the same bits (Lookup,
+  // StatusBar, etc.); only a DIFFERENT item claiming an already-claimed bit is the bug to catch.
+  std::array<bool, 64> seen{};
+  std::array<ReaderDrawerCatalogItem, 64> claimedBy{};
+  for (const ReaderDrawerCatalog* catalog : {&complete, &ao3Complete}) {
+    for (const auto& tab : *catalog) {
+      for (uint8_t i = 0; i < tab.count; ++i) {
+        const int bit = readerDrawerItemVisibilityBit(tab.items[i]);
+        ASSERT_GE(bit, -1);
+        if (bit < 0) continue;
+        ASSERT_LT(bit, 64);
+        if (seen[bit]) {
+          EXPECT_EQ(claimedBy[bit], tab.items[i]) << "bit " << bit << " claimed by more than one catalog item";
+        } else {
+          seen[bit] = true;
+          claimedBy[bit] = tab.items[i];
+        }
+      }
+    }
+  }
+}
