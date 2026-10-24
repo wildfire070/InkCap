@@ -127,11 +127,24 @@ std::string restoreFic(const std::string& archivedPath) {
     return "";
   }
 
-  // Recreates a live index record at the restored path's hash; the
-  // tombstoned slot left by archiveFic() is treated as free, not matched by
-  // cacheHash, so this lands cleanly with no manual un-tombstone step.
-  const Epub restoredEpub(restoredPath, "/.crosspoint");
-  Ao3Librarian::scrape(restoredEpub, /*force=*/true);
+  // Recreates a live index record at the restored path's hash. scrape() needs the epub's spine
+  // loaded first -- every other caller (Ao3IndexActivity's single/batch scrape, the one other
+  // production call site) does epub.load(...) before scrape(), but this call skipped it, so
+  // parseTitlePage()'s epub.getSpineItemsCount() == 0 check always failed scrape() silently right
+  // at the top -- confirmed via qemu (2026-10-24): scrape() returned false here on every restore,
+  // never reaching the index write at all, which is why the tombstoned slot archiveFic() left
+  // behind was never cleared and the restored fic stayed invisible in AO3 Library. The
+  // ao3_library_info/ao3-info.bin sidecars already present in the cache dir at this point are
+  // just the pre-archive scrape's files, carried through unchanged by the rename in
+  // migrateMovedEpubState() above, not evidence this call ever ran -- don't take their presence as
+  // success without checking scrape()'s return value, same trap this bug sat behind.
+  Epub restoredEpub(restoredPath, "/.crosspoint");
+  if (!restoredEpub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip,
+                         /*cacheCumulativeSpineSizes=*/false, /*skipScraping=*/true)) {
+    LOG_ERR("Ao3Archive", "Failed to load restored epub for re-scrape: %s", restoredPath.c_str());
+  } else if (!Ao3Librarian::scrape(restoredEpub, /*force=*/true)) {
+    LOG_ERR("Ao3Archive", "Re-scrape failed for restored fic: %s", restoredPath.c_str());
+  }
 
   if (wasMarkedForLater) {
     if (AO3_MARKED_FOR_LATER_STORE.addBook(restoredPath, meta.title, meta.author)) {
