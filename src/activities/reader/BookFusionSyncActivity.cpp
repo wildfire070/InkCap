@@ -473,6 +473,24 @@ void BookFusionSyncActivity::loop() {
       returnToReader();
       return;
     }
+    // Tap either choice row directly -- matches the tap-to-choose convention OptionPopup/
+    // TouchActionButtons use elsewhere (no separate select-then-confirm step for touch).
+    // resultOptionY is filled by the render() call that just drew these same rows.
+    int tapX = 0, tapY = 0;
+    if (mappedInput.wasScreenTapped(tapX, tapY)) {
+      const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+      for (int i = 0; i < 2; ++i) {
+        if (resultOptionY[i] >= 0 && tapY >= resultOptionY[i] && tapY < resultOptionY[i] + lineH) {
+          selectedOption = i;
+          if (i == 0) {
+            applyRemoteProgress();
+          } else {
+            uploadLocalProgress();
+          }
+          return;
+        }
+      }
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Left) ||
         mappedInput.wasReleased(MappedInputManager::Button::Right)) {
       selectedOption = selectedOption == 0 ? 1 : 0;
@@ -517,6 +535,7 @@ void BookFusionSyncActivity::render(RenderLock&&) {
       struct ResultLine {
         std::string text;
         bool bold;
+        int optionIndex = -1;  // 0/1 for the Apply Remote/Upload Local choice rows, -1 otherwise
       };
       std::vector<ResultLine> lines;
 
@@ -549,7 +568,11 @@ void BookFusionSyncActivity::render(RenderLock&&) {
         lines.push_back({lastSyncedBuf, false});
       }
 
-      lines.push_back({selectedOption == 0 ? tr(STR_BF_APPLY_REMOTE) : tr(STR_BF_UPLOAD_LOCAL), true});
+      // Both choices shown as their own line (rather than one line that cycles), so touch
+      // devices have something to tap directly -- see resultOptionY below. The selected one
+      // is bold, matching how Left/Right already highlighted it on button devices.
+      lines.push_back({tr(STR_BF_APPLY_REMOTE), selectedOption == 0, 0});
+      lines.push_back({tr(STR_BF_UPLOAD_LOCAL), selectedOption == 1, 1});
 
       constexpr int LINE_GAP = 8;
       const int blockHeight = static_cast<int>(lines.size()) * lineH + (static_cast<int>(lines.size()) - 1) * LINE_GAP;
@@ -557,6 +580,9 @@ void BookFusionSyncActivity::render(RenderLock&&) {
       for (const auto& line : lines) {
         renderer.drawCenteredText(UI_10_FONT_ID, y, line.text.c_str(), true,
                                   line.bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+        // Cache each choice row's y-band for loop()'s tap hit-test -- rendering is the only
+        // place that knows the real layout (lines.size() varies with which counts are shown).
+        if (line.optionIndex >= 0) resultOptionY[line.optionIndex] = y;
         y += lineH + LINE_GAP;
       }
       break;

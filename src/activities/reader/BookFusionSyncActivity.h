@@ -92,6 +92,12 @@ class BookFusionSyncActivity final : public Activity {
   // Selection in result screen (0 = Apply remote, 1 = Upload local)
   int selectedOption = 0;
 
+  // Top y-coordinate of each choice row the last time render() drew the result screen, so
+  // loop() can hit-test a tap against the same layout render() actually used -- the row
+  // count/positions above them varies with which optional lines are showing. -1 means not
+  // yet rendered this time through SHOWING_RESULT.
+  int resultOptionY[2] = {-1, -1};
+
   unsigned long autoReturnAt = 0;
   static constexpr unsigned long AUTO_RETURN_DELAY_MS = 1200;
 
