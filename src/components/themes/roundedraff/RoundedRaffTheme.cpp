@@ -200,27 +200,9 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
                                                Color::LightGray);
       }
 
-      // BookFusion-linked books: bottom-left badge with white padding around
-      // the mark, inset from the cover corner. iconY snapped to a multiple of
-      // 8 because drawImageTransparent truncates the display-y via integer
-      // divide by 8 -- non-aligned values shift the icon relative to the
-      // white fill. Ported from InsiderPhD's fork (their LyraTheme.cpp), never
-      // carried over during the original BookFusion port; applied here to
-      // match Lyra's own port of the same badge.
-      if (BookFusionBookIdStore::hasBookId(book.path)) {
-        constexpr int BF_ICON_SIZE = 24;
-        constexpr int BF_PADDING = 4;
-        constexpr int BF_MARGIN = 4;
-        constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
-        const int coverX = tileX + (tileWidth - coverWidth) / 2;
-        const int coverDrawH = RoundedRaffMetrics::values.homeCoverHeight;
-        const int iconY = ((imgY + coverDrawH - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
-        const int badgeX = coverX + BF_MARGIN;
-        const int badgeY = iconY - BF_PADDING;
-        const int iconX = badgeX + BF_PADDING;
-        renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
-        drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
-      }
+      // BookFusion-linked books: bottom-left badge. See drawBookFusionBadgeIfLinked.
+      drawBookFusionBadgeIfLinked(renderer, book.path, tileX + (tileWidth - coverWidth) / 2, imgY,
+                                  RoundedRaffMetrics::values.homeCoverHeight);
 
       coverBufferStored = storeCoverBuffer();
       coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
