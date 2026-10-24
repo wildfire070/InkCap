@@ -16,9 +16,11 @@ struct Bookmark {
   // Optional 1-based paragraph anchor from the section cache. UINT16_MAX means unavailable.
   uint16_t paragraphIndex = UINT16_MAX;
   char snippet[BOOKMARK_SNIPPET_MAX] = {};
-  // BookFusion's id for this bookmark once pushed (POST /api/v2/library/books/{id}/bookmarks);
-  // 0 means never pushed. BookFusion has no delete/rename endpoint for bookmarks, so this is
-  // write-once per bookmark -- removing the bookmark locally does not reach the server.
+  // Unused: BookFusion's real API has no concept of a plain, text-less bookmark to push this
+  // to at all (confirmed 2026-10-24 against BookFusion's own official KOReader plugin source
+  // -- see BookFusionSyncActivity::pushHighlights()'s comment). Kept rather than removed, to
+  // avoid an on-disk format migration for a field that costs 4 bytes per bookmark and was
+  // already write-once; always 0 in practice.
   uint32_t bookFusionId = 0;
 };
 

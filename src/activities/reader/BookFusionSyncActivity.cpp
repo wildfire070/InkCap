@@ -14,7 +14,6 @@
 
 #include "BookFusionBookIdStore.h"
 #include "BookFusionSyncClient.h"
-#include "BookmarkStore.h"
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -35,12 +34,12 @@ namespace {
 // sides already agree.
 constexpr float SAME_PROGRESS_EPSILON = 0.001f;
 
-// Every other timestamp this client ever sends is server-reported -- this is
-// the one exception (BookFusion's reading-time endpoint has no server-side
-// "now"). NTP-syncs the system clock and formats it as UTC ISO-8601, or
-// returns false if the result still doesn't look like a real current date
-// (no RTC, no WiFi, or NTP failed) -- callers skip the push rather than
-// send a bogus timestamp.
+// BookFusion's reading-time endpoint has no server-side "now", so this is the one timestamp
+// this client has to generate rather than echo back. NTP-syncs the system clock and formats
+// it as UTC ISO-8601, or returns false if the result still doesn't look like a real current
+// date (no RTC, no WiFi, or NTP failed) -- callers skip the push rather than send a bogus
+// timestamp. See utcIsoFromEpoch() below for the other device-generated-timestamp case
+// (a highlight's own creation time, already captured on-device, just needs formatting).
 bool currentUtcIsoTimestamp(char* buf, size_t bufSize) {
 #ifndef SIMULATOR
   if (!halClock.syncSystemTimeFromNTP()) {
@@ -51,6 +50,18 @@ bool currentUtcIsoTimestamp(char* buf, size_t bufSize) {
   struct tm timeinfo;
   gmtime_r(&now, &timeinfo);
   if (timeinfo.tm_year + 1900 < 2024) return false;  // Clock still looks unsynced.
+  strftime(buf, bufSize, "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return true;
+}
+
+// Formats a clipping's own creationTimeUtc() (ClippingStore.cpp) as UTC ISO-8601 for the
+// highlight push's added_at field. Returns false (buf untouched) for epochSeconds == 0,
+// ClippingStore's own "no clock was available when this was created" sentinel.
+bool utcIsoFromEpoch(const uint32_t epochSeconds, char* buf, const size_t bufSize) {
+  if (epochSeconds == 0) return false;
+  const time_t t = static_cast<time_t>(epochSeconds);
+  struct tm timeinfo;
+  gmtime_r(&t, &timeinfo);
   strftime(buf, bufSize, "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
   return true;
 }
@@ -109,12 +120,11 @@ bool BookFusionSyncActivity::ensureEpubLoaded() {
     epub.reset();
     return false;
   }
-  // EpubReaderActivity loads BOOKMARKS/CLIPPINGS in its own onEnter() and unloads them in its
-  // own onExit() -- replacing it with this activity (see the BOOKFUSION_SYNC case in
+  // EpubReaderActivity loads CLIPPINGS in its own onEnter() and unloads it in its own
+  // onExit() -- replacing it with this activity (see the BOOKFUSION_SYNC case in
   // EpubReaderActivity.cpp) runs that unload() before this activity's onEnter() ever sees the
-  // book, so without this, pushBookmarksAndHighlights() always finds both stores empty and
-  // silently pushes nothing, no matter how many bookmarks/highlights the book actually has.
-  BOOKMARKS.loadForBook(epubPath, epub->getTitle(), epub->getAuthor(), "epub");
+  // book, so without this, pushHighlights() always finds the store empty and silently pushes
+  // nothing, no matter how many highlights the book actually has.
   CLIPPINGS.loadForBook(epubPath, epub->getTitle(), epub->getAuthor(), "epub");
   return true;
 }
@@ -157,12 +167,11 @@ void BookFusionSyncActivity::onEnter() {
 
 void BookFusionSyncActivity::onExit() {
   Activity::onExit();
-  // Mirrors EpubReaderActivity's own load-in-onEnter/unload-in-onExit discipline for these same
-  // two global stores (see ensureEpubLoaded()) -- returning to the reader reloads them there
+  // Mirrors EpubReaderActivity's own load-in-onEnter/unload-in-onExit discipline for this same
+  // global store (see ensureEpubLoaded()) -- returning to the reader reloads it there
   // regardless, but this keeps the store from being left pointed at a book that's no longer
   // active if the user instead backs out to Home from a failed/finished sync.
   if (epub) {
-    BOOKMARKS.unload();
     CLIPPINGS.unload();
   }
   if (WiFi.getMode() != WIFI_MODE_NULL) {
@@ -200,11 +209,7 @@ void BookFusionSyncActivity::onWifiSelectionComplete(const bool success) {
 
 namespace {
 // Bounds the heap/network time this adds to a sync; the rest stay pending for next time.
-constexpr int MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC = 8;
-// Sentinel for "pushed, but the response carried no id" -- BookFusion has no bookmark
-// update/delete endpoint anyway, so there is nothing a real id would be used for later;
-// this just has to read back as "not 0" so the bookmark is never pushed a second time.
-constexpr uint32_t BOOKMARK_PUSHED_WITHOUT_ID = UINT32_MAX;
+constexpr int MAX_HIGHLIGHT_PUSH_PER_SYNC = 8;
 
 // Formats a server "YYYY-MM-DD..." timestamp (BookFusionSyncBaseline::syncedAtUtcIso) using
 // the user's own date format/separator settings. Returns false (buf untouched) for anything
@@ -220,37 +225,22 @@ bool formatLastSyncedDate(const std::string& iso, char* buf, size_t bufSize) {
 }
 }  // namespace
 
-void BookFusionSyncActivity::pushBookmarksAndHighlights() {
+// Highlights only, deliberately: BookFusion's real API (confirmed by reading BookFusion's own
+// official KOReader plugin source, since there's no public documentation) has no concept of a
+// plain, text-less bookmark -- only a highlighted passage with real quoted text can be pushed.
+// An earlier version of this function also tried to push BookmarkStore entries to a
+// /api/v2/library/.../bookmarks endpoint that turned out not to be the real one at all (every
+// create attempt failed server-side); dropped rather than fixed, since there's nothing on the
+// server side for a text-less bookmark to become.
+void BookFusionSyncActivity::pushHighlights() {
   if (!epub) return;
   const int spineCount = epub->getSpineItemsCount();
   if (spineCount <= 0) return;
 
   int pushed = 0;
 
-  const auto& bookmarks = BOOKMARKS.getBookmarks();
-  for (size_t i = 0; i < bookmarks.size() && pushed < MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC; i++) {
-    const Bookmark& bookmark = bookmarks[i];
-    if (bookmark.bookFusionId != 0 || bookmark.spineIndex >= spineCount) continue;
-
-    BookFusionBookmark remoteBookmark;
-    remoteBookmark.title = bookmark.chapterTitle;  // No user-given bookmark name in this format yet.
-    remoteBookmark.chapterIndex = bookmark.spineIndex;
-    remoteBookmark.pagePositionInChapter = bookmark.progress;
-    remoteBookmark.pagePositionInBook = epub->calculateProgress(bookmark.spineIndex, bookmark.progress);
-
-    uint32_t remoteId = 0;
-    const auto result = BookFusionSyncClient::createBookmark(bookId, remoteBookmark, &remoteId);
-    if (result == BookFusionSyncClient::AUTH_FAILED || result == BookFusionSyncClient::NETWORK_ERROR) {
-      LOG_INF("BFSync", "Bookmark push stopped: %s", BookFusionSyncClient::errorString(result).c_str());
-      return;  // Also skips the highlight loop below -- same failure would hit it too.
-    }
-    if (result != BookFusionSyncClient::OK) continue;  // Leave bookFusionId at 0; retried next sync.
-    BOOKMARKS.setBookmarkFusionId(i, remoteId != 0 ? remoteId : BOOKMARK_PUSHED_WITHOUT_ID);
-    pushed++;
-  }
-
   const auto& clippings = CLIPPINGS.getClippings();
-  for (size_t i = 0; i < clippings.size() && pushed < MAX_BOOKMARK_HIGHLIGHT_PUSH_PER_SYNC; i++) {
+  for (size_t i = 0; i < clippings.size() && pushed < MAX_HIGHLIGHT_PUSH_PER_SYNC; i++) {
     const Clipping& clipping = clippings[i];
     if (clipping.bookFusionId != 0 || clipping.spineIndex >= spineCount || clipping.pageCount == 0) continue;
 
@@ -262,8 +252,10 @@ void BookFusionSyncActivity::pushBookmarksAndHighlights() {
     highlight.chapterIndex = clipping.spineIndex;
     highlight.quoteText = text;
     highlight.chapterTitle = clipping.chapterTitle;
-    const float chapterFraction = static_cast<float>(clipping.startPage) / static_cast<float>(clipping.pageCount);
-    highlight.positionPercentage = epub->calculateProgress(clipping.spineIndex, chapterFraction) * 100.0f;
+    char addedAtBuf[24];
+    if (utcIsoFromEpoch(clipping.timestamp, addedAtBuf, sizeof(addedAtBuf))) {
+      highlight.addedAt = addedAtBuf;
+    }
 
     uint32_t remoteId = 0;
     const auto result = BookFusionSyncClient::createHighlight(highlight, &remoteId);
@@ -287,12 +279,8 @@ void BookFusionSyncActivity::performSync() {
   }
 
   // Independent of the progress comparison below: never blocks or fails this sync.
-  pushBookmarksAndHighlights();
+  pushHighlights();
 
-  localBookmarkCount = static_cast<int>(BOOKMARKS.getBookmarks().size());
-  syncedBookmarkCount = static_cast<int>(std::count_if(
-      BOOKMARKS.getBookmarks().begin(), BOOKMARKS.getBookmarks().end(),
-      [](const Bookmark& bookmark) { return bookmark.bookFusionId != 0; }));
   localHighlightCount = static_cast<int>(CLIPPINGS.getClippings().size());
   syncedHighlightCount = static_cast<int>(std::count_if(
       CLIPPINGS.getClippings().begin(), CLIPPINGS.getClippings().end(),
@@ -565,11 +553,6 @@ void BookFusionSyncActivity::render(RenderLock&&) {
       lines.push_back({remoteBuf, false});
 
       char countBuf[48];
-      if (localBookmarkCount > 0) {
-        snprintf(countBuf, sizeof(countBuf), tr(STR_BF_BOOKMARKS_SYNCED_FORMAT), syncedBookmarkCount,
-                 localBookmarkCount);
-        lines.push_back({countBuf, false});
-      }
       if (localHighlightCount > 0) {
         snprintf(countBuf, sizeof(countBuf), tr(STR_BF_HIGHLIGHTS_SYNCED_FORMAT), syncedHighlightCount,
                  localHighlightCount);
