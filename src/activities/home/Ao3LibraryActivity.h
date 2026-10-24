@@ -109,6 +109,12 @@ class Ao3LibraryActivity final : public Activity {
   void loadPageCache(int page);
   BookStatus getBookStatus(uint64_t cacheHash);
   int getMarkedPosition(uint64_t cacheHash);
+  // Opens the reader on selectorIndex's fic, or the BookAction menu (Archive/Restore/
+  // Reindex/Delete/Mark for Later/QR) when isLongPress is true. Shared by the Confirm-button
+  // long-press path and the touch long-press path, which both need to resolve the same
+  // selectorIndex -> epubPath/hash lookup before dispatching -- see the touch-tap handler in
+  // loop() for why a held touch release must route here instead of always opening the reader.
+  void activateSelectedRow(bool isLongPress);
 
   void renderEntry(RenderLock& lock, int y, const ViewEntry& ve, int cacheSlot, bool selected);
   void drawAo3Square(RenderLock& lock, int x, int y, int s, char rating, bool detailsMissing, bool completed,
