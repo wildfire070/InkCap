@@ -35,6 +35,10 @@ uint32_t BookFusionBookIdStore::loadBookId(const std::string& epubPath) {
   return doc["bookId"] | (uint32_t)0;
 }
 
+bool BookFusionBookIdStore::hasBookId(const std::string& epubPath) {
+  return Storage.exists(sidecarPath(epubPath).c_str());
+}
+
 bool BookFusionBookIdStore::saveBookId(const std::string& epubPath, uint32_t bookId) {
   if (bookId == 0) {
     LOG_ERR("BFS", "Refusing to save sidecar with bookId=0 (reserved for 'no id')");
