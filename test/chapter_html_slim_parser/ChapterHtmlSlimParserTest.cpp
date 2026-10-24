@@ -27,6 +27,50 @@ TEST(ParagraphIndentTest, DoesNotInventIndentWithoutSourceCss) {
   }
 }
 
+// Percentage vertical margins/padding resolve against the column's short axis (whichever of
+// width/height is smaller), not always against width -- see BlockStyle::fromCssStyle. Width-based
+// resolution is CSS spec for all axes, but it makes vertical percentage gaps balloon in landscape,
+// where width becomes the long axis; this is a deliberate e-reader-usability deviation.
+TEST(BlockStyleFromCssStyleTest, VerticalPercentMarginsUseShortAxisInLandscape) {
+  CssStyle cssStyle;
+  cssStyle.marginTop = CssLength(10.0f, CssUnit::Percent);
+  cssStyle.marginBottom = CssLength(10.0f, CssUnit::Percent);
+  cssStyle.marginLeft = CssLength(2.0f, CssUnit::Percent);
+  cssStyle.marginRight = CssLength(2.0f, CssUnit::Percent);
+
+  // Landscape-shaped viewport: width (960) is the long axis, height (540) is the short axis.
+  const BlockStyle style =
+      BlockStyle::fromCssStyle(cssStyle, /*emSize=*/16.0f, CssTextAlign::Left, /*viewportWidth=*/960,
+                                /*viewportHeight=*/540);
+  EXPECT_EQ(style.marginTop, 54);     // 10% of the short axis (540) -- the old behavior would give 96
+  EXPECT_EQ(style.marginBottom, 54);
+  EXPECT_EQ(style.marginLeft, 19);    // 2% of width (960) -- horizontal margins are untouched by this fix
+  EXPECT_EQ(style.marginRight, 19);
+}
+
+TEST(BlockStyleFromCssStyleTest, VerticalPercentMarginsUnchangedInPortrait) {
+  CssStyle cssStyle;
+  cssStyle.marginTop = CssLength(10.0f, CssUnit::Percent);
+  cssStyle.marginBottom = CssLength(10.0f, CssUnit::Percent);
+
+  // Portrait-shaped viewport: width (540) is already the short axis, same as pre-fix behavior.
+  const BlockStyle style =
+      BlockStyle::fromCssStyle(cssStyle, /*emSize=*/16.0f, CssTextAlign::Left, /*viewportWidth=*/540,
+                                /*viewportHeight=*/960);
+  EXPECT_EQ(style.marginTop, 54);  // 10% of 540 either way -- no behavior change in portrait
+  EXPECT_EQ(style.marginBottom, 54);
+}
+
+TEST(BlockStyleFromCssStyleTest, VerticalPercentMarginsFallBackToWidthWhenHeightOmitted) {
+  CssStyle cssStyle;
+  cssStyle.marginTop = CssLength(10.0f, CssUnit::Percent);
+
+  // Callers that don't pass viewportHeight (default 0) keep the old width-only resolution.
+  const BlockStyle style =
+      BlockStyle::fromCssStyle(cssStyle, /*emSize=*/16.0f, CssTextAlign::Left, /*viewportWidth=*/960);
+  EXPECT_EQ(style.marginTop, 96);
+}
+
 class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
  protected:
   std::string filepath = "unused.xhtml";
