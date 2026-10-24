@@ -5,7 +5,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
+#include "BookFusionBookIdStore.h"
 #include "MappedInputManager.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
@@ -214,6 +216,32 @@ inline void drawLucideIcon(const GfxRenderer& renderer, const freeink::Icon& ico
                                   static_cast<int16_t>(icon.h)},
                 freeink::ui::bitmapFromIcon(icon), freeink::ui::BitmapMode::Center,
                 freeink::ui::Paint::solid(foregroundBlack ? freeink::ui::Color::Black : freeink::ui::Color::White));
+}
+
+// BookFusion-linked books get a bottom-left badge: a white padding square
+// around the BookFusion mark, inset from the cover's corner. coverX/coverY/
+// coverHeight describe the actual drawn cover rect, which every theme that
+// draws this badge computes differently (tile math, a carousel's focused
+// outRect, a bitmap rect) -- that anchor is the only thing that varies
+// between themes, so it's the only thing this helper takes as input. iconY
+// is snapped to a multiple of 8 because drawImageTransparent truncates the
+// display-y via integer divide by 8; a non-aligned value shifts the icon
+// relative to the white fill. Ported from InsiderPhD's fork (LyraTheme),
+// then hand-copied into 5 more themes as the badge was extended to match --
+// this is the one copy, not a new design.
+inline void drawBookFusionBadgeIfLinked(const GfxRenderer& renderer, const std::string& bookPath, const int coverX,
+                                        const int coverY, const int coverHeight) {
+  if (!BookFusionBookIdStore::hasBookId(bookPath)) return;
+  constexpr int BF_ICON_SIZE = 24;
+  constexpr int BF_PADDING = 4;
+  constexpr int BF_MARGIN = 4;
+  constexpr int BF_BADGE_SIZE = BF_ICON_SIZE + 2 * BF_PADDING;
+  const int iconY = ((coverY + coverHeight - BF_MARGIN - BF_PADDING - BF_ICON_SIZE) / 8) * 8;
+  const int badgeX = coverX + BF_MARGIN;
+  const int badgeY = iconY - BF_PADDING;
+  const int iconX = badgeX + BF_PADDING;
+  renderer.fillRect(badgeX, badgeY, BF_BADGE_SIZE, BF_BADGE_SIZE, false);
+  drawLucideIcon(renderer, icon_bookfusion_24, iconX, iconY);
 }
 
 // Scroll semantics shared by every FreeInkUI list screen: swipes move the
