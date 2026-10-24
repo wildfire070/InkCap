@@ -1085,72 +1085,6 @@ BookFusionSyncClient::Error BookFusionSyncClient::trackReadingTime(uint32_t book
   return SERVER_ERROR;
 }
 
-BookFusionSyncClient::Error BookFusionSyncClient::createBookmark(uint32_t bookId, const BookFusionBookmark& bookmark,
-                                                                 uint32_t* outId) {
-  if (!BOOKFUSION_STORE.hasToken()) return NO_TOKEN;
-  if (outId) *outId = 0;
-
-  char urlBuf[128];
-  snprintf(urlBuf, sizeof(urlBuf), "%s/api/v2/library/books/%lu/bookmarks", BASE_URL, (unsigned long)bookId);
-  const std::string url = urlBuf;
-  LOG_DBG("BFS", "createBookmark: book=%lu chapter=%d", (unsigned long)bookId, bookmark.chapterIndex);
-  if (insufficientHeap()) return LOW_MEMORY;
-
-  // Same JSON shape the web reader posts.
-  JsonDocument reqDoc;
-  reqDoc["title"] = bookmark.title;
-  reqDoc["chapter_index"] = bookmark.chapterIndex;
-  reqDoc["page_position_in_chapter"] = bookmark.pagePositionInChapter;
-  reqDoc["page_position_in_book"] = bookmark.pagePositionInBook;
-  std::string body;
-  serializeJson(reqDoc, body);
-
-#ifdef SIMULATOR
-  WiFiClientSecure secureClient;
-  secureClient.setInsecure();
-  HTTPClient http;
-  http.begin(secureClient, url.c_str());
-  addAuthHeaders(http);
-  http.addHeader("Content-Type", "application/json");
-
-  const int httpCode = http.POST(body.c_str());
-  lastHttpCode = httpCode;
-  lastTransportError = (httpCode < 0) ? httpCode : 0;
-  const String responseBody = http.getString();
-  http.end();
-#else
-  freeink::SecureHttpClient http;
-  http.setInsecure();
-  if (!http.begin(url)) {
-    LOG_ERR("BFS", "Bad URL: %s", url.c_str());
-    return NETWORK_ERROR;
-  }
-  addAuthHeaders(http);
-  http.addHeader("Content-Type", "application/json");
-  std::string responseBody;
-  const int httpCode = bookfusion_sync::boundedSendRequest(http, "POST", body, responseBody);
-  lastHttpCode = httpCode;
-  lastTransportError = (httpCode < 0) ? httpCode : 0;
-  http.end();
-#endif
-
-  LOG_DBG("BFS", "createBookmark response: %d", httpCode);
-  if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 401) return AUTH_FAILED;
-  if (httpCode != 200 && httpCode != 201) return SERVER_ERROR;
-
-  // Only the id matters; a response without one still counts as created.
-  if (outId) {
-    JsonDocument filter;
-    filter["id"] = true;
-    JsonDocument doc;
-    if (deserializeJson(doc, responseBody.c_str(), DeserializationOption::Filter(filter)) == DeserializationError::Ok) {
-      *outId = doc["id"] | 0u;
-    }
-  }
-  return OK;
-}
-
 BookFusionSyncClient::Error BookFusionSyncClient::createHighlight(const BookFusionHighlight& highlight,
                                                                   uint32_t* outId) {
   if (!BOOKFUSION_STORE.hasToken()) return NO_TOKEN;
@@ -1163,14 +1097,17 @@ BookFusionSyncClient::Error BookFusionSyncClient::createHighlight(const BookFusi
 
   // Same JSON shape the KOReader plugin posts (bf_sync.lua annotationToHighlight), minus
   // the character-offset anchors InkCap's clipping format doesn't keep -- BookFusion still
-  // saves a highlight with no offsets, just without an anchor in the reading view.
+  // saves a highlight with no offsets, just without an anchor in the reading view. No
+  // "note" field: clippings have no local note concept to send one from.
   JsonDocument reqDoc;
   reqDoc["book_id"] = highlight.bookId;
   reqDoc["chapter_index"] = highlight.chapterIndex;
   reqDoc["quote_text"] = highlight.quoteText;
-  reqDoc["position_percentage"] = highlight.positionPercentage;
   if (!highlight.chapterTitle.empty()) {
     reqDoc["chapter_title"] = highlight.chapterTitle;
+  }
+  if (!highlight.addedAt.empty()) {
+    reqDoc["added_at"] = highlight.addedAt;
   }
   std::string body;
   serializeJson(reqDoc, body);
