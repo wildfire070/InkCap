@@ -2882,7 +2882,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->flushPartWordBuffer();
     }
     const float emSize = self->renderer.getLineHeight(self->fontId) * self->lineCompression;
-    auto tableBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
+    auto tableBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
 
     const auto heap = MemoryBudget::snapshot();
     const bool useCompact = !MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_RICH_TABLE, MIN_MAX_ALLOC_FOR_RICH_TABLE);
@@ -3668,7 +3668,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(blockFontId));
 
   const CssTextAlign requestedAlign = static_cast<CssTextAlign>(self->paragraphAlignment);
-  auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, requestedAlign, self->viewportWidth);
+  auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, requestedAlign, self->viewportWidth, self->viewportHeight);
   userAlignmentBlockStyle.fontSize = fontStyle.fontSize;
   userAlignmentBlockStyle.fontScale = fontStyle.fontScale;
   if ((strcmp(name, "html") == 0 || strcmp(name, "body") == 0) && fontStyle.fontSize) {
@@ -3730,7 +3730,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->skipCurrentElement();
       return;
     }
-    auto hrBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
+    auto hrBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
     if (!self->embeddedStyle || self->isLightMode()) {
       stripPublisherSpacing(hrBlockStyle);
     }
@@ -3776,7 +3776,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->headingDepth = self->depth;
     self->headingOpenerActive = true;
     self->currentCssStyle = cssStyle;
-    auto headerBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Center, self->viewportWidth);
+    auto headerBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Center, self->viewportWidth, self->viewportHeight);
     headerBlockStyle.fontSize = fontStyle.fontSize;
     headerBlockStyle.fontScale = fontStyle.fontScale;
     headerBlockStyle.textAlignDefined = true;
