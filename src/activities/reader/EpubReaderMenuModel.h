@@ -324,11 +324,12 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   }
   addIfVisible(location, ReaderDrawerCatalogItem::SaveClipping);
   if (available.hasClippings) addIfVisible(location, ReaderDrawerCatalogItem::ViewClippings);
-  if (available.buttonDevice) {
-    addIfVisible(location, ReaderDrawerCatalogItem::SyncProgress);
-    addIfVisible(location, ReaderDrawerCatalogItem::NearbyPositionSync);
-    addIfVisible(location, ReaderDrawerCatalogItem::SendNearbyBook);
-  }
+  // Previously button-device-only: an artifact of the old separate touch menu never
+  // having had these, not a deliberate touch-UX choice (see readerDrawerItemVisibilityBit()).
+  // The reader-menu-visibility veto above gives touch users an opt-out if they don't want them.
+  addIfVisible(location, ReaderDrawerCatalogItem::SyncProgress);
+  addIfVisible(location, ReaderDrawerCatalogItem::NearbyPositionSync);
+  addIfVisible(location, ReaderDrawerCatalogItem::SendNearbyBook);
   addIfVisible(location, ReaderDrawerCatalogItem::Screenshot);
   addIfVisible(location, ReaderDrawerCatalogItem::DisplayQr);
 

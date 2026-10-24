@@ -130,9 +130,14 @@ TEST(ReaderDrawerModel, CatalogOrderAndConditionalRowsMatchTouchDesign) {
   EXPECT_EQ(stableMore.items[2], ReaderDrawerCatalogItem::GoToStablePage);
 
   const auto& minimalLocation = minimal[static_cast<size_t>(ReaderDrawerTab::Location)];
-  EXPECT_EQ(minimalLocation.count, 4);
+  EXPECT_EQ(minimalLocation.count, 7);
   EXPECT_EQ(minimalLocation.items[0], ReaderDrawerCatalogItem::BookmarkToggle);
-  EXPECT_EQ(minimalLocation.items[3], ReaderDrawerCatalogItem::DisplayQr);
+  EXPECT_EQ(minimalLocation.items[1], ReaderDrawerCatalogItem::SaveClipping);
+  EXPECT_EQ(minimalLocation.items[2], ReaderDrawerCatalogItem::SyncProgress);
+  EXPECT_EQ(minimalLocation.items[3], ReaderDrawerCatalogItem::NearbyPositionSync);
+  EXPECT_EQ(minimalLocation.items[4], ReaderDrawerCatalogItem::SendNearbyBook);
+  EXPECT_EQ(minimalLocation.items[5], ReaderDrawerCatalogItem::Screenshot);
+  EXPECT_EQ(minimalLocation.items[6], ReaderDrawerCatalogItem::DisplayQr);
 
   const ReaderDrawerCatalog complete = makeReaderDrawerCatalog({true, true, true, true, true, true});
   const auto& more = complete[static_cast<size_t>(ReaderDrawerTab::More)];
@@ -145,14 +150,17 @@ TEST(ReaderDrawerModel, CatalogOrderAndConditionalRowsMatchTouchDesign) {
   EXPECT_EQ(more.items[5], ReaderDrawerCatalogItem::AutoPageTurn);
 
   const auto& location = complete[static_cast<size_t>(ReaderDrawerTab::Location)];
-  EXPECT_EQ(location.count, 7);
+  EXPECT_EQ(location.count, 10);
   EXPECT_EQ(location.items[0], ReaderDrawerCatalogItem::BookmarkToggle);
   EXPECT_EQ(location.items[1], ReaderDrawerCatalogItem::ViewBookmarks);
   EXPECT_EQ(location.items[2], ReaderDrawerCatalogItem::DeleteBookmarks);
   EXPECT_EQ(location.items[3], ReaderDrawerCatalogItem::SaveClipping);
   EXPECT_EQ(location.items[4], ReaderDrawerCatalogItem::ViewClippings);
-  EXPECT_EQ(location.items[5], ReaderDrawerCatalogItem::Screenshot);
-  EXPECT_EQ(location.items[6], ReaderDrawerCatalogItem::DisplayQr);
+  EXPECT_EQ(location.items[5], ReaderDrawerCatalogItem::SyncProgress);
+  EXPECT_EQ(location.items[6], ReaderDrawerCatalogItem::NearbyPositionSync);
+  EXPECT_EQ(location.items[7], ReaderDrawerCatalogItem::SendNearbyBook);
+  EXPECT_EQ(location.items[8], ReaderDrawerCatalogItem::Screenshot);
+  EXPECT_EQ(location.items[9], ReaderDrawerCatalogItem::DisplayQr);
 
   const auto& settings = complete[static_cast<size_t>(ReaderDrawerTab::Settings)];
   EXPECT_EQ(settings.count, 12);
@@ -198,28 +206,42 @@ TEST(ReaderDrawerModel, StatsRowsFollowGlobalAndBookTrackingChoices) {
   }
 }
 
-TEST(ReaderDrawerModel, ButtonDevicesRestoreStatsAndTransfersInTheirTabs) {
+TEST(ReaderDrawerModel, ButtonDevicesRestoreReadingStatsInMoreTab) {
+  // ReadingStats is still button-device-only (unlike the Location-tab sync rows below,
+  // which now show on every device -- see SyncRowsAppearInLocationTabRegardlessOfDevice).
   ReaderDrawerAvailability available{};
   available.buttonDevice = true;
   const ReaderDrawerCatalog catalog = makeReaderDrawerCatalog(available);
   const auto& more = catalog[static_cast<size_t>(ReaderDrawerTab::More)];
   EXPECT_EQ(more.count, 4);
   EXPECT_EQ(more.items[3], ReaderDrawerCatalogItem::ReadingStats);
+}
 
-  const auto& location = catalog[static_cast<size_t>(ReaderDrawerTab::Location)];
-  EXPECT_EQ(location.count, 7);
-  EXPECT_EQ(location.items[2], ReaderDrawerCatalogItem::SyncProgress);
-  EXPECT_EQ(location.items[3], ReaderDrawerCatalogItem::NearbyPositionSync);
-  EXPECT_EQ(location.items[4], ReaderDrawerCatalogItem::SendNearbyBook);
-  EXPECT_EQ(location.items[5], ReaderDrawerCatalogItem::Screenshot);
-  EXPECT_EQ(location.items[6], ReaderDrawerCatalogItem::DisplayQr);
+TEST(ReaderDrawerModel, SyncRowsAppearInLocationTabRegardlessOfDevice) {
+  // SyncProgress/NearbyPositionSync/SendNearbyBook (no BookFusionSync on this branch --
+  // no BookFusion here) used to be gated on available.buttonDevice -- an artifact of the old
+  // separate touch menu never having had them, not a deliberate touch-UX choice. Fixed
+  // 2026-10-23: they now show on every device, with the reader-menu-visibility veto giving
+  // touch users an opt-out if they don't want them.
+  ReaderDrawerAvailability touchAvailable{};
+  touchAvailable.buttonDevice = false;
+  const ReaderDrawerCatalog touchCatalog = makeReaderDrawerCatalog(touchAvailable);
+  const auto& touchLocation = touchCatalog[static_cast<size_t>(ReaderDrawerTab::Location)];
+  EXPECT_EQ(touchLocation.count, 7);
+  EXPECT_EQ(touchLocation.items[2], ReaderDrawerCatalogItem::SyncProgress);
+  EXPECT_EQ(touchLocation.items[3], ReaderDrawerCatalogItem::NearbyPositionSync);
+  EXPECT_EQ(touchLocation.items[4], ReaderDrawerCatalogItem::SendNearbyBook);
+  EXPECT_EQ(touchLocation.items[5], ReaderDrawerCatalogItem::Screenshot);
+  EXPECT_EQ(touchLocation.items[6], ReaderDrawerCatalogItem::DisplayQr);
 
-  available.hasBookmarks = true;
-  available.hasClippings = true;
-  const ReaderDrawerCatalog fullCatalog = makeReaderDrawerCatalog(available);
-  const auto& fullLocation = fullCatalog[static_cast<size_t>(ReaderDrawerTab::Location)];
-  EXPECT_EQ(fullLocation.count, 10);
-  EXPECT_EQ(fullLocation.items[5], ReaderDrawerCatalogItem::SyncProgress);
+  ReaderDrawerAvailability buttonAvailable{};
+  buttonAvailable.buttonDevice = true;
+  buttonAvailable.hasBookmarks = true;
+  buttonAvailable.hasClippings = true;
+  const ReaderDrawerCatalog buttonCatalog = makeReaderDrawerCatalog(buttonAvailable);
+  const auto& buttonLocation = buttonCatalog[static_cast<size_t>(ReaderDrawerTab::Location)];
+  EXPECT_EQ(buttonLocation.count, 10);
+  EXPECT_EQ(buttonLocation.items[5], ReaderDrawerCatalogItem::SyncProgress);
 }
 
 TEST(ReaderDrawerModel, ChangeMaskSeparatesPreviewRelayoutAndOrientation) {
