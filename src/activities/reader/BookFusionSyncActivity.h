@@ -75,14 +75,12 @@ class BookFusionSyncActivity final : public Activity {
   BookFusionProgress localSyncProgress;
   BookFusionProgress remoteSyncProgress;
 
-  // For the result screen: how many of this book's local bookmarks/clippings
-  // already carry a BookFusion id (pushed), out of how many exist locally.
-  // Counts this device's own pushes only -- BookFusion may hold more from
-  // other devices, which this client has no cheap way to show without an
-  // extra round trip. Computed once in performSync(), after
-  // pushBookmarksAndHighlights() has had a chance to push this sync's batch.
-  int localBookmarkCount = 0;
-  int syncedBookmarkCount = 0;
+  // For the result screen: how many of this book's local clippings already
+  // carry a BookFusion id (pushed), out of how many exist locally. Counts
+  // this device's own pushes only -- BookFusion may hold more from other
+  // devices, which this client has no cheap way to show without an extra
+  // round trip. Computed once in performSync(), after pushHighlights() has
+  // had a chance to push this sync's batch.
   int localHighlightCount = 0;
   int syncedHighlightCount = 0;
   // Server-reported updated_at from the last successful sync, if any
@@ -110,12 +108,12 @@ class BookFusionSyncActivity final : public Activity {
 
   void onWifiSelectionComplete(bool success);
   void performSync();
-  // Pushes any bookmarks/clippings this device hasn't sent to BookFusion yet, for the
-  // currently loaded book (BOOKMARKS/CLIPPINGS singletons, already loaded by
-  // EpubReaderActivity::onEnter() before this activity could be reached). Best-effort and
-  // silent: failures leave bookFusionId at 0 for the next sync, same as a skipped item ran
-  // out of budget; never blocks or fails progress sync.
-  void pushBookmarksAndHighlights();
+  // Pushes any clippings this device hasn't sent to BookFusion yet, for the currently loaded
+  // book (CLIPPINGS singleton, loaded in ensureEpubLoaded()). Best-effort and silent: failures
+  // leave bookFusionId at 0 for the next sync, same as a skipped item ran out of budget; never
+  // blocks or fails progress sync. Highlights only -- see pushHighlights()'s own comment for
+  // why there's no bookmark counterpart.
+  void pushHighlights();
   void applyRemoteProgress();
   void uploadLocalProgress();
   bool ensureEpubLoaded();

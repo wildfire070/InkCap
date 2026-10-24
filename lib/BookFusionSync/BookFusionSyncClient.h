@@ -67,27 +67,23 @@ struct BookFusionProgress {
 };
 
 /**
- * One bookmark to create on BookFusion. Positions use the same conventions as
- * BookFusionProgress: pagePositionInBook = (chapterIndex + pagePositionInChapter) / spine count.
- */
-struct BookFusionBookmark {
-  std::string title;  // Shown in the web reader's bookmark list; the book's own chapter title is a fine fallback.
-  int chapterIndex = 0;             // spine index, 0-based (same as BookFusionProgress).
-  float pagePositionInChapter = 0.0f;
-  float pagePositionInBook = 0.0f;
-};
-
-/**
  * One highlight to create on BookFusion (POST /api/user/highlights). BookFusion only
  * places a highlight in the book's text when it can match the quote; a highlight with
  * no match still saves, just without an anchor in the reading view.
+ *
+ * Field set and names match BookFusion's own official KOReader plugin
+ * (bf_sync.lua's annotationToHighlight(), BookFusion/koreader-plugin-releases v1.2.1) --
+ * confirmed by reading that plugin's source after this client's own guess at the request
+ * shape (book_id in the URL path, a position_percentage field) turned out wrong: BookFusion
+ * has no concept of a plain, text-less bookmark at all, only highlights with real quoted
+ * text, and the real create call is POST /api/user/highlights with book_id *in the body*.
  */
 struct BookFusionHighlight {
   uint32_t bookId = 0;
   int chapterIndex = 0;  // spine index, 0-based (same as BookFusionProgress).
   std::string quoteText;  // required
   std::string chapterTitle;
-  float positionPercentage = 0.0f;  // 0-100 (same scale as BookFusionProgress::percentage * 100).
+  std::string addedAt;  // UTC ISO-8601 (e.g. "2026-01-01T12:00:00Z"); omitted from the request when empty.
 };
 
 /**
@@ -182,15 +178,6 @@ class BookFusionSyncClient {
    * responsible for only calling this when the clock looks genuinely synced.
    */
   static Error trackReadingTime(uint32_t bookId, uint32_t durationSeconds, const char* loggedAtUtcIso);
-
-  /**
-   * Creates one bookmark for a book (POST /api/v2/library/books/{id}/bookmarks, the web
-   * reader's own endpoint). On success *outId receives the server's bookmark id, or 0 when
-   * the response carried none -- still counts as created, just not one this device can
-   * recognise as already-pushed later (BookFusion has no bookmark delete/rename endpoint
-   * for this client to reconcile against anyway).
-   */
-  static Error createBookmark(uint32_t bookId, const BookFusionBookmark& bookmark, uint32_t* outId);
 
   /**
    * Creates one highlight (POST /api/user/highlights). On success *outId receives the
