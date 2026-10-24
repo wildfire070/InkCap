@@ -11,11 +11,16 @@
 #include "../Ao3LibraryMetadata.h"
 #include "ActivityManager.h"
 #include "activities/network/Ao3ReceiveActivity.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
 
 namespace {
+// TouchRegistry::Item id for the explicit touch Update button render() draws in place of the
+// button-hints row (see the touch-handling comment in loop()).
+constexpr int UPDATE_BUTTON_ID = 0;
+
 // Matches the wording Ao3LibraryActivity's Sort & Filter overlay already uses for this
 // same rating char, so the two screens describe a rating the same way.
 const char* ratingLabel(const char rating) {
@@ -86,7 +91,16 @@ void Ao3PageQrActivity::loop() {
     return;
   }
 
-  if (!storyUrl.empty() && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+  // Touch (X4 Pro): the board has no Left key, and BaseTheme::drawButtonHints() -- the usual
+  // touch fallback for a button-hint label -- no-ops entirely on touch hardware (it only draws
+  // the physical-button hint row), so this screen's Update action needs its own explicit touch
+  // target. render() draws and registers it only when storyUrl is non-empty, same gate used here.
+  int tappedItem = -1;
+  const bool updateTapped =
+      !storyUrl.empty() && mappedInput.wasItemTapped(tappedItem) && tappedItem == UPDATE_BUTTON_ID;
+  if (updateTapped) mappedInput.suppressCurrentTouchContact();
+
+  if (!storyUrl.empty() && (mappedInput.wasReleased(MappedInputManager::Button::Left) || updateTapped)) {
     startActivityForResult(
         std::make_unique<Ao3ReceiveActivity>(renderer, mappedInput, Ao3ReceiveMode::UPDATE_SINGLE, filePath,
                                              storyUrl, std::string(title), std::string(author)),
@@ -99,6 +113,15 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
+
+  // Touch (X4 Pro): metrics.buttonHintsHeight is 0 on touch hardware (BaseTheme reserves that
+  // band only for the physical-button hint row it draws, which it skips on touch -- see
+  // BaseTheme::drawButtonHints()'s early `if (gpio.hasTouch()) return;`), so the content layout
+  // below would otherwise use the full page height and leave no room for the explicit touch
+  // Update button drawn at the end of this function. Reserve the same height for both.
+  constexpr int TOUCH_UPDATE_BUTTON_HEIGHT = 48;
+  const int touchButtonReserve =
+      (mappedInput.hasTouchHardware() && !storyUrl.empty()) ? TOUCH_UPDATE_BUTTON_HEIGHT : 0;
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_AO3_PAGE_QR));
 
@@ -169,7 +192,7 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   const int bottomBlockH = storyUrl.empty() ? 0 : (urlH + 10 + scanH);
 
   const int topLimit = metrics.topPadding + metrics.headerHeight;
-  const int bottomLimit = pageHeight - metrics.buttonHintsHeight;
+  const int bottomLimit = pageHeight - metrics.buttonHintsHeight - touchButtonReserve;
   const int availableH = bottomLimit - topLimit;
   const int totalContent = topBlockH + qrBlockH + bottomBlockH;
 
@@ -239,6 +262,19 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   const char* updateLabel = storyUrl.empty() ? "" : tr(STR_AO3_QR_UPDATE);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, updateLabel, "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+  // Touch (X4 Pro): drawButtonHints() above no-ops on touch hardware (it only draws the
+  // physical-button hint row), leaving its reserved bottom band empty and the Update action with
+  // no touch target at all -- see loop()'s matching tap check. Draw an explicit button filling
+  // that same reserved band instead, only when there's an Update action to trigger.
+  if (touchButtonReserve > 0) {
+    const int btnH = touchButtonReserve;
+    const Rect updateBtnRect{0, pageHeight - btnH, pageWidth, btnH};
+    renderer.drawRect(updateBtnRect.x, updateBtnRect.y, updateBtnRect.width, updateBtnRect.height);
+    renderer.drawCenteredText(UI_10_FONT_ID, updateBtnRect.y + (btnH - renderer.getLineHeight(UI_10_FONT_ID)) / 2,
+                              tr(STR_AO3_QR_UPDATE));
+    TouchRegistry::getInstance().add(updateBtnRect, UPDATE_BUTTON_ID, TouchRegistry::Item);
+  }
 
   renderer.displayBuffer();
 }
