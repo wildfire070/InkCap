@@ -109,6 +109,13 @@ bool BookFusionSyncActivity::ensureEpubLoaded() {
     epub.reset();
     return false;
   }
+  // EpubReaderActivity loads BOOKMARKS/CLIPPINGS in its own onEnter() and unloads them in its
+  // own onExit() -- replacing it with this activity (see the BOOKFUSION_SYNC case in
+  // EpubReaderActivity.cpp) runs that unload() before this activity's onEnter() ever sees the
+  // book, so without this, pushBookmarksAndHighlights() always finds both stores empty and
+  // silently pushes nothing, no matter how many bookmarks/highlights the book actually has.
+  BOOKMARKS.loadForBook(epubPath, epub->getTitle(), epub->getAuthor(), "epub");
+  CLIPPINGS.loadForBook(epubPath, epub->getTitle(), epub->getAuthor(), "epub");
   return true;
 }
 
@@ -150,6 +157,14 @@ void BookFusionSyncActivity::onEnter() {
 
 void BookFusionSyncActivity::onExit() {
   Activity::onExit();
+  // Mirrors EpubReaderActivity's own load-in-onEnter/unload-in-onExit discipline for these same
+  // two global stores (see ensureEpubLoaded()) -- returning to the reader reloads them there
+  // regardless, but this keeps the store from being left pointed at a book that's no longer
+  // active if the user instead backs out to Home from a failed/finished sync.
+  if (epub) {
+    BOOKMARKS.unload();
+    CLIPPINGS.unload();
+  }
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
