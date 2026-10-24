@@ -216,6 +216,100 @@ void Ao3LibraryActivity::loadPageCache(int page) {
   }
 }
 
+void Ao3LibraryActivity::activateSelectedRow(const bool isLongPress) {
+  // Ensure the page cache is fresh for the current selector position
+  const int selPage = static_cast<int>(selectorIndex) / 3;
+  if (selPage != cachedPage) {
+    // loadPageCache() reassigns pageCache/wrappedSummary, which render() reads
+    // under its own RenderLock -- must not mutate them unlocked from loop().
+    RenderLock lock(*this);
+    loadPageCache(selPage);
+  }
+
+  const int slot = static_cast<int>(selectorIndex) % 3;
+  // Full epub path and title live in the ao3_library_info sidecar (page cache)
+  const std::string epubPath(pageCache[slot].filepath);
+  const std::string epubTitle(pageCache[slot].title[0] ? pageCache[slot].title : viewEntries[selectorIndex].title);
+  const uint64_t hash = viewEntries[selectorIndex].cacheHash;
+
+  if (isLongPress && !epubPath.empty()) {
+    // Long-press → BookAction menu
+    auto handler = [this, epubPath, hash](const ActivityResult& res) {
+      if (const auto* actionRes = std::get_if<BookActionResult>(&res.data)) {
+        if (actionRes->modified) {
+          if (actionRes->deleted || actionRes->archived) {
+            if (actionRes->deleted) {
+              // Tombstone in the index, remove file + cache from disk
+              Ao3Librarian::tombstoneRecord(epubPath);
+              if (Storage.remove(epubPath.c_str())) {
+                Epub(epubPath, "/.crosspoint").clearCache();
+              }
+            }
+            // Archiving already tombstoned the record and moved the
+            // file/cache itself (Ao3ArchiveUtils::archiveFic) -- either
+            // way the fic no longer belongs at this index, so just drop
+            // it from the in-RAM view rather than leave a stale row
+            // showing a bogus reset status. viewEntries is read by
+            // render()/renderLibrary() under its own lock, so erasing
+            // from it here (loop task) needs the same lock.
+            RenderLock lock(*this);
+            auto it = std::find_if(viewEntries.begin(), viewEntries.end(),
+                                   [hash](const ViewEntry& v) { return v.cacheHash == hash; });
+            if (it != viewEntries.end()) viewEntries.erase(it);
+
+            // Clamp selectorIndex so we don't go out of bounds on next render
+            if (!viewEntries.empty()) {
+              if (selectorIndex >= viewEntries.size()) {
+                selectorIndex = viewEntries.size() - 1;
+              }
+            } else {
+              selectorIndex = 0;
+            }
+            cachedPage = -1;  // invalidate so next render reloads page cache
+          } else if (actionRes->indexingCompleted || actionRes->restored ||
+                     (actionRes->markedForLaterChanged && activeState.view == LibraryView::MARKED_FOR_LATER)) {
+            // Restore re-scrapes a fresh live index record -- this fic's
+            // cache hash/index slot may not match what's cached here
+            // (it may not even have been a normal live entry a moment
+            // ago), so a full rebuild is the safe choice rather than an
+            // in-place patch. Marking/unmarking inside the Marked for Later
+            // view changes which fics belong in the list at all.
+            rebuildViewEntries();
+          } else {
+            // Status and/or Marked-for-Later change — update in-place
+            // without a full reload. pageCacheStatus/pageCacheMarkedPosition
+            // are read by render() under its own RenderLock, so mutating
+            // them here (on the loop task) needs the same lock.
+            if (static_cast<int>(selectorIndex) / 3 == cachedPage) {
+              RenderLock lock(*this);
+              pageCacheStatus[selectorIndex % 3] = actionRes->newStatus;
+              if (actionRes->markedForLaterChanged) {
+                // AO3_MARKED_FOR_LATER_STORE is a FIFO -- a mark/unmark
+                // shifts every other marked fic's queue position, so
+                // refresh every cached slot's badge, not just the
+                // acted-upon one, or a sibling row on this same page
+                // shows a stale position digit until the page reloads.
+                const int startIdx = cachedPage * 3;
+                const int endIdx = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
+                for (int i = startIdx; i < endIdx; i++) {
+                  pageCacheMarkedPosition[i - startIdx] = getMarkedPosition(viewEntries[i].cacheHash);
+                }
+              } else {
+                pageCacheMarkedPosition[selectorIndex % 3] = getMarkedPosition(hash);
+              }
+            }
+          }
+          requestUpdate(true);
+        }
+      }
+    };
+    startActivityForResult(std::make_unique<BookActionActivity>(renderer, mappedInput, epubPath, epubTitle), handler);
+  } else if (!epubPath.empty()) {
+    APP_STATE.ao3LibraryReturnIndex = static_cast<int>(selectorIndex);
+    activityManager.goToReader(epubPath);
+  }
+}
+
 // ---------------------------------------------------------------------------
 //  loop
 // ---------------------------------------------------------------------------
@@ -303,27 +397,20 @@ void Ao3LibraryActivity::loop() {
       }
       return;
     }
-    // Tap a fic row (registered in renderLibrary) → open it directly. Consume the
-    // touch contact so the tap can't re-fire or leak into the reader.
+    // Tap a fic row (registered in renderLibrary): a short tap opens it directly, a long
+    // press (>=1000ms, same threshold as the Confirm-button path below) opens the BookAction
+    // menu instead. wasItemTapped() fires on release regardless of hold duration, but by the
+    // time it returns true, getHeldTime() already reflects how long THIS release was held
+    // (MappedInputManager::wasScreenTapped() -> rememberTouchHeldTime() populates it before
+    // wasItemTapped() returns) -- no separate down/up tracking needed. Consume the touch
+    // contact so the tap can't re-fire or leak into the reader.
     {
       int tappedItem = -1;
       if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 &&
           tappedItem < static_cast<int>(viewEntries.size())) {
         mappedInput.suppressCurrentTouchContact();
         selectorIndex = static_cast<size_t>(tappedItem);
-        const int selPage = tappedItem / 3;
-        if (selPage != cachedPage) {
-          // loadPageCache() reassigns pageCache/wrappedSummary, which render()
-          // reads under its own RenderLock -- must not mutate them unlocked
-          // from loop().
-          RenderLock lock(*this);
-          loadPageCache(selPage);
-        }
-        const std::string epubPath(pageCache[tappedItem % 3].filepath);
-        if (!epubPath.empty()) {
-          APP_STATE.ao3LibraryReturnIndex = tappedItem;
-          activityManager.goToReader(epubPath);
-        }
+        activateSelectedRow(mappedInput.getHeldTime() >= 1000);
         return;
       }
     }
@@ -411,98 +498,7 @@ void Ao3LibraryActivity::loop() {
     }
 
     if (!viewEntries.empty() && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      // Ensure the page cache is fresh for the current selector position
-      const int selPage = static_cast<int>(selectorIndex) / 3;
-      if (selPage != cachedPage) {
-        // See the tap handler above: loadPageCache() must run under a
-        // RenderLock when called from loop(), not just from render().
-        RenderLock lock(*this);
-        loadPageCache(selPage);
-      }
-
-      const int slot = static_cast<int>(selectorIndex) % 3;
-      // Full epub path and title live in the ao3_library_info sidecar (page cache)
-      const std::string epubPath(pageCache[slot].filepath);
-      const std::string epubTitle(pageCache[slot].title[0] ? pageCache[slot].title : viewEntries[selectorIndex].title);
-      const uint64_t hash = viewEntries[selectorIndex].cacheHash;
-
-      if (mappedInput.getHeldTime() >= 1000 && !epubPath.empty()) {
-        // Long-press → BookAction menu
-        auto handler = [this, epubPath, hash](const ActivityResult& res) {
-          if (const auto* actionRes = std::get_if<BookActionResult>(&res.data)) {
-            if (actionRes->modified) {
-              if (actionRes->deleted || actionRes->archived) {
-                if (actionRes->deleted) {
-                  // Tombstone in the index, remove file + cache from disk
-                  Ao3Librarian::tombstoneRecord(epubPath);
-                  if (Storage.remove(epubPath.c_str())) {
-                    Epub(epubPath, "/.crosspoint").clearCache();
-                  }
-                }
-                // Archiving already tombstoned the record and moved the
-                // file/cache itself (Ao3ArchiveUtils::archiveFic) -- either
-                // way the fic no longer belongs at this index, so just drop
-                // it from the in-RAM view rather than leave a stale row
-                // showing a bogus reset status. viewEntries is read by
-                // render()/renderLibrary() under its own lock, so erasing
-                // from it here (loop task) needs the same lock.
-                RenderLock lock(*this);
-                auto it = std::find_if(viewEntries.begin(), viewEntries.end(),
-                                       [hash](const ViewEntry& v) { return v.cacheHash == hash; });
-                if (it != viewEntries.end()) viewEntries.erase(it);
-
-                // Clamp selectorIndex so we don't go out of bounds on next render
-                if (!viewEntries.empty()) {
-                  if (selectorIndex >= viewEntries.size()) {
-                    selectorIndex = viewEntries.size() - 1;
-                  }
-                } else {
-                  selectorIndex = 0;
-                }
-                cachedPage = -1;  // invalidate so next render reloads page cache
-              } else if (actionRes->indexingCompleted || actionRes->restored ||
-                         (actionRes->markedForLaterChanged && activeState.view == LibraryView::MARKED_FOR_LATER)) {
-                // Restore re-scrapes a fresh live index record -- this fic's
-                // cache hash/index slot may not match what's cached here
-                // (it may not even have been a normal live entry a moment
-                // ago), so a full rebuild is the safe choice rather than an
-                // in-place patch. Marking/unmarking inside the Marked for Later
-                // view changes which fics belong in the list at all.
-                rebuildViewEntries();
-              } else {
-                // Status and/or Marked-for-Later change — update in-place
-                // without a full reload. pageCacheStatus/pageCacheMarkedPosition
-                // are read by render() under its own RenderLock, so mutating
-                // them here (on the loop task) needs the same lock.
-                if (static_cast<int>(selectorIndex) / 3 == cachedPage) {
-                  RenderLock lock(*this);
-                  pageCacheStatus[selectorIndex % 3] = actionRes->newStatus;
-                  if (actionRes->markedForLaterChanged) {
-                    // AO3_MARKED_FOR_LATER_STORE is a FIFO -- a mark/unmark
-                    // shifts every other marked fic's queue position, so
-                    // refresh every cached slot's badge, not just the
-                    // acted-upon one, or a sibling row on this same page
-                    // shows a stale position digit until the page reloads.
-                    const int startIdx = cachedPage * 3;
-                    const int endIdx = std::min(startIdx + 3, static_cast<int>(viewEntries.size()));
-                    for (int i = startIdx; i < endIdx; i++) {
-                      pageCacheMarkedPosition[i - startIdx] = getMarkedPosition(viewEntries[i].cacheHash);
-                    }
-                  } else {
-                    pageCacheMarkedPosition[selectorIndex % 3] = getMarkedPosition(hash);
-                  }
-                }
-              }
-              requestUpdate(true);
-            }
-          }
-        };
-        startActivityForResult(std::make_unique<BookActionActivity>(renderer, mappedInput, epubPath, epubTitle),
-                               handler);
-      } else if (!epubPath.empty()) {
-        APP_STATE.ao3LibraryReturnIndex = static_cast<int>(selectorIndex);
-        activityManager.goToReader(epubPath);
-      }
+      activateSelectedRow(mappedInput.getHeldTime() >= 1000);
       return;
     }
   }
