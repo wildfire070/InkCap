@@ -540,14 +540,18 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
             static_cast<uint64_t>(ctx->srcXOffset_fp) + static_cast<uint64_t>(outX + 1) * ctx->scaleX_fp;
         const int srcXStart = std::min(ctx->srcWidth - 1, static_cast<int>(srcXStart_fp >> 16));
         const int srcXEnd = std::min(ctx->srcWidth, static_cast<int>(srcXEnd_fp >> 16));
+        // Tone-mapped ahead of the average (CoverToneCurve.h), same order PngToBmpConverter
+        // applies it in -- this area-averaging path is the one place that previously read
+        // srcRow directly and skipped ctx->toneLut entirely, so the tone curve never fired for
+        // the common case of a baseline JPEG cover being downscaled to a thumbnail.
         int sum = 0;
         int count = 0;
         for (int srcX = srcXStart; srcX < srcXEnd && srcX < ctx->srcWidth; srcX++) {
-          sum += srcRow[srcX];
+          sum += ctx->toneLut[srcRow[srcX]];
           count++;
         }
         if (count == 0 && srcXStart < ctx->srcWidth) {
-          sum = srcRow[srcXStart];
+          sum = ctx->toneLut[srcRow[srcXStart]];
           count = 1;
         }
         ctx->rowAccum[outX] += sum;
