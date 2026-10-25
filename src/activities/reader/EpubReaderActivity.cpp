@@ -7721,6 +7721,17 @@ void EpubReaderActivity::silentPrefetchNextPageImageIfNeeded(const int marginLef
   const int nextPageIndex = section->currentPage + 1;
   if (nextPageIndex >= section->pageCount) return;  // chapter boundary: silentIndexNextChapterIfNeeded's job
 
+  // This is optional, speculative work -- degrade gracefully rather than spend memory the
+  // current page (or anything else) might still need. Loading an extra page right after the
+  // heaviest point of the current page's own render is exactly the "heap already fragmented
+  // after a long reading session" scenario that's caused real hardware crashes before; the
+  // JPEG/PNG decoder's own allocation is already budget-checked, but the page load that gets
+  // us there (prefetchDecode() never runs otherwise) was not, until this guard.
+  if (!MemoryBudget::hasHeap(MemoryBudget::snapshot(), MemoryBudget::EPUB_INLINE_IMAGE_MIN_FREE,
+                             MemoryBudget::EPUB_INLINE_IMAGE_MIN_MAX_ALLOC)) {
+    return;
+  }
+
   std::unique_ptr<Page> nextPage = section->loadPage(nextPageIndex);
   if (!nextPage || !nextPage->hasImagesNeedingDecode()) return;
 
