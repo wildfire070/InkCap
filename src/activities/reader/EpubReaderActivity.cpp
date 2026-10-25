@@ -7386,6 +7386,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
     }
     silentIndexNextChapterIfNeeded(viewportWidth, viewportHeight);
+    silentPrefetchNextPageImageIfNeeded(layout.marginLeft, layout.marginTop);
     queueCompletionPromptIfNeeded();
   }
 
@@ -7569,6 +7570,29 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   preparedNextSpineIndex = nextSpineIndex;
   preparedNextViewportWidth = viewportWidth;
   preparedNextViewportHeight = viewportHeight;
+}
+
+void EpubReaderActivity::silentPrefetchNextPageImageIfNeeded(const int marginLeft, const int marginTop) {
+  if (activeFootnotePreview || !section || section->isBuilding() || section->isPartial()) return;
+
+  const int nextPageIndex = section->currentPage + 1;
+  if (nextPageIndex >= section->pageCount) return;  // chapter boundary: silentIndexNextChapterIfNeeded's job
+
+  std::unique_ptr<Page> nextPage = section->loadPage(nextPageIndex);
+  if (!nextPage || !nextPage->hasImagesNeedingDecode()) return;
+
+  // Mirrors what the normal render path does before ever calling ImageBlock::render():
+  // the raw image (or a seeded PXC) is extracted from the EPUB archive on first use, not
+  // ahead of time at section-build. Without this, prefetchDecode() below would find no
+  // source file to decode on a page that has never actually been rendered yet.
+  nextPage->prepareImageCaches();
+
+  const bool imageGrayscale = !renderer.isDisplayInverted() && SETTINGS.imageGrayscale;
+  for (const auto& element : nextPage->elements) {
+    if (element->getTag() != TAG_PageImage) continue;
+    const auto& img = static_cast<const PageImage&>(*element);
+    img.getImageBlock().prefetchDecode(renderer, img.xPos + marginLeft, img.yPos + marginTop, imageGrayscale);
+  }
 }
 
 void EpubReaderActivity::cancelSilentPrefetchForInput() {

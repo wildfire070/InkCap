@@ -20,6 +20,10 @@ struct RenderConfig {
   bool performanceMode = false;
   bool useExactDimensions = false;  // If true, use maxWidth/maxHeight as exact output size (no recalculation)
   std::string cachePath;            // If non-empty, decoder will write pixel cache to this path
+  // If true, decode only to warm cachePath (which must be non-empty) -- never touch the live
+  // framebuffer. Used by picture-prefetch-on-page-turn to decode an upcoming page's image
+  // ahead of time, while the current page is still on screen.
+  bool cacheOnly = false;
 };
 
 class ImageToFramebufferDecoder {
