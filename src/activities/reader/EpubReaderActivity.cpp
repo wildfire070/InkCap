@@ -9286,6 +9286,7 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             // before touching anything else below, so the cache-path lookup, status save, and New
             // Chapters tracking all operate on its final (possibly restored) location.
             std::string currentPath = bookPath;
+            bool restoreReindexFailed = false;
             if (Ao3ArchiveUtils::isArchived(bookPath)) {
               bool reindexFailed = false;
               const std::string restoredPath = Ao3ArchiveUtils::restoreFic(bookPath, &reindexFailed);
@@ -9293,12 +9294,19 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
                 LOG_ERR("ERS", "Failed to restore archived fic after finding an update: %s", bookPath.c_str());
               } else {
                 currentPath = restoredPath;
-                // Silent by design, same as the move itself -- but distinguish the two failure
-                // modes in the log rather than leaving a successful-looking restore unexplained
-                // if the fic turns out invisible in AO3 Library afterward.
+                // Not actually silent-by-design the way the move itself is: unlike
+                // Ao3ReceiveActivity's equivalent restore-before-swap (whose very next step
+                // unconditionally tombstones the index record and defers to the next library
+                // scan either way), nothing downstream of this call re-indexes the fic -- a
+                // reindex failure here leaves it genuinely invisible in AO3 Library, right after
+                // the user saw a real "Update found" confirmation from AO3SyncActivity. Queue the
+                // same alert BookActionActivity/FileBrowserActivity/the standalone Archive/Restore
+                // action show for this case (once freshEpub below can supply a title) instead of
+                // only logging it.
                 if (reindexFailed) {
                   LOG_ERR("ERS", "Restored archived fic but re-scrape failed after finding an update: %s",
                          bookPath.c_str());
+                  restoreReindexFailed = true;
                 }
               }
             }
@@ -9307,6 +9315,9 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             // disturb the reader's own (about-to-be-destroyed) epub/section state.
             Epub freshEpub(currentPath, "/.crosspoint");
             const std::string cachePath = freshEpub.getCachePath();
+            if (restoreReindexFailed) {
+              showRestoreReindexFailedAlert(freshEpub.getTitle());
+            }
 
             if (ao3Res.downloaded) {
               // New chapters landed on disk: refresh the AO3 sidecar, force a re-index by
