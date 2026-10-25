@@ -1051,7 +1051,8 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                                                                           tr(STR_RESTORE_BODY)),
                                    [this, fullPath](const ActivityResult& confirmation) {
                                      if (confirmation.isCancelled) return;
-                                     if (Ao3ArchiveUtils::restoreFic(fullPath).empty()) {
+                                     bool reindexFailed = false;
+                                     if (Ao3ArchiveUtils::restoreFic(fullPath, &reindexFailed).empty()) {
                                        RenderLock lock(*this);
                                        BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
                                      } else {
@@ -1059,6 +1060,21 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                                        loadFilesLocked();
                                        selectorIndex =
                                            entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+                                       if (reindexFailed) {
+                                         // The move succeeded -- the fic really is back -- but the re-scrape
+                                         // failed for some other reason (OOM, corrupt epub, etc.). Surface this
+                                         // distinctly from a move failure rather than silently reporting full
+                                         // success; same alert BookActionActivity shows for the same case.
+                                         const size_t lastSlash = fullPath.rfind('/');
+                                         const std::string fileName =
+                                             lastSlash != std::string::npos ? fullPath.substr(lastSlash + 1) : fullPath;
+                                         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+                                                  tr(STR_RESTORE_REINDEX_FAILED_TITLE));
+                                         snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody),
+                                                  tr(STR_RESTORE_REINDEX_FAILED_BODY), fileName.c_str());
+                                         APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+                                         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+                                       }
                                      }
                                      requestUpdate(true);
                                    });

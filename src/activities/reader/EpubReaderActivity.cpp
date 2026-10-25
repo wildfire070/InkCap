@@ -1257,6 +1257,19 @@ void showArchiveMoveFailedAlert(const bool restoring, const std::string& title) 
   APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
 }
 
+// The move itself succeeded -- the fic really is back -- but Ao3ArchiveUtils::restoreFic()'s
+// re-scrape failed for some other reason (OOM, corrupt epub, etc.). Surfaced distinctly from
+// showArchiveMoveFailedAlert() above rather than silently reporting full success: the fic may
+// not show up correctly in AO3 Library until re-indexed by hand.
+void showRestoreReindexFailedAlert(const std::string& title) {
+  snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+          tr(STR_RESTORE_REINDEX_FAILED_TITLE));
+  snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_RESTORE_REINDEX_FAILED_BODY),
+          title.c_str());
+  APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+  APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+}
+
 // Relocate a finished book into /Archive/, then migrate path-keyed state such as
 // cache files, bookmarks, recents, and resume path.
 // Goes through BookMoveUtils::archiveBook() rather than a hand-rolled rename+migrate, so a finish-triggered
@@ -2531,11 +2544,14 @@ void EpubReaderActivity::onExit() {
     const std::string author = epub->getAuthor();
     const bool restoring = pendingAo3ArchiveAction == PendingAo3ArchiveAction::Restore;
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
-    const std::string result =
-        restoring ? Ao3ArchiveUtils::restoreFic(path) : Ao3ArchiveUtils::archiveFic(path, title, author);
+    bool reindexFailed = false;
+    const std::string result = restoring ? Ao3ArchiveUtils::restoreFic(path, &reindexFailed)
+                                         : Ao3ArchiveUtils::archiveFic(path, title, author);
     if (result.empty()) {
       LOG_ERR("ERS", "Failed to %s AO3 fic: %s", restoring ? "restore" : "archive", path.c_str());
       showArchiveMoveFailedAlert(restoring, title);
+    } else if (restoring && reindexFailed) {
+      showRestoreReindexFailedAlert(title);
     }
   } else {
     epub.reset();
@@ -9271,11 +9287,19 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
             // Chapters tracking all operate on its final (possibly restored) location.
             std::string currentPath = bookPath;
             if (Ao3ArchiveUtils::isArchived(bookPath)) {
-              const std::string restoredPath = Ao3ArchiveUtils::restoreFic(bookPath);
+              bool reindexFailed = false;
+              const std::string restoredPath = Ao3ArchiveUtils::restoreFic(bookPath, &reindexFailed);
               if (restoredPath.empty()) {
                 LOG_ERR("ERS", "Failed to restore archived fic after finding an update: %s", bookPath.c_str());
               } else {
                 currentPath = restoredPath;
+                // Silent by design, same as the move itself -- but distinguish the two failure
+                // modes in the log rather than leaving a successful-looking restore unexplained
+                // if the fic turns out invisible in AO3 Library afterward.
+                if (reindexFailed) {
+                  LOG_ERR("ERS", "Restored archived fic but re-scrape failed after finding an update: %s",
+                         bookPath.c_str());
+                }
               }
             }
 

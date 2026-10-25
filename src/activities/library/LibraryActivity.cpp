@@ -1840,8 +1840,21 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
                    openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
                                                                       tr(STR_RESTORE_BODY)),
                               [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled && Ao3ArchiveUtils::restoreFic(book.path).empty()) {
+                                if (confirmation.isCancelled) return;
+                                bool reindexFailed = false;
+                                if (Ao3ArchiveUtils::restoreFic(book.path, &reindexFailed).empty()) {
                                   LOG_ERR("LIB", "Failed to restore fic: %s", book.path.c_str());
+                                } else if (reindexFailed) {
+                                  // The move succeeded -- the fic really is back -- but the re-scrape failed
+                                  // for some other reason (OOM, corrupt epub, etc.). Surface this distinctly
+                                  // from a move failure rather than silently reporting full success; same
+                                  // alert BookActionActivity shows for the same case.
+                                  snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+                                          tr(STR_RESTORE_REINDEX_FAILED_TITLE));
+                                  snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody),
+                                          tr(STR_RESTORE_REINDEX_FAILED_BODY), book.title.c_str());
+                                  APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+                                  APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
                                 }
                                 reloadAfterBookAction();
                               });
