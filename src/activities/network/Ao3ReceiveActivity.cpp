@@ -150,9 +150,16 @@ void Ao3ReceiveActivity::handleUpdateComplete(const std::string& receivedPath) {
   // An archived fic's own path moved when it was archived; follow it back first so the
   // swap below lands on the real file, same as the reader's own "update found" handling.
   if (Ao3ArchiveUtils::isArchived(targetPath)) {
-    const std::string restored = Ao3ArchiveUtils::restoreFic(targetPath);
+    bool reindexFailed = false;
+    const std::string restored = Ao3ArchiveUtils::restoreFic(targetPath, &reindexFailed);
     if (!restored.empty()) {
       targetPath = restored;
+      // Silent by design, same as the move itself -- but distinguish the two failure modes in
+      // the log rather than leaving a successful-looking restore unexplained if the fic turns
+      // out invisible in AO3 Library afterward.
+      if (reindexFailed) {
+        LOG_ERR("AO3R", "Restored archived fic but re-scrape failed before update swap: %s", targetPath.c_str());
+      }
     }
   }
 
