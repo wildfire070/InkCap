@@ -172,7 +172,8 @@ void BookActionActivity::loop() {
       if (bookIsArchived) {
         auto handler = [this](const ActivityResult& res) {
           if (!res.isCancelled) {
-            const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath);
+            bool reindexFailed = false;
+            const std::string restoredPath = Ao3ArchiveUtils::restoreFic(filePath, &reindexFailed);
             if (!restoredPath.empty()) {
               // filePath is read by render()'s rowTitle lambda on the render task
               // with no lock of its own on that side either -- guard the mutation.
@@ -180,6 +181,19 @@ void BookActionActivity::loop() {
               filePath = restoredPath;
               bookIsArchived = false;
               wasRestored = true;
+              if (reindexFailed) {
+                // The move itself succeeded -- the fic really is back -- but restoreFic()'s
+                // re-scrape failed for some other reason than the move/migration (OOM, corrupt
+                // epub, etc.). Surface this distinctly from a move failure rather than silently
+                // reporting full success: the fic may not show up correctly in AO3 Library until
+                // re-indexed by hand.
+                snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
+                         tr(STR_RESTORE_REINDEX_FAILED_TITLE));
+                snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody),
+                         tr(STR_RESTORE_REINDEX_FAILED_BODY), fileName.c_str());
+                APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+                APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+              }
             } else {
               // AlertActivity (via the pendingAlert flags) rather than another ConfirmationActivity --
               // this is a pure error notice with nothing to confirm, and ActivityManager already shows
