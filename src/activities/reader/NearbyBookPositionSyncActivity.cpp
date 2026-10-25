@@ -212,9 +212,6 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
       break;
     case State::SHOWING_RESULT:
       break;
-    case State::APPLYING:
-      primary = tr(STR_NEARBY_POSITION_APPLYING);
-      break;
     case State::SYNCED:
       primary = tr(STR_NEARBY_POSITION_SYNCED);
       detail = std::string(tr(STR_DEVICE_NAME)) + ": " + peerName_;
@@ -942,7 +939,7 @@ void NearbyBookPositionSyncActivity::enqueueEspNowPacket(const uint8_t* sourceMa
     if (payloadLength != DOCUMENT_HASH_BYTES) return;
     copyBounded(event.position.documentHash.data(), event.position.documentHash.size(),
                 reinterpret_cast<const char*>(payload), DOCUMENT_HASH_BYTES);
-  } else if (packetType == PacketType::POSITION || packetType == PacketType::APPLY) {
+  } else if (packetType == PacketType::POSITION) {
     if (!parsePosition(payload, payloadLength, event.position)) {
       event.type = PacketType::INVALID;
     }
@@ -1026,8 +1023,8 @@ void NearbyBookPositionSyncActivity::handleEvent(const SyncEvent& event) {
     return;
   }
 
-  const bool startingPassiveSync = state_ != State::DISCOVERING && state_ != State::SYNCING &&
-                                   state_ != State::APPLYING && state_ != State::SHOWING_RESULT;
+  const bool startingPassiveSync =
+      state_ != State::DISCOVERING && state_ != State::SYNCING && state_ != State::SHOWING_RESULT;
   if (startingPassiveSync) {
     errorMessage_.clear();
     peerPositionReceived_ = false;
@@ -1061,10 +1058,6 @@ void NearbyBookPositionSyncActivity::handleEvent(const SyncEvent& event) {
     peerPositionReceived_ = true;
     sendAck(peerSourceMac_.data());
     setState(State::SHOWING_RESULT);
-    return;
-  }
-
-  if (event.type == PacketType::APPLY) {
     return;
   }
 
@@ -1109,7 +1102,7 @@ bool NearbyBookPositionSyncActivity::sendPacket(const PacketType type, const uin
   if (type == PacketType::HELLO) {
     if (!writeDocumentHash(payload, localPosition_.documentHash)) return false;
     payloadLength = DOCUMENT_HASH_BYTES;
-  } else if (type == PacketType::POSITION || type == PacketType::APPLY) {
+  } else if (type == PacketType::POSITION) {
     if (!serializePosition(localPosition_, payload, packet.size() - PACKET_HEADER_BYTES, payloadLength)) return false;
   } else if (type == PacketType::NAME) {
     const char* name = SETTINGS.getEffectiveDeviceName();
@@ -1235,15 +1228,11 @@ bool NearbyBookPositionSyncActivity::applyPeerPosition() {
 }
 
 void NearbyBookPositionSyncActivity::updateSyncProgress() {
-  if (state_ != State::DISCOVERING && state_ != State::SYNCING && state_ != State::APPLYING) return;
+  if (state_ != State::DISCOVERING && state_ != State::SYNCING) return;
 
   const uint32_t now = millis();
   if (now - syncStartedMs_ > SYNC_TIMEOUT_MS) {
     setError(I18N.get(peerSeen_ ? StrId::STR_NEARBY_POSITION_TIMEOUT : StrId::STR_NEARBY_POSITION_NO_READER));
-    return;
-  }
-
-  if (state_ == State::APPLYING) {
     return;
   }
 
@@ -1320,9 +1309,6 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
       primary = I18N.get(sourceMode_ ? StrId::STR_NEARBY_POSITION_SHARING : StrId::STR_NEARBY_POSITION_WAITING);
       detail = std::string(I18N.get(peerName_.empty() ? StrId::STR_SYSTEM_DEVICE : StrId::STR_DEVICE_NAME)) + ": " +
                (peerName_.empty() ? peerId_ : peerName_);
-      break;
-    case State::APPLYING:
-      primary = tr(STR_NEARBY_POSITION_APPLYING);
       break;
     case State::SYNCED:
       primary = I18N.get(sourceMode_ ? StrId::STR_NEARBY_POSITION_SHARED : StrId::STR_NEARBY_POSITION_SYNCED);

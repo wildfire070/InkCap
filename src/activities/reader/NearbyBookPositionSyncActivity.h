@@ -32,9 +32,7 @@ class NearbyBookPositionSyncActivity final : public Activity {
   bool preventAutoSleep() override { return true; }
   bool isReaderActivity() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return true; }
-  bool skipLoopDelay() override {
-    return state_ == State::DISCOVERING || state_ == State::SYNCING || state_ == State::APPLYING;
-  }
+  bool skipLoopDelay() override { return state_ == State::DISCOVERING || state_ == State::SYNCING; }
 
   void enqueueEspNowPacket(const uint8_t* sourceMac, const uint8_t* data, int length);
 
@@ -58,8 +56,11 @@ class NearbyBookPositionSyncActivity final : public Activity {
   };
 
  private:
-  enum class State { STARTING, READY, DISCOVERING, SYNCING, SHOWING_RESULT, APPLYING, SYNCED, ERROR };
-  enum class PacketType : uint8_t { HELLO = 1, POSITION = 2, APPLY = 3, ACK = 4, NAME = 5, INVALID = 0xFF };
+  enum class State { STARTING, READY, DISCOVERING, SYNCING, SHOWING_RESULT, SYNCED, ERROR };
+  // 3 (APPLY) was a never-sent, abandoned peer-initiated-apply packet type -- removed along with
+  // State::APPLYING; left unassigned here rather than renumbering ACK/NAME, since these values
+  // cross the wire between devices.
+  enum class PacketType : uint8_t { HELLO = 1, POSITION = 2, ACK = 4, NAME = 5, INVALID = 0xFF };
 
   static constexpr size_t MAX_SYNC_EVENTS = 8;
 
