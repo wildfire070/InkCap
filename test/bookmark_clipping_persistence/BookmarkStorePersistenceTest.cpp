@@ -6,10 +6,15 @@
 
 #include "BookmarkStore.h"
 
-// Round-trip coverage for the bookFusionId field added to BookmarkStore's on-disk format for the
-// BookFusion bookmark push (see global ~/.claude/CLAUDE.md's "InsiderPhD/crosspoint-reader port
-// review" note): until now this field was compile-verified only, with no test proving it actually
-// survives a save/reload cycle or that a pre-existing (pre-bookFusionId) file migrates safely.
+// Round-trip coverage for BookmarkStore's on-disk format. Originally written to cover a
+// per-bookmark bookFusionId field added for the BookFusion bookmark push -- that push turned out
+// to hit a wrong, non-existent BookFusion endpoint (every create attempt failed server-side with
+// "Device required!"; BookFusion's real API has no concept of a plain, text-less bookmark at
+// all, only highlighted passages with real quoted text -- see
+// BookFusionSyncActivity::pushHighlights()'s comment) and the field was removed along with it.
+// Kept and retargeted at the store's other fields plus the version-6-with-bookFusionId file
+// format that briefly shipped, which BookmarkStore::readFromFile() still reads (skipping the
+// stray 4 bytes) so a device that already wrote one doesn't hit "unknown version".
 namespace {
 
 constexpr char BOOKMARKS_DIR[] = "/.crosspoint/bookmarks";
@@ -36,36 +41,42 @@ class BookmarkStorePersistenceTest : public ::testing::Test {
 
 }  // namespace
 
-TEST_F(BookmarkStorePersistenceTest, BookFusionIdRoundTripsAcrossReload) {
+TEST_F(BookmarkStorePersistenceTest, BasicFieldsRoundTripAcrossReload) {
   const std::string path = "/book.epub";
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
-  ASSERT_EQ(BOOKMARKS.addBookmark(2, 0.5f, 100, "Chapter 2"), BookmarkStore::AddResult::Added);
-  ASSERT_TRUE(BOOKMARKS.setBookmarkFusionId(0, 777u));
+  ASSERT_EQ(BOOKMARKS.addBookmark(2, 0.5f, 100, "Chapter 2", 7, "a short snippet"), BookmarkStore::AddResult::Added);
 
-  // Simulate the book being closed and reopened -- the real-world case the push feature actually
-  // depends on: a bookFusionId set on one visit must still be there in a later session, so a
-  // repush doesn't create a duplicate bookmark server-side.
+  // Simulate the book being closed and reopened -- every field set on one visit must still be
+  // there in a later session.
   BOOKMARKS.unload();
 
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
   ASSERT_EQ(BOOKMARKS.getBookmarks().size(), 1u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].bookFusionId, 777u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].spineIndex, 2);
+  const Bookmark& bm = BOOKMARKS.getBookmarks()[0];
+  EXPECT_EQ(bm.spineIndex, 2);
+  EXPECT_FLOAT_EQ(bm.progress, 0.5f);
+  EXPECT_STREQ(bm.chapterTitle, "Chapter 2");
+  EXPECT_EQ(bm.paragraphIndex, 7);
+  EXPECT_STREQ(bm.snippet, "a short snippet");
 }
 
-TEST_F(BookmarkStorePersistenceTest, PreBookFusionIdFileMigratesIdToZeroNotGarbage) {
+TEST_F(BookmarkStorePersistenceTest, LegacyBookFusionIdFileLoadsAndMigrates) {
   const std::string path = "/legacy.epub";
-  constexpr uint8_t SNIPPET_VERSION = 5;  // the format immediately before bookFusionId was added
+  // The format briefly shipped with a per-bookmark bookFusionId trailing each record (now
+  // removed -- see this file's header comment). BookmarkStore.cpp's own
+  // LEGACY_BOOKFUSION_ID_VERSION (internal constant); duplicated here since it's not exported.
+  constexpr uint8_t LEGACY_BOOKFUSION_ID_VERSION = 6;
 
   FsFile f;
   ASSERT_TRUE(Storage.openFileForWrite("BKS", storeFilePathFor(path, "epub"), f));
-  serialization::writePod(f, SNIPPET_VERSION);
+  serialization::writePod(f, LEGACY_BOOKFUSION_ID_VERSION);
   serialization::writePod<uint16_t>(f, 1);  // count
   serialization::writeString(f, std::string("Title"));
   serialization::writeString(f, std::string("Author"));
   serialization::writeString(f, path);
-  // One record in the SNIPPET_VERSION layout: spineIndex, progress, timestamp, chapterTitle[48],
-  // paragraphIndex, snippet[64] -- stops there; no bookFusionId field exists at this version.
+  // One record in the LEGACY_BOOKFUSION_ID_VERSION layout: spineIndex, progress, timestamp,
+  // chapterTitle[48], paragraphIndex, snippet[64], bookFusionId(uint32) -- the trailing 4 bytes
+  // this version's reader must skip rather than error on.
   serialization::writePod<uint16_t>(f, 3);   // spineIndex
   serialization::writePod<float>(f, 0.25f);  // progress
   serialization::writePod<uint32_t>(f, 0);   // timestamp
@@ -74,39 +85,42 @@ TEST_F(BookmarkStorePersistenceTest, PreBookFusionIdFileMigratesIdToZeroNotGarba
   serialization::writePod<uint16_t>(f, 7);  // paragraphIndex
   char snippet[BOOKMARK_SNIPPET_MAX] = "legacy snippet";
   f.write(reinterpret_cast<const uint8_t*>(snippet), sizeof(snippet));
+  serialization::writePod<uint32_t>(f, 555);  // bookFusionId -- must be skipped, not kept anywhere
   f.close();
 
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
   ASSERT_EQ(BOOKMARKS.getBookmarks().size(), 1u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].bookFusionId, 0u) << "pre-bookFusionId file must default to 0, not garbage";
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].spineIndex, 3);
-  EXPECT_STREQ(BOOKMARKS.getBookmarks()[0].chapterTitle, "Legacy Chapter");
+  const Bookmark& bm = BOOKMARKS.getBookmarks()[0];
+  EXPECT_EQ(bm.spineIndex, 3);
+  EXPECT_STREQ(bm.chapterTitle, "Legacy Chapter");
+  EXPECT_EQ(bm.paragraphIndex, 7);
+  EXPECT_STREQ(bm.snippet, "legacy snippet");
 
   // Loading an old-version file auto-migrates and rewrites it in the current format
-  // (BookmarkStore::readFromFile()). A newly-set id on that migrated record must then round-trip
-  // like any other -- the append-only-field discipline should need no special case for "this
-  // record predates the field."
-  ASSERT_TRUE(BOOKMARKS.setBookmarkFusionId(0, 999u));
+  // (BookmarkStore::readFromFile()'s needsRewrite). Add a second bookmark and reload again to
+  // confirm the migrated file is still readable in the (now current, bookFusionId-less) format.
+  ASSERT_EQ(BOOKMARKS.addBookmark(5, 0.75f, 100, "Chapter 5"), BookmarkStore::AddResult::Added);
   BOOKMARKS.unload();
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
-  ASSERT_EQ(BOOKMARKS.getBookmarks().size(), 1u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].bookFusionId, 999u);
+  ASSERT_EQ(BOOKMARKS.getBookmarks().size(), 2u);
+  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].spineIndex, 3);
+  EXPECT_EQ(BOOKMARKS.getBookmarks()[1].spineIndex, 5);
 }
 
-TEST_F(BookmarkStorePersistenceTest, MultipleBookmarksKeepIndependentBookFusionIds) {
+TEST_F(BookmarkStorePersistenceTest, MultipleBookmarksKeepIndependentFields) {
   const std::string path = "/multi.epub";
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
   ASSERT_EQ(BOOKMARKS.addBookmark(0, 0.1f, 100, "Ch1"), BookmarkStore::AddResult::Added);
   ASSERT_EQ(BOOKMARKS.addBookmark(1, 0.4f, 100, "Ch2"), BookmarkStore::AddResult::Added);
   ASSERT_EQ(BOOKMARKS.addBookmark(2, 0.9f, 100, "Ch3"), BookmarkStore::AddResult::Added);
-  // Only the middle one has been pushed to BookFusion so far -- the others stay at the "never
-  // pushed" sentinel (0), which must not collide with a real low-valued server id.
-  ASSERT_TRUE(BOOKMARKS.setBookmarkFusionId(1, 42u));
 
   BOOKMARKS.unload();
   ASSERT_TRUE(BOOKMARKS.loadForBook(path, "Title", "Author", "epub"));
   ASSERT_EQ(BOOKMARKS.getBookmarks().size(), 3u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].bookFusionId, 0u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[1].bookFusionId, 42u);
-  EXPECT_EQ(BOOKMARKS.getBookmarks()[2].bookFusionId, 0u);
+  EXPECT_EQ(BOOKMARKS.getBookmarks()[0].spineIndex, 0);
+  EXPECT_STREQ(BOOKMARKS.getBookmarks()[0].chapterTitle, "Ch1");
+  EXPECT_EQ(BOOKMARKS.getBookmarks()[1].spineIndex, 1);
+  EXPECT_STREQ(BOOKMARKS.getBookmarks()[1].chapterTitle, "Ch2");
+  EXPECT_EQ(BOOKMARKS.getBookmarks()[2].spineIndex, 2);
+  EXPECT_STREQ(BOOKMARKS.getBookmarks()[2].chapterTitle, "Ch3");
 }

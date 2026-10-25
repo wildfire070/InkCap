@@ -15,8 +15,14 @@ namespace {
 constexpr uint8_t LEGACY_VERSION = 2;
 constexpr uint8_t COUNT_U16_VERSION = 3;
 constexpr uint8_t PARAGRAPH_ANCHOR_VERSION = 4;
-constexpr uint8_t SNIPPET_VERSION = 5;
-constexpr uint8_t VERSION = 6;
+constexpr uint8_t VERSION = 5;
+// Briefly written by a 2026-10-23/24 build that carried a per-bookmark BookFusion id
+// (Bookmark::bookFusionId, now removed -- BookFusion's real API has no concept of a
+// text-less bookmark to push it to; see BookFusionSyncActivity::pushHighlights()'s comment).
+// Never reached real BookFusion use. Kept here read-only so a device that already wrote one
+// of these doesn't hit "unknown version" -- readFromFile() skips the trailing 4 bytes rather
+// than storing them anywhere, and the file gets rewritten in the current VERSION on next save.
+constexpr uint8_t LEGACY_BOOKFUSION_ID_VERSION = 6;
 // Stored count is uint16_t in v3+, but we keep an in-memory safety cap for ESP32-C3 RAM.
 constexpr uint16_t MAX_BOOKMARKS = 1024;
 constexpr size_t INITIAL_BOOKMARK_RESERVE = 8;
@@ -48,8 +54,8 @@ bool readBookmarkCount(FsFile& file, const uint8_t version, uint16_t& count) {
     return true;
   }
 
-  if (version == COUNT_U16_VERSION || version == PARAGRAPH_ANCHOR_VERSION || version == SNIPPET_VERSION ||
-      version == VERSION) {
+  if (version == COUNT_U16_VERSION || version == PARAGRAPH_ANCHOR_VERSION || version == VERSION ||
+      version == LEGACY_BOOKFUSION_ID_VERSION) {
     serialization::readPod(file, count);
     return true;
   }
@@ -170,7 +176,7 @@ bool readBookmarkFileHeader(const std::string& fullPath, const char* name, Bookm
   uint8_t version;
   serialization::readPod(f, version);
   if (version != LEGACY_VERSION && version != COUNT_U16_VERSION && version != PARAGRAPH_ANCHOR_VERSION &&
-      version != SNIPPET_VERSION && version != VERSION) {
+      version != VERSION && version != LEGACY_BOOKFUSION_ID_VERSION) {
     f.close();
     return false;
   }
@@ -379,15 +385,6 @@ bool BookmarkStore::removeBookmarkAt(size_t index) {
   return true;
 }
 
-bool BookmarkStore::setBookmarkFusionId(size_t index, uint32_t bookFusionId) {
-  if (index >= bookmarks.size()) return false;
-
-  bookmarks[index].bookFusionId = bookFusionId;
-  dirty = true;
-  saveToFile();
-  return true;
-}
-
 bool BookmarkStore::hasBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount) {
   if (pageCount <= 0) return false;
   float pageSlice = 1.0f / static_cast<float>(pageCount);
@@ -445,7 +442,7 @@ bool BookmarkStore::readFromFile(const std::string& path, std::vector<Bookmark>&
   uint8_t version;
   serialization::readPod(f, version);
   if (version != LEGACY_VERSION && version != COUNT_U16_VERSION && version != PARAGRAPH_ANCHOR_VERSION &&
-      version != SNIPPET_VERSION && version != VERSION) {
+      version != VERSION && version != LEGACY_BOOKFUSION_ID_VERSION) {
     LOG_ERR("BKS", "Unknown bookmark file version %u: %s", version, path.c_str());
     f.close();
     return false;
@@ -525,7 +522,7 @@ bool BookmarkStore::readFromFile(const std::string& path, std::vector<Bookmark>&
     } else {
       bm.paragraphIndex = UINT16_MAX;
     }
-    if (version >= SNIPPET_VERSION) {
+    if (version >= VERSION) {
       const int snippetRead = f.read(bm.snippet, sizeof(bm.snippet));
       bm.snippet[sizeof(bm.snippet) - 1] = '\0';
       if (snippetRead != static_cast<int>(sizeof(bm.snippet))) {
@@ -536,15 +533,16 @@ bool BookmarkStore::readFromFile(const std::string& path, std::vector<Bookmark>&
     } else {
       bm.snippet[0] = '\0';
     }
-    if (version >= VERSION) {
-      if (f.available() < static_cast<int>(sizeof(bm.bookFusionId))) {
-        LOG_ERR("BKS", "Bookmark file truncated at bookFusionId, record %u: %s", i, path.c_str());
+    if (version == LEGACY_BOOKFUSION_ID_VERSION) {
+      // Skip the now-removed bookFusionId field rather than erroring on it -- see
+      // LEGACY_BOOKFUSION_ID_VERSION's comment above.
+      uint32_t unusedBookFusionId = 0;
+      if (f.available() < static_cast<int>(sizeof(unusedBookFusionId))) {
+        LOG_ERR("BKS", "Bookmark file truncated at legacy bookFusionId, record %u: %s", i, path.c_str());
         f.close();
         return false;
       }
-      serialization::readPod(f, bm.bookFusionId);
-    } else {
-      bm.bookFusionId = 0;
+      serialization::readPod(f, unusedBookFusionId);
     }
     loadedBookmarks.push_back(bm);
   }
@@ -578,7 +576,6 @@ bool BookmarkStore::writeToFile() const {
     f.write(reinterpret_cast<const uint8_t*>(bm.chapterTitle), sizeof(bm.chapterTitle));
     serialization::writePod(f, bm.paragraphIndex);
     f.write(reinterpret_cast<const uint8_t*>(bm.snippet), sizeof(bm.snippet));
-    serialization::writePod(f, bm.bookFusionId);
   }
 
   f.close();
@@ -910,7 +907,7 @@ bool BookmarkStore::getAllBookmarkedBooks(std::vector<BookmarkedBookEntry>& out)
     uint8_t version;
     serialization::readPod(f, version);
     if (version != LEGACY_VERSION && version != COUNT_U16_VERSION && version != PARAGRAPH_ANCHOR_VERSION &&
-        version != SNIPPET_VERSION && version != VERSION) {
+        version != VERSION && version != LEGACY_BOOKFUSION_ID_VERSION) {
       LOG_DBG("BKS", "Skipping bookmark file with unknown version: %s", name.c_str());
       f.close();
       continue;

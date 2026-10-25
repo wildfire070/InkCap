@@ -16,12 +16,6 @@ struct Bookmark {
   // Optional 1-based paragraph anchor from the section cache. UINT16_MAX means unavailable.
   uint16_t paragraphIndex = UINT16_MAX;
   char snippet[BOOKMARK_SNIPPET_MAX] = {};
-  // Unused: BookFusion's real API has no concept of a plain, text-less bookmark to push this
-  // to at all (confirmed 2026-10-24 against BookFusion's own official KOReader plugin source
-  // -- see BookFusionSyncActivity::pushHighlights()'s comment). Kept rather than removed, to
-  // avoid an on-disk format migration for a field that costs 4 bytes per bookmark and was
-  // already write-once; always 0 in practice.
-  uint32_t bookFusionId = 0;
 };
 
 struct BookmarkedBookEntry {
@@ -65,9 +59,6 @@ class BookmarkStore {
   bool removeBookmarkAt(size_t index);
   bool hasBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount);
   const std::vector<Bookmark>& getBookmarks() const { return bookmarks; }
-  // Records the BookFusion id a push just created for an already-loaded bookmark. Marks the
-  // store dirty; caller still calls saveToFile() (matching every other mutator here).
-  bool setBookmarkFusionId(size_t index, uint32_t bookFusionId);
 
   // Flush to disk if dirty. Called automatically by add/remove; also call from reader onExit().
   void saveToFile();
