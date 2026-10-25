@@ -31,7 +31,12 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
 // at the pre-archive path) to recover where it came from, moves the file
 // back (deduping if something now occupies that path), migrates state back,
 // and re-scrapes to recreate a live index record. Returns the restored path
-// on success, empty string on failure.
-std::string restoreFic(const std::string& archivedPath);
+// on success, empty string on failure (the file move/state migration itself
+// failed -- nothing moved, or was rolled back). The restored path is still
+// returned on success even if the final re-scrape fails (the fic really is
+// back, just not in the index yet): reindexFailed, if non-null, is set to
+// true in that case so the caller can surface it distinctly from a move
+// failure, rather than silently reporting the restore as fully successful.
+std::string restoreFic(const std::string& archivedPath, bool* reindexFailed = nullptr);
 
 }  // namespace Ao3ArchiveUtils

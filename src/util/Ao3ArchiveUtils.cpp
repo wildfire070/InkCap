@@ -62,7 +62,9 @@ std::string archiveFic(const std::string& srcPath, const std::string& title, con
   return dstPath;
 }
 
-std::string restoreFic(const std::string& archivedPath) {
+std::string restoreFic(const std::string& archivedPath, bool* reindexFailed) {
+  if (reindexFailed) *reindexFailed = false;
+
   Ao3LibraryMetadata meta;
   const Epub archivedEpub(archivedPath, "/.crosspoint");
   if (!Ao3Librarian::getLibraryInfo(archivedEpub, meta) || meta.filepath[0] == '\0') {
@@ -142,8 +144,10 @@ std::string restoreFic(const std::string& archivedPath) {
   if (!restoredEpub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip,
                          /*cacheCumulativeSpineSizes=*/false, /*skipScraping=*/true)) {
     LOG_ERR("Ao3Archive", "Failed to load restored epub for re-scrape: %s", restoredPath.c_str());
+    if (reindexFailed) *reindexFailed = true;
   } else if (!Ao3Librarian::scrape(restoredEpub, /*force=*/true)) {
     LOG_ERR("Ao3Archive", "Re-scrape failed for restored fic: %s", restoredPath.c_str());
+    if (reindexFailed) *reindexFailed = true;
   }
 
   if (wasMarkedForLater) {
