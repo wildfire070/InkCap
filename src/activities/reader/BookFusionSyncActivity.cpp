@@ -24,6 +24,7 @@
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/EpubReaderUtils.h"
 #include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "HalClock.h"
 #include "fontIds.h"
@@ -478,21 +479,21 @@ void BookFusionSyncActivity::loop() {
     }
     // Tap either choice row directly -- matches the tap-to-choose convention OptionPopup/
     // TouchActionButtons use elsewhere (no separate select-then-confirm step for touch).
-    // resultOptionY is filled by the render() call that just drew these same rows.
-    int tapX = 0, tapY = 0;
-    if (mappedInput.wasScreenTapped(tapX, tapY)) {
-      const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
-      for (int i = 0; i < 2; ++i) {
-        if (resultOptionY[i] >= 0 && tapY >= resultOptionY[i] && tapY < resultOptionY[i] + lineH) {
-          selectedOption = i;
-          if (i == 0) {
-            applyRemoteProgress();
-          } else {
-            uploadLocalProgress();
-          }
-          return;
-        }
+    // Rows are registered in TouchRegistry by the render() call that just drew them, same as
+    // every other touch row in this codebase (TouchRegistry::getInstance().add() + here,
+    // wasItemTapped()) -- this used to hand-compute a y-band and compare tapY directly, which
+    // is the hand-rolled-row-geometry pattern that's repeatedly proven unreliable on real
+    // hardware even when it looks correct in review/emulation.
+    int tappedItem = -1;
+    if (mappedInput.wasItemTapped(tappedItem) && (tappedItem == 0 || tappedItem == 1)) {
+      mappedInput.suppressCurrentTouchContact();
+      selectedOption = tappedItem;
+      if (tappedItem == 0) {
+        applyRemoteProgress();
+      } else {
+        uploadLocalProgress();
       }
+      return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Left) ||
         mappedInput.wasReleased(MappedInputManager::Button::Right)) {
@@ -574,13 +575,16 @@ void BookFusionSyncActivity::render(RenderLock&&) {
 
       constexpr int LINE_GAP = 8;
       const int blockHeight = static_cast<int>(lines.size()) * lineH + (static_cast<int>(lines.size()) - 1) * LINE_GAP;
+      const int pageWidth = renderer.getScreenWidth();
       int y = (pageHeight - blockHeight) / 2;
       for (const auto& line : lines) {
         renderer.drawCenteredText(UI_10_FONT_ID, y, line.text.c_str(), true,
                                   line.bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-        // Cache each choice row's y-band for loop()'s tap hit-test -- rendering is the only
-        // place that knows the real layout (lines.size() varies with which counts are shown).
-        if (line.optionIndex >= 0) resultOptionY[line.optionIndex] = y;
+        // Register each choice row's full-width tap zone -- rendering is the only place that
+        // knows the real layout (lines.size() varies with which counts are shown).
+        if (line.optionIndex >= 0) {
+          TouchRegistry::getInstance().add(Rect{0, y, pageWidth, lineH}, line.optionIndex, TouchRegistry::Item);
+        }
         y += lineH + LINE_GAP;
       }
       break;
