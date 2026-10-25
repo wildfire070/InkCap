@@ -18,6 +18,14 @@ class ImageBlock final : public Block {
   void prepareCache() const;
   bool hasValidCache() const;
   bool needsDecode() const;
+  // Decodes into the on-SD pixel cache ahead of time, without touching the live framebuffer --
+  // used by the reader's forward-page-turn prefetch to warm the cache for an upcoming page's
+  // image before the user actually turns to it. (x, y) must be where the image will actually be
+  // rendered once that page is shown, so the fully-on-screen check (render()'s own caching
+  // eligibility) agrees with the real render. Returns false (nothing done, not an error) if the
+  // image isn't fully on screen at that position, already has a valid cache, or already failed
+  // to decode this session -- all the same no-op conditions render() already has.
+  bool prefetchDecode(GfxRenderer& renderer, int x, int y, bool imageGrayscale = true) const;
   void renderPlaceholder(GfxRenderer& renderer, int x, int y, bool foregroundBlack) const;
   static void clearSessionRenderFailures();
   static void releaseSessionPixelCache();
