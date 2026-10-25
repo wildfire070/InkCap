@@ -240,15 +240,20 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   bool useDithering = ctx->config->useDithering;
 
   // Pre-compute orientation and render-mode state once per callback.
+  // Prefetch calls (picture-prefetch-on-page-turn) warm the pixel cache for an
+  // upcoming page without touching the live framebuffer. pw stays uninitialized
+  // and unused in that case -- initializing it would read current renderer/panel
+  // state (write target, render mode) that has nothing to do with this decode.
+  const bool paint = !ctx->config->cacheOnly;
   DirectPixelWriter pw;
-  pw.init(*ctx->renderer, ctx->config->useGrayscale);
+  if (paint) pw.init(*ctx->renderer, ctx->config->useGrayscale);
 
   for (int dstY = firstDstY; dstY < endDstY; dstY++) {
     ctx->lastDstY = dstY;
     int outY = ctx->config->y + dstY;
     if (outY >= ctx->screenHeight) continue;
 
-    pw.beginRow(outY);
+    if (paint) pw.beginRow(outY);
 
     // The cache streams to disk one row at a time. Flushing rows below this one
     // (PNGdec delivers scanlines top to bottom) repositions the single-row band.
@@ -280,7 +285,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
         } else {
           ditheredGray = quantizeGrayTo4Level(gray);
         }
-        pw.writePixel(outX, ditheredGray);
+        if (paint) pw.writePixel(outX, ditheredGray);
         if (caching) cw.writePixel(outX, ditheredGray);
       }
 

@@ -196,6 +196,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
 
   const bool useDithering = ctx->config->useDithering;
   bool caching = ctx->caching;
+  // Prefetch calls (picture-prefetch-on-page-turn) warm the pixel cache for an
+  // upcoming page without touching the live framebuffer. pw stays uninitialized
+  // and unused in that case -- initializing it would read current renderer/panel
+  // state (write target, render mode) that has nothing to do with this decode.
+  const bool paint = !ctx->config->cacheOnly;
   const int32_t fineScaleFPX = ctx->fineScaleFPX;
   const int32_t invScaleFPX = ctx->invScaleFPX;
   const int32_t fineScaleFPY = ctx->fineScaleFPY;
@@ -230,7 +235,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
 
   // Pre-compute orientation and render-mode state once per callback invocation
   DirectPixelWriter pw;
-  pw.init(renderer, ctx->config->useGrayscale);
+  if (paint) pw.init(renderer, ctx->config->useGrayscale);
 
   // The cache streams to disk one MCU-row band at a time. Flushing rows below
   // this block (raster order guarantees they are final) repositions the band;
@@ -253,7 +258,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   if (fineScaleFPX == FP_ONE && fineScaleFPY == FP_ONE) {
     for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
       const int outY = cfgY + dstY;
-      pw.beginRow(outY);
+      if (paint) pw.beginRow(outY);
       if (caching) cw.beginRow(outY, cacheOriginY);
       const uint8_t* row = &pixels[(dstY - blockY) * stride];
       for (int dstX = dstXStart; dstX < dstXEnd; dstX++) {
@@ -266,7 +271,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
           dithered = gray / 85;
           if (dithered > 3) dithered = 3;
         }
-        pw.writePixel(outX, dithered);
+        if (paint) pw.writePixel(outX, dithered);
         if (caching) cw.writePixel(outX, dithered);
       }
     }
@@ -287,7 +292,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
 
     for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
       const int outY = cfgY + dstY;
-      pw.beginRow(outY);
+      if (paint) pw.beginRow(outY);
       if (caching) cw.beginRow(outY, cacheOriginY);
       const int32_t srcFyFP = dstY * invScaleFPY;
       const int32_t fy = srcFyFP & FP_MASK;
@@ -325,7 +330,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
           dithered = gray / 85;
           if (dithered > 3) dithered = 3;
         }
-        pw.writePixel(outX, dithered);
+        if (paint) pw.writePixel(outX, dithered);
         if (caching) cw.writePixel(outX, dithered);
       }
 
@@ -348,7 +353,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
           dithered = gray / 85;
           if (dithered > 3) dithered = 3;
         }
-        pw.writePixel(outX, dithered);
+        if (paint) pw.writePixel(outX, dithered);
         if (caching) cw.writePixel(outX, dithered);
       }
 
@@ -374,7 +379,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
           dithered = gray / 85;
           if (dithered > 3) dithered = 3;
         }
-        pw.writePixel(outX, dithered);
+        if (paint) pw.writePixel(outX, dithered);
         if (caching) cw.writePixel(outX, dithered);
       }
     }
@@ -384,7 +389,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   // === Nearest-neighbor (downscale: fineScale < 1.0) ===
   for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
     const int outY = cfgY + dstY;
-    pw.beginRow(outY);
+    if (paint) pw.beginRow(outY);
     if (caching) cw.beginRow(outY, cacheOriginY);
     const int32_t srcFyFP = dstY * invScaleFPY;
     int ly = (srcFyFP >> FP_SHIFT) - blockY;
@@ -407,7 +412,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
         dithered = gray / 85;
         if (dithered > 3) dithered = 3;
       }
-      pw.writePixel(outX, dithered);
+      if (paint) pw.writePixel(outX, dithered);
       if (caching) cw.writePixel(outX, dithered);
     }
   }
