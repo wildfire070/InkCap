@@ -417,6 +417,14 @@ class EpubReaderActivity final : public Activity {
   std::string footnotePreviewCacheSuffix(EpubRenderMode renderMode, const std::string& anchor) const;
   void clearFootnotePreviewState();
   void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
+  // Warms the pixel cache for an upcoming page's image(s) right after the current page
+  // finishes rendering, while the page is already on screen -- so a later forward turn to
+  // that page hits a warm cache instead of paying a fresh decode. Only covers the common
+  // case: the next page already exists in the current, fully-built section (not a chapter
+  // boundary, which silentIndexNextChapterIfNeeded() above handles separately). No-op if
+  // the next page has no image needing decode, matching ImageBlock::prefetchDecode()'s own
+  // no-op conditions (already cached, failed this session, not fully on screen).
+  void silentPrefetchNextPageImageIfNeeded(int marginLeft, int marginTop);
   void cancelSilentPrefetchForInput();
   bool restoreCurrentPageBufferAfterSilentIndex();
   // Larger batches are reserved for non-interactive work such as sleep-page preparation.

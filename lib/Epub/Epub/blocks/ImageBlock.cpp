@@ -446,6 +446,47 @@ void ImageBlock::prepareCache() const {
 
 bool ImageBlock::needsDecode() const { return !imageFailedThisSession(imagePath) && !hasValidCache(); }
 
+bool ImageBlock::prefetchDecode(GfxRenderer& renderer, const int x, const int y, const bool imageGrayscale) const {
+  if (width <= 0 || height <= 0) return false;
+  if (imageFailedThisSession(imagePath)) return false;
+  if (hasValidCache()) return false;  // already warm, nothing to do
+
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  // Mirrors render()'s own caching eligibility: a partially-off-screen image is never
+  // cached there either, so there's nothing useful to warm for one at this position.
+  const bool fullyOnScreen = x >= 0 && y >= 0 && x + width <= screenWidth && y + height <= screenHeight;
+  if (!fullyOnScreen) return false;
+
+  FsFile file;
+  if (!Storage.openFileForRead("IMG", imagePath, file)) return false;
+  const size_t fileSize = file.size();
+  file.close();
+  if (fileSize == 0) return false;
+
+  ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
+  if (!decoder) return false;
+
+  const std::string cachePath = getCachePath(imagePath);
+  // The decoder is about to replace this PXC path -- drop any retained payload first so a
+  // later grayscale pass can't draw from a stale generation (mirrors render()'s own call).
+  invalidateRetainedPxcPath(cachePath);
+
+  RenderConfig config;
+  config.x = x;
+  config.y = y;
+  config.maxWidth = width;
+  config.maxHeight = height;
+  config.useGrayscale = imageGrayscale;
+  config.useDithering = true;
+  config.performanceMode = false;
+  config.useExactDimensions = true;
+  config.cachePath = cachePath;
+  config.cacheOnly = true;
+
+  return decoder->decodeToFramebuffer(imagePath, renderer, config);
+}
+
 void ImageBlock::clearSessionRenderFailures() {
   failedImageCount = 0;
   releaseSessionPixelCache();
