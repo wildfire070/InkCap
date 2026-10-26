@@ -82,6 +82,7 @@ void NearbyStatsSyncActivity::setState(const State state) {
 #include "SdCardFontSystem.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "components/TouchActionButtons.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -253,14 +254,9 @@ void NearbyStatsSyncActivity::loop() {
 
   const bool canStartSync = state_ == State::READY || state_ == State::SYNCED || state_ == State::ERROR;
   if (mappedInput.hasTouch() && canStartSync) {
-    const auto actions = touchActionLayout(renderer);
     int touchedAction = -1;
-    const auto touch = mappedInput.rowTouch(touchedAction, actions.buttons[0].y,
-                                            TouchActionButtons::kDefaultHeight + TouchActionButtons::kDefaultGap,
-                                            actions.count, actions.buttons[0].x,
-                                            actions.buttons[0].x + actions.buttons[0].width, actions.buttons[0].height);
-    if (touch == MappedInputManager::RowTouch::Down) return;
-    if (touch == MappedInputManager::RowTouch::Tap) {
+    if (mappedInput.wasItemTouchedDown(touchedAction)) return;
+    if (mappedInput.wasItemTapped(touchedAction)) {
       if (touchedAction == 0) {
         startSync();
       } else if (touchedAction == 1) {
@@ -695,6 +691,9 @@ void NearbyStatsSyncActivity::render(RenderLock&&) {
       const auto actions = touchActionLayout(renderer);
       const char* actionLabels[] = {tr(STR_SYNC), tr(STR_CANCEL)};
       TouchActionButtons::draw(renderer, actions, actionLabels, 0, -1, UI_10_FONT_ID);
+      for (uint8_t i = 0; i < actions.count; i++) {
+        TouchRegistry::getInstance().add(actions.buttons[i], i, TouchRegistry::Item);
+      }
     } else {
       const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SYNC), "", "");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

@@ -10,6 +10,7 @@
 #include "activities/reader/StatsBackup.h"
 #include "components/TouchActionButtons.h"
 #include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -55,6 +56,9 @@ void BackupStatsActivity::render(RenderLock&&) {
       const auto actions = backupActions(renderer, metrics);
       const char* actionLabels[] = {tr(STR_CONFIRM), tr(STR_CANCEL)};
       TouchActionButtons::draw(renderer, actions, actionLabels, 0, -1, UI_10_FONT_ID);
+      for (uint8_t i = 0; i < actions.count; i++) {
+        TouchRegistry::getInstance().add(actions.buttons[i], i, TouchRegistry::Item);
+      }
     }
 
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_CONFIRM), "", "");
@@ -93,15 +97,9 @@ void BackupStatsActivity::loop() {
   }
   if (state == WARNING) {
     if (mappedInput.hasTouchHardware()) {
-      const auto& metrics = UITheme::getInstance().getMetrics();
-      const auto actions = backupActions(renderer, metrics);
       int touchedOption = -1;
-      const auto touch = mappedInput.rowTouch(
-          touchedOption, actions.buttons[0].y, TouchActionButtons::kDefaultHeight + TouchActionButtons::kDefaultGap,
-          actions.count, actions.buttons[0].x, actions.buttons[0].x + actions.buttons[0].width,
-          actions.buttons[0].height);
-      if (touch == MappedInputManager::RowTouch::Down) return;
-      if (touch == MappedInputManager::RowTouch::Tap) {
+      if (mappedInput.wasItemTouchedDown(touchedOption)) return;
+      if (mappedInput.wasItemTapped(touchedOption)) {
         if (touchedOption == 0) {
           runBackup();
         } else if (touchedOption == 1) {
