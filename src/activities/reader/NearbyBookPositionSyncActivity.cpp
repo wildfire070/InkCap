@@ -223,7 +223,7 @@ void NearbyBookPositionSyncActivity::render(RenderLock&&) {
       break;
   }
 
-  if (state_ == State::READY || (state_ == State::SYNCED && !sourceMode_) || state_ == State::ERROR) {
+  if (state_ == State::READY || state_ == State::SYNCED || state_ == State::ERROR) {
     renderReady(primary, detail, detailSecondary);
     if (mappedInput.hasTouch()) {
       drawTouchActionButtons(renderer, screen, metrics, tr(STR_NEARBY_POSITION_SHARE_BUTTON),
