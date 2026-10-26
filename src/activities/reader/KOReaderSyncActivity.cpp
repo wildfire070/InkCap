@@ -32,6 +32,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/TouchActionButtons.h"
 #include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/ClippingsUpload.h"
@@ -1081,6 +1082,15 @@ void KOReaderSyncActivity::render(RenderLock&&) {
     const auto actions = resultActionLayout(renderer, screen, metrics, hasTouch, folderSync ? 3 : 2);
     const char* actionLabels[] = {tr(STR_APPLY_REMOTE), tr(STR_UPLOAD_LOCAL), tr(STR_SKIP_BOOK)};
     TouchActionButtons::draw(renderer, actions, actionLabels, selectedOption, selectedOption, UI_10_FONT_ID);
+    // Registered here (render time) regardless of layout shape (landscape 2-row grid or a
+    // single column) so loop() can hit-test either one the same way, via TouchRegistry, rather
+    // than the two hand-computed paths (indexAt on the raw tap point for the grid, rowTouch's
+    // caller-derived offsets for the column) this used to need -- the latter is the pattern
+    // that's repeatedly proven unreliable on real hardware even when it looks correct in
+    // review/emulation; see the global CLAUDE.md "Recurring technical hazards" note.
+    for (uint8_t i = 0; i < actions.count; i++) {
+      TouchRegistry::getInstance().add(actions.buttons[i], i, TouchRegistry::Item);
+    }
 
     // Bottom button hints. In a bulk sync Back leaves the whole sync, not this book.
     const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(folderSync ? tr(STR_EXIT) : tr(STR_BACK)),
@@ -1218,33 +1228,20 @@ void KOReaderSyncActivity::loop() {
     };
 
     {
-      const auto actions = resultActionLayout(renderer, screen, metrics, mappedInput.hasTouchHardware(), optionCount);
-      if (actions.buttons[1].x != actions.buttons[0].x) {
-        // The landscape two-row layout is not a single column, so hit-test the tap directly.
-        int x = 0, y = 0;
-        const int tapped = mappedInput.wasScreenTapped(x, y) ? TouchActionButtons::indexAt(actions, x, y) : -1;
-        if (tapped >= 0) {
-          selectedOption = tapped;
-          chooseSelected();
-          return;
-        }
-      } else {
-        const Rect& first = actions.buttons[0];
-        int touchedOption = -1;
-        const auto touch = mappedInput.rowTouch(touchedOption, first.y, actions.buttons[1].y - first.y, actions.count,
-                                                first.x, first.x + first.width, first.height);
-        if (touch == MappedInputManager::RowTouch::Down) {
-          if (selectedOption != touchedOption) {
-            selectedOption = touchedOption;
-            requestUpdate();
-          }
-          return;
-        }
-        if (touch == MappedInputManager::RowTouch::Tap) {
+      // Both layout shapes (the landscape 2-row grid and the single column) registered their
+      // button rects into TouchRegistry at render time -- hit-test either one the same way.
+      int touchedOption = -1;
+      if (mappedInput.wasItemTouchedDown(touchedOption)) {
+        if (selectedOption != touchedOption) {
           selectedOption = touchedOption;
-          chooseSelected();
-          return;
+          requestUpdate();
         }
+        return;
+      }
+      if (mappedInput.wasItemTapped(touchedOption)) {
+        selectedOption = touchedOption;
+        chooseSelected();
+        return;
       }
     }
 
