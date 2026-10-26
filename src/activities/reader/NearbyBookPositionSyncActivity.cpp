@@ -7,6 +7,7 @@
 
 #include "components/TouchActionButtons.h"
 #include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/InputReleaseGuard.h"
@@ -28,6 +29,13 @@ void drawTouchActionButtons(GfxRenderer& renderer, const Rect& screen, const The
   const auto actions = touchActionLayout(screen, metrics, backOnly ? 1 : 2);
   const char* labels[] = {backOnly ? tr(STR_DONE) : confirmLabel, backOnly ? nullptr : tr(STR_CANCEL)};
   TouchActionButtons::draw(renderer, actions, labels, 0, -1, UI_10_FONT_ID);
+  // Registered here (render time) rather than hit-tested via hand-computed offsets in loop() --
+  // the latter (mappedInput.rowTouch() fed caller-derived top/rowStep/xStart/xEnd) is the
+  // pattern that's repeatedly proven unreliable on real hardware even when it looks correct in
+  // review/emulation; see the global CLAUDE.md "Recurring technical hazards" note.
+  for (uint8_t i = 0; i < actions.count; i++) {
+    TouchRegistry::getInstance().add(actions.buttons[i], i, TouchRegistry::Item);
+  }
 }
 
 }  // namespace
@@ -131,16 +139,9 @@ void NearbyBookPositionSyncActivity::loop() {
   const bool canShare = state_ == State::READY || (state_ == State::SYNCED && !sourceMode_) || state_ == State::ERROR;
   const bool canApplyReceivedPosition = state_ == State::SHOWING_RESULT && !sourceMode_;
   if (mappedInput.hasTouch() && (canShare || canApplyReceivedPosition || senderSynced)) {
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-    const uint8_t actionCount = senderSynced ? 1 : 2;
-    const auto actions = touchActionLayout(screen, metrics, actionCount);
     int touchedAction = -1;
-    const auto touch = mappedInput.rowTouch(
-        touchedAction, actions.buttons[0].y, TouchActionButtons::kDefaultHeight + TouchActionButtons::kDefaultGap,
-        actionCount, actions.buttons[0].x, actions.buttons[0].x + actions.buttons[0].width, actions.buttons[0].height);
-    if (touch == MappedInputManager::RowTouch::Down) return;
-    if (touch == MappedInputManager::RowTouch::Tap) {
+    if (mappedInput.wasItemTouchedDown(touchedAction)) return;
+    if (mappedInput.wasItemTapped(touchedAction)) {
       if (senderSynced) {
         returnToReader(true);
       } else if (touchedAction == 0 && canShare) {
@@ -781,16 +782,9 @@ void NearbyBookPositionSyncActivity::loop() {
   const bool canShare = state_ == State::READY || (state_ == State::SYNCED && !sourceMode_) || state_ == State::ERROR;
   const bool canApplyReceivedPosition = state_ == State::SHOWING_RESULT && !sourceMode_;
   if (mappedInput.hasTouch() && (canShare || canApplyReceivedPosition || senderSynced)) {
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-    const uint8_t actionCount = senderSynced ? 1 : 2;
-    const auto actions = touchActionLayout(screen, metrics, actionCount);
     int touchedAction = -1;
-    const auto touch = mappedInput.rowTouch(
-        touchedAction, actions.buttons[0].y, TouchActionButtons::kDefaultHeight + TouchActionButtons::kDefaultGap,
-        actionCount, actions.buttons[0].x, actions.buttons[0].x + actions.buttons[0].width, actions.buttons[0].height);
-    if (touch == MappedInputManager::RowTouch::Down) return;
-    if (touch == MappedInputManager::RowTouch::Tap) {
+    if (mappedInput.wasItemTouchedDown(touchedAction)) return;
+    if (mappedInput.wasItemTapped(touchedAction)) {
       if (senderSynced) {
         returnToReader(true);
       } else if (touchedAction == 0 && canShare) {
