@@ -566,6 +566,7 @@ void NearbyBookTransferActivity::rejectOffer() {
 void NearbyBookTransferActivity::setState(const State state) {
   state_ = state;
   selectedIndex_ = 0;
+  touchDownActionIndex_ = -1;
   uiReady_ = false;
   app_.clearTapFlash();
   lastUiMs_ = millis();
@@ -799,22 +800,29 @@ void NearbyBookTransferActivity::loop() {
   int tx = 0;
   int ty = 0;
   if (mappedInput.hasTouch() &&
-      (state_ == State::OfferPrompt || state_ == State::CollisionPrompt || state_ == State::Success) &&
-      mappedInput.wasScreenTouchDown(tx, ty)) {
+      (state_ == State::OfferPrompt || state_ == State::CollisionPrompt || state_ == State::Success)) {
     const Rect safeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-    if (state_ == State::CollisionPrompt) {
-      const auto actions = touchActionLayout(safeArea, 3);
-      const int index = TouchActionButtons::indexAt(actions, tx, ty);
-      if (index >= 0) {
-        selectedIndex_ = index;
-        activateSelected();
-      }
+    const uint8_t actionCount =
+        state_ == State::CollisionPrompt ? 3 : (state_ == State::Success && mode_ != Mode::Receive ? 1 : 2);
+    const auto actions = touchActionLayout(safeArea, actionCount);
+    // Touch-down only records which button (if any) the finger landed on; the action commits
+    // below only if the release lands back on that same button, so a drag-off cancels instead
+    // of firing -- these are destructive (CollisionPrompt's Replace) or hard to undo (accepting/
+    // rejecting a transfer), unlike the simple dialogs elsewhere that commit on touch-down itself.
+    if (mappedInput.wasScreenTouchDown(tx, ty)) {
+      touchDownActionIndex_ = TouchActionButtons::indexAt(actions, tx, ty);
       return;
     }
-    const uint8_t actionCount = state_ == State::Success && mode_ != Mode::Receive ? 1 : 2;
-    const auto actions = touchActionLayout(safeArea, actionCount);
-    const int action = TouchActionButtons::indexAt(actions, tx, ty);
-    if (action >= 0) {
+    if (mappedInput.wasScreenTapped(tx, ty)) {
+      const int action = TouchActionButtons::indexAt(actions, tx, ty);
+      const int downIndex = touchDownActionIndex_;
+      touchDownActionIndex_ = -1;
+      if (action < 0 || action != downIndex) return;
+      if (state_ == State::CollisionPrompt) {
+        selectedIndex_ = action;
+        activateSelected();
+        return;
+      }
       if (actionCount == 2 && action == 1) {
         if (state_ == State::Success) {
           exitAfterRadio();

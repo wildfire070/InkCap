@@ -78,6 +78,16 @@ class NearbyBookTransferActivity final : public Activity {
   // the WaitingForApproval screen needs the name of the peer actually being
   // contacted, not whatever peers_[0] happens to be.
   std::array<char, 21> waitingPeerName_{};
+  // Which OfferPrompt/CollisionPrompt/Success action button (if any) the
+  // finger went down on; -1 if none. The matching action only commits if the
+  // release lands back on this same button, so a drag-off cancels instead of
+  // firing -- these touch-down targets can be destructive (CollisionPrompt's
+  // Replace overwrites a file) or hard to undo (accepting/rejecting an
+  // incoming transfer), unlike the simple binary dialogs elsewhere in this
+  // codebase that commit on touch-down itself. Reset in setState() so a
+  // state change (including the one the matched action itself causes) can
+  // never leave a stale target to match against.
+  int touchDownActionIndex_ = -1;
 
   HalFile sourceFile_;
   HalFile receiveFile_;
