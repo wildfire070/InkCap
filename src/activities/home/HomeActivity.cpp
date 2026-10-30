@@ -264,14 +264,16 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasBo
   if (hasBookFusion) {
     items.push({tr(STR_BF_SYNC), BookFusion, HomeMenuAction::BookFusion});
   }
-  if (hasReadingStats) {
-    items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
-  }
   if (hasBookmarks || hasClippings) {
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
   }
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  // Least-used entry: pushed to the end so it's the first to spill onto page 2
+  // when the menu overflows, rather than displacing more-used items.
+  if (hasReadingStats) {
+    items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
+  }
   items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
 }
 
@@ -303,11 +305,13 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasBookFusion, b
   if (hasBookmarks || hasClippings) {
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
   }
+
+  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  // Least-used entry: pushed to the end so it's the first to spill onto page 2
+  // when the menu overflows, rather than displacing more-used items.
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
-
-  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   return items;
 }
 
@@ -1706,6 +1710,20 @@ void HomeActivity::loop() {
         return;
       }
 
+      // Same page-arrow-with-no-touch-target gap as the classic/Lyra/RoundedRaff
+      // menu's own swipe handler elsewhere in this function: a swipe is the only
+      // way a touch-only device can reach a second page here.
+      const auto minimalMenuSwipe = mappedInput.wasSwipe();
+      if (minimalMenuSwipe == MappedInputManager::SwipeDir::Up || minimalMenuSwipe == MappedInputManager::SwipeDir::Down) {
+        const int delta = minimalMenuSwipe == MappedInputManager::SwipeDir::Up ? homeMenuPageItems : -homeMenuPageItems;
+        const int nextIndex = std::clamp(minimalMenuIndex + delta, 0, menuCount - 1);
+        if (nextIndex != minimalMenuIndex) {
+          minimalMenuIndex = nextIndex;
+          requestUpdate();
+        }
+        return;
+      }
+
       int touchX = 0;
       int touchY = 0;
       if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
@@ -2177,6 +2195,25 @@ void HomeActivity::loop() {
       return;
     }
 
+    // The theme's own page-arrow/scrollbar indicator draws no touch target of its
+    // own (it's purely a visual cue), so a swipe over the menu is the only way a
+    // touch-only device can reach a second page. Swipe up reveals later items
+    // (matches Settings' own scroll-by-swipe convention); the selection moves
+    // with the page since this menu has no independent scroll offset.
+    const auto menuSwipe = mappedInput.wasSwipe();
+    if (menuSwipe == MappedInputManager::SwipeDir::Up || menuSwipe == MappedInputManager::SwipeDir::Down) {
+      const int menuLocalIndex = selectorIndex - getHomeMenuSelectionOffset(recentBooks);
+      if (menuLocalIndex >= 0 && menuLocalIndex < static_cast<int>(menuItems.size())) {
+        const int delta = menuSwipe == MappedInputManager::SwipeDir::Up ? homeMenuPageItems : -homeMenuPageItems;
+        const int nextLocalIndex = std::clamp(menuLocalIndex + delta, 0, static_cast<int>(menuItems.size()) - 1);
+        if (nextLocalIndex != menuLocalIndex) {
+          selectorIndex = getHomeMenuSelectionOffset(recentBooks) + nextLocalIndex;
+          requestUpdate();
+        }
+        return;
+      }
+    }
+
     const int menuCount = getMenuItemCount();
     buttonNavigator.onNext([this, menuCount] {
       selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
@@ -2309,9 +2346,10 @@ void HomeActivity::render(RenderLock&&) {
       const auto menuItems =
           buildMinimalMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats, hasBookmarks, hasClippings);
 
+      const Rect minimalMenuRect{safe.x, homeTop, safe.width, std::max(0, safe.y + safe.height - homeTop)};
+      homeMenuPageItems = GUI.getButtonMenuPageItems(renderer, minimalMenuRect, static_cast<int>(menuItems.size()));
       GUI.drawButtonMenu(
-          renderer, Rect{safe.x, homeTop, safe.width, std::max(0, safe.y + safe.height - homeTop)},
-          static_cast<int>(menuItems.size()), minimalMenuIndex,
+          renderer, minimalMenuRect, static_cast<int>(menuItems.size()), minimalMenuIndex,
           [&menuItems](int index) { return menuItems[index].label; },
           [&menuItems](int index) { return menuItems[index].icon; });
       if (showMinimalHomeButtonHints(mappedInput)) {
@@ -2455,8 +2493,10 @@ void HomeActivity::render(RenderLock&&) {
   const int menuSelectedIndex = isCarouselTheme && mappedInput.hasTouchHardware()
                                     ? carouselMenuTouchDownIndex
                                     : selectorIndex - getHomeMenuSelectionOffset(recentBooks);
+  const Rect menuRect{safe.x, menuStartY, safe.width, menuHeight};
+  homeMenuPageItems = GUI.getButtonMenuPageItems(renderer, menuRect, static_cast<int>(menuItems.size()));
   GUI.drawButtonMenu(
-      renderer, Rect{safe.x, menuStartY, safe.width, menuHeight}, static_cast<int>(menuItems.size()), menuSelectedIndex,
+      renderer, menuRect, static_cast<int>(menuItems.size()), menuSelectedIndex,
       [&menuItems](int index) { return menuItems[index].label; },
       [&menuItems](int index) { return menuItems[index].icon; });
 

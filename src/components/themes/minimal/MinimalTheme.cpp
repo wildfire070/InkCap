@@ -799,6 +799,13 @@ void MinimalTheme::drawStatsSleepScreen(const GfxRenderer& renderer, const Recen
   }
 }
 
+int MinimalTheme::getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const {
+  (void)rect;
+  if (buttonCount <= 0) return 1;
+  const Rect panel = buttonMenuPanelRect(renderer, buttonCount);
+  return std::max(1, (panel.height - 2) / kMenuRowHeight);
+}
+
 void MinimalTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                   const std::function<const char*(int index)>& buttonLabel,
                                   const std::function<UIIcon(int index)>& rowIcon) const {
