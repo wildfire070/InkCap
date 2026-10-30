@@ -578,7 +578,7 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
               "kMaxCachedBooks must cover all carousel slots");
 
 int HomeActivity::getMenuItemCount() const {
-  if (coverGridUi) return static_cast<int>(recentBooks.size()) + (4 + hasOpdsServers + hasBookFusion + hasPlugins);
+  if (coverGridUi) return static_cast<int>(recentBooks.size()) + (4 + hasPlugins);
   const auto& metrics = UITheme::getInstance().getMetrics();
   int count = 4;  // File Browser, Library, File transfer, Settings
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
