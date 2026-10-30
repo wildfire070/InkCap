@@ -2038,6 +2038,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::Plugins:
             onPluginsOpen();
             break;
+          case HomeMenuAction::OpdsBrowser:
+            onOpdsBrowserOpen();
+            break;
           case HomeMenuAction::Ao3Library:
             onAo3LibraryOpen();
             break;
@@ -2291,6 +2294,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::Plugins:
         onPluginsOpen();
+        break;
+      case HomeMenuAction::OpdsBrowser:
+        onOpdsBrowserOpen();
         break;
       case HomeMenuAction::Ao3Library:
         onAo3LibraryOpen();
@@ -2978,6 +2984,8 @@ void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
+
+void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onPluginsOpen() { activityManager.goToPlugins(); }
 
