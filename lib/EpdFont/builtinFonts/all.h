@@ -21,21 +21,19 @@
 #include <builtinFonts/bitter_16_italic.h>
 #include <builtinFonts/bitter_16_regular.h>
 #include <builtinFonts/lexenddeca_10_bold.h>
-#include <builtinFonts/lexenddeca_10_bolditalic.h>
 #include <builtinFonts/lexenddeca_10_italic.h>
 #include <builtinFonts/lexenddeca_10_regular.h>
 #include <builtinFonts/lexenddeca_12_bold.h>
-#include <builtinFonts/lexenddeca_12_bolditalic.h>
 #include <builtinFonts/lexenddeca_12_italic.h>
 #include <builtinFonts/lexenddeca_12_regular.h>
 #include <builtinFonts/lexenddeca_14_bold.h>
-#include <builtinFonts/lexenddeca_14_bolditalic.h>
 #include <builtinFonts/lexenddeca_14_italic.h>
 #include <builtinFonts/lexenddeca_14_regular.h>
 #include <builtinFonts/lexenddeca_16_bold.h>
-#include <builtinFonts/lexenddeca_16_bolditalic.h>
 #include <builtinFonts/lexenddeca_16_italic.h>
 #include <builtinFonts/lexenddeca_16_regular.h>
+// bolditalic variants are intentionally omitted on non-scalable-font hardware (flash budget):
+// EpdFontFamily::getFont() falls back to bold when boldItalic is null (see main.cpp).
 
 #endif
 
