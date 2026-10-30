@@ -84,6 +84,11 @@ class HomeActivity final : public Activity {
   int coverRectY = 0;
   int coverRectW = 0;
   int coverRectH = 0;
+  // How many menu rows fit on one page at the size the menu was last drawn,
+  // per the active theme's own drawButtonMenu() layout. A swipe over the menu
+  // uses this to jump a full page, since the theme's page-arrow/scrollbar
+  // indicator implies that's possible but draws no touch target of its own.
+  int homeMenuPageItems = 1;
   float currentBookProgressPercent = -1.0f;
   std::string currentBookChapterTitle;
   BookReadingStats currentBookStats;

@@ -85,6 +85,7 @@ class MinimalTheme : public LyraTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<const char*(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  int getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   bool usesCompactFileBrowserRows() const override { return true; }
   int compactFileBrowserRowHeight(const GfxRenderer& renderer) const override;
 };

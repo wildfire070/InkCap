@@ -39,7 +39,7 @@ constexpr ThemeMetrics values = {.batteryWidth = StatusBarMetrics::batteryWidth,
                                  .tabSpacing = 8,
                                  .tabBarHeight = 40,
                                  .tabBarAppearance = ThemeTabBarAppearance::Pill,
-                                 .scrollBarWidth = 4,
+                                 .scrollBarWidth = 2,
                                  .scrollBarRightOffset = 5,
                                  .homeTopPadding = 56,
                                  .homeCoverHeight = 226,
@@ -114,6 +114,7 @@ class LyraTheme : public BaseTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<const char*(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  int getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
