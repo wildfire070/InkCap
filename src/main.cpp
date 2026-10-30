@@ -193,27 +193,24 @@ static void logBootHeap(const char* stage) {
 EpdFont lexenddeca10RegularFont(&lexenddeca_10_regular);
 EpdFont lexenddeca10BoldFont(&lexenddeca_10_bold);
 EpdFont lexenddeca10ItalicFont(&lexenddeca_10_italic);
-EpdFont lexenddeca10BoldItalicFont(&lexenddeca_10_bolditalic);
+// No bolditalic variant on non-scalable-font hardware (flash budget); getFont() falls back to bold.
 EpdFontFamily lexenddeca10FontFamily(&lexenddeca10RegularFont, &lexenddeca10BoldFont, &lexenddeca10ItalicFont,
-                                     &lexenddeca10BoldItalicFont);
+                                     nullptr);
 EpdFont lexenddeca12RegularFont(&lexenddeca_12_regular);
 EpdFont lexenddeca12BoldFont(&lexenddeca_12_bold);
 EpdFont lexenddeca12ItalicFont(&lexenddeca_12_italic);
-EpdFont lexenddeca12BoldItalicFont(&lexenddeca_12_bolditalic);
 EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont, &lexenddeca12ItalicFont,
-                                     &lexenddeca12BoldItalicFont);
+                                     nullptr);
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
 EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
 EpdFont lexenddeca14ItalicFont(&lexenddeca_14_italic);
-EpdFont lexenddeca14BoldItalicFont(&lexenddeca_14_bolditalic);
 EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont, &lexenddeca14ItalicFont,
-                                     &lexenddeca14BoldItalicFont);
+                                     nullptr);
 EpdFont lexenddeca16RegularFont(&lexenddeca_16_regular);
 EpdFont lexenddeca16BoldFont(&lexenddeca_16_bold);
 EpdFont lexenddeca16ItalicFont(&lexenddeca_16_italic);
-EpdFont lexenddeca16BoldItalicFont(&lexenddeca_16_bolditalic);
 EpdFontFamily lexenddeca16FontFamily(&lexenddeca16RegularFont, &lexenddeca16BoldFont, &lexenddeca16ItalicFont,
-                                     &lexenddeca16BoldItalicFont);
+                                     nullptr);
 EpdFont bitter10RegularFont(&bitter_10_regular);
 EpdFont bitter10BoldFont(&bitter_10_bold);
 EpdFont bitter10ItalicFont(&bitter_10_italic);
