@@ -218,7 +218,7 @@ constexpr ThemeMetrics values = {.batteryWidth = StatusBarMetrics::batteryWidth,
                                  .tabSpacing = 10,
                                  .tabBarHeight = 50,
                                  .tabBarAppearance = ThemeTabBarAppearance::Pill,
-                                 .scrollBarWidth = 4,
+                                 .scrollBarWidth = 2,
                                  .scrollBarRightOffset = 5,
                                  .homeTopPadding = 40,
                                  .homeCoverHeight = 370,
@@ -363,6 +363,12 @@ class BaseTheme {
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<const char*(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
+  // How many rows drawButtonMenu(rect, buttonCount, ...) fits on one page. Callers
+  // use this to let a swipe jump the selection by a full page, matching what the
+  // scrollbar/page-arrow it draws implies is possible -- keep in sync with that
+  // function's own pageItems formula; it is intentionally not shared with it to
+  // avoid touching already-verified rendering code for an input-only change.
+  virtual int getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const;
   // With preserveBackdrop, leave the popup on the display but restore the backing
   // pixels for the next redraw. Caller must own RenderLock.
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, bool preserveBackdrop = false) const;

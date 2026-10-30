@@ -34,7 +34,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .tabSpacing = 10,
                                  .tabBarHeight = 50,
                                  .tabBarAppearance = ThemeTabBarAppearance::Pill,
-                                 .scrollBarWidth = 4,
+                                 .scrollBarWidth = 2,
                                  .scrollBarRightOffset = 5,
                                  .homeTopPadding = 75,
                                  // Compact cover tile so the full roundedraff home menu fits above button hints.
@@ -107,6 +107,7 @@ class RoundedRaffTheme : public BaseTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<const char*(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  int getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const override;
   void drawTextField(const GfxRenderer& renderer, Rect rect, int textWidth, bool cursorMode = false,
                      int contentStartX = 0, int contentWidth = 0) const override;
   int getListRowStep(bool hasSubtitle, int rowHeightScale = 1) const override;

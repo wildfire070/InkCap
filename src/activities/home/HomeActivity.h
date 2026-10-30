@@ -121,6 +121,11 @@ class HomeActivity final : public Activity {
   // Width the menu was last drawn at. The companion can sit in the space beside
   // a narrowed menu, so touch must not claim the full row width there.
   int companionMenuWidth = 0;
+  // How many menu rows fit on one page at the size the menu was last drawn,
+  // per the active theme's own drawButtonMenu() layout. A swipe over the menu
+  // uses this to jump a full page, since the theme's page-arrow/scrollbar
+  // indicator implies that's possible but draws no touch target of its own.
+  int homeMenuPageItems = 1;
   // Draws the companion and its speech bubble in the region the theme set aside
   // for it. No-op unless enabled.
   void drawCompanion(Rect region) const;

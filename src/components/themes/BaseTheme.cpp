@@ -726,6 +726,16 @@ HomeCompanionLayout BaseTheme::getHomeCompanionLayout(const GfxRenderer& rendere
   return layout;
 }
 
+int BaseTheme::getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const {
+  (void)renderer;
+  (void)buttonCount;
+  constexpr int maxVisibleItems = 7;
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int rowStep = metrics.menuRowHeight + metrics.menuSpacing;
+  const int availableHeight = std::max(0, rect.height - metrics.verticalSpacing);
+  return std::clamp((availableHeight + metrics.menuSpacing) / rowStep, 1, maxVisibleItems);
+}
+
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<const char*(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
