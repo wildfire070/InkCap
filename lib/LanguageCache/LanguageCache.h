@@ -16,6 +16,9 @@ constexpr uint16_t MISSING = 0xffff;
 constexpr size_t MAX_SOURCE_SIZE = 256 * 1024;
 constexpr char DIRECTORY[] = "/.crosspoint/languages";
 
+// Finder copies these metadata companions alongside SD files. They are not payloads.
+constexpr bool isAppleDoubleFile(const char* filename) { return filename && filename[0] == '.' && filename[1] == '_'; }
+
 struct Metadata {
   char code[CODE_SIZE] = {};
   char name[NAME_SIZE] = {};
@@ -50,6 +53,8 @@ struct Flash {
   bool (*read)(void*, size_t, void*, size_t);
   bool (*write)(void*, size_t, const void*, size_t);
   bool (*erase)(void*, size_t, size_t);
+  // Optional bounded readback with one storage handle for bulk writes.
+  bool (*verify)(void*, size_t, const void*, size_t) = nullptr;
 };
 
 enum class Result : uint8_t {
@@ -71,13 +76,20 @@ bool validUtf8(const char* text, size_t length);
 bool validCode(const char* code);
 bool compatibleFormat(const char* english, const char* translated);
 
+// Reasons point to static text; no source strings or extra allocation are retained.
+struct InspectionDiagnostic {
+  const char* reason = nullptr;
+  // One-based line; offset counts consumed bytes through that line or read failure.
+  size_t line = 0;
+  size_t offset = 0;
+};
 // Reuse a single bounded workspace while enumerating a language directory.
 class Inspector {
  public:
   Inspector();
   ~Inspector();
   bool available() const { return bool(workspace_); }
-  Result inspect(Input input, Metadata& metadata);
+  Result inspect(Input input, Metadata& metadata, InspectionDiagnostic* diagnostic = nullptr);
 
  private:
   struct Impl;
@@ -85,7 +97,7 @@ class Inspector {
 };
 
 // Inspect metadata without reading beyond the first string. Metadata must precede strings.
-Result inspect(Input input, Metadata& metadata);
+Result inspect(Input input, Metadata& metadata, InspectionDiagnostic* diagnostic = nullptr);
 
 // Optional online admission checks. Null expectations preserve manual-source semantics.
 // continueWork may yield and returns false to cancel; called at most every 256 input bytes.
@@ -111,7 +123,10 @@ struct Installed {
 // Identical compiled content (including record order) and metadata returns
 // Unchanged with the pinned identity
 // and no writes. A changed source requires Input::rewind before any flash mutation.
-Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed);
+// Optional caller-owned SLOT_SIZE scratch batches the inactive slot in RAM.
+// Storage is still verified before the commit marker is published last.
+Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed,
+               uint8_t* staging = nullptr);
 
 // Fully validates a committed mapped slot. Offsets are relative to the slot base.
 // Pass nullptr for offsets to inspect a candidate without changing the active index.

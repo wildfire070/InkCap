@@ -28,7 +28,7 @@ def main():
 
     settings = read()
     keys = ['shortPwrBtn', 'longPwrBtn', 'powerChordAction', 'longPressMenuAction',
-            'longPressBackAction', 'longPressButtonBehavior', 'sideButtonUpShort',
+            'longPressBackAction', 'frontButtonLeftLong', 'frontButtonRightLong', 'sideButtonUpShort',
             'sideButtonUpLong', 'sideButtonDownShort', 'sideButtonDownLong']
     if 'sideButtonChordAction' in settings:
         keys.append('sideButtonChordAction')

@@ -38,6 +38,24 @@ bool hyphenationCode(const char* code) {
 }
 }  // namespace
 
+bool catalogPath(const Options& options, char* output, size_t capacity) {
+  if (!output || !capacity) return false;
+  output[0] = '\0';
+  const bool translation = options.expectedKind == Kind::Translation;
+  if (translation && (!options.expectedSource || !options.expectedKeyset || !isHex(options.expectedSource, 64) ||
+                      !isHex(options.expectedKeyset, 64)))
+    return false;
+  const char* channel = options.expectedChannel == Channel::Rc ? "rc" : "stable";
+  const int size = translation ? std::snprintf(output, capacity, "catalogs/%s/translation/%s/%s.json", channel,
+                                               options.expectedSource, options.expectedKeyset)
+                               : std::snprintf(output, capacity, "catalogs/%s/hyphenation.json", channel);
+  if (size < 0 || static_cast<size_t>(size) >= capacity) {
+    output[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
 Parser::Parser(Catalog& catalog, const Options& options) : catalog_(catalog), options_(options) {
   // Reset in place; avoid a large temporary on the constrained device stack.
   catalog_.count = 0;
@@ -331,8 +349,7 @@ bool Parser::stringComplete() {
       break;
     case Code:
       if (!validCode(token_) || sameCode(token_, "en")) return fail("Invalid or built-in code");
-      if (options_.expectedKind == Kind::Hyphenation ? !hyphenationCode(token_)
-                                                     : !options_.supportedTranslation(token_, options_.context))
+      if (options_.expectedKind == Kind::Hyphenation && !hyphenationCode(token_))
         return fail("Unsupported language code");
       destination = catalog_.entries[catalog_.count].code;
       break;
@@ -399,6 +416,17 @@ bool Parser::endRoot() {
   uint32_t required = (1u << (Entries + 1)) - 1;
   if (options_.expectedKind == Kind::Translation) required |= (1u << Source) | (1u << Keyset);
   if ((rootFields_ & required) != required) return fail("Missing root field");
+  if (options_.expectedKind == Kind::Translation) {
+    // Validate and bound every entry before filtering. Future language additions
+    // must not block downloads for a firmware's existing registry.
+    size_t retained = 0;
+    for (size_t i = 0; i < catalog_.count; ++i) {
+      if (!options_.supportedTranslation(catalog_.entries[i].code, options_.context)) continue;
+      if (retained != i) catalog_.entries[retained] = catalog_.entries[i];
+      ++retained;
+    }
+    catalog_.count = retained;
+  }
   state_ = State::Done;
   return true;
 }

@@ -60,7 +60,11 @@ constexpr int kStatsValueLabelGap = 1;
 
 bool isWideScreen(const GfxRenderer& renderer) { return renderer.getScreenWidth() >= 560; }
 
-int contentInset(const GfxRenderer& renderer) { return isWideScreen(renderer) ? kContentInsetX3 : kContentInsetX4; }
+int contentInset(const GfxRenderer& renderer) {
+  const auto edges = renderer.getViewableInsets().rotated(static_cast<unsigned>(renderer.getOrientation())).edges;
+  return std::max(isWideScreen(renderer) ? kContentInsetX3 : kContentInsetX4,
+                  static_cast<int>(std::max(edges[1], edges[3])));
+}
 
 Rect coverRectForScreen(const GfxRenderer& renderer, const Rect& rect) {
   const int inset = contentInset(renderer);
@@ -507,8 +511,8 @@ int footerRowGap() {
 // lower than the true screen bottom minus the button-hint reserve -- so this
 // still reads as "pinned to the bottom" the way it always has.
 int footerBottomRowCenterY(const GfxRenderer& renderer, const Rect& coverRect) {
-  const int buttonHintReserve = gpio.hasTouch() ? 0 : DashboardMetrics::values.buttonHintsHeight;
-  const int footerY = renderer.getScreenHeight() - buttonHintReserve - kFooterBottomGap;
+  const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int footerY = safe.y + safe.height - kFooterBottomGap;
   return std::max(coverRect.y + coverRect.height + 120, footerY);
 }
 

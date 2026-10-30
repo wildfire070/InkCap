@@ -38,6 +38,10 @@ void capture(const char* name) {
     for (int x = 0; x < width; ++x) std::fputc(renderer.isPixelBlack(x, y) ? 0 : 255, output);
   std::fclose(output);
 }
+bool overlaps(const TextSelectionOverlay::Rect a, const TextSelectionOverlay::Rect b) {
+  return !a.empty() && !b.empty() && a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom();
+}
+
 void verifyOverlayBounds() {
   RenderLock lock;
   const auto orientation = renderer.getOrientation();
@@ -47,20 +51,60 @@ void verifyOverlayBounds() {
     for (int size = 0; size < CrossPointSettings::UI_SCALE_COUNT; ++size) {
       SETTINGS.uiScale = static_cast<CrossPointSettings::UI_SCALE>(size);
       const auto safe = TextSelectionOverlay::safeArea(renderer);
+      const auto inside = [&](const TextSelectionOverlay::Rect rect) {
+        return rect.empty() ||
+               (rect.x >= safe.x && rect.right() <= safe.right() && rect.y >= safe.y && rect.bottom() <= safe.bottom());
+      };
       for (const auto point : {TextSelectionOverlay::Rect{safe.x, safe.y, 1, 1},
                                TextSelectionOverlay::Rect{safe.right(), safe.bottom(), 1, 1}}) {
-        TextSelectionOverlay::Layout layout;
-        TextSelectionOverlay::placeActions(renderer, layout, point.x, point.y);
-        for (const auto& button : layout.actions) {
-          require(button.x >= safe.x && button.right() <= safe.right() && button.y >= safe.y &&
-                      button.bottom() <= safe.bottom(),
-                  "Scaled or rotated toolbar escaped usable screen bounds");
+        for (const bool lookup : {false, true}) {
+          TextSelectionOverlay::Layout layout;
+          TextSelectionOverlay::placeActions(renderer, layout, point, point, lookup);
+          require(inside(layout.bar), "Scaled or rotated toolbar escaped usable screen bounds");
+          for (const auto& button : layout.actions) {
+            require(inside(button), "Scaled or rotated toolbar escaped usable screen bounds");
+          }
+          require(layout.actions[TextSelectionOverlay::lookupAction].empty() != lookup,
+                  "Look Up visibility does not follow dictionary availability");
         }
-        for (bool left : {false, true}) {
-          const auto handle = TextSelectionOverlay::handle(safe, point, left);
-          require(handle.x >= safe.x && handle.right() <= safe.right() && handle.y >= safe.y &&
-                      handle.bottom() <= safe.bottom(),
-                  "Selection handle escaped usable screen bounds");
+        for (const bool left : {false, true}) {
+          for (const bool isStart : {false, true}) {
+            const auto handle = TextSelectionOverlay::handle(safe, point, left, isStart);
+            require(inside(handle.stem) && inside(handle.dot) && inside(handle.hit),
+                    "Selection handle escaped usable screen bounds");
+          }
+        }
+      }
+      // Placement rules: above when there is room, otherwise below; never on the word.
+      const int16_t lineHeight = static_cast<int16_t>(renderer.getLineHeight(SETTINGS.getReaderFontId()));
+      for (const int16_t wordY : {safe.y, static_cast<int16_t>(safe.y + safe.height / 2)}) {
+        const TextSelectionOverlay::Rect word{static_cast<int16_t>(safe.x + safe.width / 3), wordY, 40, lineHeight};
+        TextSelectionOverlay::Layout layout;
+        layout.start = TextSelectionOverlay::handle(safe, word, true, true);
+        layout.end = TextSelectionOverlay::handle(safe, word, false, false);
+        TextSelectionOverlay::placeActions(renderer, layout, word, word, true);
+        const bool atTop = wordY == safe.y;
+        require(layout.showPointer && layout.pointerUp == atTop, "Toolbar did not flip below a top-edge selection");
+        require(atTop ? layout.bar.y >= layout.end.dot.bottom() : layout.bar.bottom() <= layout.start.dot.y,
+                "Toolbar overlaps the selection or its handles");
+        require(!overlaps(layout.start.hit, layout.end.hit), "Start and end handle touch areas overlap");
+      }
+      const int16_t middleX = static_cast<int16_t>(safe.x + safe.width / 2 - 20);
+      for (const int16_t firstX : {static_cast<int16_t>(safe.x + safe.width / 3), middleX}) {
+        // Fallback: a selection from the first line to the last leaves no room
+        // above or below, but the bar must still leave both handles reachable,
+        // including when both handles sit mid-screen.
+        const TextSelectionOverlay::Rect first{firstX, safe.y, 40, lineHeight};
+        const TextSelectionOverlay::Rect last{middleX, static_cast<int16_t>(safe.bottom() - lineHeight), 40,
+                                              lineHeight};
+        TextSelectionOverlay::Layout layout;
+        layout.start = TextSelectionOverlay::handle(safe, first, true, true);
+        layout.end = TextSelectionOverlay::handle(safe, last, false, false);
+        TextSelectionOverlay::placeActions(renderer, layout, first, last, true);
+        require(inside(layout.bar) && !layout.showPointer, "Fallback toolbar placement escaped the screen");
+        for (const auto* handle : {&layout.start, &layout.end}) {
+          require(!overlaps(layout.bar, handle->dot) && !overlaps(layout.bar, handle->stem),
+                  "Fallback toolbar hides a drag handle");
         }
       }
     }
@@ -105,11 +149,14 @@ bool ClippingSelectionSmokeTest::tick() {
     const auto layout = selection->touchSelectionLayout();
     const auto safe = TextSelectionOverlay::safeArea(renderer);
     for (const auto& button : layout.actions) {
-      require(button.x >= safe.x && button.right() <= safe.right() && button.y >= safe.y &&
-                  button.bottom() <= safe.bottom(),
+      require(button.empty() || (button.x >= safe.x && button.right() <= safe.right() && button.y >= safe.y &&
+                                 button.bottom() <= safe.bottom()),
               "Toolbar escaped usable screen bounds");
     }
-    require(layout.actions[0].y == layout.actions[1].y, "Actions are not horizontal");
+    const auto& lookup = layout.actions[TextSelectionOverlay::lookupAction];
+    const auto& clip = layout.actions[TextSelectionOverlay::clipAction];
+    require(!clip.empty() && (lookup.empty() || lookup.y == clip.y), "Actions are not horizontal");
+    require(lookup.empty() != selection->touchLookupEnabled_, "Look Up visibility does not follow the dictionary");
   };
   const auto moveEndpoint = [&](int index) {
     require(selection && selection->touchDragLookup_, "Handle did not start a drag");
@@ -158,7 +205,7 @@ bool ClippingSelectionSmokeTest::tick() {
       break;
     case 7:
       actionsReady();
-      press(selection->touchSelectionLayout().endHandle);
+      press(selection->touchSelectionLayout().end.hit);
       break;
     case 8:
       moveEndpoint(initialIndex + 3);
@@ -167,7 +214,7 @@ bool ClippingSelectionSmokeTest::tick() {
       actionsReady();
       require(selection->navigator.getLookupSelectionWordCount() == 4, "End handle did not extend the range");
       capture("clip-actions-end-handle");
-      press(selection->touchSelectionLayout().startHandle);
+      press(selection->touchSelectionLayout().start.hit);
       break;
     case 11:
       moveEndpoint(initialIndex - 2);
@@ -185,7 +232,8 @@ bool ClippingSelectionSmokeTest::tick() {
         const bool firstRtl = first.isRtl, lastRtl = last.isRtl;
         first.isRtl = last.isRtl = true;
         const auto layout = selection->touchSelectionLayout();
-        require(!layout.startOnLeft && layout.endOnLeft, "RTL handles were not reversed");
+        require(layout.start.stem.x >= first.screenX + first.width && layout.end.stem.right() <= last.screenX,
+                "RTL handles were not reversed");
         first.isRtl = firstRtl;
         last.isRtl = lastRtl;
         int oldAnchor = -1, oldCursor = -1;
@@ -206,10 +254,11 @@ bool ClippingSelectionSmokeTest::tick() {
           require(selection->navigator.getExpandedSelectionRange(begin, end) && begin == wrap && end == wrap + 1,
                   "Wrapped selection did not include both fragments");
           const auto handles = selection->touchSelectionLayout();
-          require(handles.startHandle.y ==
-                          prefix.screenY + prefix.heightOr(renderer.getLineHeight(SETTINGS.getReaderFontId())) &&
-                      handles.endHandle.y ==
-                          suffix.screenY + suffix.heightOr(renderer.getLineHeight(SETTINGS.getReaderFontId())),
+          const int lineHeight = renderer.getLineHeight(SETTINGS.getReaderFontId());
+          require(handles.start.stem.y <= prefix.screenY &&
+                      handles.start.stem.bottom() >= prefix.screenY + prefix.heightOr(lineHeight) &&
+                      handles.end.stem.y <= suffix.screenY &&
+                      handles.end.stem.bottom() >= suffix.screenY + suffix.heightOr(lineHeight),
                   "Wrapped word handles do not match highlighted fragments");
           DictionaryClippingRequest request;
           require(selection->captureCurrentClippingRequest(request) &&
@@ -268,7 +317,7 @@ bool ClippingSelectionSmokeTest::tick() {
       break;
     case 71:
       actionsReady();
-      press(selection->touchSelectionLayout().endHandle);
+      press(selection->touchSelectionLayout().end.hit);
       stage = 41;
       break;
     case 41:
@@ -353,8 +402,8 @@ bool ClippingSelectionSmokeTest::tick() {
       require(selection->pendingClippingRequest_.firstPageOffset == 0 &&
                   selection->pendingClippingRequest_.lastPageOffset == 1,
               "Clipping request lost its page boundary");
-      require(selection->touchSelectionLayout().startHandle.empty(), "Off-page start handle was drawn");
-      press(selection->touchSelectionLayout().endHandle);
+      require(selection->touchSelectionLayout().start.empty(), "Off-page start handle was drawn");
+      press(selection->touchSelectionLayout().end.hit);
       break;
     case 45:
       moveEndpoint(2);
@@ -392,7 +441,7 @@ bool ClippingSelectionSmokeTest::tick() {
     }
     case 50:
       actionsReady();
-      press(selection->touchSelectionLayout().startHandle);
+      press(selection->touchSelectionLayout().start.hit);
       break;
     case 51:
       moveEndpoint(initialIndex - 2);

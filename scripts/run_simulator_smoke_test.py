@@ -68,8 +68,8 @@ def prepare_fs(temp_root: Path, book: Path) -> str:
 def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: bool = False) -> Path:
     """Copy immutable producer bytes into a disposable mock, or make local fixtures.
 
-    Preserve full snapshot paths for companions; keep only one stable catalog
-    per kind at the legacy catalog lookup path. Never mutate
+    Preserve full snapshot paths for companions and provide scoped translation
+    discovery for the running firmware. Never mutate
     the supplied snapshot and never qualify TLS/publication with this transport.
     """
     mock = temp_root / "asset-http-mock"
@@ -193,6 +193,18 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
                 expected.parent.mkdir(exist_ok=True)
                 expected.write_text("source/TEST-ONLY.txt\nnotices.json\nsources.json\n")
         print("Asset smoke uses disposable working-source fixtures, not a release snapshot", flush=True)
+    translation_file = mock / "translation.json"
+    if translation_file.is_file():
+        from generate_language_template import generate
+        from publish_language_assets import catalog_key
+        contract = json.loads(generate("simulator-local-fixture")["language-template.json"])
+        # Obsolete-snapshot tests intentionally serve mismatched bytes at the
+        # running firmware's lookup path, so parser rejection is still exercised.
+        lookup = dict(json.loads(translation_file.read_bytes()),
+                      source=contract["englishSourceSha256"], keyset=contract["keysetSha256"])
+        destination = mock / catalog_key(lookup)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(translation_file, destination)
     return mock
 
 
@@ -302,6 +314,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_LIFECYCLE"] = "1"
         if args.chapter_percentage:
             env["CROSSINK_SIMULATOR_SMOKE_CHAPTER_PERCENTAGE"] = "1"
+        if args.centered_status_bar:
+            env["CROSSINK_SIMULATOR_SMOKE_CENTERED_STATUS_BAR"] = "1"
         if args.status_bar_feature:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_FEATURE"] = "1"
         if args.status_bar_captures:
@@ -330,13 +344,19 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_ISOLATED_FONTS"] = "1"
         if args.font_family:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_FAMILY"] = args.font_family
+        if args.reader_font_layout:
+            env["CROSSINK_SIMULATOR_SMOKE_READER_FONT_LAYOUT"] = "1"
         if args.c3_font_sizes:
             env["CROSSINK_SIMULATOR_SMOKE_C3_FONT_SIZES"] = "1"
         if args.font_size_book:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_SIZE_BOOK"] = "1"
+        if args.gesture_shortcuts:
+            env["CROSSINK_SIMULATOR_SMOKE_GESTURE_SHORTCUTS"] = "1"
         if args.font_recovery:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_RECOVERY"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
+        if args.tilt_settings:
+            env["CROSSINK_SIMULATOR_SMOKE_TILT_SETTINGS"] = "1"
         if args.receive_folder:
             env["CROSSINK_SIMULATOR_SMOKE_RECEIVE_FOLDER"] = "1"
         if args.receive_folder_captures:
@@ -360,6 +380,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_OPDS_CATALOG"] = "1"
         if args.support_export:
             env["CROSSINK_SIMULATOR_SMOKE_SUPPORT_EXPORT"] = "1"
+        if args.bookmarks:
+            env["CROSSINK_SIMULATOR_SMOKE_BOOKMARKS"] = "1"
         if args.about:
             env["CROSSINK_SIMULATOR_SMOKE_ABOUT"] = "1"
         if args.release_notes:
@@ -369,6 +391,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.sync_server_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sync_server_captures).resolve())
             env["CROSSINK_SIMULATOR_SMOKE_SYNC_SERVER_CAPTURES"] = "1"
+        if args.menu_orientation:
+            env["CROSSINK_SIMULATOR_SMOKE_MENU_ORIENTATION"] = "1"
         if args.home_swipe:
             env["CROSSINK_SIMULATOR_SMOKE_HOME_SWIPE"] = "1"
         if args.home_themes:
@@ -422,6 +446,14 @@ def run_smoke(args: argparse.Namespace) -> int:
         print("Simulator smoke test did not print its success marker", file=sys.stderr)
         return 2
 
+    if args.bookmarks and "Simulator smoke test passed: bookmarks" not in proc.stdout:
+        print("Simulator did not complete bookmark checks", file=sys.stderr)
+        return 2
+
+    if args.menu_orientation and "Simulator smoke test passed: menu orientation" not in proc.stdout:
+        print("Simulator did not complete the menu orientation checks", file=sys.stderr)
+        return 2
+
     if args.release_notes and "Simulator smoke test passed: release notes" not in proc.stdout:
         print("Simulator did not complete the release notes checks", file=sys.stderr)
         return 2
@@ -449,7 +481,11 @@ def run_smoke(args: argparse.Namespace) -> int:
         print("Simulator did not complete the bitmap font-size checks", file=sys.stderr)
         return 2
 
-    if args.font_family and not args.c3_font_sizes:
+    if args.reader_font_layout and "Simulator smoke test passed: reader font layout" not in proc.stdout:
+        print("Simulator did not complete the Reader Font layout checks", file=sys.stderr)
+        return 2
+
+    if args.font_family and not args.c3_font_sizes and not args.reader_font_layout:
         tab_change = proc.stdout.find("Reader Menu tab changed after TTF Native selection")
         reader_return = proc.stdout.find("Reader restored after TTF Native selection", tab_change)
         if tab_change < 0 or reader_return < 0 or "Loading file:" not in proc.stdout[tab_change:reader_return]:
@@ -467,7 +503,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
     parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")
+    parser.add_argument("--tilt-settings", action="store_true", help="Check tilt preference visibility, device editing and persistence")
     parser.add_argument("--chapter-percentage", action="store_true", help="Check chapter percentage slot selection, removal, reload and rendered formats")
+    parser.add_argument("--centered-status-bar", action="store_true", help="Check Center Status Bar and Separator rows, popups and persistence")
     parser.add_argument("--status-bar-feature", action="store_true", help="Check status bar visibility, independent sizes, disk reload and rendered theme/orientation matrix")
     parser.add_argument("--screen-calibration", action="store_true", help="Check screen calibration button/touch editing, save, cancel, reset and rotations")
     parser.add_argument("--receive-folder", action="store_true", help="Check receive folder selection, navigation and cancellation")
@@ -486,6 +524,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hyphenation-captures", help="Directory for hyphenation manager framebuffer captures (PGM)")
     parser.add_argument("--clipping-selection", action="store_true", help="Check floating text actions, selection handles, dismissal and saving")
     parser.add_argument("--dictionary", action="store_true", help="Check French contractions and exact dictionary matches")
+    parser.add_argument("--gesture-shortcuts", action="store_true", help="Check page gesture and front-button shortcut migrations, input, catalogs and UI")
     parser.add_argument("--c3-font-sizes", "--bitmap-font-sizes", dest="c3_font_sizes", action="store_true", help="Check bitmap font sizes, inline layout, page cache, selection and SD reload")
     parser.add_argument("--font-size-book", action="store_true", help="Also render every page of --book with C3 fonts, checking its opening drop cap")
     parser.add_argument("--font-dir", help="Font fixtures copied into isolated /fonts")
@@ -494,6 +533,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--filename-font-captures", help="Directory for filename font framebuffer captures (PGM)")
     parser.add_argument("--font-recovery", action="store_true", help="Check reader selection recovery after font catalog memory pressure")
     parser.add_argument("--font-family", help="Exercise custom-font size and dictionary lifecycle")
+    parser.add_argument("--reader-font-layout", action="store_true", help="Check Reader Font row bounds, scrolling and TTF touch navigation across orientations and UI sizes (X4 Pro; requires --font-dir and --font-family)")
     parser.add_argument("--timeout", type=int, help="Seconds before the simulator run is treated as hung (default: 120, or 180 for frontlight layout, about, support export, or filename font checks)")
     parser.add_argument("--page-turns", type=int, default=2, help="Number of EPUB page-forward taps to run")
     parser.add_argument("--theme", choices=sorted(THEMES), help="UI theme to use during the smoke test")
@@ -507,16 +547,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frontlight-captures", help="Directory for frontlight layout framebuffer captures (PGM)")
     parser.add_argument("--opds-catalog", action="store_true", help="Check OPDS catalog release and download return flows")
     parser.add_argument("--support-export", action="store_true", help="Check support export privacy, scopes, cancellation and failure preservation")
+    parser.add_argument("--bookmarks", action="store_true", help="Check long bookmark lists from Home and the reader, scrolling, deletion and jumps; captures via --about-captures")
     parser.add_argument("--about", action="store_true", help="Check About navigation, paging and read-only snapshots across scales/orientations")
     parser.add_argument("--release-notes", action="store_true", help="Check the one-time What's New screen (Download, Update, touch Later vs swipe, landscape hints) and the Settings Release Notes entry; captures via --about-captures")
     parser.add_argument("--about-captures", help="Directory for About framebuffer captures (PGM)")
     parser.add_argument("--sync-server-captures", help="Directory for Sync Server settings captures (PGM)")
+    parser.add_argument("--menu-orientation", action="store_true", help="Check physical menu labels/actions in all rotations independently of reader preferences; captures via --about-captures")
     parser.add_argument("--home-swipe", action="store_true", help="Check bottom-edge Home swipes, ordinary list swipes, and reader menu gestures on touch devices")
     parser.add_argument("--home-themes", action="store_true", help="Compare drawer theme changes with fresh Home renders (X4 Pro)")
     parser.add_argument("--no-build", dest="build", action="store_false", help="Run the existing simulator binary")
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)
     args = parser.parse_args()
+    if args.reader_font_layout and (args.env != "x4-pro-simulator" or not args.font_dir or not args.font_family):
+        parser.error("--reader-font-layout requires --env x4-pro-simulator, --font-dir and --font-family")
     if (args.asset_snapshot or args.asset_hyphenation_only or args.asset_captures or args.asset_expect_translation_rejection or args.asset_empty_catalog or args.asset_save_failure) and not args.asset_downloads:
         parser.error("asset fixture/capture options require --asset-downloads")
     if args.asset_expect_translation_rejection and (args.asset_hyphenation_only or not args.asset_snapshot):

@@ -50,7 +50,11 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
     assert run("boot", "ZZ-CUSTOM").startswith("EN|English|Settings|")
     sd_cache = base / "sd/.crosspoint/asset-cache.bin"
     assert not sd_cache.exists()
+    env["CROSSINK_TEST_BATCHED_INSTALL"] = "1"
+    # Use a real multi-string language so per-string syncs would exceed the cap.
+    sample.write_text(sample.read_text() + 'STR_BACK: "Retour"\nSTR_CANCEL: "Annuler"\n')
     assert run("install", "EN", 0, "/.crosspoint/languages/custom.yaml") == "ZZ-CUSTOM|1"
+    del env["CROSSINK_TEST_BATCHED_INSTALL"]
     assert (base / "flash.bin").read_bytes() == factory_flash
     assert run("boot", "ZZ-CUSTOM", 1) == "ZZ-CUSTOM|My language|Custom settings|1"
     original_source = sample.read_text()
@@ -60,6 +64,20 @@ with tempfile.TemporaryDirectory(prefix="crossink-language-") as temporary:
     old_sd = sd_cache.read_bytes()
     run("unchanged", "ZZ-CUSTOM", 1, "/.crosspoint/languages/custom.yaml")
     assert sd_cache.read_bytes() == old_sd
+    # Inject a failure after each SD flush: erase, bulk image, publication.
+    # The settings-pinned old slot and its UI stay usable even when the new
+    # marker reached disk but its sync reported failure.
+    sample.write_text(original_source.replace("Custom settings", "Replacement settings"))
+    for failure in (1, 2, 3):
+        env["CROSSINK_TEST_FAIL_SYNC"] = str(failure)
+        rejected = subprocess.run([binary, "install", "ZZ-CUSTOM", "1", "/.crosspoint/languages/custom.yaml"],
+                                  env=env, capture_output=True)
+        assert rejected.returncode == 5, (failure, rejected.stdout, rejected.stderr)
+        del env["CROSSINK_TEST_FAIL_SYNC"]
+        assert sd_cache.read_bytes()[:-0x10000] == old_sd[:-0x10000]
+        assert run("boot", "ZZ-CUSTOM", 1) == "ZZ-CUSTOM|My language|Custom settings|1"
+        sd_cache.write_bytes(old_sd)
+    sample.write_text(original_source)
     # A missing cache falls back to English; corrupt/truncated images are not
     # overwritten by a failed install.
     sd_cache.write_bytes(b"truncated")

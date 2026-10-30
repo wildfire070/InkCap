@@ -1596,7 +1596,7 @@ void LibraryActivity::promptDeleteBook(const RecentBook& book) {
     reloadAfterBookAction();
   };
 
-  const std::string heading = tr(STR_DELETE) + std::string("? ");
+  const std::string heading = tr(STR_DELETE_ITEM_CONFIRM);
   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, heading, book.title), std::move(handler));
 }
 

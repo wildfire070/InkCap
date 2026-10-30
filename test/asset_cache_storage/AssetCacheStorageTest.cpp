@@ -74,6 +74,28 @@ int main() {
   assert(HalFile::liveFiles == 0);
   std::memset(data, 0x42, sizeof(data));
   assert(storage.write(0, data, sizeof(data)));
+  {
+    const auto opens = HalStorage::opens, seeks = HalFile::seeks;
+    // Larger than the verify scratch: one open/seek for the entire readback.
+    const std::string expected(4096, '\x42');
+    assert(storage.write(4096, expected.data(), expected.size()));
+    const auto afterWrite = HalStorage::opens;
+    assert(storage.verify(4096, expected.data(), expected.size()));
+    assert(HalStorage::opens == afterWrite + 1 && afterWrite == opens + 1);
+    assert(HalFile::seeks == seeks + 2 && HalFile::liveFiles == 0);
+    assert(!storage.verify(4097, expected.data(), expected.size()));
+    HalFile::failRead = true;
+    assert(!storage.verify(4096, expected.data(), expected.size()));
+    HalFile::failRead = false;
+    HalFile::failOpen = true;
+    assert(!storage.verify(4096, expected.data(), expected.size()));
+    HalFile::failOpen = false;
+    HalFile::failClose = true;
+    assert(!storage.verify(4096, expected.data(), expected.size()));
+    HalFile::failClose = false;
+    assert(!storage.verify(storage.size(), expected.data(), expected.size()));
+    assert(HalFile::liveFiles == 0);
+  }
   AssetCacheStorage::Mapping snapshot;
   assert(storage.map(0, sizeof(data), snapshot));
   assert(snapshot.psram && snapshot.data[0] == 0x42);

@@ -38,6 +38,9 @@ struct Rect;
 #endif
 
 class FontDownloadActivity : public Activity {
+#ifdef SIMULATOR
+  friend struct ScreenCalibrationSmokeTest;
+#endif
  public:
   explicit FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 

@@ -6,9 +6,9 @@
  */
 
 #pragma once
-
 #include <Xtc.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -18,14 +18,19 @@
 #include "DailyReadingStats.h"
 #include "EndOfBookOptions.h"
 #include "GlobalReadingStats.h"
+#include "PluginReaderEvents.h"
+#include "ReaderButtonShortcuts.h"
 #include "ReaderProgressSaveDebouncer.h"
-#include "SideButtonShortcuts.h"
+#include "ReadingSessionJournal.h"
+#include "ReadingSessionStats.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
 #include "sync/SyncPending.h"
 
 class XtcReaderActivity final : public Activity {
+  PluginReaderEvents pluginEvents;
 #ifdef SIMULATOR
+  friend struct ReaderMenuOrientationSmokeTest;
   friend struct StatusBarFeatureSmokeTest;
 #endif
   OptionPopup quickActionsPopup;
@@ -37,11 +42,14 @@ class XtcReaderActivity final : public Activity {
   unsigned long pageShownAtMs = 0UL;
   uint32_t sessionReadingSeconds = 0;
   DailyReadingStats::Session dailyReadingSession;
+  ReadingSessionDates readingSessionDates;
+  DeferredReadingStatsInterval deferredReadingStats;
+  ReadingStatsSaveDelay statsSaveDelay;
+  ReadingSessionJournal::Session readingSessionJournal;
+  uint32_t statsCheckpointRevision = 0;
   void startDailyReadingInterval();
   BookReadingStats stats;
   GlobalReadingStats globalStats;
-  ReadingStatsDateTime sessionStartLocalDateTime;
-  bool hasSessionStartLocalDateTime = false;
   bool bookStatsEnabled = true;
   bool statsTrackingActive = true;
   bool paceDirty = false;
@@ -56,7 +64,7 @@ class XtcReaderActivity final : public Activity {
   // Session-only display toggle; fixed-layout XTC pages are never regenerated.
   bool statusBarVisible = true;
   bool longPressMenuHandled = false;
-  SideButtonShortcuts sideButtonShortcuts;
+  ReaderButtonShortcuts readerButtonShortcuts;
   bool frontButtonLongPressHandled = false;
   bool longPressBackHandled = false;
   bool skipRecentBookUpdateOnEntry = false;
@@ -65,6 +73,7 @@ class XtcReaderActivity final : public Activity {
   SyncPending::SessionMarker pendingSync;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  std::atomic<bool> endOfBookMenuActive{false};
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
@@ -79,14 +88,18 @@ class XtcReaderActivity final : public Activity {
   bool saveProgress(uint32_t page);
   bool queueProgressSave(uint32_t pageToRender);
   bool flushQueuedProgress();
-  void saveProgressBeforeRestart();
+  // Caller holds RenderLock, including the render-task low-memory path.
+  bool checkpointReadingStatsBeforeRestart();
+  bool saveProgressBeforeRestart();
   void loadProgress();
   void pauseReadingStatsTimer(const char* source = "unknown");
   void syncStatsTrackingState();
   void resumeReadingStatsTimer(const char* source = "unknown");
   bool currentPageReadingSecondsForStats(uint32_t& seconds, const char* source) const;
   bool forwardPageReadElapsed(uint32_t& seconds, const char* source) const;
-  void recordCurrentPageReadingTime(const char* source = "unknown");
+  void recordCurrentPageReadingTime(const char* source = "unknown", bool deferStorage = false);
+  void flushDeferredReadingStats(bool allowCheckpoint = true);
+  void checkpointReadingStatsWhenIdle();
   void recordForwardPageTurn(uint32_t seconds, bool recordPace);
   bool formatTimeLeftLabel(char* buf, size_t len, uint32_t pageToRender, bool bookEstimate) const;
   void commitReadingStats();
@@ -97,6 +110,7 @@ class XtcReaderActivity final : public Activity {
   void setBookCompleted(bool isCompleted);
   float getCurrentBookProgressPercent() const;
   void openChapterSelection();
+  void openPercentSelection();
   void openReadingStats();
   void deleteBookStats();
   void deleteBookCache();
@@ -125,6 +139,11 @@ class XtcReaderActivity final : public Activity {
         openingFeedback(openingFeedback) {}
   void onEnter() override;
   void onExit() override;
+  void prepareForSleep() override {
+    if (!flushQueuedProgress()) LOG_ERR("PEVT", "Reader progress save failed before sleep");
+    pluginEvents.poll(getCurrentBookPath());
+    pluginEvents.flush(getCurrentBookPath());
+  }
   void loop() override;
   void render(RenderLock&&) override;
   bool handleTwoFingerSwipeAction(CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) override;
@@ -134,6 +153,7 @@ class XtcReaderActivity final : public Activity {
   }
   bool isReaderActivity() const override { return true; }
   bool isBookReaderActivity() const override { return true; }
+  bool usesMenuButtonOrientation() const override;
   bool usesFullScreenReaderVerticalSwipes() const override {
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
     return true;

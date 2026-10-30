@@ -5,8 +5,20 @@
 
 #include "AssetCatalog.h"
 
-// SD source management only. Activation remains an explicit installer action.
+// Catalog selection and SD sources. Activation remains an explicit installer action.
 namespace AssetDownloadService {
+// Local builds may select a catalog channel without changing their version label.
+constexpr AssetCatalog::Channel channelForVersion([[maybe_unused]] std::string_view version) {
+#ifdef ASSET_DOWNLOAD_CHANNEL
+  constexpr std::string_view channel = ASSET_DOWNLOAD_CHANNEL;
+  static_assert(channel == "rc" || channel == "stable", "ASSET_DOWNLOAD_CHANNEL must be \"rc\" or \"stable\"");
+  return channel == "rc" ? AssetCatalog::Channel::Rc : AssetCatalog::Channel::Stable;
+#else
+  return version.size() >= 3 && version.substr(version.size() - 3) == "-RC" ? AssetCatalog::Channel::Rc
+                                                                            : AssetCatalog::Channel::Stable;
+#endif
+}
+
 constexpr size_t MAX_PATH = 160;
 constexpr size_t MAX_URL = 384;
 enum class Result { Ok, Io, Memory, Cancelled, Invalid, Collision, OverwriteRequired, Unavailable, Network };

@@ -18,6 +18,7 @@ class AssetCacheStorage {
   bool read(size_t offset, void* bytes, size_t length) const;
   bool write(size_t offset, const void* bytes, size_t length);
   bool erase(size_t offset, size_t length);
+  bool verify(size_t offset, const void* bytes, size_t length);
   bool map(size_t offset, size_t length, Mapping& mapping) const;
   static void unmap(Mapping& mapping);
   bool usesSd() const { return sd_; }

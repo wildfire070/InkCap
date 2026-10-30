@@ -107,12 +107,12 @@ size_t OpdsParser::write(uint8_t c) { return write(&c, 1); }
 size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
   if (errorOccured || !parser) {
     errorOccured = true;
-    return length;
+    return 0;
   }
   if (!xmlData && length > 0) {
     errorOccured = true;
     errorReason = OpdsParserError::INVALID_INPUT;
-    return length;
+    return 0;
   }
 
   const char* currentPos = reinterpret_cast<const char*>(xmlData);
@@ -128,7 +128,7 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
       LOG_DBG("OPDS", "Couldn't allocate memory for buffer");
       destroyXmlParser(parser);
       parser = nullptr;
-      return length;
+      return 0;
     }
 
     memcpy(buf, currentPos, toRead);
@@ -140,7 +140,7 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
               XML_ErrorString(XML_GetErrorCode(parser)));
       destroyXmlParser(parser);
       parser = nullptr;
-      return length;
+      return 0;
     }
     currentPos += toRead;
     remaining -= toRead;
@@ -363,16 +363,18 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
     }
     self->inEntry = false;
   } else if (self->inEntry) {
+    // Retain the shared text scratch: moving it transfers a previous long
+    // description's spare capacity into even a short title/author/id.
     if (strcmp(name, "title") == 0 || strstr(name, ":title") != nullptr) {
-      if (self->inTitle) self->currentEntry.title = std::move(self->currentText);
+      if (self->inTitle) self->currentEntry.title = self->currentText;
       self->inTitle = false;
     } else if (strcmp(name, "author") == 0 || strstr(name, ":author") != nullptr) {
       self->inAuthor = false;
     } else if (self->inAuthorName && (strcmp(name, "name") == 0 || strstr(name, ":name") != nullptr)) {
-      if (self->currentEntry.author.empty()) self->currentEntry.author = std::move(self->currentText);
+      if (self->currentEntry.author.empty()) self->currentEntry.author = self->currentText;
       self->inAuthorName = false;
     } else if (strcmp(name, "id") == 0 || strstr(name, ":id") != nullptr) {
-      if (self->inId) self->currentEntry.id = std::move(self->currentText);
+      if (self->inId) self->currentEntry.id = self->currentText;
       self->inId = false;
     }
   }

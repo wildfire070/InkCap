@@ -29,6 +29,7 @@
 #include "FilenameFontSystem.h"
 #include "FontSelectionActivity.h"
 #include "HyphenationManagerActivity.h"
+#include "util/PluginEvents.h"
 #if CROSSINK_SCALABLE_FONTS
 #include "TtfRenderOptionsActivity.h"
 #endif
@@ -50,6 +51,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "activities/home/FolderPickerActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/plugins/PluginCatalogActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
@@ -83,7 +85,7 @@ constexpr size_t controlsParentBaseCount = 5;
 constexpr size_t controlsHomeButtonCount = 4;
 constexpr size_t controlsPowerMinCount = 2;
 constexpr size_t controlsPowerMaxCount = 3;
-constexpr size_t controlsFrontButtonCount = 6;
+constexpr size_t controlsFrontButtonCount = 7;
 constexpr size_t controlsSideButtonBaseCount = 7;
 
 void formatFrontlightScheduleTime(const uint16_t timeOfDay, char* const buf, const size_t len) {
@@ -127,9 +129,9 @@ uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayI
   return setting.enumRawValues[displayIndex];
 }
 
-void drawCenteredTextLine(const GfxRenderer& renderer, const int pageWidth, const int y, const std::string& text) {
+void drawCenteredTextLine(const GfxRenderer& renderer, const Rect& safe, const int y, const std::string& text) {
   const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, text.c_str());
-  const int labelX = (pageWidth - labelWidth) / 2;
+  const int labelX = safe.x + (safe.width - labelWidth) / 2;
   renderer.drawText(SMALL_FONT_ID, labelX, y, text.c_str());
 }
 
@@ -158,15 +160,14 @@ std::string formatCompactDuration(const uint32_t seconds) {
   return buf;
 }
 
-void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, const int pageHeight,
-                             const ThemeMetrics& metrics) {
+void drawSystemVersionFooter(const GfxRenderer& renderer, const ThemeMetrics& metrics) {
+  const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const std::string label = std::string("Capy ") + AppVersion::version();
-  const int maxWidth = pageWidth - systemVersionFooterSideMargin * 2;
-  const int bottomLineY =
-      pageHeight - UITheme::getButtonHintsReserve(renderer) - metrics.verticalSpacing - systemVersionFooterBottomInset;
+  const int maxWidth = safe.width - systemVersionFooterSideMargin * 2;
+  const int bottomLineY = safe.y + safe.height - metrics.verticalSpacing - systemVersionFooterBottomInset;
 
   if (renderer.getTextWidth(SMALL_FONT_ID, label.c_str()) <= maxWidth) {
-    drawCenteredTextLine(renderer, pageWidth, bottomLineY, label);
+    drawCenteredTextLine(renderer, safe, bottomLineY, label);
     return;
   }
 
@@ -193,8 +194,8 @@ void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, c
                                      ? ""
                                      : renderer.truncatedText(SMALL_FONT_ID, label.substr(lineBreak).c_str(), maxWidth);
   const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  drawCenteredTextLine(renderer, pageWidth, bottomLineY - lineHeight, firstLine);
-  drawCenteredTextLine(renderer, pageWidth, bottomLineY, secondLine);
+  drawCenteredTextLine(renderer, safe, bottomLineY - lineHeight, firstLine);
+  drawCenteredTextLine(renderer, safe, bottomLineY, secondLine);
 }
 
 std::string formatSettingValue(const SettingInfo& setting) {
@@ -378,6 +379,7 @@ void SettingsActivity::rebuildSettingsLists() {
   const size_t expectedControlsCount = controlsParentBaseCount - (hasTouch ? 1u : 0u) + (hasHomeKey ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+                                       (hasSettingByName(allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_NEXT_PAGE) ? 1u : 0u);
   const size_t expectedFrontButtonCount = hasTouch ? 0u : controlsFrontButtonCount;
 #else
@@ -387,6 +389,7 @@ void SettingsActivity::rebuildSettingsLists() {
   const size_t expectedControlsCount = controlsParentBaseCount + (gpio.hasHomeKey() ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+                                       (hasSettingByName(allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_NEXT_PAGE) ? 1u : 0u);
   constexpr size_t expectedFrontButtonCount = controlsFrontButtonCount;
 #endif
@@ -1377,6 +1380,7 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   const auto& setting = (*currentSettings)[selectedSetting];
+  if (isPageGestureSettingDisabled(setting)) return;
   const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
   const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
 
@@ -1537,6 +1541,19 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::KOReaderSync:
         startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::Plugins: {
+        static constexpr StrId OPTIONS[] = {StrId::STR_ENABLED, StrId::STR_DISABLED, StrId::STR_CANCEL};
+        optionPopup.show(StrId::STR_PLUGINS, OPTIONS, 3, SETTINGS.pluginsEnabled ? 0 : 1, [this](const int idx) {
+          if (idx == 2) return;
+          SETTINGS.pluginsEnabled = idx == 0 ? 1 : 0;
+          pluginevents::refreshSubscriptions();
+          if (SETTINGS.pluginsEnabled) SETTINGS.pluginHubPromptHidden = 0;
+          SETTINGS.saveToFile();
+          rebuildSettingsLists();
+        });
+        requestUpdate();
+        return;
+      }
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -1783,6 +1800,8 @@ void SettingsActivity::openIdleTimeThresholdPicker() {
 }
 
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
+  if (isPageGestureSettingDisabled(setting)) return tr(STR_DISABLED);
+  if (setting.action == SettingAction::Plugins) return SETTINGS.pluginsEnabled ? tr(STR_ENABLED) : tr(STR_DISABLED);
   if (settingShowsNavigationCaret(setting)) return ">";
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     return SETTINGS.*(setting.valuePtr) ? tr(STR_ON) : tr(STR_OFF);
@@ -1825,14 +1844,9 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   // compact header geometry is in absolute screen coordinates. Overlap the
   // tab's top rule with the header's final underline pixel.
   const int tabTop = std::max<int>(safe.y, CompactHeader::headerBottomY(renderer) - 1);
-  if (renderer.hasCustomViewableInsets()) {
-    setUiContentMargin(screen, renderer,
-                       fui::Insets{static_cast<int16_t>(tabTop), 0,
-                                   static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
-  } else {
-    screen.setContentMargin(fui::Insets{static_cast<int16_t>(tabTop - safe.y), 0,
-                                        static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
-  }
+  setUiContentMargin(
+      screen, renderer,
+      fui::Insets{static_cast<int16_t>(tabTop), 0, static_cast<int16_t>(UITheme::getButtonHintsReserve(renderer)), 0});
 
   if (isFileBrowserView()) {
     const int16_t listInset = static_cast<int16_t>(metrics.listInset);
@@ -1991,6 +2005,7 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     values[i] = settingValueText(settings[i]);
     const bool isSectionHeader = settings[i].type == SettingType::SECTION_HEADER;
     fui::ListItem item;
+    item.enabled = !isPageGestureSettingDisabled(settings[i]);
     const fui::BitmapRef directionIcon = swipeActionIcon(settings[i].nameId);
     const fui::BitmapRef endpointIcon = frontlightScheduleEndpointIcon(settings[i]);
     const fui::BitmapRef itemIcon = directionIcon ? directionIcon : endpointIcon;
@@ -2056,7 +2071,7 @@ void SettingsActivity::render(RenderLock&&) {
 
   // Keep build information discoverable without crowding the common header.
   if (!isFileBrowserView() && selectedCategoryIndex == 3) {
-    drawSystemVersionFooter(renderer, pageWidth, renderer.getScreenHeight(), metrics);
+    drawSystemVersionFooter(renderer, metrics);
   }
 
   const auto confirmLabel =
@@ -2084,7 +2099,8 @@ void SettingsActivity::render(RenderLock&&) {
                  : tr(STR_TOGGLE));
 
   const bool horizontalFront = SETTINGS.menuNavigation == CrossPointSettings::MENU_NAV_DIRECTIONAL &&
-                               !isFileBrowserView() && !deviceUsesHorizontalSideButtonsForMenus(gpio);
+                               !isFileBrowserView() &&
+                               mappedInput.menuButton(MappedInputManager::Button::Up) == MappedInputManager::Button::Up;
   const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), confirmLabel,
                                             (horizontalFront ? tr(STR_DIR_LEFT) : tr(STR_DIR_UP)),
                                             (horizontalFront ? tr(STR_DIR_RIGHT) : tr(STR_DIR_DOWN)));
@@ -2093,3 +2109,11 @@ void SettingsActivity::render(RenderLock&&) {
   // Always use standard refresh for settings screen
   renderer.displayBuffer();
 }
+
+#ifdef SIMULATOR
+void SettingsActivity::simulatorOpenFrontButtons() {
+  controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(getSettingsList());
+  selectedCategoryIndex = 2;
+  openSubmenu(SettingAction::ControlsFrontButtons);
+}
+#endif

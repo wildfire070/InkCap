@@ -20,53 +20,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publish-github:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check GitHub asset publishing configuration
+        env:
+          ASSETS_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          [[ -n "$ASSETS_TOKEN" ]] || { echo 'Set RELEASE_PAT with contents write access to uxjulia/crossink-assets'; exit 1; }
+      - uses: actions/checkout@v6
+        with:
+          repository: uxjulia/crossink-assets
+          ref: main
+          token: ${{ secrets.RELEASE_PAT }}
+          path: github-assets
+      - name: Export individual GitHub downloads from published firmware
+        run: python3 scripts/export_github_language_assets.py --release-tag "$RELEASE_TAG" --output github-assets/assets
+      - name: Publish individual files and catalogs to crossink-assets
+        working-directory: github-assets
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets
+          if git diff --cached --quiet; then
+            echo 'GitHub language downloads are already current'
+            exit 0
+          fi
+          git commit -m "Update language downloads for $RELEASE_TAG"
+          git push origin HEAD:main
+
   publish:
     runs-on: ubuntu-latest
     environment: language-assets
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      TOOLS_REF: ${{ vars.LANGUAGE_ASSETS_TOOLS_REF }}
-      REVIEW_FILE: ${{ vars.LANGUAGE_ASSETS_REVIEW_FILE }}
       AWS_ROLE: ${{ vars.LANGUAGE_ASSETS_AWS_ROLE_ARN }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check release publishing configuration
         shell: bash
         run: |
-          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'Set LANGUAGE_ASSETS_TOOLS_REF to a reviewed full asset-tools commit'; exit 1; }
-          [[ -n "$REVIEW_FILE" && -n "$AWS_ROLE" && -n "$RELEASE_TAG" ]] || { echo 'Configure LANGUAGE_ASSETS_REVIEW_FILE and LANGUAGE_ASSETS_AWS_ROLE_ARN'; exit 1; }
-          [[ "$REVIEW_FILE" != /* && "$REVIEW_FILE" != *..* ]] || { echo 'Review path must stay inside the asset repository'; exit 1; }
+          [[ -n "$AWS_ROLE" ]] || { echo 'Set LANGUAGE_ASSETS_AWS_ROLE_ARN'; exit 1; }
+      # Release events use the workflow at the release tag, including RC branches.
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
           fetch-depth: 0
-          path: firmware
-      - uses: actions/checkout@v6
-        with:
-          repository: uxjulia/crossink-fonts
-          ref: ${{ vars.LANGUAGE_ASSETS_TOOLS_REF }}
-          path: asset-tools
-      - uses: actions/checkout@v6
-        with:
-          repository: typst/hypher
-          ref: d81cc506416bffef2a75ee2dc969d4b41bc36613
-          path: hypher
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install S3 client
-        run: python -m pip install 'boto3>=1.36,<2'
+      - name: Verify published release and build matching assets
+        run: python3 scripts/publish_language_assets.py --release-tag "$RELEASE_TAG"
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.LANGUAGE_ASSETS_AWS_ROLE_ARN }}
           aws-region: us-east-1
       - name: Publish changed assets and verified catalogs
-        shell: bash
-        run: |
-          source_commit=$(git -C firmware rev-parse HEAD)
-          python asset-tools/scripts/release_assets.py publish \
-            --firmware "$GITHUB_WORKSPACE/firmware" --commit "$source_commit" \
-            --hypher "$GITHUB_WORKSPACE/hypher" --repository "$GITHUB_REPOSITORY" \
-            --tag "$RELEASE_TAG" \
-            --source-license-review "$GITHUB_WORKSPACE/asset-tools/$REVIEW_FILE" \
-            --bucket crossink-languages --region us-east-1 --prefix v1 --apply
+        run: python3 scripts/publish_language_assets.py --release-tag "$RELEASE_TAG" --publish

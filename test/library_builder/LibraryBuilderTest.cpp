@@ -122,6 +122,62 @@ class LibraryBuilderTest : public ::testing::Test {
 
 }  // namespace
 
+TEST_F(LibraryBuilderTest, SkipsOnlyExactSystemDirectoriesInAnyFatCasing) {
+  for (const char* path : {"/XTCache/fontPos.txt", "/Backup/xtcache/epub/language.txt",
+                           "/SYSTEM VOLUME INFORMATION/notes.md", "/Books/System Volume Information/book.epub"})
+    fake::add(path);
+  for (const char* path : {"/fontPos.txt", "/language.txt", "/XTCache.txt", "/System Volume Information.md",
+                           "/XTCacheArchive/book.txt", "/System Volume Information Archive/book.md"})
+    fake::add(path);
+  initial();
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  EXPECT_EQ(index.bookCount(), 8u);
+  for (const char* path : {"/XTCache/fontPos.txt", "/Backup/xtcache/epub", "/SYSTEM VOLUME INFORMATION/notes.md",
+                           "/Books/System Volume Information/book.epub"})
+    EXPECT_EQ(fake::directoryEntriesByPath[path], 0u) << path;
+  ClixRecord record{};
+  EXPECT_TRUE(recordAtPath(index, "/XTCacheArchive/book.txt", record));
+  EXPECT_TRUE(recordAtPath(index, "/System Volume Information.md", record));
+}
+
+TEST_F(LibraryBuilderTest, PreviousScanPolicyRebuildPreservesArrivalAndSourceFiles) {
+  // Build the old index with an included folder, then give its on-disk folder
+  // entry the system name. V7 and V8 share the same layout.
+  fake::add("/ZTCache/fontPos.txt");
+  initial();
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord before{};
+  ASSERT_TRUE(recordAtPath(index, "/a.epub", before));
+  index.close();
+  auto& bytes = fake::files[INDEX]->bytes;
+  const std::string oldFolder = "/ZTCache";
+  auto folder = std::search(bytes.begin(), bytes.end(), oldFolder.begin(), oldFolder.end());
+  ASSERT_NE(folder, bytes.end());
+  *(folder + 1) = 'X';
+  bytes[offsetof(ClixHeader, formatVersion)] = 7;
+  for (const char* suffix : {"", "/fontPos.txt"}) {
+    const std::string oldPath = oldFolder + suffix;
+    fake::files[std::string("/XTCache") + suffix] = fake::files[oldPath];
+    fake::files.erase(oldPath);
+  }
+  ASSERT_FALSE(index.open(INDEX));
+  ASSERT_TRUE(index.openForReconciliation(INDEX));
+  index.close();
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_TRUE(stats.indexReplaced);
+  EXPECT_EQ(stats.metadataReused, 2u);
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord after{};
+  ASSERT_TRUE(recordAtPath(index, "/a.epub", after));
+  EXPECT_EQ(before.firstSeen, after.firstSeen);
+  EXPECT_EQ(index.bookCount(), 2u);
+  EXPECT_EQ(stats.removed, 1u);
+  EXPECT_TRUE(fake::files.count("/XTCache/fontPos.txt"));
+  EXPECT_TRUE(preservedCacheClears.empty());
+}
+
 TEST_F(LibraryBuilderTest, UnchangedRebuildReusesMetadataAndDoesNotReplaceIndex) {
   initial();
   const auto old = fake::files[INDEX]->bytes;

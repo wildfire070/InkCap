@@ -11,6 +11,7 @@ class AssetCacheReadSession {
  public:
   explicit AssetCacheReadSession(AssetCacheStorage& storage);
   ~AssetCacheReadSession();
+  bool close();
   explicit operator bool() const { return ready_; }
   AssetCacheReadSession(const AssetCacheReadSession&) = delete;
   AssetCacheReadSession& operator=(const AssetCacheReadSession&) = delete;

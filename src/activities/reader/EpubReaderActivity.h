@@ -1,5 +1,4 @@
 #pragma once
-
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
@@ -14,6 +13,7 @@
 #include <string>
 
 #include "BookLoadingFeedback.h"
+#include "BookPageEstimate.h"
 #include "BookReadingStats.h"
 #include "BookStatus.h"
 #include "BookmarkStore.h"
@@ -24,9 +24,13 @@
 #include "FootnoteLinkTargets.h"
 #include "GlobalReadingStats.h"
 #include "ManualPageTurnQueue.h"
+#include "PluginReaderEvents.h"
+#include "ReaderButtonShortcuts.h"
 #include "ReaderProgressSaveDebouncer.h"
 #include "ReaderSettingsSnapshotIO.h"
-#include "SideButtonShortcuts.h"
+#include "ReadingSessionJournal.h"
+#include "ReadingSessionStats.h"
+#include "StableReadingPace.h"
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
 #include "components/OptionPopup.h"
@@ -44,7 +48,10 @@ struct ToastRect {
 };
 
 class EpubReaderActivity final : public Activity {
+  PluginReaderEvents pluginEvents;
 #ifdef SIMULATOR
+  friend struct BookmarkListSmokeTest;
+  friend struct ReaderMenuOrientationSmokeTest;
   friend struct EpubReaderCompletionSmokeTest;
   friend struct ScreenCalibrationSmokeTest;
   friend struct ClippingSelectionSmokeTest;
@@ -156,10 +163,31 @@ class EpubReaderActivity final : public Activity {
   int idlePrewarmPage = -1;
   int idlePrewarmFontId = 0;
   bool paceSampleWarmupPending = true;
+  uint32_t sessionStartPaceMillis = 0;
+  uint16_t sessionStartPaceSampleCount = 0;
   uint32_t sessionPaceSampleSeconds = 0;
   uint16_t sessionPaceSampleCount = 0;
+  BookPageEstimate bookPageEstimate;
+  StableReadingPace stableReadingPace;
+  // A display fallback while fresh text pace or chapter density is unavailable.
+  mutable uint32_t lastBookTimeLeftSeconds = 0;
+  double stableTextPosition = 0;
+  double stableTextTotal = 0;
+  double pendingStableReadStart = 0;
+  uint32_t pendingStableReadSeconds = 0;
+  int pendingStableReadSpine = -1;
+  int pendingStableReadPage = -1;
+  bool hasStableTextPosition = false;
+  int stableTextSpine = -1;
+  int stableTextPage = -1;
+  void refreshStableTextProgress();
   uint32_t sessionReadingSeconds = 0;
   DailyReadingStats::Session dailyReadingSession;
+  ReadingSessionDates readingSessionDates;
+  DeferredReadingStatsInterval deferredReadingStats;
+  ReadingStatsSaveDelay statsSaveDelay;
+  ReadingSessionJournal::Session readingSessionJournal;
+  uint32_t statsCheckpointRevision = 0;
   void startDailyReadingInterval();
   uint16_t lastAutoPageTurnIntervalSeconds = 0;
   bool bookHasCustomReaderSettings = false;
@@ -175,8 +203,6 @@ class EpubReaderActivity final : public Activity {
   bool statsTrackingActive = true;
   bool paceDirty = false;
   bool pendingStatsCommit = false;
-  ReadingStatsDateTime sessionStartLocalDateTime;
-  bool hasSessionStartLocalDateTime = false;
   void syncStatsTrackingState();
   void commitReadingStatsSession();
   void finalizeReadingStatsOnExit();
@@ -225,14 +251,14 @@ class EpubReaderActivity final : public Activity {
   bool longPressBackHandled = false;
   bool longPowerButtonHandled = false;
   OptionPopup quickActionsPopup;
-  SideButtonShortcuts sideButtonShortcuts;
-  bool frontButtonLongPressHandled = false;
+  ReaderButtonShortcuts readerButtonShortcuts;
   bool touchDictionaryLookupHandled = false;
   int pageLoadRetryCount = 0;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
     LimitReached,
+    Unavailable,
   };
   bool pendingBookmarkFeedback = false;
   BookmarkFeedbackType bookmarkFeedbackType = BookmarkFeedbackType::Added;
@@ -251,6 +277,7 @@ class EpubReaderActivity final : public Activity {
   bool pendingRenderModeToast = false;
   bool renderModeToastShown = false;
   bool pendingSafeModeToast = false;
+  bool pendingFontDamagedToast = false;
   bool safeModeToastShown = false;
   uint8_t renderModeToastMode = 0;
   unsigned long renderModeToastShowTime = 0UL;
@@ -303,6 +330,7 @@ class EpubReaderActivity final : public Activity {
   PendingAo3ArchiveAction pendingAo3ArchiveAction = PendingAo3ArchiveAction::None;
   // The end screen owns these UI resources only while it is visible.
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  std::atomic<bool> endOfBookMenuActive{false};
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -469,7 +497,9 @@ class EpubReaderActivity final : public Activity {
   // suppression exists to protect.
   bool saveProgress(int spineIndex, int currentPage, int pageCount, bool allowDuringFootnotePreview = false);
   bool queueProgressSave(int spineIndex, int currentPage, int pageCount, bool forceSave = false);
-  void saveProgressBeforeRestart();
+  // Caller holds RenderLock, including the render-task low-memory path.
+  bool checkpointReadingStatsBeforeRestart();
+  bool saveProgressBeforeRestart();
   bool saveFootnoteOriginProgress();
   bool saveReadingProgress();
   bool saveLinkStack() const;
@@ -480,13 +510,13 @@ class EpubReaderActivity final : public Activity {
   void armReadingPaceWarmup(const char* reason = "unknown");
   bool forwardPageReadElapsed(uint32_t& seconds, const char* source) const;
   bool currentPageReadingSecondsForStats(uint32_t& seconds, const char* source) const;
-  void recordCurrentPageReadingTime(const char* source = "unknown");
+  void recordCurrentPageReadingTime(const char* source = "unknown", bool deferStorage = false);
+  void flushDeferredReadingStats(bool allowCheckpoint = true);
+  void checkpointReadingStatsWhenIdle();
   void recordForwardPagePaceSample(uint32_t seconds, const char* source);
-  bool getSessionAveragePaceSeconds(uint16_t& avgSeconds) const;
-  void recoverStoredPaceFromSession(const char* reason = "unknown");
-  bool getTimeLeftPaceSeconds(uint16_t& avgSeconds, const char*& source, uint16_t& sampleCount) const;
+  bool getTimeLeftPaceSeconds(float& avgSeconds, const char*& source, uint16_t& sampleCount) const;
+  void refreshBookPageEstimate();
   bool estimateRemainingTimeLeftPages(bool bookEstimate, float& remainingPages) const;
-  bool estimateProgressTimeLeftSeconds(uint32_t& seconds) const;
   bool estimateTimeLeftSeconds(bool bookEstimate, uint32_t& seconds) const;
   bool formatTimeLeftLabel(char* buf, size_t len, bool bookEstimate) const;
   void refreshCachedTimeLeftEstimate();
@@ -600,6 +630,11 @@ class EpubReaderActivity final : public Activity {
   // Set from APP_STATE.ao3LibraryReturnIndex in onEnter(); -1 unless opened from the AO3 library.
   void onEnter() override;
   void onExit() override;
+  void prepareForSleep() override {
+    if (!saveReadingProgress()) LOG_ERR("PEVT", "Reader progress save failed before sleep");
+    pluginEvents.poll(getCurrentBookPath());
+    pluginEvents.flush(getCurrentBookPath());
+  }
   void loop() override;
   void render(RenderLock&& lock) override;
   bool handleTwoFingerSwipeAction(CrossPointSettings::TWO_FINGER_SWIPE_ACTION action) override;
@@ -629,6 +664,7 @@ class EpubReaderActivity final : public Activity {
   }
   bool isReaderActivity() const override { return true; }
   bool isBookReaderActivity() const override { return true; }
+  bool usesMenuButtonOrientation() const override;
   bool isEpubReaderActivity() const override { return true; }
   void onInputLockChanged(bool locked) override;
   void onUserInput() override;

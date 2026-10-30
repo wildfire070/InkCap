@@ -6,7 +6,6 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <PoolBudget.h>
-#include <UniqueCodepointSet.h>
 #include <Utf8.h>
 
 #include <algorithm>
@@ -47,18 +46,33 @@ inline uint16_t readU16(const uint8_t* p) { return p[0] | (p[1] << 8); }
 inline int16_t readI16(const uint8_t* p) { return static_cast<int16_t>(p[0] | (p[1] << 8)); }
 inline uint32_t readU32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
 
-// Walks a null-terminated UTF-8 string and adds each codepoint to `codepoints`.
-// Returns true if the set's capacity was reached (cap hit).
-bool collectUniqueCodepoints(const char* text, UniqueCodepointSet& codepoints) {
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
-  while (*p) {
-    uint32_t cp = utf8NextCodepoint(&p);
-    if (cp == 0) break;
-    if (utf8IsVariationSelector(cp)) continue;
-    if (codepoints.add(cp)) return true;
+// Adapted from CrossPoint #3948. Keep only the lowest entries a capped merge
+// can retain. The caller provides two extra slots for injected space/hyphen.
+class LowestCodepoints {
+ public:
+  LowestCodepoints(uint32_t* buffer, uint32_t limit) : buffer_(buffer), limit_(limit) {}
+  void add(uint32_t cp) {
+    if (limit_ == 0 || (count_ == limit_ && cp >= buffer_[largest_])) return;
+    if (std::find(buffer_, buffer_ + count_, cp) != buffer_ + count_) return;
+    if (count_ < limit_) {
+      buffer_[count_++] = cp;
+      if (count_ < limit_) return;
+    } else {
+      buffer_[largest_] = cp;
+    }
+    largest_ = std::max_element(buffer_, buffer_ + count_) - buffer_;
   }
-  return false;
-}
+  void addReserved(uint32_t cp) {
+    if (std::find(buffer_, buffer_ + count_, cp) == buffer_ + count_) buffer_[count_++] = cp;
+  }
+  uint32_t size() const { return count_; }
+
+ private:
+  uint32_t* buffer_;
+  uint32_t limit_;
+  uint32_t count_ = 0;
+  uint32_t largest_ = 0;
+};
 
 uint32_t countUtf8Codepoints(const char* text, const uint32_t limit) {
   if (!text) return 0;
@@ -582,6 +596,9 @@ bool SdCardFont::load(const char* path, const size_t residentLimit) {
     return false;
   }
 
+  fileSize_ = file.fileSize();
+  corruptGlyphsLogged_ = 0;
+
   // Read and validate global header
   uint8_t headerBuf[HEADER_SIZE];
   if (file.read(headerBuf, HEADER_SIZE) != HEADER_SIZE) {
@@ -938,8 +955,22 @@ bool SdCardFont::readAdvance(uint32_t codepoint, uint8_t style, uint16_t* outAdv
   }
   file.close();
 
-  *outAdvance = glyph.advanceX;
+  *outAdvance = glyphEntryValid(s, glyph, codepoint) ? glyph.advanceX : 0;
   return true;
+}
+
+// Adapted from CrossPoint #4091: reject damaged metadata before any bitmap read.
+bool SdCardFont::glyphEntryValid(const PerStyle& s, const EpdGlyph& glyph, const uint32_t codepoint) const {
+  const uint32_t pixels = static_cast<uint32_t>(glyph.width) * glyph.height;
+  const uint32_t packed = s.header.is2Bit ? (pixels + 3) / 4 : (pixels + 7) / 8;
+  const uint64_t end = static_cast<uint64_t>(s.bitmapFileOffset) + glyph.dataOffset + glyph.dataLength;
+  if (glyph.dataLength == packed && end <= fileSize_) return true;
+  if (corruptGlyphsLogged_ == 0) corruptGlyphNotice_ = true;
+  if (corruptGlyphsLogged_ < 3) {
+    ++corruptGlyphsLogged_;
+    LOG_ERR("SDCF", "Corrupt glyph U+%04X in %s; drawing it as missing", static_cast<unsigned>(codepoint), filePath_);
+  }
+  return false;
 }
 
 // --- Prewarm ---
@@ -1281,24 +1312,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       freeStyleMiniData(s);
       return failPrewarm(static_cast<int>(cpCount));
     }
-    // width/height and dataLength are independent fields read straight from
-    // the file with no cross-check -- GfxRenderer's render loops trust
-    // width/height unconditionally to index into a bitmap sized only to
-    // dataLength bytes (pos = y*width+x, byte index pos>>2 for 2-bit or
-    // pos>>3 for 1-bit). A corrupted/malicious .cpfont with a large
-    // width/height but tiny dataLength would read past the glyph's slice of
-    // the shared mini bitmap arena -- for the last glyph, past the arena
-    // itself. Reject any glyph whose data can't actually cover its own
-    // claimed dimensions.
-    const EpdGlyph& g = s.miniGlyphs[mapIdx];
-    const uint32_t pixelCount = static_cast<uint32_t>(g.width) * g.height;
-    const uint32_t requiredBytes = s.header.is2Bit ? (pixelCount + 3) / 4 : (pixelCount + 7) / 8;
-    if (g.dataLength < requiredBytes) {
-      LOG_ERR("SDCF", "Prewarm: glyph %dx%d needs %u bytes but dataLength is %u (style %u, glyph %d)", g.width,
-              g.height, requiredBytes, g.dataLength, styleIdx, gIdx);
-      freeStyleMiniData(s);
-      return failPrewarm(static_cast<int>(cpCount));
-    }
+    if (!glyphEntryValid(s, s.miniGlyphs[mapIdx], mappings[mapIdx].codepoint)) s.miniGlyphs[mapIdx] = EpdGlyph{};
     lastReadIndex = gIdx;
   }
 
@@ -1672,7 +1686,7 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
       }
       lastReadIndex = gIdx;
       staged[fetched].codepoint = mappings[i].codepoint;
-      staged[fetched].advanceX = tempGlyph.advanceX;
+      staged[fetched].advanceX = glyphEntryValid(s, tempGlyph, mappings[i].codepoint) ? tempGlyph.advanceX : 0;
       fetched++;
     }
     file.close();
@@ -1707,49 +1721,97 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
     }
   }
 
-  // +2 reserved slots for space and hyphen injected after the main scan.
-  static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
-  uint32_t sourceCodepointCount = 0;
-  for (auto it = begin; it != end && sourceCodepointCount < MAX_UNIQUE_CODEPOINTS; ++it) {
-    sourceCodepointCount += countUtf8Codepoints(asCStr(*it), MAX_UNIQUE_CODEPOINTS - sourceCodepointCount);
+  // Preserve CrossInk's active-text refresh: a full cache is reusable only
+  // when every requested character is already cached. This prepass allocates nothing.
+  const auto visit = [&](auto accept, auto reserved) {
+    const auto text = [&](const char* value) {
+      const auto* p = reinterpret_cast<const unsigned char*>(value);
+      while (*p) {
+        const uint32_t cp = utf8NextCodepoint(&p);
+        if (cp == 0) break;
+        if (!utf8IsVariationSelector(cp)) accept(cp);
+      }
+    };
+    for (auto it = begin; it != end; ++it) text(asCStr(*it));
+    if (extraText) text(extraText);
+    if (includeSpace) reserved(' ');
+    if (includeHyphen) reserved('-');
+  };
+  uint8_t openStyles = 0;
+  for (uint8_t si = 0; si < MAX_STYLES; ++si) {
+    if (!(styleMask & (1 << si)) || !styles_[si].present) continue;
+    bool needsFetch = advanceTableSize_[si] < ADVANCE_CACHE_LIMIT;
+    if (!needsFetch) {
+      const auto check = [&](uint32_t cp) {
+        if (!advanceTableLookup(si, cp, nullptr)) needsFetch = true;
+      };
+      visit(check, check);
+    }
+    if (needsFetch) openStyles |= 1 << si;
   }
-  if (extraText && sourceCodepointCount < MAX_UNIQUE_CODEPOINTS) {
-    sourceCodepointCount += countUtf8Codepoints(extraText, MAX_UNIQUE_CODEPOINTS - sourceCodepointCount);
+  if (openStyles == 0) {
+    stats_.prewarmTotalMs = millis() - startMs;
+    return 0;
   }
-  const uint32_t capacity = sourceCodepointCount + 2;
-  auto codepoints = makeUniqueNoThrow<uint32_t[]>(capacity);
-  if (!codepoints) {
-    LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)",
-            static_cast<unsigned>(capacity * sizeof(uint32_t)));
-    return -1;
-  }
-  bool hitCap = false;
-  // Unique codepoints never exceed the source count, which is itself capped at
-  // MAX_UNIQUE_CODEPOINTS; the two extra slots stay free for space and hyphen.
-  UniqueCodepointSet uniqueCodepoints(codepoints.get(), sourceCodepointCount);
 
-  for (auto it = begin; it != end && !hitCap; ++it) {
-    hitCap = collectUniqueCodepoints(asCStr(*it), uniqueCodepoints);
+  uint32_t limit = 0;
+  for (auto it = begin; it != end && limit < ADVANCE_CACHE_LIMIT; ++it)
+    limit += countUtf8Codepoints(asCStr(*it), ADVANCE_CACHE_LIMIT - limit);
+  if (extraText && limit < ADVANCE_CACHE_LIMIT) limit += countUtf8Codepoints(extraText, ADVANCE_CACHE_LIMIT - limit);
+  // 136 bytes on stack for short text; at most 1032 heap bytes for a paragraph.
+  // A chapter-sized stack buffer is unsafe on the reader task's small stack.
+  constexpr uint32_t INLINE_CODEPOINTS = 32;
+  uint32_t inlineCodepoints[INLINE_CODEPOINTS + 2];
+  std::unique_ptr<uint32_t[]> heapCodepoints;
+  uint32_t* codepoints = inlineCodepoints;
+  if (limit > INLINE_CODEPOINTS) {
+    heapCodepoints = makeUniqueNoThrow<uint32_t[]>(limit + 2);
+    if (!heapCodepoints) {
+      LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)",
+              static_cast<unsigned>((limit + 2) * sizeof(uint32_t)));
+      return -1;
+    }
+    codepoints = heapCodepoints.get();
   }
-  if (extraText && !hitCap) {
-    hitCap = collectUniqueCodepoints(extraText, uniqueCodepoints);
+  int totalMissed = 0;
+  for (uint8_t si = 0; si < MAX_STYLES; ++si) {
+    if (!(openStyles & (1 << si))) continue;
+    const auto& style = styles_[si];
+    const bool refresh = advanceTableSize_[si] >= ADVANCE_CACHE_LIMIT;
+    const bool replacement = findGlobalGlyphIndex(style, REPLACEMENT_GLYPH) >= 0;
+    const auto resolves = [&](uint32_t cp) { return replacement || findGlobalGlyphIndex(style, cp) >= 0; };
+    bool anyLacking = false;
+    const auto wanted = [&](uint32_t cp) {
+      if (!refresh && advanceTableLookup(si, cp, nullptr)) return false;
+      if (resolves(cp)) return true;
+      anyLacking = true;
+      return false;
+    };
+    LowestCodepoints collected(codepoints, limit);
+    visit(
+        [&](uint32_t cp) {
+          if (wanted(cp)) collected.add(cp);
+        },
+        [&](uint32_t cp) {
+          if (wanted(cp)) collected.addReserved(cp);
+        });
+    std::sort(codepoints, codepoints + collected.size());
+    // A full table must refresh even if the bounded lowest subset happens to
+    // be cached: the prepass inspected the entire request, not just that subset.
+    if (refresh) advanceTableSize_[si] = 0;
+    totalMissed += fetchAdvancesForCodepoints(codepoints, collected.size(), 1 << si);
+    if (anyLacking) {
+      LowestCodepoints lacking(codepoints, limit);
+      visit(
+          [&](uint32_t cp) {
+            if (!resolves(cp)) lacking.add(cp);
+          },
+          [&](uint32_t cp) {
+            if (!resolves(cp)) lacking.addReserved(cp);
+          });
+      totalMissed += static_cast<int>(lacking.size());
+    }
   }
-  uint32_t cpCount = uniqueCodepoints.finish();
-
-  // Check both against the sorted set before appending either.
-  const bool addSpace =
-      includeSpace && !std::binary_search(codepoints.get(), codepoints.get() + cpCount, static_cast<uint32_t>(' '));
-  const bool addHyphen =
-      includeHyphen && !std::binary_search(codepoints.get(), codepoints.get() + cpCount, static_cast<uint32_t>('-'));
-  if (addSpace) codepoints[cpCount++] = ' ';
-  if (addHyphen) codepoints[cpCount++] = '-';
-
-  if (hitCap) {
-    LOG_ERR("SDCF", "buildAdvanceTable: unique codepoint cap (%u) hit, layout may be approximate",
-            MAX_UNIQUE_CODEPOINTS);
-  }
-  std::sort(codepoints.get(), codepoints.get() + cpCount);
-  int totalMissed = fetchAdvancesForCodepoints(codepoints.get(), cpCount, styleMask);
   stats_.prewarmTotalMs = millis() - startMs;
   return totalMissed;
 }
@@ -1921,6 +1983,8 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
       return nullptr;
     }
   }
+
+  if (!self->glyphEntryValid(s, tempGlyph, codepoint)) tempGlyph = EpdGlyph{};
 
   // Read bitmap data into temporary (if any)
   uint8_t* tempBitmap = nullptr;
