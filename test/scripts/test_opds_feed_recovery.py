@@ -36,7 +36,10 @@ prefix = r'''
 
 #define LOG_DBG(...) ((void)0)
 #define LOG_ERR(...) ((void)0)
-struct RenderLock {};
+struct RenderLock {
+  RenderLock() = default;
+  template <typename T> explicit RenderLock(T&) {}
+};
 struct I18n { static I18n& getInstance() { static I18n value; return value; } const char* getCode() const { return "en"; } };
 void replaceFolderEmoji(std::string&) {}
 constexpr const char *STR_MEMORY_ERROR = "memory", *STR_NO_SERVER_URL = "no server",

@@ -114,6 +114,13 @@ void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callb
 }
 
 void ButtonNavigator::onContinuous(const Button button, const Callback& callback) {
+  if (mappedInput != nullptr && mappedInput->wasPressed(button)) {
+    // A render wait can age a sampled press before the activity receives it.
+    // Give this press its own repeat window; never count it as a hold as well.
+    lastPressTime = mappedInput->buttonSampleTime();
+    hasRepeated = false;
+    return;
+  }
   if (mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously()) {
     callback();
     lastContinuousNavTime = millis();
