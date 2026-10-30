@@ -34,6 +34,7 @@
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
+#include "OpdsServerStore.h"
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "SavedItemsHomeActivity.h"

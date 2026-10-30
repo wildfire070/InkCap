@@ -5240,7 +5240,6 @@ void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   archivePromptShown = false;
   restorePromptQueued = false;
   restorePromptShown = false;
-  hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   sessionStartPaceMillis = 0;
   sessionStartPaceSampleCount = 0;
   readingSessionDates.reset();

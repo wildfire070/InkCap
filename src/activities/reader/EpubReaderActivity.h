@@ -29,7 +29,6 @@
 #include "ReaderSettingsSnapshotIO.h"
 #include "ReadingSessionJournal.h"
 #include "ReadingSessionStats.h"
-#include "SideButtonShortcuts.h"
 #include "StableReadingPace.h"
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
