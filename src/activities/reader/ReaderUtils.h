@@ -13,6 +13,7 @@
 #include "GlobalActions.h"
 #include "MappedInputManager.h"
 #include "ReaderStatusBarTapTarget.h"
+#include "ReaderTiltPageTurn.h"
 #include "components/UITheme.h"
 
 namespace ReaderUtils {
@@ -27,10 +28,13 @@ constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
 constexpr int8_t TOP_STATUS_BAR_TEXT_PADDING = 0;
 
 inline bool isNavigationLongPressAction(const uint8_t action) {
-  return action == CrossPointSettings::LONG_MENU_HOME_READER || action == CrossPointSettings::LONG_MENU_BACK_HOME;
+  return action == CrossPointSettings::LONG_MENU_HOME_READER || action == CrossPointSettings::LONG_MENU_BACK_HOME ||
+         action == CrossPointSettings::LONG_MENU_TOGGLE_PAGE_TURN_GESTURES;
 }
 
 inline bool dispatchNavigationLongPressAction(const uint8_t action) {
+  if (action == CrossPointSettings::LONG_MENU_TOGGLE_PAGE_TURN_GESTURES)
+    return dispatchShortcutAction(CrossPointSettings::TOGGLE_PAGE_TURN_GESTURES);
   if (!isNavigationLongPressAction(action)) return false;
   return dispatchShortcutAction(action == CrossPointSettings::LONG_MENU_HOME_READER ? CrossPointSettings::HOME_READER
                                                                                     : CrossPointSettings::BACK_HOME);
@@ -145,7 +149,7 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   return {false, false, false, 0, 0, 0};
 #else
   TouchPageTurn result{false, false, false, 0, 0, 0};
-  if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
+  if (!input.hasTouch()) {
     return result;
   }
 
@@ -164,6 +168,7 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
 
   const auto swipe = input.wasSwipe();
   if (swipe != MappedInputManager::SwipeDir::None) {
+    if (SETTINGS.disablePageTurnGestures) return result;
     result.prev = swipe == (rtlBook ? MappedInputManager::SwipeDir::Left : MappedInputManager::SwipeDir::Right) &&
                   allowsSwipe(SETTINGS.previousPageGesture);
     result.next = swipe == (rtlBook ? MappedInputManager::SwipeDir::Right : MappedInputManager::SwipeDir::Left) &&
@@ -188,6 +193,7 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
 
   // Give the entire page tap area to the sole tap-enabled direction. When
   // both accept taps, RTL books and Inverted Tap each swap their shared zones.
+  if (SETTINGS.disablePageTurnGestures) return result;
   const bool nextTaps = allowsTap(SETTINGS.pageTurnGesture);
   const bool previousTaps = allowsTap(SETTINGS.previousPageGesture);
   const bool invertedTaps = (SETTINGS.pageTurnGesture == CrossPointSettings::INVERTED_TAP ||
@@ -216,20 +222,18 @@ inline bool isTopStatusBarTap(const GfxRenderer& renderer, const int y, const in
 inline bool isTouchMenuGesture(const MappedInputManager& input) {
   // The capacitive Home key is independent from screen touch. Its configured
   // long-press reader-menu action must still work when screen touch is disabled.
-  return input.wasReaderMenuHold() ||
-         (SETTINGS.touchReaderControls && input.hasTouch() && input.wasReaderMenuGesture());
+  return input.wasReaderMenuHold() || (input.hasTouch() && input.wasReaderMenuGesture());
 }
 
 // X4 Pro opens the reader menu with an upward swipe. Its top-edge downward
 // swipe is the opposite gesture and dismisses the menu instead of opening the
 // frontlight panel. Other touch boards retain their existing menu behavior.
 inline bool isTouchMenuDismissGesture(const MappedInputManager& input) {
-  return SETTINGS.touchReaderControls && input.hasTouch() && input.hasHomeKey() && input.wasLightPanelGesture();
+  return input.hasTouch() && input.hasHomeKey() && input.wasLightPanelGesture();
 }
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  const bool tiltNext = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedForward();
-  const bool tiltPrev = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedBack();
+  const auto tilt = detectReaderTiltPageTurn(halTiltSensor, SETTINGS.tiltPageTurn, SETTINGS.tiltNextPageOnly);
 
   const bool frontPrev = input.wasReleased(MappedInputManager::Button::Left);
   const bool powerReleased = input.wasReleased(MappedInputManager::Button::Power);
@@ -240,8 +244,8 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   const bool powerTurn = shortPowerTurn || longPowerTurn;
   const bool frontNext = input.wasReleased(MappedInputManager::Button::Right) || powerTurn;
 
-  // Side-button actions are resolved by SideButtonShortcuts in each reader.
-  return {tiltPrev || frontPrev, tiltNext || frontNext, false, tiltPrev || tiltNext};
+  // Side-button actions are resolved by ReaderButtonShortcuts in each reader.
+  return {tilt.prev || frontPrev, tilt.next || frontNext, false, tilt.prev || tilt.next};
 }
 
 // One helper, blocking or deferred: the async form starts the refresh and

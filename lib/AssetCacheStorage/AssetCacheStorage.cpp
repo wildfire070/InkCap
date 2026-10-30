@@ -53,12 +53,19 @@ AssetCacheReadSession::AssetCacheReadSession(AssetCacheStorage& storage) : stora
   storage_.erasedRead_ = absent;
   attached_ = ready_ = true;
 }
-AssetCacheReadSession::~AssetCacheReadSession() {
+AssetCacheReadSession::~AssetCacheReadSession() { close(); }
+bool AssetCacheReadSession::close() {
   if (attached_) {
     storage_.reader_ = nullptr;
     storage_.erasedRead_ = false;
+    attached_ = false;
   }
-  if (!file_.close()) LOG_ERR("ASSET", "Cannot close SD asset cache read session");
+  ready_ = false;
+  if (!file_.close()) {
+    LOG_ERR("ASSET", "Cannot close SD asset cache read session");
+    return false;
+  }
+  return true;
 }
 
 bool AssetCacheStorage::begin(bool create) {
@@ -164,6 +171,23 @@ bool AssetCacheStorage::erase(size_t offset, size_t length) {
   ok = file.close() && ok;
   if (!ok) LOG_ERR("ASSET", "Cannot erase SD asset cache region");
   return ok;
+}
+bool AssetCacheStorage::verify(size_t offset, const void* bytes, size_t length) {
+  if (!contains(offset, length)) return false;
+  // Keep one SD reader open for the whole readback; each read otherwise reopens
+  // and seeks. The preceding write has already synced and closed its handle.
+  AssetCacheReadSession reads(*this);
+  if (!reads) return false;
+  uint8_t check[256];
+  const auto* expected = static_cast<const uint8_t*>(bytes);
+  for (size_t done = 0; done < length; done += sizeof(check)) {
+    const size_t count = std::min(sizeof(check), length - done);
+    if (!read(offset + done, check, count) || std::memcmp(check, expected + done, count)) {
+      LOG_ERR("ASSET", "Asset cache readback failed");
+      return false;
+    }
+  }
+  return reads.close();
 }
 bool AssetCacheStorage::map(size_t offset, size_t length, Mapping& mapping) const {
   if (!sd_) return flash_.map(offset, length, mapping);

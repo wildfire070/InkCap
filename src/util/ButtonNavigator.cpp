@@ -56,11 +56,11 @@ void ButtonNavigator::onRelease(const Buttons& buttons, const Callback& callback
   });
 
   if (wasReleased) {
-    if (lastContinuousNavTime == 0) {
+    if (!hasRepeated) {
       callback();
     }
 
-    lastContinuousNavTime = 0;
+    hasRepeated = false;
   }
 }
 
@@ -75,17 +75,36 @@ void ButtonNavigator::onRelease(const Button button, const Callback& callback) {
 }
 
 void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callback) {
+  const bool wasPressed = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
+    return mappedInput != nullptr && mappedInput->wasPressed(button);
+  });
+  if (wasPressed) {
+    // A render wait can age a sampled press before the activity receives it.
+    // Give this press its own repeat window; never count it as a hold as well.
+    lastPressTime = mappedInput->buttonSampleTime();
+    hasRepeated = false;
+    return;
+  }
+
   const bool isPressed = std::any_of(buttons.begin(), buttons.end(), [this](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously();
   });
 
   if (isPressed) {
     callback();
-    lastContinuousNavTime = millis();
+    lastContinuousNavTime = mappedInput->buttonSampleTime();
+    hasRepeated = true;
   }
 }
 
 void ButtonNavigator::onContinuous(const Button button, const Callback& callback) {
+  if (mappedInput != nullptr && mappedInput->wasPressed(button)) {
+    // A render wait can age a sampled press before the activity receives it.
+    // Give this press its own repeat window; never count it as a hold as well.
+    lastPressTime = mappedInput->buttonSampleTime();
+    hasRepeated = false;
+    return;
+  }
   if (mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously()) {
     callback();
     lastContinuousNavTime = millis();
@@ -95,8 +114,10 @@ void ButtonNavigator::onContinuous(const Button button, const Callback& callback
 bool ButtonNavigator::shouldNavigateContinuously() const {
   if (!mappedInput) return false;
 
-  const bool buttonHeldLongEnough = mappedInput->getHeldTime() > continuousStartMs;
-  const bool navigationIntervalElapsed = (millis() - lastContinuousNavTime) > continuousIntervalMs;
+  const uint32_t now = mappedInput->buttonSampleTime();
+  const bool buttonHeldLongEnough =
+      mappedInput->getHeldTime() > continuousStartMs && (now - lastPressTime) > continuousStartMs;
+  const bool navigationIntervalElapsed = !hasRepeated || (now - lastContinuousNavTime) > continuousIntervalMs;
 
   return buttonHeldLongEnough && navigationIntervalElapsed;
 }

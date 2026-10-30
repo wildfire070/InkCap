@@ -37,7 +37,7 @@ class BookCacheUtilsTest : public ::testing::Test {
     SETTINGS.trackReadingStats = 1;
     cachePath = Epub("/a.epub", "/.crosspoint").getCachePath();
     fake::add(cachePath + "/progress.bin", "progress");
-    fake::add(cachePath + "/stats_v5.bin", "stats");
+    fake::add(cachePath + "/stats_v6.bin", "stats");
     fake::add(cachePath + "/reader_settings.bin", "settings");
     fake::add(cachePath + "/reading_stats_off", "off");
     fake::add(cachePath + "/book.bin", "derived");
@@ -75,7 +75,7 @@ class BookCacheUtilsTest : public ::testing::Test {
       EXPECT_EQ(std::string(bytes.begin(), bytes.end()), expected);
     };
     expectFile(cachePath + "/progress.bin", "progress");
-    expectFile(cachePath + "/stats_v5.bin", "stats");
+    expectFile(cachePath + "/stats_v6.bin", "stats");
     expectFile(cachePath + "/reader_settings.bin", "settings");
     expectFile(cachePath + "/reading_stats_off", "off");
   }
@@ -89,14 +89,14 @@ TEST_F(BookCacheUtilsTest, ClearsDerivedFilesWhileKeepingReadingState) {
 }
 
 TEST_F(BookCacheUtilsTest, RetryRecoversStatsAfterFailedRestore) {
-  fake::failRenameToPath = cachePath + "/stats_v5.bin";
+  fake::failRenameToPath = cachePath + "/stats_v6.bin";
   ASSERT_FALSE(clearBookCachePreservingUserState("/a.epub"));
-  ASSERT_TRUE(Storage.exists((cachePath + ".upload_preserve_stats_v5.bin").c_str()));
+  ASSERT_TRUE(Storage.exists((cachePath + ".upload_preserve_stats_v6.bin").c_str()));
   ASSERT_TRUE(Storage.exists((cachePath + ".upload_preserve_stats_pending").c_str()));
 
   ASSERT_TRUE(clearBookCachePreservingUserState("/a.epub"));
   expectUserStateIntact();
-  EXPECT_FALSE(Storage.exists((cachePath + ".upload_preserve_stats_v5.bin").c_str()));
+  EXPECT_FALSE(Storage.exists((cachePath + ".upload_preserve_stats_v6.bin").c_str()));
   EXPECT_FALSE(Storage.exists((cachePath + ".upload_preserve_stats_pending").c_str()));
 }
 
@@ -123,7 +123,7 @@ TEST_F(BookCacheUtilsTest, BookChoiceSurvivesCacheClearAndStatsDeletion) {
   ASSERT_FALSE(BookStatsTracking::isBookEnabled(cachePath));
   ASSERT_TRUE(clearBookCachePreservingUserState("/a.epub"));
   ASSERT_FALSE(BookStatsTracking::isBookEnabled(cachePath));
-  ASSERT_TRUE(Storage.remove((cachePath + "/stats_v5.bin").c_str()));
+  ASSERT_TRUE(Storage.remove((cachePath + "/stats_v6.bin").c_str()));
   EXPECT_FALSE(BookStatsTracking::isBookEnabled(cachePath));
   ASSERT_TRUE(BookStatsTracking::setBookEnabled(cachePath, true));
   EXPECT_TRUE(BookStatsTracking::isEnabled(cachePath));

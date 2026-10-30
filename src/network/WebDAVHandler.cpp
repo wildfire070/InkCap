@@ -13,6 +13,7 @@
 #include <new>
 
 #include "CrossPointSettings.h"
+#include "ProtectedPaths.h"
 #include "activities/boot_sleep/ImageFolderIndex.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookMetadataUtils.h"
@@ -237,6 +238,10 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
   String path = getRequestPath(s);
   int depth = getDepth(s);
 
+  if (isProtectedPath(path)) {
+    s.send(403, "text/plain", "Forbidden");
+    return;
+  }
   LOG_DBG("DAV", "PROPFIND %s depth=%d", path.c_str(), depth);
 
   // Check if path exists
@@ -333,6 +338,7 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
 
 void WebDAVHandler::sendPropEntry(WebServer& s, const String& path, bool isDir, size_t size,
                                   const String& lastModified) const {
+  if (protectedpaths::isSensitivePath(path.c_str())) return;
   String href;
   urlEncodePath(path, href);
   // Ensure directory hrefs end with /
@@ -493,7 +499,7 @@ void WebDAVHandler::handleDelete(WebServer& s) {
     return;
   }
 
-  if (isProtectedPath(path)) {
+  if (isProtectedPath(path) || protectedpaths::isSensitivePath(path.c_str(), true)) {
     s.send(403, "text/plain", "Forbidden");
     return;
   }
@@ -603,7 +609,8 @@ void WebDAVHandler::handleMove(WebServer& s) {
     return;
   }
 
-  if (isProtectedPath(srcPath) || isProtectedPath(dstPath)) {
+  if (isProtectedPath(srcPath) || isProtectedPath(dstPath) || protectedpaths::isSensitivePath(srcPath.c_str(), true) ||
+      protectedpaths::isSensitivePath(dstPath.c_str(), true)) {
     s.send(403, "text/plain", "Forbidden");
     return;
   }
@@ -775,7 +782,8 @@ void WebDAVHandler::handleCopy(WebServer& s) {
 
   LOG_DBG("DAV", "COPY %s -> %s (overwrite=%d)", srcPath.c_str(), dstPath.c_str(), overwrite);
 
-  if (isProtectedPath(srcPath) || isProtectedPath(dstPath)) {
+  if (isProtectedPath(srcPath) || isProtectedPath(dstPath) || protectedpaths::isSensitivePath(srcPath.c_str(), true) ||
+      protectedpaths::isSensitivePath(dstPath.c_str(), true)) {
     s.send(403, "text/plain", "Forbidden");
     return;
   }
@@ -1002,6 +1010,7 @@ void WebDAVHandler::urlEncodePath(const String& path, String& out) const {
 }
 
 bool WebDAVHandler::isProtectedPath(const String& path) const {
+  if (protectedpaths::isSensitivePath(path.c_str())) return true;
   // Check every segment of the path, not just the last one.
   // This prevents access to e.g. /.hidden/somefile or /System Volume Information/foo
   int start = 0;

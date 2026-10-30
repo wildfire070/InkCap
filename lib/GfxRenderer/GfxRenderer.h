@@ -35,6 +35,9 @@ struct Frame;
 enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
 
 class GfxRenderer {
+#ifdef SIMULATOR
+  friend struct UpstreamFeatureSmokeTest;
+#endif
  public:
   enum RenderMode { BW, GRAYSCALE_LSB, GRAYSCALE_MSB };
 
@@ -243,7 +246,6 @@ class GfxRenderer {
   void clearScreen(uint8_t color = 0xFF) const;
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
   const ScreenInsets& getViewableInsets() const { return viewableInsets; }
-  bool hasCustomViewableInsets() const { return viewableInsets != ScreenInsets{}; }
   void setViewableInsets(const ScreenInsets& insets) {
     if (insets.valid()) viewableInsets = insets;
   }
@@ -282,8 +284,10 @@ class GfxRenderer {
   void drawIcon(const uint8_t bitmap[], int x, int y, int width, int height) const;
   void drawIconInverted(const uint8_t bitmap[], int x, int y, int size) const;
   void drawIconInverted(const uint8_t bitmap[], int x, int y, int width, int height) const;
-  bool drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
-                  float cropY = 0) const;
+  // monochromeMask draws nonwhite pixels as black without changing the active
+  // grayscale session; white pixels remain transparent.
+  bool drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0, float cropY = 0,
+                  bool monochromeMask = false) const;
   bool drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
   // Counter-invert content images in the logical framebuffer so output-level
   // Dark Mode leaves their original polarity unchanged.

@@ -53,6 +53,56 @@ std::string fixture(const char* name) {
   return std::string(std::istreambuf_iterator<char>(file), {});
 }
 
+TEST(AssetCatalog, DiscoveryPathsKeepContractsAndChannelsSeparate) {
+  char path[MAX_CATALOG_PATH];
+  auto options = translationOptions();
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_EQ(std::string(path), "catalogs/stable/translation/" + hash + "/" + oldHash + ".json");
+  const std::string original(path);
+  options.expectedSource = oldHash.c_str();
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_NE(std::string(path), original);
+  options.expectedSource = hash.c_str();
+  options.expectedKeyset = hash.c_str();
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_NE(std::string(path), original);
+  options = translationOptions();
+  options.expectedChannel = Channel::Rc;
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_EQ(std::string(path), "catalogs/rc/translation/" + hash + "/" + oldHash + ".json");
+  options.expectedKind = Kind::Hyphenation;
+  options.expectedSource = options.expectedKeyset = nullptr;
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_STREQ(path, "catalogs/rc/hyphenation.json");
+  options.expectedChannel = Channel::Stable;
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  EXPECT_STREQ(path, "catalogs/stable/hyphenation.json");
+}
+TEST(AssetCatalog, DiscoveryPathsRejectInvalidContractsAndShortBuffers) {
+  char path[MAX_CATALOG_PATH];
+  auto options = translationOptions();
+  ASSERT_TRUE(catalogPath(options, path, sizeof(path)));
+  const size_t length = std::strlen(path);
+  EXPECT_FALSE(catalogPath(options, path, length));
+  EXPECT_STREQ(path, "");
+  EXPECT_TRUE(catalogPath(options, path, length + 1));
+  EXPECT_FALSE(catalogPath(options, nullptr, sizeof(path)));
+  EXPECT_FALSE(catalogPath(options, path, 0));
+  for (const char* bad : {static_cast<const char*>(nullptr), "", "../invalid", "abcd"}) {
+    options = translationOptions();
+    options.expectedSource = bad;
+    EXPECT_FALSE(catalogPath(options, path, sizeof(path)));
+    EXPECT_STREQ(path, "");
+    options = translationOptions();
+    options.expectedKeyset = bad;
+    EXPECT_FALSE(catalogPath(options, path, sizeof(path)));
+  }
+  const std::string uppercase(64, 'A');
+  options = translationOptions();
+  options.expectedSource = uppercase.c_str();
+  EXPECT_FALSE(catalogPath(options, path, sizeof(path)));
+}
+
 TEST(AssetCatalog, ValidBytewiseAndEveryChunkBoundary) {
   const auto input = catalog();
   for (size_t chunk = 1; chunk <= input.size(); ++chunk) EXPECT_TRUE(parse(input, {}, chunk)) << chunk;
@@ -161,7 +211,7 @@ TEST(AssetCatalog, CompatibilityAndRegistryFailClosed) {
   const auto translation = catalog(entry("FR", true), true);
   EXPECT_FALSE(parse(replace(translation, "\"source\":\"" + hash, "\"source\":\"" + oldHash), options));
   options.supportedTranslation = [](const char*, void*) { return false; };
-  EXPECT_FALSE(parse(translation, options));
+  EXPECT_TRUE(parse(translation, options));
   options.supportedTranslation = nullptr;
   EXPECT_FALSE(parse(translation, options));
   options = translationOptions();
@@ -172,6 +222,37 @@ TEST(AssetCatalog, CompatibilityAndRegistryFailClosed) {
     EXPECT_FALSE(parse(catalog(entry(code)))) << code;
   EXPECT_FALSE(parse(catalog(entry("EN", true), true), translationOptions()));
 }
+TEST(AssetCatalog, FutureTranslationsAreValidatedBeforeFiltering) {
+  auto options = translationOptions();
+  options.supportedTranslation = [](const char* code, void*) { return std::strcmp(code, "FR") == 0; };
+  const auto input = catalog(entry("NEW", true) + ',' + entry("FR", true) + ',' + entry("OTHER", true), true);
+  auto output = std::make_unique<Catalog>();
+  Parser parser(*output, options);
+  ASSERT_TRUE(parser.feed(input.data(), input.size()));
+  ASSERT_TRUE(parser.finish());
+  ASSERT_EQ(output->count, 1u);
+  EXPECT_STREQ(output->entries[0].code, "FR");
+  EXPECT_STREQ(output->entries[0].sha256, hash.c_str());
+  EXPECT_TRUE(parse(catalog(entry("NEW", true), true), options));
+  EXPECT_FALSE(parse(catalog(entry("NEW", true) + ',' + entry("new", true), true), options));
+  EXPECT_FALSE(parse(catalog(replace(entry("NEW", true), hash, "bad"), true), options));
+  EXPECT_FALSE(parse(catalog(replace(entry("NEW", true), "French", ""), true), options));
+  EXPECT_FALSE(parse(catalog(replace(entry("NEW", true), "\"bytes\":1", "\"bytes\":262145"), true), options));
+  EXPECT_FALSE(parse(catalog(entry("NEW", true), true) + "{}", options));
+  options.supportedTranslation = [](const char*, void*) { return false; };
+  auto empty = std::make_unique<Catalog>();
+  Parser emptyParser(*empty, options);
+  ASSERT_TRUE(emptyParser.feed(input.data(), input.size()));
+  ASSERT_TRUE(emptyParser.finish());
+  EXPECT_EQ(empty->count, 0u);
+  std::string entries;
+  for (size_t i = 0; i <= MAX_ENTRIES; ++i) {
+    if (!entries.empty()) entries += ',';
+    entries += entry("NEW" + std::to_string(i), true);
+  }
+  EXPECT_FALSE(parse(catalog(entries, true), options));
+}
+
 TEST(AssetCatalog, SizeAndHashBounds) {
   for (const auto* number : {"0", "262145", "4294967295", "4294967296", "999999999999999999999"})
     EXPECT_FALSE(parse(replace(catalog(), "\"bytes\":1", std::string("\"bytes\":") + number))) << number;

@@ -12,6 +12,7 @@
 
 #include "CrossPointSettings.h"
 #include "activities/reader/DailyReadingStats.h"
+#include "activities/reader/ReadingSessionJournal.h"
 #include "activities/reader/StatsUploadPayload.h"
 #include "network/ReadingSyncUpload.h"
 #include "network/StatsUploadClient.h"
@@ -97,6 +98,42 @@ void verifyStatsUploadContract() {
     global = {};
     book = {};
     require(StatsUploadPayload::global(payload.data(), payload.size(), id, global), "test global payload");
+    if (const char* mode = std::getenv("CROSSINK_STATS_TEST_SESSION")) {
+      SETTINGS.trackReadingStats = 1;
+      ReadingSessionJournal::Record record;
+      strcpy(record.id, "0123456789abcdef0123456789abcdef");
+      strcpy(record.document, "0123456789abcdef0123456789abcdef");
+      record.startedAt = 1609502400;
+      record.endedAt = 1609503000;
+      record.seconds = 600;
+      global.totalReadingSeconds = 600;
+      global.save();
+      require(ReadingSessionJournal::save(record), "session fixture");
+      const auto first = ReadingSyncUpload::globalStats();
+      const std::string path = "/.crosspoint/reading_sessions/" + std::string(record.id) + ".bin";
+      if (strcmp(mode, "ok") != 0) {
+        const auto wanted = strcmp(mode, "old-server") == 0 ? StatsUploadClient::Result::Unsupported
+                                                            : StatsUploadClient::Result::InvalidResponse;
+        require(first == wanted, "session acknowledgment failure classification");
+        require(Storage.exists(path.c_str()), "unacknowledged session retained");
+        require(KOREADER_STORE.getServerSupport() == SyncServerSupport::SUPPORTED, "legacy stats still supported");
+        if (strcmp(mode, "old-server") == 0) std::_Exit(0);
+      } else {
+        require(first == StatsUploadClient::Result::Ok, "session first upload");
+        require(!Storage.exists(path.c_str()), "acknowledged session removed");
+        require(ReadingSessionJournal::save(record), "retry fixture");
+      }
+      require(ReadingSyncUpload::globalStats() == StatsUploadClient::Result::Ok, "session retry");
+      record.seconds = 1200;
+      record.endedAt += 600;
+      global.totalReadingSeconds = 1200;
+      global.save();
+      require(ReadingSessionJournal::save(record), "later session checkpoint");
+      require(ReadingSyncUpload::globalStats() == StatsUploadClient::Result::Ok, "later checkpoint upload");
+      require(!Storage.exists(path.c_str()), "later checkpoint acknowledged");
+      LOG_INF("SMOKE", "Reading session acknowledgment and retry smoke passed");
+      std::_Exit(0);
+    }
     const char* expected = std::getenv("CROSSINK_STATS_TEST_ERROR");
     auto result = client.put("/api/v1/stats/global", payload.data(), false);
     if (expected) {

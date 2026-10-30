@@ -176,7 +176,7 @@ def load_translations(
 def known_languages():
     """Frozen compatibility identities, independent of community translations."""
     root = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd()
-    return json.loads((root / "lib/I18n/languages.json").read_text())
+    return json.loads((root / "lib/I18n/languages.json").read_text(encoding="utf-8"))
 
 
 def stable_hash(text):

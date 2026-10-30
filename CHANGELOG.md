@@ -33,13 +33,21 @@
 - Choose a sync server type and custom authentication headers; compatible servers can receive ISBN, ASIN, and series metadata when sharing metadata is enabled.
 - Swipe left on File Browser, Library list, and bookmark rows to reveal a delete button, with confirmation before removal (adapted from Uri Tauber, CrossPoint #3712).
 - Fill missing characters throughout the UI, including translated menu labels and dialogs, using the selected UI Font while preserving built-in characters and the reading font.
-
 - Assign Rotate Page 180° to Power, Home, front-button long presses, and button chords as well as side buttons, from device or web settings.
+- Assign separate front Left and Right long-press shortcuts, with the same actions as side buttons. Existing shared assignments migrate automatically.
+- Pause and resume page-turn taps and swipes with the Disable Page Turn Gestures shortcut, without changing menu access or other touch gestures.
+- Enable Tilt: Next Page Only in Controls to advance a page with either tilt direction on supported devices.
+- Jump to a percentage in XTC and XTCH books from the reader menu, using the same slider and numeric keypad as EPUB books.
+- Install SD card plugins with browser interfaces, on-device catalogs, sign-in, and configurable download folders. Enable Plugins in Settings → System, then open Plugins from Home. Download the optional Plugin Hub to discover, install, and update compatible plugins.
+- Center Status Bar option for the top and bottom reader status bars, which centers all items in one row joined by a •, ·, –, or | separator.
+- Browse OPDS 2 JSON catalogs, groups, facets, publication descriptions, and indirect EPUB links using the same bounded catalog storage as Atom feeds. OAuth and LCP service fulfillment are not included (CrossPoint #3629).
+- Render non-interlaced GIF images, covers, and thumbnails in EPUBs, using the first frame of animated files (CrossPoint #2299).
+- Uninstall an installed plugin after holding Confirm for one second or long-pressing its row, with confirmation before its files are removed (CrossPoint #4100).
+- Choose Cover Overlay to place a transparent sleep image over the current book cover (CrossPoint #3770).
 
 ### Fixed
 
 - Keep font upload and delete feedback visible while scrolling on the web portal, including mobile, and prevent older notification timers from hiding newer messages (adapted from CrossPoint #3984).
-
 - Keep web dialogs open when a text-selection drag ends outside the dialog, while preserving backdrop clicks and upload-in-progress protection (adapted from Crestwave, CrossPoint #3931).
 - Normalize new web-upload filenames to composed Unicode (NFC), including duplicate checks, so accented filenames remain accessible across platforms (adapted from serialx, CrossPoint #3961).
 - Explain OPDS feed failures caused by credentials, withheld credentials across origins, server errors, or no response (adapted from Marco Rojas, CrossPoint #3872).
@@ -101,8 +109,33 @@
 - Avoid extra temporary allocations when navigating Home’s cover grid (adapted from Sung-jin Brian Hong, CrossPoint #3848).
 - Clear the retained sleep image when X3 wakes to Home without a restored Quick Resume frame, including with Sunlight Fading Fix enabled.
 - Restore Touch Reader Controls in Settings → Controls → Taps & Gestures so reader touch gestures can be re-enabled on the device after being turned off in the web portal (#871).
-
 - Show all button shortcut settings on the web portal, including option lists too long for the previous response buffer.
+- Import CrossPoint's normal 100% word spacing as 0 instead of maximum spacing, while preserving saved CrossInk spacing levels.
+- Draw damaged SD-font glyphs as blanks and show a one-time warning to reinstall the font (CrossPoint #4091).
+- Avoid large contiguous allocations for EPUB chapter anchors without changing background pagination (anchor-storage portion of CrossPoint #4040).
+- Keep the last word before a nested EPUB quotation or heading in its original paragraph; existing book layouts rebuild automatically (adapted from yassine-cc, #886).
+- Respond promptly to reader controls while keeping idle power savings, and keep reader plugin bookkeeping from holding up input during a page refresh.
+- Prevent a queued navigation click from also repeating after a screen refresh.
+- Keep quick physical button taps in order during screen refreshes and filter release bounce before it becomes another click.
+- Use stable-page text progress and measured time per stable page for book time-left when available, keeping incremental indexing and font changes from inflating the estimate. Other books retain a chapter-density estimate.
+- Credit EPUB and XTC reading to the actual local day and time, preserving streaks when a reading session crosses midnight.
+- Preserve reading stats before silent reader restarts, and keep the live session available when a restart save fails.
+- Show EPUB and XTC page turns before periodic reading-stat saves, reducing SD-card pauses on button and touch devices. Defer periodic checkpoints until page input and rendering have been quiet for one second.
+- Keep words below large decorative first letters intact when EPUB text returns to full width; existing book layouts rebuild automatically (adapted from Uri Tauber, CrossPoint #4173).
+- Discover newly added sleep images, including after SD-card copies and USB Drive transfers, and shuffle through every image before repeating. Keep the rotation across sleep and restart, with no immediate repeat between rounds.
+- Reduce memory use when opening long bookmark lists from Home or the reader, and avoid a reboot if bookmark loading or the bookmark screen runs out of memory; failed loads and interrupted rewrites preserve saved bookmarks (#892).
+- Keep system-folder support files out of Library, including FAT name casing variants, while preserving ordinary TXT and Markdown books and rebuilding existing indexes without deleting source files (adapted from Uri Tauber, CrossPoint #4184).
+- Reserve the retained TLS input buffer after sending bulk HTTPS requests, including OPDS book downloads, to avoid later full-record allocation failures when a server ignores the small-record request (adapted from Eszter Schuffert, FreeInk SDK #154 and #155 via CrossPoint #4167).
+- Use full refreshes on SSD2677 Sticky displays when previous-frame memory is unavailable, preventing stale black pixels.
+- Reduce memory used by OPDS book feeds with long descriptions, release partial catalogs after failed requests, and stop transfers promptly when parsing fails.
+- Keep saved tilt preferences when the sensor fails its startup check, while hiding unavailable controls (CrossPoint #4078).
+- Fix skipped and repeated plugin catalog entries, including compatibility-filtered static lists, and support encoded item fields in plugin URLs (CrossPoint #4170, #4195, #4196).
+- Connect plugin HTTPS requests before copying custom headers to reduce memory pressure during connection setup (CrossPoint #4167).
+- Align SD-font text-width measurements with drawing while preserving character spacing; existing EPUB layouts rebuild automatically (CrossPoint #3985).
+- Preserve complete non-English characters in Wi-Fi names and masked password previews, and keep installed font rows visibly selectable (CrossPoint #4079, #4106, #4101).
+- Load Adobe-obfuscated publisher fonts in EPUBs on devices with scalable font support.
+
+- Ask before setting a sleep cover from the image viewer, and use complete translated delete and sleep-cover questions (CrossPoint #3994, #4097).
 
 ### Changed
 
@@ -130,6 +163,15 @@
 - Reduce repeated SD reads when opening EPUBs, browsing Library rows, and preserving reading position through layout changes; reuse temporary TXT indexing scratch without retaining it while reading.
 - Exclude unused Arduino libraries and Bluetooth/Zigbee components from tuned firmware builds (adapted from Uri Tauber, CrossPoint #3857).
 - Install SD languages and hyphenation packs on PSRAM-equipped readers with small factory data partitions, including X4 Pro, using an SD cache loaded into PSRAM. Startup reuses an open cache file for sequential validation reads. The bootloader, partition table, and firmware slots remain unchanged.
+- Remove the redundant Touch Reader Controls setting from device and web settings; Disable Touchscreen remains the full reader touch lock.
+- Reduce temporary memory used to prepare SD-font character widths, while keeping the cache up to date as text changes (adapted from CrossPoint #3948).
+- Move OPDS Browser into File Transfer, keeping room for Plugins and Settings on Home.
+- Save periodic reading-stat checkpoints every five minutes of accepted reading instead of every minute, while keeping session-end, sleep, and restart saves.
+- Match menu button directions and front Up/Down labels to screen orientation on X3, X4 Pro, and X4 Classic while preserving tab navigation and reader page-turn preferences. Slider side buttons follow the screen orientation, with the upper button increasing values and the lower button decreasing them.
+- Reduce temporary allocations while finding EPUB line breaks and disable unused XML parser input-context buffering (CrossPoint #4126, #4118).
+- Revalidate plugin files with content-based ETags so unchanged files do not need to be transferred again (CrossPoint #4193).
+
+- Use themed web confirmations and alerts, accessible file dialogs, and clearer dropdown arrows; preserve upload cancellation and feedback timers (CrossPoint #3984, #4090).
 
 ## [v1.6.1] - 2026-10-03
 

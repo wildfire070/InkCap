@@ -65,9 +65,16 @@ class Reader {
   const ValidationOptions* options;
   uint8_t* buffer;
   size_t cursor = 0, available = 0, total = 0;
+  const char* error = nullptr;
+  Result fail(Result result, const char* reason) {
+    error = reason;
+    return result;
+  }
 
  public:
   Reader(Input in, uint8_t* buf, const ValidationOptions* opts = nullptr) : input(in), options(opts), buffer(buf) {}
+  const char* errorReason() const { return error; }
+  size_t offset() const { return total; }
   Result line(char* out, bool& eof) {
     size_t length = 0;
     eof = false;
@@ -75,7 +82,7 @@ class Reader {
       if (cursor == available) {
         if (options && options->continueWork && !options->continueWork(options->context)) return Result::Cancelled;
         const int n = input.read(input.context, buffer, 256);
-        if (n < 0 || n > 256) return Result::Io;
+        if (n < 0 || n > 256) return fail(Result::Io, "source read failed");
         cursor = 0;
         available = static_cast<size_t>(n);
         if (n == 0) {
@@ -83,16 +90,16 @@ class Reader {
           break;
         }
       }
-      if (++total > MAX_SOURCE_SIZE) return Result::TooLarge;
+      if (++total > MAX_SOURCE_SIZE) return fail(Result::TooLarge, "source exceeds byte limit");
       const char c = static_cast<char>(buffer[cursor++]);
-      if (c == '\0') return Result::Invalid;
+      if (c == '\0') return fail(Result::Invalid, "NUL byte in source");
       if (c == '\n') break;
-      if (length == LINE_SIZE - 1) return Result::TooLarge;
+      if (length == LINE_SIZE - 1) return fail(Result::TooLarge, "line exceeds byte limit");
       out[length++] = c;
     }
     if (length && out[length - 1] == '\r') --length;
     out[length] = '\0';
-    return validUtf8(out, length) ? Result::Ok : Result::Invalid;
+    return validUtf8(out, length) ? Result::Ok : fail(Result::Invalid, "invalid UTF-8 or control character");
   }
 };
 
@@ -324,6 +331,7 @@ Result readCrc(const Flash& flash, size_t base, size_t size, uint8_t* scratch, u
 }
 bool writeVerified(const Flash& flash, size_t offset, const void* bytes, size_t size) {
   if (!flash.write(flash.context, offset, bytes, size)) return false;
+  if (flash.verify) return flash.verify(flash.context, offset, bytes, size);
   uint8_t check[128];
   const auto* data = static_cast<const uint8_t*>(bytes);
   for (size_t i = 0; i < size; i += sizeof(check)) {
@@ -506,33 +514,53 @@ struct Inspector::Impl : Workspace {};
 Inspector::Inspector() { workspace_.init(MemoryPool::None); }
 Inspector::~Inspector() = default;
 
-Result inspect(Input input, Metadata& metadata) {
+Result inspect(Input input, Metadata& metadata, InspectionDiagnostic* diagnostic) {
   Inspector inspector;
-  return inspector.inspect(input, metadata);
+  return inspector.inspect(input, metadata, diagnostic);
 }
-Result Inspector::inspect(Input input, Metadata& metadata) {
+Result Inspector::inspect(Input input, Metadata& metadata, InspectionDiagnostic* diagnostic) {
+  if (diagnostic) *diagnostic = {};
   auto* work = workspace_.get();
-  if (!work) return Result::Memory;
+  if (!work || !input.read) {
+    if (diagnostic) diagnostic->reason = work ? "missing source reader" : "metadata workspace allocation failed";
+    return work ? Result::Invalid : Result::Memory;
+  }
   work->unknownCount = 0;
   metadata = {};
   Reader reader(input, work->inputBuffer);
+  size_t line = 0;
+  const auto reject = [&](Result result, const char* reason) {
+    if (diagnostic) *diagnostic = {reason, line, reader.offset()};
+    return result;
+  };
   bool direction = false;
   while (true) {
+    ++line;
     bool eof;
     auto result = reader.line(work->line, eof);
-    if (result != Result::Ok) return result;
+    if (result != Result::Ok) return reject(result, reader.errorReason());
     if (eof) break;
+    if (line == 1 && std::strncmp(work->line, "\xef\xbb\xbf", 3) == 0)
+      return reject(Result::Invalid, "UTF-8 BOM is not supported");
     char *key, *value;
     result = parseLine(work->line, key, value);
-    if (result != Result::Ok) return result;
+    if (result != Result::Ok)
+      return reject(result, result == Result::TooLarge ? "YAML key exceeds byte limit"
+                                                       : "invalid YAML syntax: expected key: \"value\"");
     if (!key) continue;
     if (key[0] != '_') break;
     result = remember(*work, hash(key), nullptr);
-    if (result != Result::Ok) return result;
+    if (result != Result::Ok)
+      return reject(result, result == Result::Duplicate ? "duplicate metadata key" : "metadata key limit exceeded");
     result = metadataLine(key, value, metadata, direction);
-    if (result != Result::Ok) return result;
+    if (result != Result::Ok) return reject(result, "invalid language metadata value");
   }
-  return finishMetadata(metadata, direction);
+  const auto result = finishMetadata(metadata, direction);
+  return result == Result::Ok
+             ? result
+             : reject(result, result == Result::MetadataMissing
+                                  ? "missing _language_code or _language_name before translation strings"
+                                  : "English is built in; EN is not an SD language");
 }
 
 Result validate(Input input, const Schema& schema, Metadata& metadata, const ValidationOptions& options) {
@@ -548,7 +576,8 @@ Result validate(Input input, const Schema& schema, Metadata& metadata, const Val
   return result;
 }
 
-Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed) {
+Result install(Input input, const Schema& schema, const Flash& flash, int pinnedSlot, Installed& installed,
+               uint8_t* staging) {
   if (schema.count > MAX_KEYS || pinnedSlot < -1 || pinnedSlot > 1) return Result::Invalid;
   if (flash.size < 2 * SLOT_SIZE || flash.size % SLOT_SIZE != 0) return Result::StorageUnavailable;
   HeapObject<Workspace> storage;
@@ -604,8 +633,38 @@ Result install(Input input, const Schema& schema, const Flash& flash, int pinned
   if (newest == std::numeric_limits<uint64_t>::max()) return Result::Invalid;
   const int target = pinnedSlot >= 0 ? 1 - pinnedSlot : (latestSlot >= 0 ? 1 - latestSlot : 0);
   const size_t base = slotOffset(flash.size, target);
-  if (!flash.erase(flash.context, base, SLOT_SIZE) || !writeVerified(flash, base, OWNER, OWNER_SIZE)) return Result::Io;
-  result = parseDocument(input, schema, work, metadata, end, count, nullptr, &flash, base);
+  // Compile into caller-owned RAM when supplied. The selected old slot is never
+  // touched, and parse failures do not modify storage at all in this mode.
+  struct StagedSlot {
+    uint8_t* bytes;
+    size_t base;
+    bool contains(size_t offset, size_t length) const {
+      return offset >= base && offset - base <= SLOT_SIZE && length <= SLOT_SIZE - (offset - base);
+    }
+  } staged{staging, base};
+  const Flash buffered{&staged, flash.size,
+                       [](void* context, size_t offset, void* bytes, size_t length) {
+                         auto& slot = *static_cast<StagedSlot*>(context);
+                         if (!slot.contains(offset, length)) return false;
+                         std::memcpy(bytes, slot.bytes + offset - slot.base, length);
+                         return true;
+                       },
+                       [](void* context, size_t offset, const void* bytes, size_t length) {
+                         auto& slot = *static_cast<StagedSlot*>(context);
+                         if (!slot.contains(offset, length)) return false;
+                         std::memcpy(slot.bytes + offset - slot.base, bytes, length);
+                         return true;
+                       },
+                       [](void* context, size_t offset, size_t length) {
+                         auto& slot = *static_cast<StagedSlot*>(context);
+                         if (!slot.contains(offset, length)) return false;
+                         std::memset(slot.bytes + offset - slot.base, 0xff, length);
+                         return true;
+                       }};
+  const Flash& output = staging ? buffered : flash;
+  if (!output.erase(output.context, base, SLOT_SIZE) || !writeVerified(output, base, OWNER, OWNER_SIZE))
+    return Result::Io;
+  result = parseDocument(input, schema, work, metadata, end, count, nullptr, &output, base);
   if (result != Result::Ok) return result;
   std::memset(work->header, 0, HEADER_SIZE);
   std::memcpy(work->header, OWNER, OWNER_SIZE);
@@ -619,13 +678,17 @@ Result install(Input input, const Schema& schema, const Flash& flash, int pinned
   std::memcpy(work->header + 168, metadata.keyboard, CODE_SIZE);
   // Leave checksum erased too; flash cannot program zero bits back to one.
   std::memset(work->header + 36, 0xff, 4);
-  if (!writeVerified(flash, base + 20, work->header + 20, HEADER_SIZE - 20)) return Result::Io;
+  if (!writeVerified(output, base + 20, work->header + 20, HEADER_SIZE - 20)) return Result::Io;
   uint32_t crc;
-  result = readCrc(flash, base, end, work->inputBuffer, crc);
+  result = readCrc(output, base, end, work->inputBuffer, crc);
   if (result != Result::Ok) return result;
   uint8_t encoded[4];
   put32(encoded, crc);
-  if (!writeVerified(flash, base + 36, encoded, sizeof(encoded))) return Result::Io;
+  if (!writeVerified(output, base + 36, encoded, sizeof(encoded))) return Result::Io;
+  // Persist and verify the uncommitted image first. A failed/torn write cannot
+  // make this slot bootable. The commit marker is a separate durable write.
+  if (staging && (!flash.erase(flash.context, base, SLOT_SIZE) || !writeVerified(flash, base, staging, end)))
+    return Result::Io;
   put32(encoded, COMMITTED);
   if (!writeVerified(flash, base + 16, encoded, sizeof(encoded))) return Result::Io;
   installed.metadata = metadata;

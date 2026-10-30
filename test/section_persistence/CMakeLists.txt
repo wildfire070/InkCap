@@ -7,6 +7,7 @@ add_executable(SectionPersistenceTest
 )
 
 target_include_directories(SectionPersistenceTest PRIVATE
+  ${REPO_ROOT}/freeink-sdk/libs/book/ContentProtection/include
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/InflateReader
   ${REPO_ROOT}/lib/uzlib/src

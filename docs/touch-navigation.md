@@ -44,6 +44,8 @@ or swipe right starting from the left edge.
 Swipe up on the Dashboard or Minimal Home screen to see shortcuts. Which ones
 appear depends on what you have set up:
 
+Open File Transfer to access OPDS Browser.
+
 - **Library** (or **Browse Files** when swapped)
 - **OPDS Browser**, if you have added an OPDS server
 - **Bookmarks & Clippings**, if you have saved any

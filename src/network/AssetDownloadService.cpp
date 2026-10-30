@@ -89,6 +89,8 @@ Result hashFile(const char* path, char* hex, Workspace& work, size_t expected = 
   if (!Storage.openFileForRead("ASSET", path, file)) return failure(Result::Io);
   const auto size = file.fileSize64();
   if (size > MAX_PAYLOAD || (expected && size != expected)) {
+    LOG_ERR("ASSET", "SD size check failed: path=%s bytes=%llu expected=%u limit=%u", path,
+            static_cast<unsigned long long>(size), unsigned(expected), unsigned(MAX_PAYLOAD));
     file.close();
     return failure(Result::Invalid);
   }
@@ -119,18 +121,27 @@ Result hashFile(const char* path, char* hex, Workspace& work, size_t expected = 
 Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& source, Workspace& work) {
   source = {};
   work.discoverableSources = 0;
-  if (!canonicalPath(kind, entry.code, work.canonical, sizeof(work.canonical))) return failure(Result::Invalid);
+  if (!canonicalPath(kind, entry.code, work.canonical, sizeof(work.canonical))) {
+    LOG_ERR("ASSET", "SD check failed: invalid destination code=%s", entry.code);
+    return failure(Result::Invalid);
+  }
   std::strcpy(source.path, work.canonical);
   const char* directoryPath =
       kind == AssetCatalog::Kind::Translation ? language_cache::DIRECTORY : HyphenationPackStore::DIRECTORY;
-  if (!Storage.exists(directoryPath)) return Result::Ok;
+  LOG_DBG("ASSET", "SD check start: code=%s dir=%s target=%s", entry.code, directoryPath, work.canonical);
+  if (!Storage.exists(directoryPath)) {
+    LOG_DBG("ASSET", "SD check complete: code=%s directory missing; new download", entry.code);
+    return Result::Ok;
+  }
   auto directory = Storage.open(directoryPath);
   if (!directory || !directory.isDirectory()) {
+    LOG_ERR("ASSET", "SD check failed: cannot open directory=%s code=%s", directoryPath, entry.code);
     directory.close();
     return failure(Result::Io);
   }
   if (kind == AssetCatalog::Kind::Translation && !work.inspector) work.inspector.emplace();
   if (work.inspector && !work.inspector->available()) {
+    LOG_ERR("ASSET", "SD check failed: metadata workspace allocation code=%s", entry.code);
     directory.close();
     return failure(Result::Memory);
   }
@@ -147,20 +158,42 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
         result = Result::Memory;
       else if (directory.iterationFailed())
         result = Result::Io;
+      if (result != Result::Ok)
+        LOG_ERR("ASSET", "SD check failed: directory iteration dir=%s code=%s result=%s", directoryPath, entry.code,
+                resultName(result));
       file.close();
       break;
     }
     if (++count > MAX_DIRECTORY_ENTRIES) {
+      LOG_ERR("ASSET", "SD check failed: directory entry limit dir=%s count=%u limit=%u", directoryPath,
+              unsigned(count), unsigned(MAX_DIRECTORY_ENTRIES));
       file.close();
       result = Result::Invalid;
       break;
     }
+    work.filename[0] = '\0';
     const size_t length = file.getName(work.filename, sizeof(work.filename));
-    if (!length || length >= sizeof(work.filename) - 1 || !safeName(work.filename)) {
+    work.filename[sizeof(work.filename) - 1] = '\0';
+    const bool metadataFile = language_cache::isAppleDoubleFile(work.filename);
+    if (!length || length >= sizeof(work.filename) - 1 || (!metadataFile && !safeName(work.filename))) {
+      LOG_ERR("ASSET", "SD filename rejected: name=%s", work.filename);
+      LOG_ERR("ASSET", "SD filename reason=%s length=%u dir=%s",
+              !length                               ? "unreadable filename"
+              : length >= sizeof(work.filename) - 1 ? "filename too long"
+                                                    : "unsafe filename",
+              unsigned(length), directoryPath);
       file.close();
       result = Result::Invalid;
       break;
     }
+    if (metadataFile) {
+      LOG_DBG("ASSET", "Skipping macOS metadata: path=%s/%s", directoryPath, work.filename);
+      file.close();
+      continue;
+    }
+    LOG_DBG("ASSET", "SD entry: path=%s/%s bytes=%llu position=%llu directory=%u", directoryPath, work.filename,
+            file.isDirectory() ? 0ULL : static_cast<unsigned long long>(file.fileSize64()),
+            file.isDirectory() ? 0ULL : static_cast<unsigned long long>(file.position()), unsigned(file.isDirectory()));
     // Match I18n::discover exactly for the publication source-count preflight:
     // directories, long names, sidecars and uppercase extensions are excluded.
     if (kind == AssetCatalog::Kind::Translation && !file.isDirectory() && length >= 6 && length < 127 &&
@@ -178,6 +211,7 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
     }
     const int n = std::snprintf(work.candidate, sizeof(work.candidate), "%s/%s", directoryPath, work.filename);
     if (n <= 0 || size_t(n) + 4 >= sizeof(work.candidate)) {
+      LOG_ERR("ASSET", "SD check failed: path too long dir=%s file=%s", directoryPath, work.filename);
       file.close();
       result = Result::Invalid;
       break;
@@ -189,6 +223,8 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
     ++sources;
     if ((kind == AssetCatalog::Kind::Translation && work.discoverableSources > I18n::Catalog::MAX_SOURCE_FILES) ||
         (kind == AssetCatalog::Kind::Hyphenation && sources > MAX_SOURCES)) {
+      LOG_ERR("ASSET", "SD check failed: source count limit dir=%s count=%u", directoryPath,
+              unsigned(kind == AssetCatalog::Kind::Translation ? work.discoverableSources : sources));
       file.close();
       result = Result::Invalid;
       break;
@@ -196,11 +232,28 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
     const bool canonical = equalFold(work.candidate, work.canonical);
     bool sameCode = false;
     if (file.isDirectory()) {
-      if (canonical) result = Result::Collision;
+      if (canonical) {
+        LOG_ERR("ASSET", "SD check failed: destination is a directory path=%s", work.candidate);
+        result = Result::Collision;
+      }
     } else if (kind == AssetCatalog::Kind::Translation) {
-      const auto inspected = file.fileSize64() <= MAX_PAYLOAD
-                                 ? work.inspector->inspect({&file, readInput}, work.metadata)
+      language_cache::InspectionDiagnostic diagnostic;
+      const auto bytes = file.fileSize64();
+      const auto inspected = bytes <= MAX_PAYLOAD
+                                 ? work.inspector->inspect({&file, readInput}, work.metadata, &diagnostic)
                                  : language_cache::Result::TooLarge;
+      if (inspected != language_cache::Result::Ok) {
+        LOG_ERR("ASSET", "SD metadata rejected: path=%s%s", work.candidate, backup ? ".old" : "");
+        LOG_ERR("ASSET", "SD metadata details: selected=%s bytes=%llu canonical=%u result=%s", entry.code,
+                static_cast<unsigned long long>(bytes), unsigned(canonical), language_cache::resultName(inspected));
+        LOG_ERR("ASSET", "SD metadata reason=%s line=%u offset=%u",
+                bytes > MAX_PAYLOAD ? "source exceeds byte limit"
+                : diagnostic.reason ? diagnostic.reason
+                                    : "unknown",
+                unsigned(diagnostic.line), unsigned(diagnostic.offset));
+      } else
+        LOG_DBG("ASSET", "SD metadata accepted: path=%s%s code=%s selected=%s", work.candidate, backup ? ".old" : "",
+                work.metadata.code, entry.code);
       // Unknown identity cannot safely coexist with a new same-code source.
       if (inspected == language_cache::Result::Io)
         result = Result::Io;
@@ -210,8 +263,11 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
         result = Result::Invalid;
       sameCode = inspected == language_cache::Result::Ok && equalFold(work.metadata.code, entry.code);
       if ((sameCode && std::strcmp(work.metadata.code, entry.code)) ||
-          (canonical && inspected == language_cache::Result::Ok && !sameCode))
+          (canonical && inspected == language_cache::Result::Ok && !sameCode)) {
+        LOG_ERR("ASSET", "SD check failed: language identity collision path=%s file_code=%s selected=%s",
+                work.candidate, work.metadata.code, entry.code);
         result = Result::Collision;
+      }
     } else {
       // CPHY identity bytes are read without installing or allocating a trie.
       char header[7];
@@ -220,22 +276,34 @@ Result scan(AssetCatalog::Kind kind, const AssetCatalog::Entry& entry, Source& s
                    lower(header[6]) == lower(entry.code[1]);
       }
     }
-    if (!file.close()) result = Result::Io;
+    if (!file.close()) {
+      LOG_ERR("ASSET", "SD check failed: cannot close path=%s%s", work.candidate, backup ? ".old" : "");
+      result = Result::Io;
+    }
     if (result != Result::Ok) break;
     if (!canonical && !sameCode) continue;
     if ((canonical && std::strcmp(work.candidate, work.canonical)) ||
         (kind == AssetCatalog::Kind::Hyphenation && !canonical) || ++found > 1) {
+      LOG_ERR("ASSET", "SD check failed: source collision path=%s target=%s matches=%u", work.candidate, work.canonical,
+              unsigned(found));
       result = Result::Collision;
       break;
     }
     std::strcpy(source.path, work.candidate);
   }
-  if (!directory.close()) result = Result::Io;
+  if (!directory.close()) {
+    LOG_ERR("ASSET", "SD check failed: cannot close directory=%s", directoryPath);
+    result = Result::Io;
+  }
   if (result != Result::Ok) {
     if (result == Result::Collision) source.status = Status::Collision;
     return failure(result);
   }
-  if (!found) return Result::Ok;
+  if (!found) {
+    LOG_DBG("ASSET", "SD check complete: code=%s entries=%u destination missing; new download", entry.code,
+            unsigned(count));
+    return Result::Ok;
+  }
   const char* path = source.path;
   // Derive this from the selected logical path, including manual filenames.
   // Discovery remains read-only even when the published bytes are current.

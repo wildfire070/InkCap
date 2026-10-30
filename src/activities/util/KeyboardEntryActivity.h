@@ -18,6 +18,7 @@ enum class InputType { Text, Password, Url };
 // editing, and the URL snippet layouts.
 class KeyboardEntryActivity : public Activity {
  public:
+  bool usesMenuButtonOrientation() const override { return false; }
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                  std::string title = "Enter Text", std::string initialText = "",
                                  const size_t maxLength = 0, InputType inputType = InputType::Text,

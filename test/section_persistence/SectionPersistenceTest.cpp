@@ -36,8 +36,18 @@ namespace {
 // every distinct byte either side ever used as a sentinel is listed below and
 // must still be rejected, regardless of which branch originally produced it
 // (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 97;
-constexpr uint8_t kPartialVersion = 0xD2;
+constexpr uint8_t kFullVersion = 102;
+constexpr uint8_t kPartialVersion = 0xD7;
+constexpr uint8_t kGlyphRoundingFullVersion = 101;  // upstream v101 (round SD-font glyph advances), now superseded
+constexpr uint8_t kGlyphRoundingPartialVersion = 0xD6;
+constexpr uint8_t kPreRoundingFullVersion = 100;  // upstream v101's immediate predecessor
+constexpr uint8_t kPreRoundingPartialVersion = 0xD5;
+constexpr uint8_t kStablePageFullVersion = 99;  // upstream v99 (stable-page reading pace)
+constexpr uint8_t kStablePagePartialVersion = 0xD4;
+constexpr uint8_t kPreDropCapFullVersion = 98;  // upstream v98 (flush buffered words)
+constexpr uint8_t kPreDropCapPartialVersion = 0xD3;
+constexpr uint8_t kHyphenJustifyFullVersion = 97;  // upstream v97 (hyphenated word boundaries/justification), now superseded
+constexpr uint8_t kHyphenJustifyPartialVersion = 0xD2;
 constexpr uint8_t kPreHyphenJustifyFullVersion = 96;  // upstream v97's immediate predecessor (v96 only)
 constexpr uint8_t kPreHyphenJustifyPartialVersion = 0xD1;
 constexpr uint8_t kPreHyphenBreakFullVersion = 95;  // upstream v96's predecessor (pre hyphen/dash line breaks)
@@ -103,7 +113,7 @@ struct SectionHarness {
         [](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t, uint32_t) {}, spec.embeddedStyle, "", "",
         spec.imageRendering, std::vector<std::string>{}, nullptr, nullptr, spec.renderMode);
     ASSERT_NE(context->parser, nullptr);
-    context->parser->anchorData = anchors;
+    context->parser->anchorData.assign(anchors.begin(), anchors.end());
     section.build_ = std::move(context);
     ASSERT_TRUE(Storage.openFileForWrite("TEST", section.build_->tmpSectionPath, section.file));
     ASSERT_TRUE(section.writeSectionFileHeader(spec));
@@ -114,8 +124,8 @@ struct SectionHarness {
       ASSERT_EQ(section.build_->pageIndex.prepareAppend(), SectionPageIndex::PrepareResult::Ready);
       const uint32_t offset = section.onPageComplete(std::make_unique<Page>());
       ASSERT_NE(offset, 0U);
-      section.build_->pageIndex.appendPrepared(
-          {offset, static_cast<uint16_t>(i * 3U), static_cast<uint16_t>(i * 5U), static_cast<uint32_t>(i * 17U)});
+      section.build_->pageIndex.appendPrepared({offset, static_cast<uint16_t>(i * 3U), static_cast<uint16_t>(i * 5U),
+                                                static_cast<uint32_t>(i * 17U), static_cast<uint32_t>(i * 13U)});
     }
   }
 
@@ -179,7 +189,8 @@ TEST_F(SectionPersistenceTest, PartialCommitFiltersFutureAnchorsAndFallsBackBeyo
   for (size_t i = 0; i < 10; ++i) {
     ASSERT_EQ(replay->pageIndex.prepareAppend(), SectionPageIndex::PrepareResult::Ready);
     replay->pageIndex.appendPrepared({static_cast<uint32_t>(1000 + i), static_cast<uint16_t>(i * 3U),
-                                      static_cast<uint16_t>(i * 5U), static_cast<uint32_t>(i * 17U)});
+                                      static_cast<uint16_t>(i * 5U), static_cast<uint32_t>(i * 17U),
+                                      static_cast<uint32_t>(i * 13U)});
   }
   reopened.build_ = std::move(replay);
   reopened.builtPageCount_ = 10;
@@ -211,15 +222,18 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreHyphenJustifyFullVersion, kPreHyphenJustifyPartialVersion, kPreHyphenBreakFullVersion,
-        kPreHyphenBreakPartialVersion, kPreImageAlignmentFullVersion, kPreImageAlignmentPartialVersion,
-        kPreFieldsetFullVersion, kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion,
-        kC3BitmapFullVersion, kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion,
-        kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion,
-        kBorderSuppressionPartialVersion, kInkCapPreviousPartialVersion, kOlderFullVersion, kOlderPartialVersion,
-        kUpstreamHangulPartialVersion, kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamPaddingPartialVersion,
-        kEarlierFullVersion, kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion,
-        kLastReleaseFullVersion, kLastReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {
+       {kGlyphRoundingFullVersion, kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion,
+        kStablePageFullVersion, kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion,
+        kHyphenJustifyFullVersion, kHyphenJustifyPartialVersion, kPreHyphenJustifyFullVersion,
+        kPreHyphenJustifyPartialVersion, kPreHyphenBreakFullVersion, kPreHyphenBreakPartialVersion,
+        kPreImageAlignmentFullVersion, kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion,
+        kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion, kC3BitmapFullVersion,
+        kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion, kParagraphSpacingFullVersion,
+        kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion,
+        kInkCapPreviousPartialVersion, kOlderFullVersion, kOlderPartialVersion, kUpstreamHangulPartialVersion,
+        kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamPaddingPartialVersion, kEarlierFullVersion,
+        kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion, kLastReleaseFullVersion,
+        kLastReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
     harness.appendPages(1);
@@ -492,4 +506,38 @@ TEST_F(SectionPersistenceTest, ContentsSelectsLatestSubchapterAcrossAnchorBatche
   EXPECT_EQ(h.section.getTocIndexForPage(65), 65);
   EXPECT_EQ(h.section.getTocIndexForPage(0), 0);
   EXPECT_EQ(h.section.getTocIndexForPage(100), 69);
+}
+
+TEST_F(SectionPersistenceTest, ReferenceCoordinatesSurviveCompletePartialAndLiveReplay) {
+  for (const uint8_t version : {kFullVersion, kPartialVersion}) {
+    Storage.reset();
+    SectionHarness harness;
+    harness.begin();
+    harness.appendPages(65);
+    harness.section.build_->parser->referenceTextOffset = 1000;
+    uint32_t textLength = 0;
+    EXPECT_EQ(harness.section.getReferenceTextOffsetForPage(64, textLength), 64U * 13U);
+    EXPECT_EQ(textLength, 0U);
+    ASSERT_TRUE(harness.commit(version, 100, 200));
+    harness.finishSuccessfulCommit();
+    Section reopened(harness.epub, 0, harness.renderer);
+    ASSERT_TRUE(reopened.loadSectionFile(harness.spec));
+    EXPECT_EQ(reopened.getReferenceTextOffsetForPage(64, textLength), 64U * 13U);
+    EXPECT_EQ(textLength, version == kFullVersion ? 1000U : 0U);
+    EXPECT_FALSE(reopened.getReferenceTextOffsetForPage(65, textLength));
+    EXPECT_EQ(reopened.getVisibleTextOffsetForPage(64), 64U * 17U);
+  }
+}
+
+TEST_F(SectionPersistenceTest, PreviousReferenceLessCachesAreRejected) {
+  for (const uint8_t version : {uint8_t{98}, uint8_t{0xD3}}) {
+    Storage.reset();
+    SectionHarness harness;
+    harness.begin();
+    harness.appendPages(2);
+    ASSERT_TRUE(harness.commit(version));
+    harness.finishSuccessfulCommit();
+    Section reopened(harness.epub, 0, harness.renderer);
+    EXPECT_FALSE(reopened.loadSectionFile(harness.spec));
+  }
 }

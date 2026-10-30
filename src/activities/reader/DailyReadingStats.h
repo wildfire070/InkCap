@@ -10,7 +10,8 @@ struct Counter {
 constexpr const char* DIRECTORY = "/.crosspoint/daily_reading";
 bool read(uint32_t day, Counter& counter);
 bool write(uint32_t day, const Counter& counter);
-bool record(uint32_t day, uint32_t seconds);
+bool record(uint32_t day, uint32_t seconds, bool allowCheckpoint = true);
+bool checkpointIfDue();
 bool flush();
 // Streams cumulative daily totals; acknowledges only successful callbacks. No file stays open during upload.
 bool uploadPending(bool (*upload)(void*, uint32_t day, uint32_t seconds), void* context);
@@ -46,6 +47,7 @@ class Session {
     startTime = local;
     offset = utcOffset;
   }
-  bool accept(const ReadingStatsDateTime& end, uint8_t utcOffset, uint32_t seconds, uint32_t sessionSeconds);
+  bool accept(const ReadingStatsDateTime& end, uint8_t utcOffset, uint32_t seconds, uint32_t sessionSeconds,
+              bool allowCheckpoint = true);
 };
 }  // namespace DailyReadingStats

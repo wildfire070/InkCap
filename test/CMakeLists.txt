@@ -53,9 +53,11 @@ add_subdirectory(clip_word_store)
 add_subdirectory(clipping_preview)
 add_subdirectory(dict_layout)
 add_subdirectory(reader_progress_save_debouncer)
+add_subdirectory(reader_tilt_page_turn)
 add_subdirectory(epub_link_return_state)
 add_subdirectory(manual_page_turn_queue)
 add_subdirectory(page_count_estimator)
+add_subdirectory(book_page_estimate)
 add_subdirectory(section_page_index)
 add_subdirectory(section_persistence)
 add_subdirectory(compact_table_layout)
@@ -75,11 +77,13 @@ add_subdirectory(two_finger_swipe)
 add_subdirectory(edge_slide)
 add_subdirectory(option_popup)
 add_subdirectory(sleep_wake_policy)
+add_subdirectory(sleep_image_deck)
 add_subdirectory(firmware_board_tag)
 add_subdirectory(ota_staging_guard)
 add_subdirectory(font_cache_manager)
 add_subdirectory(reader_drawer_model)
 add_subdirectory(stable_page_navigation)
+add_subdirectory(xtc_navigation)
 add_subdirectory(touch_reader_preview)
 add_subdirectory(dictionary_word_parts)
 add_subdirectory(ligature_guard)
@@ -111,6 +115,7 @@ add_subdirectory(library_text)
 add_subdirectory(library_format)
 add_subdirectory(library_index_file)
 add_subdirectory(content_opf_parser)
+add_subdirectory(adobe_font_obfuscation)
 add_subdirectory(library_builder)
 add_subdirectory(library_input_buffer)
 add_subdirectory(library_recent_order)
@@ -155,3 +160,45 @@ add_subdirectory(http_header)
 add_subdirectory(swipe_delete)
 
 add_subdirectory(cover_tone_curve)
+add_subdirectory(touch_action_buttons)
+
+add_test(NAME LanguageAssetPublicationRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_language_asset_publication.py)
+
+add_subdirectory(reading_session_journal)
+
+add_subdirectory(reading_session_checkpoint)
+
+add_subdirectory(protected_paths)
+add_subdirectory(plugin_manifest_classification)
+add_subdirectory(plugin_catalog_paging)
+add_subdirectory(plugin_http_policy)
+add_subdirectory(plugin_bundle)
+
+add_subdirectory(plugin_picker_layout)
+
+add_subdirectory(plugin_details)
+
+add_subdirectory(reader_session)
+add_subdirectory(reader_plugin_events)
+
+add_subdirectory(hal_power_manager)
+add_subdirectory(input_wake)
+add_subdirectory(button_navigation)
+add_subdirectory(button_capture)
+
+add_test(NAME ReaderRestartStatsRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_reader_restart_stats.py)
+
+add_test(NAME ReaderStatsLatencyRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_reader_stats_latency.py)
+
+add_test(NAME BookmarkListMemoryRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_bookmark_list_memory.py)
+
+add_subdirectory(bookmark_store)
+
+add_test(NAME UpstreamPortRegressions
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_upstream_ports.py)
+
+add_subdirectory(gif_support)

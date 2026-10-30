@@ -38,6 +38,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME = 9,
     MINIMAL_STATS_SLEEP = 10,
     DASHBOARD_SLEEP = 11,
+    COVER_OVERLAY = 12,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
@@ -171,6 +172,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     TWO_FINGER_SWIPE_BACK_HOME,
     TWO_FINGER_SWIPE_HOME_READER,
     TWO_FINGER_SWIPE_SELECT_CHAPTER,
+    TWO_FINGER_SWIPE_TOGGLE_PAGE_TURN_GESTURES,
     TWO_FINGER_SWIPE_ACTION_COUNT,
   };
 
@@ -292,6 +294,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     BACK_HOME = 37,
     SELECT_CHAPTER = 38,
     ROTATE_FLIP = 39,
+    TOGGLE_PAGE_TURN_GESTURES = 40,
     SHORT_PWRBTN_COUNT
   };
 
@@ -335,6 +338,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CHORD_BACK_HOME = 33,
     CHORD_SELECT_CHAPTER = 34,
     CHORD_ROTATE_FLIP = 35,
+    CHORD_TOGGLE_PAGE_TURN_GESTURES = 36,
     POWER_CHORD_ACTION_COUNT
   };
 
@@ -378,7 +382,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
-  enum TOUCH_READER_CONTROLS { TOUCH_READER_OFF = 0, TOUCH_READER_ON = 1, TOUCH_READER_CONTROLS_COUNT };
   enum PAGE_TURN_GESTURE {
     TAP_AND_SWIPE = 0,
     TAP_ONLY = 1,
@@ -431,6 +434,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_MENU_BACK_HOME = 26,
     LONG_MENU_SELECT_CHAPTER = 27,
     LONG_MENU_ROTATE_FLIP = 28,
+    LONG_MENU_TOGGLE_PAGE_TURN_GESTURES = 29,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
@@ -523,8 +527,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t forceParagraphIndents = 0;
   uint8_t textAntiAliasing = 1;
   // Touch screen reader zones/gestures on boards with a touch controller.
-  uint8_t touchReaderControls = TOUCH_READER_ON;
-  // Page-turn gestures remain independently configurable while touch reader controls stay enabled.
+  // Shortcut-only pause; keep the saved tap/swipe choices unchanged.
+  uint8_t disablePageTurnGestures = 0;
   uint8_t pageTurnGesture = TAP_AND_SWIPE;
   uint8_t previousPageGesture = TAP_AND_SWIPE;
   uint8_t customBootscreenEnabled = 1;
@@ -634,7 +638,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Legacy Hide Battery % choice, read only to migrate into per-bar battery styles.
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
-  uint8_t longPressButtonBehavior = OFF;
+  uint8_t longPressButtonBehavior = OFF;  // Legacy binary migration only.
+  uint8_t frontButtonLeftLong = IGNORE;
+  uint8_t frontButtonRightLong = IGNORE;
   // UI Theme
   uint8_t uiTheme = LYRA;
   uint8_t swapLibraryFileBrowser = 0;
@@ -665,6 +671,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char dictionarySdFontFamilyName[64] = "";
   // Zero follows the active reader size.
   uint8_t dictionaryFontPointSize = 0;
+  uint8_t pluginsEnabled = 0;
+  uint8_t pluginHubPromptHidden = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Prefer embedded EPUB titles/authors in Library; disable for filename-only scans.
@@ -709,6 +717,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Tilt-based page turning on devices with a supported IMU (X3 and Sticky).
   uint8_t tiltPageTurn = TILT_OFF;
   uint8_t tiltPageTurnDirection = TILT_LEFT_RIGHT;
+  uint8_t tiltNextPageOnly = 0;
   // Frontlight quick-panel state (boards with FREEINK_CAP_FRONTLIGHT, e.g. X4
   // Pro). Applied at boot, edited only from the frontlight panel; persisted as
   // category-less entries so they stay out of the Settings screen. Writes are

@@ -23,6 +23,9 @@
 #include <MemoryBudget.h>
 #include <RestartHooks.h>
 #include <SPI.h>
+#include <TrustedTime.h>
+
+#include "util/PluginEvents.h"
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
 #include <XteinkDetect.h>
 #endif
@@ -115,6 +118,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "components/icons/tablerFilledIcons.h"
 #include "fontIds.h"
 #include "network/UsbSerialFileTransfer.h"
+#include "util/PluginBundle.h"
 #ifdef SIMULATOR
 #include <SimulatorLifecycle.h>
 
@@ -636,7 +640,7 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
         LOG_ERR("MAIN", "Quick Lock requested without an input trigger");
         return false;
       }
-      buttonShortcutController.toggleQuickLock(millis(), quickLockTrigger,
+      buttonShortcutController.toggleQuickLock(mappedInputManager.buttonSampleTime(), quickLockTrigger,
                                                quickLockTrigger == QuickLockTrigger::LongPower);
       notifyQuickLockChanged();
       return true;
@@ -698,6 +702,12 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       LOG_INF("LIGHT", "Frontlight toggled %s by shortcut", lightOn ? "on" : "off");
       return true;
     }
+    case CrossPointSettings::SHORT_PWRBTN::TOGGLE_PAGE_TURN_GESTURES:
+      if (!gpio.hasTouch()) return false;
+      SETTINGS.disablePageTurnGestures = !SETTINGS.disablePageTurnGestures;
+      activityManager.persistGlobalSettings();
+      activityManager.requestUpdate();
+      return true;
     case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN:
       if (!gpio.hasTouch()) return false;
       SETTINGS.disableReaderTouchscreen = SETTINGS.disableReaderTouchscreen ? 0 : 1;
@@ -808,6 +818,8 @@ CrossPointSettings::SHORT_PWRBTN chordPowerAction(const ButtonShortcutController
       return Power::QUICK_ACTIONS;
     case Chord::ToggleFrontlight:
       return Power::TOGGLE_FRONTLIGHT;
+    case Chord::TogglePageTurnGestures:
+      return Power::TOGGLE_PAGE_TURN_GESTURES;
     case Chord::ToggleTouchscreen:
       return Power::TOGGLE_TOUCHSCREEN;
     default:
@@ -911,7 +923,7 @@ bool wasX4ProHomeKeyLongPressed() {
 }
 
 bool unlockX4ProHomeQuickLock(const QuickLockTrigger trigger) {
-  if (!buttonShortcutController.tryUnlockWithTrigger(millis(), trigger)) {
+  if (!buttonShortcutController.tryUnlockWithTrigger(mappedInputManager.buttonSampleTime(), trigger)) {
     return false;
   }
   notifyQuickLockChanged();
@@ -1117,6 +1129,9 @@ void mirrorWakeShortPressToNvs() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout) {
+#ifndef SIMULATOR
+  gpio.stopButtonCapture();
+#endif
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -1131,6 +1146,14 @@ void enterDeepSleep(bool fromTimeout) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
+  activityManager.preparePluginSleep();
+  {
+    RenderLock lock;
+    const std::string book = activityManager.getCurrentBookPath();
+    pluginevents::prepareSleep(book.c_str(), activityManager.getScreenshotInfo().progressPercent,
+                               powerManager.getBatteryPercentage() >= 20);
+  }
+  trustedtime::note();
   activityManager.goToSleep(fromTimeout);
   // Reader exit may already have saved this state. Save after the sleep screen
   // appears, skipping an unchanged snapshot while still retrying failed saves.
@@ -1328,6 +1351,20 @@ void setup() {
 
   halTiltSensor.begin();
   halClock.begin();
+#ifndef SIMULATOR
+  // Convert the RTC's UTC calendar without depending on the display timezone.
+  uint16_t rtcYear;
+  uint8_t rtcMonth, rtcDay, rtcHour, rtcMinute, rtcSecond;
+  if (halClock.getReadingDateTime(rtcYear, rtcMonth, rtcDay, rtcHour, rtcMinute, rtcSecond)) {
+    int year = rtcYear - (rtcMonth <= 2);
+    const int era = year / 400;
+    const unsigned yoe = year - era * 400;
+    const unsigned doy = (153 * (rtcMonth + (rtcMonth > 2 ? -3 : 9)) + 2) / 5 + rtcDay - 1;
+    const int64_t days = era * 146097LL + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    trustedtime::adopt(days * 86400 + rtcHour * 3600 + rtcMinute * 60 + rtcSecond);
+  }
+#endif
+  trustedtime::init();
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -1378,7 +1415,9 @@ void setup() {
 
   HalSystem::checkPanic();
 
+  if (!PluginBundle::recoverPending()) LOG_ERR("PLUG", "Plugin install recovery pending");
   SETTINGS.loadFromFile();
+  pluginevents::refreshSubscriptions();
   Storage.installDateTimeCallback(&SETTINGS.clockUtcOffsetQ);
   APP_STATE.loadFromFile();
 #ifdef SIMULATOR
@@ -1476,6 +1515,8 @@ void setup() {
   bool allowFastInitialReaderRefresh = false;
   bool x4WakeCanFastPaint = false;
   bool x3WakeNeedsRefresh = false;
+  // A retained page is useful opening feedback even when a fast refresh is unavailable.
+  bool quickResumeFrameVisible = false;
 
   setupDisplayAndFonts(SleepWakePolicy::shouldInitializeSeamlessly(resume, isUc8279X3, hasValidSleepFrame),
                        resume != BootResume::Network, useReaderRenderStack);
@@ -1500,6 +1541,7 @@ void setup() {
       APP_STATE.showBootScreen = true;
       APP_STATE.saveToFile();
       if (shouldRestoreSleepFrame && loadSleepFrameBuffer()) {
+        quickResumeFrameVisible = true;
         if (gpio.deviceIsX3()) {
           // begin() clears the X3 controller RAM. Restore the saved frame as
           // the baseline for the first reader paint without refreshing the panel.
@@ -1650,7 +1692,7 @@ void setup() {
     APP_STATE.openEpubPath = "";
     APP_STATE.readerActivityLoadCount++;
     APP_STATE.saveToFile();
-    activityManager.goToReader(path, false, allowFastInitialReaderRefresh);
+    activityManager.goToReader(path, false, allowFastInitialReaderRefresh, false, quickResumeFrameVisible);
   }
 
   if (resume == BootResume::Silent || resume == BootResume::Network) {
@@ -1670,6 +1712,9 @@ void setup() {
     gpio.update();
   }
 
+#ifndef SIMULATOR
+  gpio.startButtonCapture();
+#endif
   allowSleepAt = millis() + 2000;
 
   // Baseline for the heap attribution ladder: framebuffer, fonts, settings and
@@ -1804,8 +1849,8 @@ void loop() {
   const bool touchscreenEscapeHatch =
       !modalOwnsInput && gpio.hasTouch() && SETTINGS.disableReaderTouchscreen && activityManager.isReaderActivity();
   const auto sideButtonShortcutResult = buttonShortcutController.updateUpDown(
-      millis(), gpio.isPressed(HalGPIO::BTN_UP), gpio.isPressed(HalGPIO::BTN_DOWN), configuredSideButtonChordAction(),
-      touchscreenEscapeHatch, modalOwnsInput);
+      mappedInputManager.buttonSampleTime(), gpio.isPressed(HalGPIO::BTN_UP), gpio.isPressed(HalGPIO::BTN_DOWN),
+      configuredSideButtonChordAction(), touchscreenEscapeHatch, modalOwnsInput);
   if (dispatchButtonShortcut(sideButtonShortcutResult) || sideButtonShortcutResult.consumeInput) {
     lastActivityTime = millis();
     return;
@@ -1817,9 +1862,9 @@ void loop() {
                                  gpio.getPowerButtonHeldTime() < SETTINGS.getPowerButtonLongPressDuration();
   const bool quickLockOnShortPower =
       shortPowerRelease && SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::QUICK_LOCK;
-  const auto shortcutResult =
-      buttonShortcutController.update(millis(), powerPressed, chordButtonPressed, shortPowerRelease,
-                                      quickLockOnShortPower, configuredChordAction(), modalOwnsInput);
+  const auto shortcutResult = buttonShortcutController.update(
+      mappedInputManager.buttonSampleTime(), powerPressed, chordButtonPressed, shortPowerRelease, quickLockOnShortPower,
+      configuredChordAction(), modalOwnsInput);
   if (dispatchButtonShortcut(shortcutResult)) {
     lastActivityTime = millis();
     return;
@@ -1828,20 +1873,33 @@ void loop() {
   if (buttonShortcutController.isQuickLocked()) {
     const bool longPowerPressed =
         powerPressed && gpio.getPowerButtonHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
-    if (buttonShortcutController.tryUnlockLongPower(millis(), longPowerPressed)) {
+    if (buttonShortcutController.tryUnlockLongPower(mappedInputManager.buttonSampleTime(), longPowerPressed)) {
       notifyQuickLockChanged();
       lastActivityTime = millis();
       return;
     }
-    if (buttonShortcutController.tryUnlockSide(millis(), mappedInputManager.isPressed(MappedInputManager::Button::Up),
-                                               mappedInputManager.wasPressed(MappedInputManager::Button::Up),
-                                               mappedInputManager.wasReleased(MappedInputManager::Button::Up),
-                                               SETTINGS.sideButtonUpLong != CrossPointSettings::IGNORE,
-                                               mappedInputManager.isPressed(MappedInputManager::Button::Down),
-                                               mappedInputManager.wasPressed(MappedInputManager::Button::Down),
-                                               mappedInputManager.wasReleased(MappedInputManager::Button::Down),
-                                               SETTINGS.sideButtonDownLong != CrossPointSettings::IGNORE,
-                                               ReaderUtils::SKIP_HOLD_MS)) {
+    if (buttonShortcutController.tryUnlockSide(
+            mappedInputManager.buttonSampleTime(), mappedInputManager.isPressed(MappedInputManager::Button::Up),
+            mappedInputManager.wasPressed(MappedInputManager::Button::Up),
+            mappedInputManager.wasReleased(MappedInputManager::Button::Up),
+            SETTINGS.sideButtonUpLong != CrossPointSettings::IGNORE,
+            mappedInputManager.isPressed(MappedInputManager::Button::Down),
+            mappedInputManager.wasPressed(MappedInputManager::Button::Down),
+            mappedInputManager.wasReleased(MappedInputManager::Button::Down),
+            SETTINGS.sideButtonDownLong != CrossPointSettings::IGNORE, ReaderUtils::SKIP_HOLD_MS)) {
+      notifyQuickLockChanged();
+      lastActivityTime = millis();
+      return;
+    }
+    if (buttonShortcutController.tryUnlockFront(
+            mappedInputManager.buttonSampleTime(), mappedInputManager.isPressed(MappedInputManager::Button::Left),
+            mappedInputManager.wasPressed(MappedInputManager::Button::Left),
+            mappedInputManager.wasReleased(MappedInputManager::Button::Left),
+            mappedInputManager.isPressed(MappedInputManager::Button::Right),
+            mappedInputManager.wasPressed(MappedInputManager::Button::Right),
+            mappedInputManager.wasReleased(MappedInputManager::Button::Right), ReaderUtils::SKIP_HOLD_MS)) {
+      mappedInputManager.suppressNextFrontRelease(MappedInputManager::Button::Left);
+      mappedInputManager.suppressNextFrontRelease(MappedInputManager::Button::Right);
       notifyQuickLockChanged();
       lastActivityTime = millis();
       return;
@@ -1950,6 +2008,12 @@ void loop() {
     }
   }
 
+  // Background delivery must not hold up text entry or wait for a screen
+  // refresh after input was sampled: a stale touch-down can become a false hold.
+  if (!activityManager.isReaderActivity() && !activityManager.hasActivityNamed("KeyboardEntry")) {
+    RenderLock lock(RenderLock::Mode::Try);
+    if (lock.ownsLock()) pluginevents::pollOnline();
+  }
   const unsigned long activityStartTime = millis();
   activityManager.loop();
 #if CROSSINK_APP_CAP_TOUCH
@@ -1975,6 +2039,15 @@ void loop() {
   // Add delay at the end of the loop to prevent tight spinning
   // When an activity requests skip loop delay (e.g., webserver running), use yield() for faster response
   // Otherwise, use longer delay to save power
+  const auto waitForInput = [](const uint32_t timeoutMs) {
+#ifdef SIMULATOR
+    delay(timeoutMs);
+#else
+    // Wake before decoding/debouncing input, without raising the idle clock
+    // or running the whole main loop more often while the device is untouched.
+    if (gpio.waitForInput(timeoutMs)) powerManager.setPowerSaving(false);
+#endif
+  };
   const uint8_t inputPollDelayMs = activityManager.inputPollDelayMs();
   bool skipLoopDelay = false;
   {
@@ -1983,7 +2056,7 @@ void loop() {
     RenderLock lock(RenderLock::Mode::Try);
     if (!lock.ownsLock()) {
       // Continue polling at the activity's rate while its screen is drawn.
-      delay(inputPollDelayMs);
+      waitForInput(inputPollDelayMs);
       return;
     }
     skipLoopDelay = activityManager.skipLoopDelay();
@@ -1995,10 +2068,10 @@ void loop() {
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
-      delay(50);
+      waitForInput(50);
     } else {
       // Short delay to prevent tight loop while still being responsive
-      delay(inputPollDelayMs);
+      waitForInput(inputPollDelayMs);
     }
   }
 }

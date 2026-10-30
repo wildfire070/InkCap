@@ -5,6 +5,25 @@ All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8 unless a format notes a
 fixed-size char buffer.
 
+## Bookmark file safety
+
+Bookmark files under `/.crosspoint/bookmarks/` retain their existing binary
+versions (2–5). No format bump or cache reset is required.
+
+Writes go to `<file>.tmp`, are checked, synced and closed, then replace the
+primary through the shared atomic-file publisher. `<file>.bak` retains the
+previous primary until publication completes; reads recover it after an
+interrupted publication. Header scans ignore temporary files and can recover
+backup-only stores.
+
+Home header scans reject title, author or book-path fields over 1024 bytes.
+Direct loads stream unused metadata and compare the stored path in 64-byte
+chunks. Record counts and remaining file bytes are checked before a fallible
+record allocation. A failed complete load or legacy merge disables editing and
+saving for that session, preserving both source files until a successful
+reload. This also fails closed on corrupt canonical files rather than replacing
+them with a potentially incomplete legacy subset.
+
 ## Settings: menu navigation
 
 `menuNavigation` in `/.crosspoint/crossink-settings.json` selects Directional
@@ -34,6 +53,15 @@ slots and options, removes its text and progress lane from reader geometry, and
 reflows EPUB/TXT around the saved text position. XTC preserves its fixed-layout
 page and clears the displayed status strip. These fields round-trip through
 settings export/import and the web status-bar editor.
+
+`readerStatusBars.top.centered` and `readerStatusBars.bottom.centered` are
+optional booleans (Center Status Bar). Missing values default to `false`. When
+`true`, that bar draws every non-empty slot as one centered row in slot order.
+`readerStatusBars.top.separator` and `readerStatusBars.bottom.separator` pick the
+glyph between items: bullet `•` (`0`), en dash `–` (`1`), or `|` (`2`). Missing
+or invalid values fall back to the bullet. Bar height and reader pagination are
+unaffected. These fields round-trip through settings export/import and the web
+status-bar editor.
 
 `readerStatusBars.top.battery`, `readerStatusBars.bottom.battery`, and the root
 `displayBatteryStyle` select how a Battery slot renders in that bar: Icon + %
@@ -110,35 +138,43 @@ keeps at most 24 modified family profiles to bound RAM use while settings are op
 
 ## `/.crosspoint/sleep-image-index/<directory-hash>-{bmp,all}.idx`
 
-### Version 1
+### Version 2
 
 `ImageFolderIndex` (`src/activities/boot_sleep/ImageFolderIndex.{h,cpp}`) keeps
 a compact, rebuildable index per indexed folder. It backs both the sleep-image
 folder and the boot-screen folder (`/bootscreen` or `/.bootscreen`); the
 directory name predates the boot-screen use and was kept as-is so existing
-sleep caches aren't orphaned by an unrelated rename. The index avoids walking
-a folder on every selection while using only one fixed-size record at a time
-in RAM. `bmp` contains BMP files and `all` contains BMP and PNG files (sleep's
-Page Overlay mode only; the boot screen is BMP-only and always uses a `bmp`
-index). The `validated` header flag means BMP headers were checked while
-rebuilding after a failed render.
+sleep caches aren't orphaned by an unrelated rename. The index uses only one
+fixed-size filename record at a time in RAM. `bmp` contains BMP files and `all`
+contains BMP and PNG files (sleep's Page Overlay mode only; the boot screen is
+BMP-only and always uses a `bmp` index). The `validated` header flag means BMP
+headers were checked while rebuilding after a failed render.
 
-The index is disposable: a missing, malformed, or stale selected entry causes
-one rebuild and then the caller falls back to its directory scan. File
-transfer, file-browser, and preferred-folder changes invalidate affected
-indexes via `ImageFolderIndex::invalidateForPath()`. Files added or changed
-directly on the SD card have no notification path; they are picked up when a
-cached entry is found missing or when an index is otherwise rebuilt.
+Version 2 appends an ordered folder fingerprint to the packed header; version 1
+indexes rebuild automatically. On each sleep-image selection, the firmware walks
+the folder's direct children and fingerprints eligible filenames, file sizes and
+modification times. Additions, deletions, renames, replacements and changes to
+directory order refresh the index on the next selection, including direct SD
+copies. This costs a metadata walk per sleep, without decoding every image.
+Boot-screen selection retains its existing cached/random selection policy.
+
+The index is disposable. File-transfer, file-browser and preferred-folder changes
+invalidate indexes; USB Drive invalidates them before detaching the filesystem
+for raw host access (normal filesystem access resumes after reboot).
+Invalidation preserves the separate deck checkpoints for unchanged collections.
+If index/selection I/O or allocation fails, sleep retains its older scan/random fallback;
+the full-deck guarantee requires a writable cache and renderable images.
 
 ```c++
 struct ImageFolderIndexHeader {
     char magic[4];       // "CSIX"
-    u8 version;          // 1
+    u8 version;          // 2
     u8 flags;            // bit 0: BMP+PNG, bit 1: BMP headers validated
     u16 pathLength;
     u16 recordCount;
     u16 recordSize;      // sizeof(ImageFolderIndexRecord)
     u32 recordsOffset;   // sizeof(header) + pathLength
+    u64 fingerprint;     // ordered eligible filename/size/modification-time hash
     char directory[pathLength];
 };
 
@@ -150,7 +186,58 @@ struct ImageFolderIndexRecord {
 };
 ```
 
+### Sleep shuffled deck (`<index-path>.deck`), version 1
+
+Sleep images are drawn uniformly from the remaining images, which is equivalent
+to shuffling a deck and dealing every card once. A packed checkpoint stores one
+bit per index record (least significant bit first; 1 = attempted/skipped) plus this header:
+
+```c++
+struct SleepImageDeckHeader {
+    char magic[4];       // "CSDK"
+    u8 version;          // 1
+    u64 fingerprint;     // index fingerprint
+    u16 count;           // number of indexed candidates
+    u16 lastIndex;       // last displayed image, or 65535 before any display
+    u8 hasDisplayed;     // a successful display in the current round (0 or 1)
+    u64 checksum;        // FNV-1a over preceding header bytes and bitmap
+    u8 drawn[(count + 7) / 8];
+};
+```
+
+Numeric fields are little-endian, without padding. The checkpoint survives deep
+sleep and restart. Once all cards are drawn the bitmap clears; with more than one
+eligible image, the first successful display excludes the previous round's last
+displayed image, even if earlier attempts in the new round failed. Changes to the
+collection start a fresh deck; normal BMP and Page Overlay collections have
+independent checkpoints. Hidden files and subfolders are excluded, as before.
+Sleep retries retain the same index positions and deck: BMP validation and the
+BMP-only retry after a PNG failure filter the remaining cards, without resetting
+the round. Validation skips all known-malformed BMPs for the round; temporary
+BMP-only filtering leaves untried PNGs available. An exhausted retry subset does
+not bypass the deck through a random
+scan. The existing root/default screen remains available when no retry can draw.
+
+The bitmap needs `ceil(count / 8)` bytes of temporary heap (125 bytes for 1,000
+images, capped at 8,192 bytes for 65,535 images), freed before rendering. Retry
+filtering temporarily uses a second bitmap of the same size. After each render
+attempt, the drawn bit is saved; only a successful render updates the last
+displayed index. This consumes failed images without falsely counting them as
+displayed for boundary protection. Each attempt writes a synced temporary
+checkpoint and publishes it through the shared atomic
+file helper, retaining `.bak` until publication succeeds. A remaining backup is
+recovered before reading; a malformed or checksum-invalid checkpoint starts a
+fresh deck. Deleting `/.crosspoint/sleep-image-index/` resets indexes and decks.
+
 ## `/.crosspoint/library.idx`
+
+### Version 8
+
+Version 8 keeps the version 7 layout and rebuilds the index to exclude
+`XTCache` and `System Volume Information` directories, regardless of FAT name
+casing. Version 7 remains readable for reconciliation, preserving arrival
+history and reusable metadata. Rebuilding never deletes the source books or
+system directories.
 
 ### Version 7
 
@@ -737,6 +824,27 @@ book is renamed or moved outside CrossInk, the path hash changes, so the old
 clipping file may no longer be associated with the book until the file is moved
 back or the clipping store is migrated.
 
+## `stats_v6.bin`
+
+### Version 6
+
+Version 6 extends the 73-byte version 5 layout below to 75 bytes:
+
+- `[0]` version (`6`)
+- `[1-72]` unchanged version 5 fields
+- `[73-74]` `paceFractionMillis` (`uint16_t` LE, `0..999`)
+
+Reading pace is `avgSecondsPerForwardPage * 1000 + paceFractionMillis`
+milliseconds per forward page, capped at `65535000` ms. The fraction is zero
+at that cap. Fractional precision is preserved across updates and reopen.
+The whole-second field and sync payload retain their existing units.
+
+When absent, reads try `stats_v5.bin`, `stats_v4.bin`, then legacy `stats.bin`.
+Older payloads start with a zero fractional part. Saves write only version 6;
+older canonical snapshots remain available to older firmware. Reset removes
+all supported versioned snapshots and recovery files to avoid restoring old
+history. This stats-only change does not invalidate EPUB layout caches.
+
 ## `stats_v5.bin`
 
 ### Version 5
@@ -769,6 +877,58 @@ Binary layout:
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
 ## `section.bin`
+
+### Version 102
+
+Complete caches use `102`; suspended partial caches use `0xD7`. GIF images now
+participate in EPUB layout, so older pages must be rebuilt. The binary layout
+is unchanged.
+
+### Version 101
+
+Complete caches use `101`; suspended partial caches use `0xD6`. SD-font layout
+rounds each glyph advance to pixels before summing, matching drawing while
+preserving character spacing and boundary kerning. The payload is unchanged.
+Both complete and partial caches from version `100` / `0xD5` and earlier rebuild
+automatically; saved reading progress and book metadata are preserved.
+
+### Version 100
+
+Complete caches use `100`; suspended partial caches use `0xD5`. The payload
+retains the reference-text offset tables introduced in version 99 below.
+Layout beside drop caps stops after the requested lines, leaving the remaining
+words intact for full-width layout. Both cache types rebuild to remove stale
+hyphens and refresh wrapping; book metadata and saved progress are kept.
+Version `99` / `0xD4` and earlier caches are rejected as stale.
+
+### Version 99
+
+Complete caches use `99`; suspended partial caches use `0xD4`. The header and
+existing lookup-table offsets are unchanged. After the visible-text offset
+table, a second `uint32_t[pageCount]` table stores normalized reference-text
+character offsets at each page start, followed by a `uint32_t` total normalized
+text length (zero while partial). The partial parse-watermark trailer follows
+these new fields. Both cache types rebuild automatically.
+
+All section builders record these coordinates, including sleep-page rebuilds
+that skip location metadata. The in-memory page index grows from 12 to 16 bytes
+per page, in fallible 1 KiB chunks; active text buffers also retain the parser's
+existing optional four-byte reference offset per buffered word.
+
+These coordinates let book time-left use the stable-page manifest's text units
+without relying on a provisional chapter page count. Character-based manifests
+work during incremental indexing. Older word-based manifests use the complete
+section's text length to map character positions to fractional word progress;
+they retain the screen-page fallback while that length is unknown. Stable pace
+is learned in memory from three accepted forward reads per session and remains
+valid through font/layout changes; the persisted screen-page pace is separate.
+
+### Version 98
+
+Complete caches use `98`; suspended partial caches use `0xD3`. The payload is
+unchanged. Pending words are committed to their original paragraph before a
+nested block changes layout or inherited font styles. Both cache types rebuild
+automatically so existing books pick up the corrected word placement (#886).
 
 ### Version 95
 
@@ -1557,9 +1717,10 @@ UTC after NTP; this does not add background NTP or correct deep-sleep clock drif
 No historical duration is inferred from global totals, buckets, or history bits.
 
 RAM is bounded: two day counters plus at most nine seconds of pending short-session
-intervals per reader. Saves are debounced to 60 accepted seconds, and flushed at
-existing global-stat save/exit boundaries and before sync. A sudden power loss can
-lose uncheckpointed accepted seconds (normally under 60), plus the current page
+intervals per reader. Saves are debounced to 300 accepted seconds (five minutes),
+with periodic checkpoints waiting for one second of quiet reader input/rendering.
+Explicit global-stat saves, reader exits and sync still flush immediately. A sudden power loss can
+lose uncheckpointed accepted seconds (normally under 300, but longer while paging), plus the current page
 interval that has not yet been accepted. Normal sleep commits through reader exit.
 Daily counters survive book/global-total resets and book moves/merges; they are
 monotonic device history for sync, independent of those resettable totals. Deleting
@@ -1688,3 +1849,68 @@ a restart before another operation or activation of its new mapping.
 Section cache version 96 (partial version `0xD1`) adds breakable, space-free token boundaries after visible hyphens and dashes. Both complete and suspended caches from earlier versions rebuild automatically.
 
 Section cache version 97 (partial version `0xD2`) prevents justification from stretching boundaries inside hyphenated words. Complete and suspended layouts from earlier versions rebuild automatically; the binary payload is unchanged.
+
+
+## Reading session outbox
+
+New measured sessions supplement the existing book/global counters and daily
+history; no existing stats file or EPUB cache format changes. Each tracking
+session keeps a random 128-bit ID and cumulative active seconds, checkpointed
+after another 300 accepted reading seconds (five minutes) and on normal reader
+exit or tracking disable. Periodic writes wait until reader input/rendering have been quiet for
+one second; explicit saves bypass that delay. Matching previews of the existing book/global counters are saved without
+consuming the live session, including temporary overlays and restart handoffs. A checkpoint excludes idle page intervals using the existing timer.
+Intervals with an unavailable/corrected clock remain in the existing counters
+but do not produce fabricated dated sessions. The outbox is independent of book
+cache cleanup and follows the configured KOReader document identity at capture.
+
+`/.crosspoint/reading_sessions/<32-lowercase-hex-id>.bin` uses SyncFiles atomic
+writes, CRC validation, and `.tmp`/`.bak` recovery. Fields are written separately
+in the firmware's little-endian integer representation, without struct padding:
+
+| Field | Bytes |
+|---|---:|
+| Format version (1) | 1 |
+| Session ID, ASCII hex without terminator | 32 |
+| Document ID, ASCII hex without terminator | 32 |
+| UTC start timestamp, seconds | 8 |
+| UTC end timestamp, seconds | 8 |
+| Cumulative active reading seconds | 4 |
+| Signed UTC offset, minutes | 2 |
+| CRC32 over preceding bytes | 4 |
+
+Session IDs remain unchanged as checkpoints grow and across upload retries.
+Uploads use the existing stats credentials and privacy switches, with at most
+20 records per network pass. A specific `accepted_session_ids` acknowledgment is
+required before deleting the local file and its recovery copies. An older server
+without `/api/v1/stats/sessions` leaves the outbox intact and does not invalidate
+support for the older stats endpoints. Corrupt/unreadable records and failed
+uploads are retained. Reading fragments under ten seconds are not exported,
+matching the current BookOrbit minimum; existing counters keep their own rules.
+
+This adds future session detail only. Old totals, daily time, and streak history
+are retained without guessing historical sessions. Clock/offset changes and gaps between accepted active intervals start a
+new session identity, so a paused reader does not spread reading time across
+unread hours or dates. Future-dated records are retained after clock correction
+while other valid sessions continue to upload. Device display continues to use the existing counters;
+imported aggregate stats never enter this local measured-session outbox.
+
+Automatic BookOrbit export requires a resolved book match. EPUB progress normally
+supplies the matching metadata. XTC's stats-only protocol currently supplies no
+title/author, so its sessions require an existing or manually established match
+to the corresponding EPUB in BookOrbit.
+
+## Protected EPUB `<book>.key`
+
+Version 2 stores `FIBK` (4 bytes), version `2` (1 byte), content-key length
+(1 byte: 16 or 32), expiry (8-byte little-endian UTC epoch seconds; zero means
+no expiry), random IV (12 bytes), wrapped content key (16 or 32 bytes), and
+AES-GCM tag (16 bytes). The complete 14-byte header is authenticated as additional
+data. The wrapping key is SHA-256 of `book-key:` followed by the 32-byte internal
+NVS device secret. The file is 58 or 74 bytes; unexpected lengths are rejected.
+Version 1 remains readable and has a 13-byte header without the key-length byte,
+with a fixed 16-byte content key.
+
+Writes use `.tmp` staging and `.old` recovery. The device secret is not stored on
+the SD card. Existing EPUB cache formats are unchanged; those caches may contain
+decoded content and are usable by the reader only after its book-open access check.

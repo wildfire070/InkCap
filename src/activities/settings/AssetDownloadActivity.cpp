@@ -198,10 +198,7 @@ void AssetDownloadActivity::fetch() {
   showBusy();
   AssetCatalog::Options parserOptions;
   parserOptions.expectedKind = kind_;
-  const char* version = AppVersion::version();
-  const size_t versionLength = std::strlen(version);
-  const bool rc = versionLength >= 3 && std::strcmp(version + versionLength - 3, "-RC") == 0;
-  parserOptions.expectedChannel = rc ? AssetCatalog::Channel::Rc : AssetCatalog::Channel::Stable;
+  parserOptions.expectedChannel = AssetDownloadService::channelForVersion(AppVersion::version());
   parserOptions.expectedSource = I18n::sourceContract();
   parserOptions.expectedKeyset = I18n::keysetContract();
   parserOptions.supportedTranslation = [](const char* code, void*) { return I18n::supportedDownload(code); };
@@ -213,11 +210,11 @@ void AssetDownloadActivity::fetch() {
     showError(StrId::STR_MEMORY_ERROR, Pending::Exit);
     return;
   }
-  char relative[64];
-  std::snprintf(relative, sizeof(relative), "catalogs/%s/%s.json", rc ? "rc" : "stable",
-                kind_ == AssetCatalog::Kind::Hyphenation ? "hyphenation" : "translation");
-  bool valid = AssetDownloadService::buildUrl(catalogEndpoints_, relative, url_, sizeof(url_));
+  char relative[AssetCatalog::MAX_CATALOG_PATH];
+  bool valid = AssetCatalog::catalogPath(parserOptions, relative, sizeof(relative)) &&
+               AssetDownloadService::buildUrl(catalogEndpoints_, relative, url_, sizeof(url_));
   if (valid) {
+    LOG_DBG("ASSET", "Fetching catalog: %s", url_);
     HttpDownloader::DownloadOptions options;
     options.maxBytes = AssetCatalog::MAX_CATALOG_BYTES;
     options.maxRedirects = 2;
@@ -289,7 +286,8 @@ void AssetDownloadActivity::installSelected() {
     return;
   }
   if (result != Result::Ok) {
-    LOG_ERR("ASSET", "Source discovery: %s", AssetDownloadService::resultName(result));
+    LOG_ERR("ASSET", "Pre-download SD check failed: code=%s result=%s", catalog_->entries[selected_].code,
+            AssetDownloadService::resultName(result));
     showError(result == Result::Collision ? StrId::STR_LANGUAGE_DUPLICATE : StrId::STR_LANGUAGE_IO_ERROR,
               Pending::Install);
     return;

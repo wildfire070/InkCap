@@ -5,9 +5,10 @@
 #include <Memory.h>
 #include <WiFi.h>
 #include <base64.h>
-#if defined(FREEINK_NET_WOLFSSL)
+#if defined(FREEINK_NET_WOLFSSL) || defined(FREEINK_NET_EXTERNAL_TLS)
 #include <SecureHttpClient.h>
 #endif
+#include <DownloadFileSwap.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <strings.h>
@@ -18,7 +19,6 @@
 #include <utility>
 
 #include "AppVersion.h"
-#include "network/DownloadFileSwap.h"
 #include "network/HttpDownloadFilename.h"
 #include "network/HttpDownloadResume.h"
 #include "network/HttpRedirectPolicy.h"
@@ -132,6 +132,7 @@ class ProgressNotifier {
 };
 
 struct Sink {
+  const std::vector<HttpDownloader::Header>* headers = nullptr;
   std::function<bool(const uint8_t*, size_t)> write;
   HttpDownloader::ProgressCallback progress;
   bool* cancelFlag = nullptr;
@@ -243,7 +244,7 @@ void logTlsError(esp_http_client_handle_t client, const char* phase) {
   }
 }
 
-#if defined(FREEINK_NET_WOLFSSL)
+#if defined(FREEINK_NET_WOLFSSL) || defined(FREEINK_NET_EXTERNAL_TLS)
 std::string_view responseDisposition(freeink::SecureHttpClient& http, const Sink& sink) {
   if (!sink.prepareDestination) return {};
   const auto* header = http.getUniqueHeader("content-disposition");
@@ -258,7 +259,7 @@ std::string responseValidator(freeink::SecureHttpClient& http) {
 }
 #endif
 
-#if defined(FREEINK_NET_WOLFSSL)
+#if defined(FREEINK_NET_WOLFSSL) || defined(FREEINK_NET_EXTERNAL_TLS)
 HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::string& username,
                                             const std::string& password, const std::string& bearerToken,
                                             const HttpRedirectPolicy::Url& credentialOrigin, const bool hasCredentials,
@@ -278,6 +279,7 @@ HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::s
 
     freeink::SecureHttpClient http;
     http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setReserveFullRecord(sink.options->reserveFullRecord);
     // SecureNet does not yet expose ESP-IDF's CA bundle. This matches the
     // existing KOSync transport; cross-origin hops omit Basic credentials.
     http.setInsecure();
@@ -293,6 +295,10 @@ HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::s
       http.addHeader("Referer", BOOKFUSION_REFERER);
     } else {
       http.setUserAgent(AppVersion::userAgent());
+    }
+    if (sink.headers && currentParsed &&
+        HttpRedirectPolicy::shouldSendAuthorization(currentOrigin, credentialOrigin, true)) {
+      for (const auto& h : *sink.headers) http.addHeader(h.first, h.second);
     }
     if (sink.resumeOffset > 0) {
       char rangeHeader[40];
@@ -346,6 +352,7 @@ HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::s
     // GET can fail after receiving headers (including a truncated 200).
     if (sink.diagnostics) sink.diagnostics->status = http.getStatus();
     if (http.aborted()) return HttpDownloader::ABORTED;
+    if (status == 401 || status == 403) return HttpDownloader::UNAUTHORIZED;
     if (sink.rangeIgnored) {
       LOG_DBG("HTTP", "Server ignored range request; restarting download");
       return HttpDownloader::HTTP_ERROR;
@@ -441,6 +448,10 @@ HttpDownloader::DownloadError runGetDefault(const std::string& url, const std::s
     }
 
     setRequestHeaders(client, currentUrl, username, password, bearerToken, sink.resumeOffset, sendAuthorization);
+    if (sink.headers && currentParsed &&
+        HttpRedirectPolicy::shouldSendAuthorization(currentOrigin, credentialOrigin, true)) {
+      for (const auto& h : *sink.headers) esp_http_client_set_header(client, h.first.c_str(), h.second.c_str());
+    }
     if (sink.resumeOffset && !sink.validator.empty())
       esp_http_client_set_header(client, "If-Range", sink.validator.c_str());
 
@@ -469,6 +480,10 @@ HttpDownloader::DownloadError runGetDefault(const std::string& url, const std::s
       return HttpDownloader::HTTP_ERROR;
     }
 
+    if (status == 401 || status == 403) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::UNAUTHORIZED;
+    }
     if (isRedirect(status)) {
       if (responseHeaders.location.empty()) {
         LOG_ERR("HTTP", "Redirect missing Location header");
@@ -603,9 +618,13 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
                                      const HttpDownloader::Transport transport) {
   HttpRedirectPolicy::Url credentialOrigin;
   const std::string_view credentialUrl = authorizationOrigin.empty() ? std::string_view(url) : authorizationOrigin;
-  const bool hasCredentials = ((!username.empty() && !password.empty()) || !bearerToken.empty()) &&
-                              HttpRedirectPolicy::parseUrl(credentialUrl, credentialOrigin);
-#if defined(FREEINK_NET_WOLFSSL)
+  // Parsed unconditionally: callers with no username/password/bearerToken (e.g. plugin-supplied
+  // sink.headers) still need a real credentialOrigin so their own origin check isn't comparing
+  // against a default-constructed Url that can never match.
+  const bool originParsed = HttpRedirectPolicy::parseUrl(credentialUrl, credentialOrigin);
+  const bool hasCredentials =
+      ((!username.empty() && !password.empty()) || !bearerToken.empty()) && originParsed;
+#if defined(FREEINK_NET_WOLFSSL) || defined(FREEINK_NET_EXTERNAL_TLS)
   if (transport == HttpDownloader::Transport::WOLFSSL) {
     return runGetWolfSsl(url, username, password, bearerToken, credentialOrigin, hasCredentials, sink, bufferSize);
   }
@@ -659,6 +678,7 @@ HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, 
   Sink sink;
   sink.options = &options;
   sink.diagnostics = diagnostics;
+  sink.headers = options.headers;
   sink.write = onData;
   sink.progress = std::move(progress);
   sink.shouldCancel = std::move(options.shouldCancel);
@@ -702,6 +722,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   Sink sink;
   sink.options = &options;
   sink.diagnostics = diagnostics;
+  sink.headers = options.headers;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
   sink.shouldCancel = std::move(options.shouldCancel);

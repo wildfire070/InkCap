@@ -24,8 +24,37 @@ class Env(dict):
     def AddBuildMiddleware(self, callback, pattern): self.middleware.append((callback, pattern))
 
 class BuildIdentityTest(unittest.TestCase):
+    def test_asset_download_channel_overrides_version(self):
+        versions = ("", "RC", "1.6.1", "1.6.1-x4-pro", "1.6.1-abc1234-RC",
+                    "2.0.0-local-development+abc1234", "2.0.0-RC-local-development+abc1234")
+        for channel in (None, "rc", "stable"):
+            with self.subTest(channel=channel):
+                source = '#include "AssetDownloadService.h"\n'
+                for version in versions:
+                    rc = channel == "rc" if channel is not None else version.endswith("-RC")
+                    expected = "Rc" if rc else "Stable"
+                    source += (f'static_assert(AssetDownloadService::channelForVersion("{version}") '
+                               f'== AssetCatalog::Channel::{expected});\n')
+                command = ["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                           "-I", str(ROOT / "src/network"), "-I", str(ROOT / "lib/AssetCatalog"),
+                           "-x", "c++", "-fsyntax-only", "-"]
+                if channel is not None:
+                    command.append(f'-DASSET_DOWNLOAD_CHANNEL="{channel}"')
+                subprocess.run(command, input=source, text=True, check=True, capture_output=True)
+
+    def test_asset_download_channel_rejects_invalid_override(self):
+        for channel in ("", "RC", "beta"):
+            with self.subTest(channel=channel):
+                result = subprocess.run(
+                    ["c++", "-std=c++17", "-I", str(ROOT / "src/network"),
+                     "-I", str(ROOT / "lib/AssetCatalog"),
+                     f'-DASSET_DOWNLOAD_CHANNEL="{channel}"', "-x", "c++", "-fsyntax-only", "-"],
+                    input='#include "AssetDownloadService.h"\n', text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('ASSET_DOWNLOAD_CHANNEL must be "rc" or "stable"', result.stderr)
+
     def test_download_endpoint_is_explicit_and_validated(self):
-        base = "https://crossink-languages.s3.us-east-1.amazonaws.com/testing/abc/"
+        base = "https://assets.example.invalid/testing/abc/"
         function = MODULE["inject_download_endpoints"]
         env = Env()
         with patch.dict(os.environ, {"CROSSINK_ASSET_BASE_URL": base}, clear=True):

@@ -323,14 +323,15 @@ void CalibreConnectActivity::loop() {
 
 void CalibreConnectActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
+  const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int pageWidth = safe.width;
+  const int pageHeight = safe.height;
 
   renderer.clearScreen();
 
   CompactHeader::drawTitle(renderer, tr(STR_CALIBRE_WIRELESS));
   const auto height = renderer.getLineHeight(UI_10_FONT_ID);
-  const auto top = (pageHeight - height) / 2;
+  const auto top = safe.y + (pageHeight - height) / 2;
 
   if (state == CalibreConnectState::SERVER_STARTING) {
     renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_CALIBRE_STARTING));
@@ -338,13 +339,13 @@ void CalibreConnectActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_12_FONT_ID, top, tr(STR_CONNECTION_FAILED), true, EpdFontFamily::BOLD);
   } else if (state == CalibreConnectState::SERVER_RUNNING) {
     const int subHeaderTop = CompactHeader::contentTop(renderer);
-    GUI.drawSubHeader(renderer, Rect{0, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
+    GUI.drawSubHeader(renderer, Rect{safe.x, subHeaderTop, pageWidth, metrics.tabBarHeight}, connectedSSID.c_str());
 
     // Keep the network name and full address independently readable on narrow
     // screens. Sharing one subheader row forces one of them to be truncated.
     const std::string ipLabel = std::string(tr(STR_IP_ADDRESS_PREFIX)) + connectedIP;
     const int ipTop = subHeaderTop + metrics.tabBarHeight + metrics.verticalSpacing;
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, ipTop, ipLabel.c_str());
+    renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, ipTop, ipLabel.c_str());
 
     int y = ipTop + height + metrics.verticalSpacing * 3;
     const auto heightText12 = renderer.getTextHeight(UI_12_FONT_ID);
@@ -353,19 +354,22 @@ void CalibreConnectActivity::render(RenderLock&&) {
     // Once at least one file has landed, the connect instructions have already
     // served their purpose -- drop them to give the (potentially long) tally room.
     if (!hasBatchResults) {
-      renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true,
+      renderer.drawText(UI_12_FONT_ID, safe.x + metrics.contentSidePadding, y, tr(STR_CALIBRE_SETUP), true,
                         EpdFontFamily::BOLD);
       y += heightText12 + metrics.verticalSpacing * 2;
 
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_INSTRUCTION_1));
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height, tr(STR_CALIBRE_INSTRUCTION_2));
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 2, tr(STR_CALIBRE_INSTRUCTION_3));
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y + height * 3, tr(STR_CALIBRE_INSTRUCTION_4));
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y, tr(STR_CALIBRE_INSTRUCTION_1));
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y + height, tr(STR_CALIBRE_INSTRUCTION_2));
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y + height * 2,
+                        tr(STR_CALIBRE_INSTRUCTION_3));
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y + height * 3,
+                        tr(STR_CALIBRE_INSTRUCTION_4));
 
       y += height * 3 + metrics.verticalSpacing * 4;
     }
 
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, y, tr(STR_CALIBRE_STATUS), true, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, safe.x + metrics.contentSidePadding, y, tr(STR_CALIBRE_STATUS), true,
+                      EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
 
     const bool showUploadProgress = lastProgressTotal > 0 && lastProgressReceived <= lastProgressTotal;
@@ -376,9 +380,9 @@ void CalibreConnectActivity::render(RenderLock&&) {
         label = renderer.truncatedText(SMALL_FONT_ID, label.c_str(), pageWidth - metrics.contentSidePadding * 2,
                                        EpdFontFamily::REGULAR);
       }
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, label.c_str());
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y, label.c_str());
       GUI.drawProgressBar(renderer,
-                          Rect{metrics.contentSidePadding, y + height + metrics.verticalSpacing,
+                          Rect{safe.x + metrics.contentSidePadding, y + height + metrics.verticalSpacing,
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
                           lastProgressReceived, lastProgressTotal);
       y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
@@ -452,7 +456,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
       std::string msg = std::string(tr(STR_CALIBRE_RECEIVED)) + lastCompleteName;
       msg = renderer.truncatedText(SMALL_FONT_ID, msg.c_str(), pageWidth - metrics.contentSidePadding * 2,
                                    EpdFontFamily::REGULAR);
-      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, msg.c_str());
+      renderer.drawText(SMALL_FONT_ID, safe.x + metrics.contentSidePadding, y, msg.c_str());
     }
 
     const bool canScrollBatchList = hasBatchResults && !showUploadProgress && batchLineCount() > batchListVisibleRows;

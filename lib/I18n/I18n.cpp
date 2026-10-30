@@ -38,6 +38,9 @@ bool writeFlash(void* context, size_t offset, const void* bytes, size_t count) {
 bool eraseFlash(void* context, size_t offset, size_t count) {
   return static_cast<AssetCacheStorage*>(context)->erase(offset, count);
 }
+bool verifyFlash(void* context, size_t offset, const void* bytes, size_t count) {
+  return static_cast<AssetCacheStorage*>(context)->verify(offset, bytes, count);
+}
 uint64_t microseconds() {
 #if defined(SIMULATOR)
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
@@ -267,7 +270,7 @@ Result I18n::discover(Catalog& catalog, void* context, bool (*continueWork)(void
     }
     char filename[MAX_FILENAME];
     const size_t nameLength = file.getName(filename, sizeof(filename));
-    if (file.isDirectory() || !nameLength || nameLength >= sizeof(filename) - 1) {
+    if (file.isDirectory() || !nameLength || nameLength >= sizeof(filename) - 1 || isAppleDoubleFile(filename)) {
       file.close();
       continue;
     }
@@ -383,10 +386,25 @@ Result I18n::prepare(const char* path, Installed& result) {
     LOG_ERR("LANG", "Language flash unavailable");
     return Result::StorageUnavailable;
   }
+  // One temporary 64 KiB PSRAM slot avoids per-string SD writes/flushes.
+  // Too large for the stack; C3 and compatible-flash installs keep their old path.
+  HeapByteBuffer staging;
+  if (flash_.usesSd()) {
+#if defined(SIMULATOR)
+    staging = makeHeapByteBufferNoThrow(SLOT_SIZE);
+#else
+    staging = makePsramByteBufferNoThrow(SLOT_SIZE);
+#endif
+    if (!staging) {
+      LOG_ERR("LANG", "Cannot allocate %u bytes of PSRAM for language install", unsigned(SLOT_SIZE));
+      file.close();
+      return Result::Memory;
+    }
+  }
   const uint64_t start = microseconds();
-  const Flash flash{&flash_, flash_.size(), readFlash, writeFlash, eraseFlash};
+  const Flash flash{&flash_, flash_.size(), readFlash, writeFlash, eraseFlash, flash_.usesSd() ? verifyFlash : nullptr};
   const auto status = install({&file, readInput, [](void* context) { return static_cast<HalFile*>(context)->seek(0); }},
-                              SCHEMA, flash, slot_, result);
+                              SCHEMA, flash, slot_, result, staging.get());
   if (status == Result::Ok) prepared_ = true;
   file.close();
   if (status == Result::Unchanged)

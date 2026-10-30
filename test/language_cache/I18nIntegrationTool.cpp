@@ -68,7 +68,12 @@ int main(int argc, char** argv) {
     const char* old = tr(STR_SETTINGS_TITLE);
     const std::string before(old);
     language_cache::Installed installed;
+    const auto beforeSyncs = HalFile::syncs;
     const auto result = I18N.prepare(argv[4], installed);
+    // The SD installation may initialize the cache once, then sync erase,
+    // compiled data, and commit marker. Never flush per translated string.
+    if (std::getenv("CROSSINK_TEST_BATCHED_INSTALL") && HalFile::syncs - beforeSyncs > 4) return 10;
+    if (HalFile::liveFiles) return 11;
     if (result != language_cache::Result::Ok) {
       std::fprintf(stderr, "%s\n", language_cache::resultName(result));
       return 5;

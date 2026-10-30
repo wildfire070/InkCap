@@ -4,6 +4,7 @@
 #include <HalClock.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <TrustedTime.h>
 #include <WiFi.h>
 
 #include <cstdio>
@@ -67,6 +68,8 @@ void ClockSyncActivity::runSync() {
   }
 
   const bool ok = halClock.syncFromNTP();
+  trustedtime::note();
+  trustedtime::startSync();
   if (!ok) {
     state = FAILED;
     requestUpdate();
