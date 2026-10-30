@@ -294,6 +294,9 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasAo3Library, b
   if (hasPlugins) {
     items.push({tr(STR_PLUGINS), UIIcon::Plugins, HomeMenuAction::Plugins});
   }
+  if (hasOpdsServers) {
+    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
+  }
   if (hasAo3Library) {
     items.push({tr(STR_AO3_LIBRARY), Ao3, HomeMenuAction::Ao3Library});
   }
@@ -1670,6 +1673,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::Plugins:
             onPluginsOpen();
             break;
+          case HomeMenuAction::OpdsBrowser:
+            onOpdsBrowserOpen();
+            break;
           case HomeMenuAction::Ao3Library:
             onAo3LibraryOpen();
             break;
@@ -1918,6 +1924,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::Plugins:
         onPluginsOpen();
+        break;
+      case HomeMenuAction::OpdsBrowser:
+        onOpdsBrowserOpen();
         break;
       case HomeMenuAction::Ao3Library:
         onAo3LibraryOpen();
@@ -2542,6 +2551,8 @@ void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
+
+void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onPluginsOpen() { activityManager.goToPlugins(); }
 
