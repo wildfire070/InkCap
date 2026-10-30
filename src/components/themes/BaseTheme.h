@@ -176,7 +176,8 @@ enum UIIcon {
   Hotspot,
   Chart,
   Ao3,
-  BookCheck
+  BookCheck,
+  Plugins
 };
 
 // Default theme implementation (Classic Theme)

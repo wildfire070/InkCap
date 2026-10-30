@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "HttpRequestDiagnostics.h"
 
@@ -17,6 +18,7 @@
  */
 class HttpDownloader {
  public:
+  using Header = std::pair<std::string, std::string>;
   using ProgressCallback = std::function<void(size_t downloaded, size_t total)>;
   using CancelCallback = std::function<bool()>;
   // Called with each body chunk as it arrives; return false to abort. Lets a
@@ -29,6 +31,7 @@ class HttpDownloader {
     FILE_ERROR,
     ABORTED,
     INSUFFICIENT_SPACE,
+    UNAUTHORIZED,
     FILE_EXISTS,  // Resolved destination needs explicit replacement approval.
   };
 
@@ -47,6 +50,8 @@ class HttpDownloader {
           bufferSize(bufferSize),
           transport(transport) {}
 
+    // Borrowed for the synchronous call; never forwarded to a different origin.
+    const std::vector<Header>* headers = nullptr;
     bool preservePartial;
     bool resumePartial;
     CancelCallback shouldCancel;
@@ -86,6 +91,9 @@ class HttpDownloader {
     // writing anything if the SD card cannot hold the file. The first check
     // can scan the whole FAT, so leave it off for small files.
     bool checkFreeSpace = false;
+    // Opt in only for bulk WOLFSSL transfers. Reserve after request text is
+    // freed; other transports and SDK builds without retention ignore this.
+    bool reserveFullRecord = false;
     // OPDS EPUBs only: choose the final response's safe Content-Disposition
     // basename, falling back to destPath. Requires stageAsPart. A collision
     // returns FILE_EXISTS before touching the partial or complete book.

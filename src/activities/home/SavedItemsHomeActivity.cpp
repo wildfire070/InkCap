@@ -354,29 +354,38 @@ void SavedItemsHomeActivity::showSavedBookActionMenu(const int bookIndex, const 
 }
 
 void SavedItemsHomeActivity::openBookmarkList(const SavedBookEntry& entry) {
-  BOOKMARKS.loadForBook(entry.bookPath, entry.bookTitle, entry.bookAuthor, entry.bookType);
+  if (!BOOKMARKS.loadForBook(entry.bookPath, entry.bookTitle, entry.bookAuthor, entry.bookType)) {
+    LOG_ERR("SVA", "Failed to load bookmarks");
+    requestUpdate();
+    return;
+  }
+  auto bookmarkList = makeUniqueNoThrow<EpubReaderBookmarkListActivity>(renderer, mappedInput);
+  if (!bookmarkList) {
+    LOG_ERR("SVA", "OOM: bookmark list activity (%u bytes)",
+            static_cast<unsigned>(sizeof(EpubReaderBookmarkListActivity)));
+    requestUpdate();
+    return;
+  }
 
-  startActivityForResult(
-      std::make_unique<EpubReaderBookmarkListActivity>(renderer, mappedInput, BOOKMARKS.getBookmarks()),
-      [this, entry](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          const auto* bm = std::get_if<BookmarkResult>(&result.data);
-          if (bm) {
-            APP_STATE.pendingBookmarkSpine = bm->spineIndex;
-            APP_STATE.pendingBookmarkProgress = bm->progress;
-            APP_STATE.pendingBookmarkParagraphIndex = bm->paragraphIndex;
-            APP_STATE.pendingClippingIndex = UINT16_MAX;
-            APP_STATE.saveToFile();
-            onSelectBook(entry.bookPath);
-          } else {
-            LOG_ERR("SVA", "openBookmarkList: unexpected result variant");
-            requestUpdate();
-          }
-        } else {
-          reloadSavedBooks();
-          requestUpdate();
-        }
-      });
+  startActivityForResult(std::move(bookmarkList), [this, entry](const ActivityResult& result) {
+    if (!result.isCancelled) {
+      const auto* bm = std::get_if<BookmarkResult>(&result.data);
+      if (bm) {
+        APP_STATE.pendingBookmarkSpine = bm->spineIndex;
+        APP_STATE.pendingBookmarkProgress = bm->progress;
+        APP_STATE.pendingBookmarkParagraphIndex = bm->paragraphIndex;
+        APP_STATE.pendingClippingIndex = UINT16_MAX;
+        APP_STATE.saveToFile();
+        onSelectBook(entry.bookPath);
+      } else {
+        LOG_ERR("SVA", "openBookmarkList: unexpected result variant");
+        requestUpdate();
+      }
+    } else {
+      reloadSavedBooks();
+      requestUpdate();
+    }
+  });
 }
 
 void SavedItemsHomeActivity::openClippingList(const SavedBookEntry& entry) {

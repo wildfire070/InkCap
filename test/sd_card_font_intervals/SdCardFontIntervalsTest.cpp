@@ -3,6 +3,7 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -42,6 +43,7 @@ struct Allocation {
 };
 Allocation arrays[128]{};
 int failArrayCall = -1, arrayCalls = 0;
+size_t largestArrayRequest = 0;
 void* allocateArray(size_t n) {
   void* p = std::malloc(n ? n : 1);
   if (!p) throw std::bad_alloc();
@@ -71,6 +73,7 @@ void freeArray(void* p) {
 }  // namespace
 void* operator new[](size_t n) { return allocateArray(n); }
 void* operator new[](size_t n, const std::nothrow_t&) noexcept {
+  largestArrayRequest = std::max(largestArrayRequest, n);
   if (arrayCalls++ == failArrayCall) return nullptr;
   return allocateArray(n);
 }
@@ -441,10 +444,89 @@ void contentSizeChecks(const std::string& path) {
   for (const auto& file : family.files) std::filesystem::remove(file.path);
 }
 
+void upstreamFontTests(const std::string& path) {
+  // Corrupt length, out-of-file bitmap, and 32-bit offset wrap must all be blank
+  // through direct metrics, prewarm, and on-demand/lean-content loading.
+  for (int damage = 0; damage < 3; ++damage) {
+    fixture(path, {{0, table({{0x41, 0x44}})}});
+    constexpr size_t glyphOffset = 64 + sizeof(EpdUnicodeInterval) + sizeof(EpdGlyph);
+    std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+    EpdGlyph glyph{};
+    file.seekg(glyphOffset);
+    file.read(reinterpret_cast<char*>(&glyph), sizeof(glyph));
+    if (damage == 0) glyph.dataLength = 500;
+    if (damage == 1) glyph.dataOffset = 10000;
+    if (damage == 2) glyph.dataOffset = UINT32_MAX;
+    file.seekp(glyphOffset);
+    file.write(reinterpret_cast<const char*>(&glyph), sizeof(glyph));
+    file.close();
+    for (bool lean : {false, true}) {
+      SdCardFont::takeCorruptGlyphNotice();
+      SdCardFont font;
+      assert(font.load(path.c_str(), lean ? 100000 : 0));
+      uint16_t width = 99;
+      assert(font.readAdvance('B', 0, &width) && width == 0);
+      assert(SdCardFont::takeCorruptGlyphNotice());
+      assert(!SdCardFont::takeCorruptGlyphNotice());
+      assert(font.buildAdvanceTable("ABCD", 1) == 0);
+      assert(font.prewarm("ABCD", 1) == (lean ? 0 : 1));  // fixture has no replacement glyph
+      const auto* bad = font.getEpdFont()->getGlyph('B');
+      assert(bad && bad->width == 0 && bad->dataLength == 0 && bad->advanceX == 0);
+      const auto* good = font.getEpdFont()->getGlyph('A');
+      assert(good && good->dataLength == 1 && good->width == 1);
+      assert(!SdCardFont::takeCorruptGlyphNotice());
+      font.clearPersistentCache();
+      bad = font.getEpdFont()->getGlyph('B');
+      assert(bad && bad->dataLength == 0);
+    }
+  }
+  fixture(path, {{0, table({{0x100, 0x100 + 999}})}, {1, table({{0x100, 0x100 + 999}})}});
+  {
+    SdCardFont f;
+    assert(f.load(path.c_str()));
+    // Descending input forces replacement of the largest collected entry.
+    std::string text;
+    for (int i = 999; i >= 0; --i) text += kernText(0x100 + i, 1);
+    largestArrayRequest = 0;
+    assert(f.buildAdvanceTable(text.c_str(), 3) == 0);
+    assert(largestArrayRequest <= (256 + 2) * sizeof(SdCardFont::AdvanceEntry));
+    for (uint32_t cp = 0x100; cp < 0x200; ++cp) {
+      assert(f.getAdvance(cp, 0) == advance(cp - 0x100, 0));
+      assert(f.getAdvance(cp, 1) == advance(cp - 0x100, 1));
+    }
+    const auto cached = kernText(0x100, 256);
+    const int before = arrayCalls, readsBefore = readCalls;
+    assert(f.buildAdvanceTable(cached.c_str(), 3) == 0);
+    assert(arrayCalls == before && readCalls == readsBefore);
+    // Different styles already hold different ranges; collect independently.
+    assert(f.buildAdvanceTable(kernText(0x300, 256).c_str(), 2) == 0);
+    assert(f.buildAdvanceTable(cached.c_str(), 3) == 0);
+    assert(f.getAdvance(0x100, 1) == advance(0, 1));
+    f.clearPersistentCache();
+    // Missing low codepoints must not displace valid higher codepoints.
+    text = kernText(0x80, 128) + cached;
+    assert(f.buildAdvanceTable(text.c_str(), 1) == 128);
+    assert(f.advanceTableSize_[0] == 256);
+    assert(f.getAdvance(0x1ff, 0) == advance(255, 0));
+    f.clearPersistentCache();
+    const std::deque<std::string> emptyWords{"", ""};
+    assert(f.buildAdvanceTable(emptyWords, true, 1) == 2);
+    assert(f.advanceTableSize_[0] == 0);
+    // Failure of bounded paragraph scratch is recoverable.
+    assert(f.ensureAdvanceTableCapacity(0, 256));
+    failArrayCall = arrayCalls;
+    assert(f.buildAdvanceTable(cached.c_str(), 1) == -1);
+    failArrayCall = -1;
+    assert(f.buildAdvanceTable(cached.c_str(), 1) == 0);
+  }
+  assert(arrayBytes() == 0 && openFiles == 0);
+}
+
 int main() {
   auto dir = std::filesystem::temp_directory_path() / "crossink-font-interval-tests";
   std::filesystem::create_directories(dir);
   const auto path = (dir / "test.cpfont").string();
+  upstreamFontTests(path);
   const auto bmp = table({{0, 2}, {0x41, 0x44}, {0xFFFD, 0xFFFF}});
   const auto mixed =
       table({{0x41, 0x44}, {0x4E00, 0x4E02}, {0xFFFD, 0xFFFF}, {0x10000, 0x10002}, {0x10FFFF, 0x10FFFF}});

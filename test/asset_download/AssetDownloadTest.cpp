@@ -3,6 +3,7 @@
 #include <DownloadFileSwap.h>
 #include <HttpDownloader.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <mbedtls/sha256.h>
 
 #include <cassert>
@@ -57,6 +58,7 @@ std::string digest(const std::string& bytes) {
 }
 const std::string yaml = "_language_code: \"DE\"\n_language_name: \"Deutsch\"\nSTR_TEST: \"Hallo\"\n";
 void reset() {
+  assetLogs.clear();
   files.clear();
   directories.clear();
   openReaders.clear();
@@ -278,7 +280,101 @@ void companionGateTests(const Endpoints& endpoints) {
   assert(std::strcmp(I18n::getInstance().getCode(), "EN") == 0 && I18n::getInstance().getGeneration() == 0);
 }
 
+void sourceDiagnosticsTests() {
+  const auto logged = [](std::string_view expected) {
+    for (const auto& line : assetLogs)
+      if (line.find(expected) != std::string::npos) return true;
+    return false;
+  };
+  auto cat = catalog();
+  auto& entry = cat.entries[0];
+  std::strcpy(entry.code, "FR");
+  Source source;
+  reset();
+  // Published-style Vietnamese metadata must not block downloading French.
+  const std::string vietnamese =
+      "_firmware_version: \"1.6.1-local\"\n_template_source_commit: \"61cc10a49ddffbcef3e9714038076d6d999e5785\"\n"
+      "_template_source_sha256: \"39d64221d9bcb1a4d05a08dd12ea19ac8ef579b1e83c001e5c58537d15787322\"\n"
+      "_template_keyset_sha256: \"29477e8b762a813886821526dc8c4146dbc112c09c1084688b43c68c87b40944\"\n" +
+      namedYaml("VI", "Tiếng Việt");
+  put("/.crosspoint/languages/VI.yaml", vietnamese);
+  assert(discover(cat.kind, entry, source) == Result::Ok && source.status == Status::Missing);
+  assert(logged("SD metadata accepted: path=/.crosspoint/languages/VI.yaml code=VI selected=FR"));
+  assert(logged("SD check complete: code=FR"));
+  for (const auto& broken :
+       {std::string("_language_code: \"VI\"\n_language_name: unquoted\n"), std::string("\xef\xbb\xbf") + vietnamese}) {
+    reset();
+    put("/.crosspoint/languages/VI.yaml", broken);
+    const auto before = files;
+    assert(discover(cat.kind, entry, source) == Result::Invalid && files == before && downloads == 0);
+    assert(logged("SD metadata rejected: path=/.crosspoint/languages/VI.yaml"));
+    assert(logged("SD metadata details: selected=FR"));
+    assert(logged(broken[0] == '_' ? "line=2" : "line=1"));
+    assert(logged(broken[0] == '_' ? "invalid YAML syntax" : "UTF-8 BOM is not supported"));
+  }
+  reset();
+  put("/.crosspoint/languages/VI.yaml", vietnamese);
+  failRead = true;
+  assert(discover(cat.kind, entry, source) == Result::Io);
+  assert(logged("reason=source read failed"));
+  reset();
+  // Long supported filenames must not push the rejection reason out of the
+  // firmware's bounded log entry (the filename itself is logged separately).
+  const auto longPath = "/.crosspoint/languages/" + std::string(120, 'v') + ".yaml";
+  put(longPath, "_language_code: \"VI\"\n_language_name: unquoted\n");
+  assert(discover(cat.kind, entry, source) == Result::Invalid);
+  assert(logged("SD metadata rejected: path=" + longPath));
+  assert(logged("reason=invalid YAML syntax: expected key: \"value\" line=2 offset=46"));
+  reset();
+  const auto rejectedName = std::string(154, 'v') + ".yaml";
+  put("/.crosspoint/languages/" + rejectedName, vietnamese);
+  assert(discover(cat.kind, entry, source) == Result::Invalid);
+  assert(logged("SD filename rejected: name=" + rejectedName));
+  assert(logged("SD filename reason=filename too long length=159"));
+  reset();
+}
+
+void macMetadataTests() {
+  const Endpoints endpoints{"https://assets.example.invalid/base/", ""};
+  const std::string appleDouble = std::string("\x00\x05\x16\x07", 4) + std::string(4092, '\0');
+  auto cat = catalog();
+  auto& entry = cat.entries[0];
+  std::strcpy(entry.code, "FR");
+  const auto french = namedYaml("FR", "Français");
+  Source source;
+  reset();
+  put("/.crosspoint/languages/VI.yaml", namedYaml("VI", "Tiếng Việt"));
+  put("/.crosspoint/languages/._VI.yaml", appleDouble);
+  put("/.crosspoint/languages/._FR.yaml.old", appleDouble);
+  const auto before = files;
+  assert(discover(cat.kind, entry, source) == Result::Ok && source.status == Status::Missing);
+  assert(files == before && downloads == 0);
+  pinResponse(entry, french);
+  assert(download(cat, entry, endpoints, false) == Result::Ok && downloads == 1);
+  assert(files.at("/.crosspoint/languages/FR.yaml") == french && files.size() == before.size() + 1);
+  for (const auto& file : before) assert(files.at(file.first) == file.second);
+
+  // An entire SD source catalog with Finder companions must retain capacity
+  // for one more real language. Sidecars are excluded by both preflight and
+  // the real I18n discovery used for the publication capacity projection.
+  reset();
+  fillSources(I18n::Catalog::MAX_SOURCE_FILES - 1);
+  const auto payloads = files;
+  for (const auto& file : payloads) {
+    const auto slash = file.first.find_last_of('/');
+    put(file.first.substr(0, slash + 1) + "._" + file.first.substr(slash + 1), appleDouble);
+  }
+  I18n::Catalog visible;
+  assert(I18n::getInstance().discover(visible) == language_cache::Result::Ok);
+  pinResponse(entry, french);
+  assert(download(cat, entry, endpoints, false) == Result::Ok && downloads == 1);
+  assert(files.at("/.crosspoint/languages/FR.yaml") == french);
+  reset();
+}
+
 int main() {
+  macMetadataTests();
+  sourceDiagnosticsTests();
   assert(digest("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   Endpoints endpoints{"https://assets.example.invalid/base/", "https://cdn.example.invalid/approved/"};
   assert(allowUrl("https://assets.example.invalid/base/snapshots/file.yaml", &endpoints));

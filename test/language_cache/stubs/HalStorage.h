@@ -20,8 +20,8 @@ class HalFile {
   bool directory_ = false;
 
  public:
-  inline static size_t reads = 0, seeks = 0, liveFiles = 0;
-  inline static bool failOpen = false, failRead = false;
+  inline static size_t reads = 0, seeks = 0, liveFiles = 0, syncs = 0;
+  inline static bool failOpen = false, failRead = false, failClose = false;
   HalFile() = default;
   explicit HalFile(std::string path, int flags = O_RDONLY) : path_(std::move(path)) {
     if (failOpen) return;
@@ -58,7 +58,10 @@ class HalFile {
   size_t write(const void* bytes, size_t length) { return file_ ? std::fwrite(bytes, 1, length, file_) : 0; }
   bool sync() {
     assert(file_);
-    return std::fflush(file_) == 0;
+    ++syncs;
+    const bool flushed = std::fflush(file_) == 0;
+    const char* failAt = std::getenv("CROSSINK_TEST_FAIL_SYNC");
+    return flushed && (!failAt || syncs != std::strtoul(failAt, nullptr, 10));
   }
   size_t position() const {
     assert(file_);
@@ -88,6 +91,7 @@ class HalFile {
     bool ok = true;
     if (file_) {
       ok = std::fclose(file_) == 0;
+      if (failClose) ok = false;
       file_ = nullptr;
       --liveFiles;
     }

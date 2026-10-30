@@ -1,0 +1,5 @@
+add_executable(HalPowerManagerTest HalPowerManagerTest.cpp ${REPO_ROOT}/lib/hal/HalPowerManager.cpp)
+target_include_directories(HalPowerManagerTest PRIVATE stubs ${REPO_ROOT}/lib/hal ${REPO_ROOT}/include)
+target_compile_definitions(HalPowerManagerTest PRIVATE CROSSINK_APP_CAP_TOUCH=0 CROSSINK_APP_CAP_USB_DRIVE=0)
+target_link_libraries(HalPowerManagerTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(HalPowerManagerTest)

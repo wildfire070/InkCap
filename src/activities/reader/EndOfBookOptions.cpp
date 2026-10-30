@@ -118,15 +118,14 @@ EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputMana
     return Action::LastPage;
   }
 
-  // Side-button navigation follows each button's configured short action.
+  // Suggestions are a menu: use spatial directions rather than reader page-turn actions.
   const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
-  if (input.wasReleased(MappedInputManager::Button::PageBack) || input.wasReleased(MappedInputManager::Button::Left)) {
+  if (input.wasReleased(MappedInputManager::Button::Up) || input.wasReleased(MappedInputManager::Button::Left)) {
     selector.store(ButtonNavigator::previousIndex(selectedIndex, itemCount),
                    std::memory_order_relaxed);  // wraps to the bottom
     return Action::Redraw;
   }
-  if (input.wasReleased(MappedInputManager::Button::PageForward) ||
-      input.wasReleased(MappedInputManager::Button::Right)) {
+  if (input.wasReleased(MappedInputManager::Button::Down) || input.wasReleased(MappedInputManager::Button::Right)) {
     selector.store(ButtonNavigator::nextIndex(selectedIndex, itemCount),
                    std::memory_order_relaxed);  // wraps to the top
     return Action::Redraw;

@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include <cmath>
+#include <cstdio>
 
 #include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
@@ -19,10 +20,9 @@ constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_DELETE = 2;
 }  // namespace
 
-EpubReaderBookmarkListActivity::EpubReaderBookmarkListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                                               const std::vector<Bookmark>& bookmarks)
+EpubReaderBookmarkListActivity::EpubReaderBookmarkListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("EpubReaderBookmarkList", renderer, mappedInput),
-      bookmarks(bookmarks),
+      bookmarks(BOOKMARKS.getBookmarks()),
       uiTarget(makeUiTarget(renderer)),
       app(uiTarget, uiTarget.deviceContext()) {}
 
@@ -48,7 +48,6 @@ void EpubReaderBookmarkListActivity::onExit() { Activity::onExit(); }
 void EpubReaderBookmarkListActivity::deleteSelectedBookmark() {
   if (bookmarks.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(bookmarks.size())) return;
   if (!BOOKMARKS.removeBookmarkAt(static_cast<size_t>(selectedIndex))) return;
-  bookmarks = BOOKMARKS.getBookmarks();
   if (bookmarks.empty())
     selectedIndex = 0;
   else if (selectedIndex >= static_cast<int>(bookmarks.size()))
@@ -175,6 +174,22 @@ void EpubReaderBookmarkListActivity::loop() {
       [this, total, &move] { move(ButtonNavigator::previousPageIndex(selectedIndex, total, visibleRows)); });
 }
 
+void EpubReaderBookmarkListActivity::provideRow(void* user, const uint16_t index, fui::ListItem& item) {
+  auto* self = static_cast<EpubReaderBookmarkListActivity*>(user);
+  if (index >= self->bookmarks.size()) return;
+  const Bookmark& bookmark = self->bookmarks[index];
+  snprintf(self->rowProgress, sizeof(self->rowProgress), "%d%%",
+           static_cast<int>(std::lround(bookmark.progress * 100.0)));
+  item.label = bookmark.snippet[0] != '\0'
+                   ? bookmark.snippet
+                   : (bookmark.chapterTitle[0] != '\0' ? bookmark.chapterTitle : tr(STR_UNKNOWN_CHAPTER));
+  if (bookmark.snippet[0] != '\0') {
+    item.subtitle = bookmark.chapterTitle[0] != '\0' ? bookmark.chapterTitle : tr(STR_UNKNOWN_CHAPTER);
+  }
+  item.value = self->rowProgress;
+  item.actionValue = static_cast<int16_t>(index);
+}
+
 void EpubReaderBookmarkListActivity::listScreen(UiApp::ScreenType& screen, void* user) {
   static_cast<EpubReaderBookmarkListActivity*>(user)->buildListScreen(screen);
 }
@@ -192,27 +207,11 @@ void EpubReaderBookmarkListActivity::buildListScreen(UiApp::ScreenType& screen) 
     screen.centeredText(tr(STR_NO_BOOKMARKS), screen.theme().bodyText);
     return;
   }
-  std::vector<std::string> values(bookmarks.size());
-  std::vector<fui::ListItem> items;
-  items.reserve(bookmarks.size());
-  for (size_t i = 0; i < bookmarks.size(); ++i) {
-    const Bookmark& bookmark = bookmarks[i];
-    values[i] = std::to_string(static_cast<int>(std::lround(bookmark.progress * 100.0))) + "%";
-    fui::ListItem item;
-    item.label = bookmark.snippet[0] != '\0'
-                     ? bookmark.snippet
-                     : (bookmark.chapterTitle[0] != '\0' ? bookmark.chapterTitle : tr(STR_UNKNOWN_CHAPTER));
-    if (bookmark.snippet[0] != '\0') {
-      item.subtitle = bookmark.chapterTitle[0] != '\0' ? bookmark.chapterTitle : tr(STR_UNKNOWN_CHAPTER);
-    }
-    item.value = values[i].c_str();
-    item.actionValue = static_cast<int16_t>(i);
-    items.push_back(item);
-  }
   FilenameUiFontScope fonts(uiTarget, renderer);
   fui::ListProps props;
-  props.items = items.data();
-  props.count = static_cast<uint16_t>(items.size());
+  props.rowProvider = &EpubReaderBookmarkListActivity::provideRow;
+  props.rowProviderCtx = this;
+  props.count = static_cast<uint16_t>(bookmarks.size());
   props.selectedIndex = static_cast<int16_t>(selectedIndex);
   const auto reveal = swipeDelete.reveal(ACTION_DELETE);
   props.reveal = &reveal;

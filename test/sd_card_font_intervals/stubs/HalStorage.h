@@ -32,6 +32,14 @@ class HalFile {
     }
     file_ = nullptr;
   }
+  size_t fileSize() const {
+    if (!file_) return 0;
+    const auto pos = std::ftell(file_);
+    std::fseek(file_, 0, SEEK_END);
+    const auto size = std::ftell(file_);
+    std::fseek(file_, pos, SEEK_SET);
+    return size;
+  }
   bool seekSet(uint32_t off) { return file_ && std::fseek(file_, off, SEEK_SET) == 0; }
   int read(void* dst, size_t n) {
     if (readCalls++ == failReadCall) return 0;

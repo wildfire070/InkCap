@@ -6,6 +6,7 @@
 // Wire contract: docs/asset-catalog-contract-v1.md. Portable, allocation-free.
 namespace AssetCatalog {
 constexpr size_t MAX_CATALOG_BYTES = 8192;
+constexpr size_t MAX_CATALOG_PATH = 192;
 constexpr size_t MAX_ENTRIES = 48;
 constexpr size_t MAX_HYPHENATION_ENTRIES = 9;
 constexpr uint32_t MAX_ASSET_BYTES = 262144;
@@ -35,6 +36,9 @@ struct Options {
   bool (*supportedTranslation)(const char* code, void* context) = nullptr;
   void* context = nullptr;
 };
+
+// Translation discovery is scoped to the firmware contract; hyphenation stays shared.
+bool catalogPath(const Options& options, char* output, size_t capacity);
 
 // Caller owns catalog and options' pointed-to data for the parser lifetime.
 // Allocate the catalog once with makeUniqueNoThrow, never on a device task stack.
