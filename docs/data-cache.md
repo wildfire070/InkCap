@@ -80,7 +80,7 @@ This is for people who browse the SD card on a computer. You do not need it for 
 ├── epub_12471232/          # Each EPUB is cached to epub_<hash>
 │   ├── progress.bin        # Reading position (chapter, page, etc.)
 │   ├── stats.bin           # Legacy per-book reading stats
-│   ├── stats_v5.bin        # Version 5 per-book reading stats
+│   ├── stats_v6.bin        # Version 6 per-book reading stats
 │   ├── reading_stats_off   # Present when stats tracking is disabled for this book
 │   ├── reader_settings.bin # Per-book reader settings, render mode, and auto-page-turn interval
 │   ├── sync.bin            # Cached sync document id and catch-up stamps (with .bak)

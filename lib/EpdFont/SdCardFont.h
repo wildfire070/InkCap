@@ -2,6 +2,7 @@
 
 #include <Memory.h>
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -28,6 +29,8 @@ class SdCardFont {
 
   SdCardFont() = default;
   ~SdCardFont();
+
+  static bool takeCorruptGlyphNotice() { return corruptGlyphNotice_.exchange(false); }
   // Owns raw buffers freed in dtor — no shallow-copy semantics. Make any
   // accidental pass-by-value or move a compile-time error.
   SdCardFont(const SdCardFont&) = delete;
@@ -307,6 +310,9 @@ class SdCardFont {
 
   Stats stats_;
   uint32_t contentHash_ = 0;
+  uint64_t fileSize_ = 0;
+  mutable uint8_t corruptGlyphsLogged_ = 0;
+  static inline std::atomic<bool> corruptGlyphNotice_{false};
   bool loaded_ = false;
   bool lastPrewarmFailed_ = false;
 
@@ -322,6 +328,7 @@ class SdCardFont {
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data, bool includeKerning) const;
   void applyGlyphMissCallback(uint8_t styleIdx);
   int32_t findGlobalGlyphIndex(const PerStyle& s, uint32_t codepoint) const;
+  bool glyphEntryValid(const PerStyle& s, const EpdGlyph& glyph, uint32_t codepoint) const;
   int fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask);
   int failPrewarm(int missed);
   template <typename Iter>

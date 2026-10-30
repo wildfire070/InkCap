@@ -275,7 +275,7 @@ let allSettings = [];
     });
 
     if (Object.prototype.hasOwnProperty.call(changes, 'koMatchMethod') &&
-        !confirm('Change Document Matching? Books get new ids, so the next sync checks every book again. ' +
+        !await showWebConfirm('Change Document Matching? Books get new ids, so the next sync checks every book again. ' +
                  'Progress already uploaded stays under the old ids until you merge books in the web app.')) {
       delete changes.koMatchMethod;
       setControlValue('koMatchMethod', originalValues.koMatchMethod);
@@ -328,8 +328,8 @@ let allSettings = [];
       }).join('') + '</select>';
   }
 
-  function statusBarRow(label, control) {
-    return '<div class="setting-row"><span class="setting-name">' + escapeHtml(label) +
+  function statusBarRow(label, control, rowId) {
+    return '<div class="setting-row"' + (rowId ? ' id="' + rowId + '"' : '') + '><span class="setting-name">' + escapeHtml(label) +
       '</span><span class="setting-control">' + control + '</span></div>';
   }
 
@@ -358,6 +358,12 @@ let allSettings = [];
         field[2].map(function(label, index) { return { value: index, label: label }; }),
         Number(bar[field[0]]), 'statusBarChanged()'));
     }
+    html += statusBarRow(labels.centered, statusBarSelect('bar-' + position + '-centered',
+      statusBars.hideOptions.map(function(label, index) { return { value: index, label: label }; }),
+      bar.centered ? 1 : 0, 'statusBarChanged()'));
+    html += statusBarRow(labels.separator, statusBarSelect('bar-' + position + '-separator',
+      statusBars.separators.map(function(glyph, index) { return { value: index, label: glyph }; }),
+      Number(bar.separator), 'statusBarChanged()'), 'bar-' + position + '-separator-row');
     html += '<div class="status-bar-preview" id="bar-' + position + '-preview"></div></div>';
     return html;
   }
@@ -391,12 +397,16 @@ let allSettings = [];
       percentageFormat: Number(document.getElementById('bar-' + position + '-percentageFormat').value),
       progressBar: Number(document.getElementById('bar-' + position + '-progressBar').value),
       thickness: Number(document.getElementById('bar-' + position + '-thickness').value),
-      hidden: document.getElementById('bar-' + position + '-hidden').value === '1'
+      hidden: document.getElementById('bar-' + position + '-hidden').value === '1',
+      centered: document.getElementById('bar-' + position + '-centered').value === '1',
+      separator: Number(document.getElementById('bar-' + position + '-separator').value)
     };
   }
 
   function updateStatusBarPreview(position) {
     const bar = readStatusBarForm(position);
+    // The separator only applies to a centered bar.
+    document.getElementById('bar-' + position + '-separator-row').style.display = bar.centered ? '' : 'none';
     if (bar.hidden) {
       document.getElementById('bar-' + position + '-preview').innerHTML = '';
       return;
@@ -406,10 +416,18 @@ let allSettings = [];
       (64.12).toFixed(bar.percentageFormat) + '%', 'Book title', 'Chapter title', statusBars.datePreview,
       (35.25).toFixed(bar.percentageFormat) + '%'];
     const slot = function(index) { return escapeHtml(examples[bar.slots[index]] || ''); };
-    const right = [4, 5, 6].map(slot).filter(Boolean).join(' &nbsp; ');
     const progressValue = bar.progressBar === 0 ? 64 : 35;
     const progress = bar.progressBar === 2 ? '' : '<div class="status-bar-preview-progress" style="height:' +
       ((bar.thickness + 1) * 2) + 'px"><span style="width:' + progressValue + '%"></span></div>';
+    if (bar.centered) {
+      const joined = [0, 1, 2, 3, 4, 5, 6].map(slot).filter(Boolean)
+        .join(' ' + escapeHtml(statusBars.separators[bar.separator] || '') + ' ');
+      document.getElementById('bar-' + position + '-preview').innerHTML =
+        (position === 'top' ? progress : '') + '<div class="status-bar-preview-items status-bar-preview-centered">' +
+        '<span>' + joined + '</span></div>' + (position === 'bottom' ? progress : '');
+      return;
+    }
+    const right = [4, 5, 6].map(slot).filter(Boolean).join(' &nbsp; ');
     document.getElementById('bar-' + position + '-preview').innerHTML =
       (position === 'top' ? progress : '') + '<div class="status-bar-preview-items"><span>' +
       [slot(0), slot(1), slot(2)].filter(Boolean).join(' &nbsp; ') + '</span><span>' + slot(3) +
@@ -566,7 +584,7 @@ let allSettings = [];
   }
 
   async function deleteWifiNetwork(idx) {
-    if (!confirm('Delete this Wi-Fi network?')) return;
+    if (!await showWebConfirm('Delete this Wi-Fi network?')) return;
     try {
       const resp = await fetch('/api/wifi/delete', {
         method: 'POST',
@@ -756,7 +774,7 @@ let allSettings = [];
   }
 
   async function deleteOpdsServer(idx) {
-    if (!confirm('Delete this OPDS server?')) return;
+    if (!await showWebConfirm('Delete this OPDS server?')) return;
     try {
       const resp = await fetch('/api/opds/delete', {
         method: 'POST',
@@ -780,3 +798,5 @@ let allSettings = [];
     await loadWifiNetworks();
     await loadOpdsServers();
   })();
+
+loadPlugins("settings");

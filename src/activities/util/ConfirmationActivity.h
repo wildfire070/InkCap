@@ -11,6 +11,7 @@ class ConfirmationActivity : public Activity {
  private:
   std::string popupTitle;
   OptionPopup confirmPopup;
+  std::string customCancelLabel, customConfirmLabel;
   bool ignoreConfirmRelease = false;
   bool overrideDisabledReaderTouchscreen = false;
   StrId cancelLabel = StrId::STR_CANCEL;
@@ -25,6 +26,11 @@ class ConfirmationActivity : public Activity {
   void setOptionLabels(StrId cancel, StrId confirm) {
     cancelLabel = cancel;
     confirmLabel = confirm;
+  }
+
+  void setOptionLabels(const std::string& cancel, const std::string& confirm) {
+    customCancelLabel = cancel;
+    customConfirmLabel = confirm;
   }
 
   void onEnter() override;

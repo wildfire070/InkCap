@@ -28,6 +28,7 @@ enum class SettingAction {
   ScreenCalibration,
   KOReaderSync,
   OPDSBrowser,
+  Plugins,
   DisplaySleepScreen,
   DisplayFrontlight,
   ReaderFontOptions,
@@ -236,6 +237,9 @@ inline bool settingShowsNavigationCaret(const SettingInfo& setting) {
 
 class SettingsActivity final : public Activity {
 #ifdef SIMULATOR
+  friend struct ScreenCalibrationSmokeTest;
+#endif
+#ifdef SIMULATOR
   friend struct AssetDownloadSmokeTest;
 #endif
  public:
@@ -367,11 +371,12 @@ class SettingsActivity final : public Activity {
   // Opens System > Device with the Download Languages popup once the activity enters.
   void openLanguageDownloadsOnEnter() { openLanguageDownloadsPending = true; }
 #ifdef SIMULATOR
+  void simulatorOpenFrontButtons();
   int simulatorCategoryIndex() const { return selectedCategoryIndex; }
   int simulatorSelectedIndex() const { return selectedSettingIndex; }
+  bool simulatorOptionPopupActive() const { return optionPopup.isActive(); }
 #if CROSSINK_SCALABLE_FONTS
   const std::vector<std::string>& simulatorFilenameFontNames() const { return filenameFontNames; }
-  bool simulatorOptionPopupActive() const { return optionPopup.isActive(); }
 #endif
   freeink::ui::Rect simulatorSafeRect() const { return app.device().safeRect(); }
   SettingAction simulatorActiveSubmenu() const { return activeSubmenu; }

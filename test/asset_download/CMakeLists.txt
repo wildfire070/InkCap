@@ -26,7 +26,7 @@ add_executable(AssetDownloadTest AssetDownloadTest.cpp
 add_dependencies(AssetDownloadTest AssetI18nSchema)
 target_compile_definitions(AssetDownloadTest PRIVATE SIMULATOR)
 target_include_directories(AssetDownloadTest PRIVATE stubs ${ASSET_I18N}
-  ${REPO_ROOT}/lib/I18n ${REPO_ROOT}/lib/HalFlashPartition ${REPO_ROOT}/lib/AssetCacheStorage ${REPO_ROOT}/src/network
+  ${REPO_ROOT}/lib/I18n ${REPO_ROOT}/lib/HalFlashPartition ${REPO_ROOT}/lib/AssetCacheStorage ${REPO_ROOT}/src/network ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/AssetCatalog ${REPO_ROOT}/lib/LanguageCache ${REPO_ROOT}/lib/Memory)
 target_compile_features(AssetDownloadTest PRIVATE cxx_std_20)
 target_compile_options(AssetDownloadTest PRIVATE -Wall -Wextra -Werror -Wno-deprecated-declarations -UNDEBUG)

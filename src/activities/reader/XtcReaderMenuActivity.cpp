@@ -42,10 +42,11 @@ std::vector<XtcReaderMenuActivity::MenuItem> XtcReaderMenuActivity::buildMenuIte
                                                                                    const bool globalStatsEnabled,
                                                                                    const bool bookStatsEnabled) {
   std::vector<MenuItem> menuItems;
-  menuItems.reserve(7 + (hasTouch ? 1u : 0u));
+  menuItems.reserve(kMaxMenuItems);
   if (hasChapters) {
     menuItems.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   }
+  menuItems.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   if (globalStatsEnabled) {
     menuItems.push_back({MenuAction::TOGGLE_BOOK_STATS_TRACKING, StrId::STR_TRACK_READING_STATS});
     if (bookStatsEnabled) menuItems.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});

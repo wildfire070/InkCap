@@ -1,12 +1,14 @@
 add_executable(BookmarkStorePersistenceTest
   BookmarkStorePersistenceTest.cpp
   ${REPO_ROOT}/src/BookmarkStore.cpp
+  ${REPO_ROOT}/lib/Serialization/AtomicFile.cpp
   ${REPO_ROOT}/lib/uzlib/src/uzlib_checksums.c
   stubs/BookMoveUtilsStub.cpp
 )
 target_include_directories(BookmarkStorePersistenceTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/src
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/uzlib/src
 )

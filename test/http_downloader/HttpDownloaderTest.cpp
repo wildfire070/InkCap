@@ -14,6 +14,7 @@ class HttpDownloaderTest : public testing::TestWithParam<HttpDownloader::Transpo
     replies.clear();
     requests.clear();
     requestUrls.clear();
+    recordReservations.clear();
     nextReply = 0;
     failWrite = failSync = false;
     cardCapacity = cardUsedBytes = 0;
@@ -252,7 +253,7 @@ TEST_P(HttpDownloaderTest, ServerErrorsAndEmptyBodiesDoNotReplaceOrRemoveExistin
   files["/Books/Author - Title.epub"] = "fallback";
   files["/Books/Server_Name.epub"] = "old";
   replies = {named("Server_Name.epub", "error", 401, 5)};
-  EXPECT_EQ(serverDownload(), HttpDownloader::HTTP_ERROR);
+  EXPECT_EQ(serverDownload(), HttpDownloader::UNAUTHORIZED);
   nextReply = 0;
   replies = {named("Server_Name.epub", "", 200, 0)};
   EXPECT_EQ(serverDownload(), HttpDownloader::FILE_EXISTS);
@@ -698,12 +699,13 @@ TEST_P(HttpDownloaderTest, FeedDiagnosticsFollowFinalResponseAndAuthorization) {
           "https://example.com/start", [](const uint8_t*, size_t) { return true; }, nullptr, credentials ? "user" : "",
           credentials ? "pass" : "", options, &diagnostic);
       const bool withheld = credentials && std::string(destination).find("other") != std::string::npos;
-      EXPECT_EQ(result, HttpDownloader::HTTP_ERROR);
+      EXPECT_EQ(result, HttpDownloader::UNAUTHORIZED);
       EXPECT_EQ(diagnostic.status, 401);
       EXPECT_EQ(diagnostic.authorizationWithheld, withheld);
       ASSERT_EQ(requests.size(), 2u);
       EXPECT_EQ(requests[1].count("Authorization") > 0, credentials && !withheld);
-      EXPECT_EQ(classifyFeedFailure(diagnostic, true),
+      EXPECT_EQ(classifyFeedFailure(diagnostic,
+                                    result == HttpDownloader::HTTP_ERROR || result == HttpDownloader::UNAUTHORIZED),
                 withheld ? OpdsFeedError::Redirected : OpdsFeedError::Unauthorized);
     }
   }
@@ -718,12 +720,13 @@ TEST_P(HttpDownloaderTest, FeedDiagnosticsResetAcrossRequestsAndKeep200FailuresG
     nextReply = 0;
     auto result = HttpDownloader::streamUrl(
         "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options, &diagnostic);
-    EXPECT_EQ(result, HttpDownloader::HTTP_ERROR);
-    EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR),
-              status == 401                   ? OpdsFeedError::Unauthorized
-              : status >= 500 && status < 600 ? OpdsFeedError::ServerError
-              : status < 0                    ? OpdsFeedError::Unreachable
-                                              : OpdsFeedError::Other);
+    EXPECT_EQ(result, status == 401 || status == 403 ? HttpDownloader::UNAUTHORIZED : HttpDownloader::HTTP_ERROR);
+    EXPECT_EQ(
+        classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR || result == HttpDownloader::UNAUTHORIZED),
+        status == 401                   ? OpdsFeedError::Unauthorized
+        : status >= 500 && status < 600 ? OpdsFeedError::ServerError
+        : status < 0                    ? OpdsFeedError::Unreachable
+                                        : OpdsFeedError::Other);
     EXPECT_FALSE(diagnostic.authorizationWithheld);
   }
   replies = {{200, "abc", 3}};
@@ -768,7 +771,7 @@ TEST_P(HttpDownloaderTest, FeedDiagnosticsRespectSavedOriginAndHttpUpgrade) {
   EXPECT_EQ(HttpDownloader::streamUrl(
                 "http://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "user", "pass",
                 options, &diagnostic),
-            HttpDownloader::HTTP_ERROR);
+            HttpDownloader::UNAUTHORIZED);
   EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Redirected);
   EXPECT_FALSE(requests.back().count("Authorization"));
   replies = {{401, "", 0}};
@@ -777,7 +780,7 @@ TEST_P(HttpDownloaderTest, FeedDiagnosticsRespectSavedOriginAndHttpUpgrade) {
   EXPECT_EQ(HttpDownloader::streamUrl(
                 "https://other.example/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "user", "pass",
                 options, &diagnostic),
-            HttpDownloader::HTTP_ERROR);
+            HttpDownloader::UNAUTHORIZED);
   EXPECT_EQ(classifyFeedFailure(diagnostic, true), OpdsFeedError::Redirected);
 }
 
@@ -810,7 +813,9 @@ TEST_P(HttpDownloaderTest, FeedInFlightCancellationIsNotConnectivityFailure) {
       "https://example.com/feed", [](const uint8_t*, size_t) { return true; }, nullptr, "", "", options, &diagnostic);
   EXPECT_EQ(result, HttpDownloader::ABORTED);
   EXPECT_TRUE(diagnostic.attempted);
-  EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+  EXPECT_EQ(
+      classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR || result == HttpDownloader::UNAUTHORIZED),
+      OpdsFeedError::Other);
 }
 
 TEST_P(HttpDownloaderTest, FeedNegativeGetRetainsHeadersAndDoesNotReportConnectivity) {
@@ -830,7 +835,9 @@ TEST_P(HttpDownloaderTest, FeedNegativeGetRetainsHeadersAndDoesNotReportConnecti
   result = HttpDownloader::streamUrl(
       "https://example.com/feed", [](const uint8_t*, size_t) { return false; }, nullptr, "", "", options, &diagnostic);
   EXPECT_TRUE(diagnostic.callbackRejected);
-  EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+  EXPECT_EQ(
+      classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR || result == HttpDownloader::UNAUTHORIZED),
+      OpdsFeedError::Other);
 }
 
 TEST_P(HttpDownloaderTest, MalformedAndUnfinishedFeedsAreNotConnectivityFailures) {
@@ -850,6 +857,53 @@ TEST_P(HttpDownloaderTest, MalformedAndUnfinishedFeedsAreNotConnectivityFailures
     EXPECT_FALSE(parser);
     EXPECT_EQ(parser.getErrorReason(), OpdsParserError::XML_PARSE);
     EXPECT_EQ(diagnostic.status, 200);
-    EXPECT_EQ(classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR), OpdsFeedError::Other);
+    EXPECT_EQ(
+        classifyFeedFailure(diagnostic, result == HttpDownloader::HTTP_ERROR || result == HttpDownloader::UNAUTHORIZED),
+        OpdsFeedError::Other);
   }
+}
+TEST_P(HttpDownloaderTest, PluginHeadersStayOnTheOriginalOrigin) {
+  const std::vector<HttpDownloader::Header> headers{{"Authorization", "Bearer test-token"}, {"X-Api-Key", "secret"}};
+  HttpDownloader::DownloadOptions options;
+  options.transport = GetParam();
+  options.stageAsPart = true;
+  options.headers = &headers;
+  replies = {{302, "", 0, "", true, "https://example.com/next"},
+             {302, "", 0, "", true, "https://other.example/file"},
+             {200, "abc", 3}};
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book", nullptr, nullptr, "", "", options),
+            HttpDownloader::OK);
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_EQ(requests[0]["Authorization"], "Bearer test-token");
+  EXPECT_EQ(requests[1]["X-Api-Key"], "secret");
+  EXPECT_EQ(requests[2].count("Authorization"), 0u);
+  EXPECT_EQ(requests[2].count("X-Api-Key"), 0u);
+  EXPECT_EQ(files["/book"], "abc");
+}
+
+TEST_P(HttpDownloaderTest, BulkReservationFollowsRedirectAndResumeAttempts) {
+  replies = {{302, "", 0, "", true, "https://example.com/book"},
+             {200, "abc", 6, "", false},
+             {206, "def", 3, "bytes 3-5/6", true}};
+  replies[1].etag = replies[2].etag = "\"book-v1\"";
+  HttpDownloader::DownloadOptions o;
+  o.transport = GetParam();
+  o.reserveFullRecord = true;
+  o.stageAsPart = true;
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/start", "/book.epub", nullptr, nullptr, "", "", o),
+            HttpDownloader::OK);
+  EXPECT_EQ(files["/book.epub"], "abcdef");
+  if (GetParam() == HttpDownloader::Transport::WOLFSSL)
+    EXPECT_EQ(recordReservations, (std::vector<bool>{true, true, true}));
+  else
+    EXPECT_TRUE(recordReservations.empty());
+}
+
+TEST_P(HttpDownloaderTest, SmallRequestsDoNotReserveTlsRecordsByDefault) {
+  replies = {{200, "abc", 3}};
+  HttpDownloader::DownloadOptions o;
+  o.transport = GetParam();
+  EXPECT_EQ(HttpDownloader::downloadToFile("https://example.com/book", "/book.epub", nullptr, nullptr, "", "", o),
+            HttpDownloader::OK);
+  if (GetParam() == HttpDownloader::Transport::WOLFSSL) EXPECT_EQ(recordReservations, (std::vector<bool>{false}));
 }

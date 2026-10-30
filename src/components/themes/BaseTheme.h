@@ -181,7 +181,8 @@ enum UIIcon {
   Check,
   Arrow,
   Files,
-  BookCheck
+  BookCheck,
+  Plugins
 };
 
 // Default theme implementation (Classic Theme)

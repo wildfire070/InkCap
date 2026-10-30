@@ -77,7 +77,7 @@ void OpdsServerListActivity::loop() {
   if (TouchHeaderBackButton::wasTapped(mappedInput, renderer) ||
       mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     if (pickerMode) {
-      activityManager.goHome(HomeMenuItem::OPDS_BROWSER);
+      activityManager.goToFileTransfer();
     } else {
       finish();
     }

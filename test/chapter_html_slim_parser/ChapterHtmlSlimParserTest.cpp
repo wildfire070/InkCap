@@ -1,9 +1,11 @@
 #include <Epub/Page.h>
+#include <Epub/converters/ImageDimsProbe.h>
 #include <GfxRenderer.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <deque>
 #include <memory>
 #include <string>
 
@@ -194,6 +196,61 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
     return style;
   }
 };
+
+// Regression cases adapted from yassine-cc's fix for CrossInk #886.
+TEST_F(ChapterHtmlSlimParserTest, NestedQuotationKeepsPrecedingWordOutsideQuote) {
+  cssParser.rulesBySelector_[".quote"] = CssParser::parseInlineStyle("margin-left: 3em");
+  const XML_Char* quoteAttributes[] = {"class", "quote", nullptr};
+
+  ChapterHtmlSlimParser::startElement(&parser, "div", nullptr);
+  const std::string introduction = "Their hypothesis was remarkably straightforward:";
+  ChapterHtmlSlimParser::characterData(&parser, introduction.data(), introduction.size());
+  ChapterHtmlSlimParser::startElement(&parser, "div", quoteAttributes);
+  ChapterHtmlSlimParser::startElement(&parser, "i", nullptr);
+  const std::string quotation = "If an MBA education";
+  ChapterHtmlSlimParser::characterData(&parser, quotation.data(), quotation.size());
+  ChapterHtmlSlimParser::endElement(&parser, "i");
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 1u);
+  ASSERT_EQ(parser.currentPage->elements[0]->getTag(), TAG_PageLine);
+  const auto& introductionLine = static_cast<const PageLine&>(*parser.currentPage->elements[0]);
+  EXPECT_EQ(introductionLine.getBlock()->wordCount(), 5u);
+  EXPECT_EQ(introductionLine.xPos, 0);
+  EXPECT_EQ(introductionLine.yPos, 0);
+
+  ASSERT_EQ(parser.currentTextBlock->size(), 4u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "If");
+  EXPECT_EQ(parser.currentTextBlock->getWordStyleAt(0), EpdFontFamily::ITALIC);
+  EXPECT_FALSE(parser.currentTextBlock->wordContinues[0]);
+  const int16_t quoteInset = parser.currentTextBlock->getBlockStyle().leftInset();
+  EXPECT_GT(quoteInset, 0);
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  parser.makePages();
+
+  ASSERT_EQ(parser.currentPage->elements.size(), 2u);
+  ASSERT_EQ(parser.currentPage->elements[1]->getTag(), TAG_PageLine);
+  EXPECT_EQ(parser.currentPage->elements[1]->xPos, quoteInset);
+  EXPECT_GT(parser.currentPage->elements[1]->yPos, introductionLine.yPos);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, NestedHeadingDoesNotAbsorbSingleBufferedWord) {
+  ChapterHtmlSlimParser::startElement(&parser, "div", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Before", 6);
+  ChapterHtmlSlimParser::startElement(&parser, "h2", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Heading", 7);
+  ChapterHtmlSlimParser::endElement(&parser, "h2");
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  parser.makePages();
+
+  ASSERT_NE(parser.currentPage, nullptr);
+  ASSERT_EQ(parser.currentPage->elements.size(), 2u);
+  for (const auto& element : parser.currentPage->elements) {
+    ASSERT_EQ(element->getTag(), TAG_PageLine);
+    EXPECT_EQ(static_cast<const PageLine&>(*element).getBlock()->wordCount(), 1u);
+  }
+}
 
 TEST_F(ChapterHtmlSlimParserTest, BlockquoteParagraphsInheritItalicAndRestoreFollowingText) {
   cssParser.rulesBySelector_["blockquote"] =
@@ -2756,4 +2813,42 @@ TEST_F(ChapterHtmlSlimParserTest, DisabledFamilySpanPreservesFocusWordBoundary) 
   ASSERT_EQ(parser.currentTextBlock->words.size(), 1u);
   EXPECT_EQ(parser.currentTextBlock->words[0], "ordinary");
   EXPECT_TRUE(parser.currentTextBlock->wordFontFamilies.empty());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, ChunkedAnchorsRetainOrderPagesAndReferencesAcrossGrowth) {
+  for (int i = 0; i < 1100; ++i) {
+    parser.pendingAnchorId = "anchor-" + std::to_string(i);
+    parser.completedPageCount = i;
+    parser.flushPendingAnchor();
+  }
+  const auto& anchors = parser.getAnchors();
+  ASSERT_EQ(anchors.size(), 1100u);
+  const auto* first = &anchors.front();
+  for (int i = 1100; i < 2200; ++i) {
+    parser.pendingAnchorId = "anchor-" + std::to_string(i);
+    parser.completedPageCount = i;
+    parser.flushPendingAnchor();
+  }
+  EXPECT_EQ(first, &anchors.front());
+  for (size_t i = 0; i < anchors.size(); ++i) {
+    EXPECT_EQ(anchors[i].first, "anchor-" + std::to_string(i));
+    EXPECT_EQ(anchors[i].second, i);
+  }
+}
+
+TEST(ImageDimsProbe, GifSignaturesAndLittleEndianDimensions) {
+  for (const char version : {'7', '9'}) {
+    ImageDimsProbe probe;
+    const uint8_t bytes[] = {'G', 'I', 'F', '8', static_cast<uint8_t>(version), 'a', 0x00, 0x02, 0x20, 0x03};
+    probe.write(bytes, sizeof(bytes));
+    ImageDimensions dims{};
+    ASSERT_TRUE(probe.getDimensions(dims));
+    EXPECT_EQ(dims.width, 512);
+    EXPECT_EQ(dims.height, 800);
+  }
+  ImageDimsProbe invalid;
+  const uint8_t bytes[] = {'G', 'I', 'F', '8', '8', 'a', 1, 0, 1, 0};
+  invalid.write(bytes, sizeof(bytes));
+  ImageDimensions dims{};
+  EXPECT_FALSE(invalid.getDimensions(dims));
 }

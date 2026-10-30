@@ -280,7 +280,8 @@ void ReleaseNotesActivity::loop() {
   int y = 0;
   // Act on a completed tap, so a swipe that starts on the buttons pages instead of dismissing.
   if (mappedInput.hasTouch() && mappedInput.wasScreenTapped(x, y)) {
-    const int action = TouchActionButtons::indexAt(actionLayout(renderer, false, actionCount()), x, y);
+    const int action = TouchActionButtons::indexAt(actionLayout(renderer, false, actionCount()), x, y,
+                                                   TouchActionButtons::kDefaultGap / 2);
     if (action == 0) {
       onPrimaryAction();
       return;

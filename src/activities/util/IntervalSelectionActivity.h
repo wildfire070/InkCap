@@ -23,6 +23,9 @@ class GfxRenderer;
 
 class IntervalSelectionActivity final : public Activity {
  public:
+#ifdef SIMULATOR
+  friend struct SliderOrientationSmokeTest;
+#endif
   using ValueFormatter = void (*)(int value, char* buf, size_t len);
   enum class ReaderPreviewSetting : uint8_t {
     None,

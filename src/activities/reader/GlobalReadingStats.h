@@ -40,8 +40,8 @@ struct GlobalReadingStats {
   // when the local stats may include in-memory changes that are not saved yet.
   static GlobalReadingStats loadAggregated(const GlobalReadingStats& localStats);
 
-  // Saves stats to /.crosspoint/global_stats.bin.
-  void save() const;
+  // Saves global and pending daily stats. False means either save needs retrying.
+  bool save() const;
 
   // Replaces /.crosspoint/global_stats.bin with a fresh empty file without
   // rotating or deleting any backup files.

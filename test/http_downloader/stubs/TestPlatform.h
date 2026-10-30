@@ -111,6 +111,7 @@ inline std::vector<Reply> replies;
 inline size_t nextReply = 0;
 inline std::vector<std::map<std::string, std::string>> requests;
 inline std::vector<std::string> requestUrls;
+inline std::vector<bool> recordReservations;
 using esp_err_t = int;
 inline constexpr int ESP_OK = 0;
 inline constexpr int HTTP_EVENT_ON_HEADER = 1;
@@ -178,6 +179,8 @@ class SecureHttpClient {
   size_t index = 0;
 
  public:
+  void setReserveFullRecord(bool on) { reserveFullRecord = on; }
+  bool reserveFullRecord = false;
   void setTimeout(int) {}
   void setInsecure() {}
   void setUserAgent(const char*) {}
@@ -187,6 +190,7 @@ class SecureHttpClient {
     index = requests.size();
     requests.emplace_back();
     requestUrls.push_back(url);
+    recordReservations.push_back(reserveFullRecord);
     return true;
   }
   void addHeader(const std::string& k, const std::string& v) { requests[index][k] = v; }

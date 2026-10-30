@@ -8,7 +8,7 @@ find_package(OpenSSL REQUIRED)
 add_executable(AssetCompanionStoreTest AssetCompanionStoreTest.cpp
   ${REPO_ROOT}/src/network/AssetCompanionStore.cpp
   ${REPO_ROOT}/lib/AssetCompanionIndex/AssetCompanionIndex.cpp)
-target_include_directories(AssetCompanionStoreTest PRIVATE stubs ${REPO_ROOT}/src/network
+target_include_directories(AssetCompanionStoreTest PRIVATE stubs ${REPO_ROOT}/src/network ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/AssetCatalog ${REPO_ROOT}/lib/AssetCompanionIndex ${REPO_ROOT}/lib/Memory)
 target_compile_features(AssetCompanionStoreTest PRIVATE cxx_std_20)
 target_compile_options(AssetCompanionStoreTest PRIVATE -Wall -Wextra -Werror -Wno-deprecated-declarations -UNDEBUG)

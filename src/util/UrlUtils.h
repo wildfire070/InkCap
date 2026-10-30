@@ -45,4 +45,8 @@ std::string buildUrl(const std::string& serverUrl, const std::string& path);
  */
 bool sameOrigin(const std::string& serverUrl, const std::string& url);
 
+// Resolve an HTTP document link (including query-only and parent references).
+// Unlike buildUrl's directory join, a relative link replaces the base filename.
+std::string resolveReference(const std::string& baseUrl, const std::string& reference);
+
 }  // namespace UrlUtils

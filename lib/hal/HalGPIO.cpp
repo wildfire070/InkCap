@@ -10,6 +10,8 @@
 
 #include <algorithm>
 
+#include "InputWake.h"
+
 #if FREEINK_MCU_S3
 #include <soc/usb_serial_jtag_reg.h>
 #endif
@@ -172,16 +174,38 @@ void HalGPIO::begin() {
   }
 #endif
   inputMgr.begin();
+  InputWake::begin();
 }
 
+bool HalGPIO::waitForInput(const uint32_t timeoutMs) { return InputWake::wait(timeoutMs, inputMgr); }
+void HalGPIO::startButtonCapture() { InputWake::startCapture(); }
+void HalGPIO::stopButtonCapture() { InputWake::stopCapture(); }
+uint32_t HalGPIO::buttonSampleTime() const { return InputWake::capturing() ? buttonFrame.timestamp : millis(); }
+
+bool HalGPIO::hasPendingButtonInput() const { return InputWake::hasPendingButtons() || inputMgr.isDebouncePending(); }
+
 void HalGPIO::update() {
-  inputMgr.update();
-  if (inputMgr.isDebouncePending()) {
-    // The SDK commits a state change after it remains stable for more than
-    // 5 ms. Re-poll before the low-power loop's next ~100 ms sample so short
-    // physical button presses are not discarded.
-    delay(BUTTON_DEBOUNCE_REPOLL_MS);
+  if (InputWake::capturing()) {
+#if CROSSINK_APP_CAP_TOUCH
+    // Touch remains owned by the main thread. Physical buttons come from the
+    // independent sampler; on C3 this also avoids a second ADC reader.
     inputMgr.update();
+#endif
+    buttonFrame = InputWake::takeFrame();
+    if (buttonFrame.pressed || buttonFrame.released) {
+      LOG_DBG("INPUT", "Buttons @%lu: state=%02x press=%02x release=%02x held=%lu",
+              static_cast<unsigned long>(buttonFrame.timestamp), buttonFrame.state, buttonFrame.pressed,
+              buttonFrame.released, static_cast<unsigned long>(buttonFrame.heldMs));
+    }
+  } else {
+    inputMgr.update();
+    if (inputMgr.isDebouncePending()) {
+      // The SDK commits a state change after it remains stable for more than
+      // 5 ms. Re-poll before the low-power loop's next ~100 ms sample so short
+      // physical button presses are not discarded.
+      delay(BUTTON_DEBOUNCE_REPOLL_MS);
+      inputMgr.update();
+    }
   }
 
   usbStateChanged = false;
@@ -199,19 +223,33 @@ void HalGPIO::update() {
 
 bool HalGPIO::wasUsbStateChanged() const { return usbStateChanged; }
 
-bool HalGPIO::isPressed(uint8_t buttonIndex) const { return inputMgr.isPressed(buttonIndex); }
+bool HalGPIO::isPressed(uint8_t buttonIndex) const {
+  return InputWake::capturing() ? buttonFrame.state & (1u << buttonIndex) : inputMgr.isPressed(buttonIndex);
+}
 
-bool HalGPIO::wasPressed(uint8_t buttonIndex) const { return inputMgr.wasPressed(buttonIndex); }
+bool HalGPIO::wasPressed(uint8_t buttonIndex) const {
+  return InputWake::capturing() ? buttonFrame.pressed & (1u << buttonIndex) : inputMgr.wasPressed(buttonIndex);
+}
 
-bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed(); }
+bool HalGPIO::wasAnyPressed() const {
+  return InputWake::capturing() ? buttonFrame.pressed != 0 : inputMgr.wasAnyPressed();
+}
 
-bool HalGPIO::wasReleased(uint8_t buttonIndex) const { return inputMgr.wasReleased(buttonIndex); }
+bool HalGPIO::wasReleased(uint8_t buttonIndex) const {
+  return InputWake::capturing() ? buttonFrame.released & (1u << buttonIndex) : inputMgr.wasReleased(buttonIndex);
+}
 
-bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased(); }
+bool HalGPIO::wasAnyReleased() const {
+  return InputWake::capturing() ? buttonFrame.released != 0 : inputMgr.wasAnyReleased();
+}
 
-unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
+unsigned long HalGPIO::getHeldTime() const {
+  return InputWake::capturing() ? buttonFrame.heldMs : inputMgr.getHeldTime();
+}
 
-unsigned long HalGPIO::getPowerButtonHeldTime() const { return inputMgr.getPowerButtonHeldTime(); }
+unsigned long HalGPIO::getPowerButtonHeldTime() const {
+  return InputWake::capturing() ? buttonFrame.powerHeldMs : inputMgr.getPowerButtonHeldTime();
+}
 
 #if CROSSINK_APP_CAP_TOUCH
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
@@ -282,7 +320,7 @@ bool HalGPIO::wasTouchActivity() const { return inputMgr.wasTouchActivity(); }
 #endif
 
 void HalGPIO::setSharedConfirmPowerShortPressEmitsPower(const bool enabled) {
-  InputManager::setSharedConfirmPowerShortPressEmitsPower(enabled);
+  InputWake::setSharedConfirmPowerShortPressEmitsPower(enabled);
 }
 
 bool HalGPIO::isXteinkDevice() const {

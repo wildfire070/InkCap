@@ -54,6 +54,8 @@ CASES = {
     'long-menu': ({'longPressMenuAction':27}, [(0,'ENTER:850')]),
     'long-back': ({'longPressBackAction':27}, [(0,'BACK:1100')]),
     'side-short': ({'sideButtonUpShort':38}, [(0,'UP')]),
+    'front-left-long': ({'frontButtonLeftLong':38}, [(0,'LEFT:850')]),
+    'front-right-long': ({'frontButtonRightLong':38}, [(0,'RIGHT:850')]),
     'side-long': ({'sideButtonUpLong':38}, [(0,'UP:850')]),
     'power-chord': ({'powerChordAction':34}, [(0,'POWER:350'),(20,'UP:280')]),
     'side-chord': ({'sideButtonChordAction':34}, [(0,'UP:350'),(20,'DOWN:280')]),
@@ -120,7 +122,7 @@ if __name__ == '__main__':
     p.add_argument('--env', default='simulator')
     p.add_argument('--program', type=Path)
     p.add_argument('--logs', type=Path)
-    p.add_argument('--cases', nargs='+', choices=CASES, default=list(CASES)[:9])
+    p.add_argument('--cases', nargs='+', choices=CASES, default=[case for case in CASES if case != 'edge'])
     p.add_argument('--kinds', nargs='+', choices=['epub', 'xtc', 'txt', 'xtc-empty'], default=['epub', 'xtc'])
     p.add_argument('--mode', choices=['select', 'cancel'], default='select')
     p.add_argument('--jobs', type=int, default=1)

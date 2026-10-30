@@ -192,3 +192,7 @@ To list all presets with codepoint counts:
 `--force-autohint`: force FreeType's auto-hinter instead of the font's native hinting (useful when a font's built-in hints produce poor results at small sizes).
 
 Install custom fonts via the web interface or manual SD card copy.
+
+### Damaged font files
+
+If the EPUB reader shows **Damaged font file**, a `.cpfont` file contains invalid glyph data. Affected characters are drawn blank. Delete the font family folder and install it again. Clear the affected book’s reading cache if its spacing was built using the damaged font.

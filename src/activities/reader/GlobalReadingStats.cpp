@@ -378,13 +378,16 @@ GlobalReadingStats GlobalReadingStats::loadAggregated(const GlobalReadingStats& 
   return stats;
 }
 
-void GlobalReadingStats::save() const {
-  if (!DailyReadingStats::flush()) LOG_ERR("GSTATS", "Failed to flush daily reading counters");
+bool GlobalReadingStats::save() const {
+  const bool dailySaved = DailyReadingStats::flush();
+  if (!dailySaved) LOG_ERR("GSTATS", "Failed to flush daily reading counters");
   if (s_blockDestructiveSave) {
     LOG_ERR("GSTATS", "Refusing to overwrite on-disk stats after newer-format file was detected");
-    return;
+    return false;
   }
-  saveToFile(*this, GLOBAL_STATS_PATH, GLOBAL_STATS_BAK_PATH);
+  // Keep the global snapshot even if the independent daily flush needs retrying.
+  const bool globalSaved = saveToFile(*this, GLOBAL_STATS_PATH, GLOBAL_STATS_BAK_PATH);
+  return globalSaved && dailySaved;
 }
 
 static uint32_t s_localResetRevision = 0;
