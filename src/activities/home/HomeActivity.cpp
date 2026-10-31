@@ -269,12 +269,12 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasBo
   }
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
-  // Least-used entry: pushed to the end so it's the first to spill onto page 2
-  // when the menu overflows, rather than displacing more-used items.
+  items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
+  // Least-used entry: pushed last (after Settings) so it's the first to spill
+  // onto page 2 when the menu overflows, rather than displacing more-used items.
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
-  items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
 }
 
 HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasBookFusion, bool hasPlugins, bool hasReadingStats,
