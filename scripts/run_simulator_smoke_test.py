@@ -412,7 +412,7 @@ def run_smoke(args: argparse.Namespace) -> int:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=args.timeout if args.timeout is not None else (300 if args.asset_downloads else 180 if args.frontlight_layout or args.about or args.support_export or args.filename_font_family else 120),
+            timeout=args.timeout if args.timeout is not None else (300 if args.asset_downloads or args.frontlight_layout else 180 if args.about or args.support_export or args.filename_font_family else 120),
         )
 
         if args.screenshot_out:
@@ -534,7 +534,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--font-recovery", action="store_true", help="Check reader selection recovery after font catalog memory pressure")
     parser.add_argument("--font-family", help="Exercise custom-font size and dictionary lifecycle")
     parser.add_argument("--reader-font-layout", action="store_true", help="Check Reader Font row bounds, scrolling and TTF touch navigation across orientations and UI sizes (X4 Pro; requires --font-dir and --font-family)")
-    parser.add_argument("--timeout", type=int, help="Seconds before the simulator run is treated as hung (default: 120, or 180 for frontlight layout, about, support export, or filename font checks)")
+    parser.add_argument("--timeout", type=int, help="Seconds before the simulator run is treated as hung (default: 120; 180 for about, support export or filename fonts; 300 for frontlight layout or asset downloads)")
     parser.add_argument("--page-turns", type=int, default=2, help="Number of EPUB page-forward taps to run")
     parser.add_argument("--theme", choices=sorted(THEMES), help="UI theme to use during the smoke test")
     parser.add_argument("--calibre-batch", action="store_true",
@@ -543,7 +543,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-menu-sync-return", choices=["file-browser", "library"], help="Check context-menu sync return across network reboots")
     parser.add_argument("--file-browser-sync-return", action="store_true", help="Check browser sync return across network reboots")
     parser.add_argument("--frontlight-sync", action="store_true", help="Check frontlight sync outside the reader with stats enabled and disabled (X4 Pro)")
-    parser.add_argument("--frontlight-layout", action="store_true", help="Check frontlight drawer bounds and handle taps across scales, orientations and themes (X4 Pro)")
+    parser.add_argument("--frontlight-layout", action="store_true", help="Check frontlight drawer bounds, handle swipes/taps, reader return and explicit Home across scales, orientations and themes (X4 Pro)")
     parser.add_argument("--frontlight-captures", help="Directory for frontlight layout framebuffer captures (PGM)")
     parser.add_argument("--opds-catalog", action="store_true", help="Check OPDS catalog release and download return flows")
     parser.add_argument("--support-export", action="store_true", help="Check support export privacy, scopes, cancellation and failure preservation")
