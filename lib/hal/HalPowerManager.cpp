@@ -54,7 +54,7 @@ bool HalPowerManager::updateBatteryCalibration() {
   const bool wasPending = batteryCalibrationPending;
   batteryCalibrationPending = BatteryMonitor::loadDesignCapacity();
   if (wasPending && !batteryCalibrationPending) {
-    _batteryLastPollMs = 0;  // Sample the corrected gauge on the next battery read.
+    _batteryPollStarted = false;  // Sample the corrected gauge on the next battery read.
     LOG_INF("PWR", "X3 battery capacity check finished");
   }
   return batteryCalibrationPending;
@@ -175,13 +175,16 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
   if (batteryCacheMutex != nullptr) {
     xSemaphoreTake(batteryCacheMutex, portMAX_DELAY);
   }
+
+  const bool hasGauge = BoardConfig::ACTIVE.batteryGauge.gaugeAddr != 0;
+  const unsigned long now = millis();
   uint16_t result;
-  if (BoardConfig::ACTIVE.batteryGauge.gaugeAddr != 0) {
-    const unsigned long now = millis();
-    if (_batteryLastPollMs != 0 && (now - _batteryLastPollMs) < BATTERY_POLL_MS) {
-      result = _batteryCachedPercent;
-    } else {
-      _batteryLastPollMs = now;
+  if (_batteryPollStarted && (now - _batteryLastPollMs) < BATTERY_POLL_MS) {
+    result = hasGauge ? _batteryCachedPercent : _batteryCachedPercent / 10;
+  } else {
+    _batteryLastPollMs = now;
+    if (hasGauge) {
+      _batteryPollStarted = true;
       uint16_t percent = 0;
       if (!battery.readPercentageChecked(percent)) {
         result = _batteryCachedPercent;
@@ -189,16 +192,19 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
         _batteryCachedPercent = percent;
         result = _batteryCachedPercent;
       }
-    }
-  } else {
-    // smooth the battery %.
-    if (_batteryCachedPercent == 0) {
-      _batteryCachedPercent = 10 * battery.readPercentage();
     } else {
-      _batteryCachedPercent = (_batteryCachedPercent * 9 + battery.readPercentage() * 10) / 10;
+      // Smooth once per poll, independent of how many times the UI measures or draws it.
+      const uint16_t percent = battery.readPercentage();
+      if (!_batteryPollStarted) {
+        _batteryCachedPercent = 10 * percent;
+      } else {
+        _batteryCachedPercent = (_batteryCachedPercent * 9 + percent * 10) / 10;
+      }
+      _batteryPollStarted = true;
+      result = _batteryCachedPercent / 10;
     }
-    result = _batteryCachedPercent / 10;
   }
+
   if (batteryCacheMutex != nullptr) {
     xSemaphoreGive(batteryCacheMutex);
   }
