@@ -34,9 +34,16 @@ class ScalableFontAccess {
 // existing 2-bit and fractional-metric conventions. Call under RenderLock.
 class HalScalableFont {
  public:
-  static constexpr size_t MaxFileBytes = 2 * 1024 * 1024;
+  // Discovery/open-time ceilings only — the loader already streams rather than
+  // requiring a file resident (openSource's streamed path, derive() synthesizing
+  // missing styles from one file), so these exist to bound worst-case SD I/O and
+  // catch degenerate data, not because a bigger file can't physically load.
+  // A subfolder family can carry up to 4 of these (see MaxFamilyBytes), so this
+  // stays below MaxFilenameFileBytes, which backs a single loose file that IS
+  // the whole family.
+  static constexpr size_t MaxFileBytes = 16 * 1024 * 1024;
   static constexpr size_t MaxFilenameFileBytes = 32 * 1024 * 1024;
-  static constexpr size_t MaxFamilyBytes = 6 * 1024 * 1024;
+  static constexpr size_t MaxFamilyBytes = 32 * 1024 * 1024;
   static constexpr size_t ReaderReserveBytes = 1024 * 1024;
   struct Info {
     char family[64] = {};
