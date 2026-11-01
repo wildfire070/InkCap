@@ -11,6 +11,7 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -8626,6 +8627,7 @@ void EpubReaderActivity::renderStatusBar() const {
   char bookTime[24] = {};
   char chapterTime[24] = {};
   ReaderStatusBarContent content;
+  if (uses(ReaderStatusBarItem::Battery)) content.batteryPercentage = powerManager.getBatteryPercentage();
   content.bookProgress = bookProgress;
   content.chapterProgress = chapterProgress * 100.0f;
   content.chapterPage = currentPage;
