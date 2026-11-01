@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -146,12 +147,26 @@ int main(int argc, char** argv) {
   bad = valid;
   retag(bad, "glyf", "CFF2");
   rejected(bad);
-  bad = valid;
-  retag(bad, "GDEF", "fvar");
-  rejected(bad);
-  bad = valid;
-  retag(bad, "GDEF", "gvar");
-  rejected(bad);
+  // A table merely TAGGED fvar/gvar is no longer rejected outright (real
+  // variable fonts carry one) -- but when its bytes are actually leftover
+  // GDEF data, not a real fvar/gvar table, FreeType must fail to parse the
+  // axes and fall back to the font's still-valid static glyf outlines rather
+  // than exposing bogus variation data or rejecting an otherwise-good font.
+  for (const char* oldTag : {"fvar", "gvar"}) {
+    bad = valid;
+    retag(bad, "GDEF", oldTag);
+    const char* path = "/fonts/Rejected/Bad.otf";
+    put(path, bad);
+    HalScalableFont::Info info;
+    bool unavailable = true;
+    assert(HalScalableFont::inspectFile(path, info, &unavailable));
+    assert(!unavailable);
+    assert(!info.variable);
+    assert(!std::strcmp(info.family, "Bitter"));
+    HalScalableFont font;
+    assert(font.openFile(path, HalScalableFont::MaxFileBytes, {}, HalScalableFont::FileMode::Auto));
+    assert(font.probeGlyph('A', 16));
+  }
   bad = valid;
   std::memcpy(bad.data(), "ttcf", 4);
   rejected(bad);

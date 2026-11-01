@@ -38,8 +38,12 @@ Result inspect(size_t size, Read read) {
     // SFNT records must be sorted by tag. This also rejects duplicate tables.
     if (tag <= previous || offset < directoryEnd || offset > size || length > size - offset) return Result::Unsupported;
     previous = tag;
-    if (tag == 0x43464632 || tag == 0x66766172 || tag == 0x67766172)
-      return Result::Unsupported;  // CFF2, fvar, gvar: variable faces.
+    // fvar/gvar (TrueType variable faces) are supported: FtFont reads the wght/
+    // ital axes directly (HalScalableFont::openSource passes weight_/italic_
+    // into FtFont::init/initStream) and SdCardFontManager::loadScalable()
+    // already derives missing styles from one variable source. CFF2 (variable
+    // CFF/OpenType) has no such path here, so it still falls through to fail
+    // the CFF `required` bit below (no plain 'CFF ' table sets it).
     switch (tag) {
       case 0x43464620:
         if (!length) return Result::Unsupported;
