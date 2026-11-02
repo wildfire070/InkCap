@@ -17,6 +17,7 @@
 #include "WifiSelectionActivity.h"
 #include "activities/home/Ao3LibraryActivity.h"
 #include "components/CompactHeader.h"
+#include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/Ao3ArchiveUtils.h"
@@ -188,13 +189,15 @@ void Ao3ReceiveActivity::handleUpdateComplete(const std::string& receivedPath) {
 void Ao3ReceiveActivity::loop() {
   if (state == Ao3ReceiveState::FILE_RECEIVED) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+        TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
       finish();
     }
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
+      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
     exitRequested = true;
   }
 
@@ -293,7 +296,7 @@ void Ao3ReceiveActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const bool isUpdate = mode == Ao3ReceiveMode::UPDATE_SINGLE;
-  CompactHeader::drawTitle(renderer, isUpdate ? tr(STR_AO3_RECEIVE_UPDATE_TITLE) : tr(STR_AO3_RECEIVE));
+  TouchHeaderBackButton::drawCompact(renderer, isUpdate ? tr(STR_AO3_RECEIVE_UPDATE_TITLE) : tr(STR_AO3_RECEIVE));
   const auto height = renderer.getLineHeight(UI_10_FONT_ID);
   const auto top = (pageHeight - height) / 2;
 
