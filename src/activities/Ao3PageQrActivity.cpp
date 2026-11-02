@@ -11,15 +11,17 @@
 #include "../Ao3LibraryMetadata.h"
 #include "ActivityManager.h"
 #include "activities/network/Ao3ReceiveActivity.h"
+#include "components/TouchActionButtons.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
 
 namespace {
-// TouchRegistry::Item id for the explicit touch Update button render() draws in place of the
+// TouchRegistry::Item ids for the explicit touch buttons render() draws in place of the
 // button-hints row (see the touch-handling comment in loop()).
-constexpr int UPDATE_BUTTON_ID = 0;
+constexpr int OPEN_BUTTON_ID = 0;
+constexpr int UPDATE_BUTTON_ID = 1;
 
 // Matches the wording Ao3LibraryActivity's Sort & Filter overlay already uses for this
 // same rating char, so the two screens describe a rating the same way.
@@ -91,14 +93,21 @@ void Ao3PageQrActivity::loop() {
     return;
   }
 
-  // Touch (X4 Pro): the board has no Left key, and BaseTheme::drawButtonHints() -- the usual
-  // touch fallback for a button-hint label -- no-ops entirely on touch hardware (it only draws
-  // the physical-button hint row), so this screen's Update action needs its own explicit touch
-  // target. render() draws and registers it only when storyUrl is non-empty, same gate used here.
+  // Touch (X4 Pro): the board has no Left/Confirm keys, and BaseTheme::drawButtonHints() -- the
+  // usual touch fallback for a button-hint label -- no-ops entirely on touch hardware (it only
+  // draws the physical-button hint row), so this screen's Open and Update actions each need their
+  // own explicit touch target. render() draws and registers each only when its action applies
+  // (filePath/storyUrl non-empty respectively), same gates used here.
   int tappedItem = -1;
-  const bool updateTapped =
-      !storyUrl.empty() && mappedInput.wasItemTapped(tappedItem) && tappedItem == UPDATE_BUTTON_ID;
-  if (updateTapped) mappedInput.suppressCurrentTouchContact();
+  const bool itemTapped = mappedInput.wasItemTapped(tappedItem);
+  const bool openTapped = !filePath.empty() && itemTapped && tappedItem == OPEN_BUTTON_ID;
+  const bool updateTapped = !storyUrl.empty() && itemTapped && tappedItem == UPDATE_BUTTON_ID;
+  if (openTapped || updateTapped) mappedInput.suppressCurrentTouchContact();
+
+  if (!filePath.empty() && openTapped) {
+    activityManager.goToReader(filePath);
+    return;
+  }
 
   if (!storyUrl.empty() && (mappedInput.wasReleased(MappedInputManager::Button::Left) || updateTapped)) {
     startActivityForResult(
@@ -118,10 +127,13 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   // band only for the physical-button hint row it draws, which it skips on touch -- see
   // BaseTheme::drawButtonHints()'s early `if (gpio.hasTouch()) return;`), so the content layout
   // below would otherwise use the full page height and leave no room for the explicit touch
-  // Update button drawn at the end of this function. Reserve the same height for both.
-  constexpr int TOUCH_UPDATE_BUTTON_HEIGHT = 48;
+  // Open/Update buttons drawn at the end of this function. Reserve the same height for both.
+  constexpr int TOUCH_FOOTER_BUTTON_HEIGHT = 48;
+  const bool hasOpenAction = !filePath.empty();
+  const bool hasUpdateAction = !storyUrl.empty();
+  const int touchFooterButtonCount = (hasOpenAction ? 1 : 0) + (hasUpdateAction ? 1 : 0);
   const int touchButtonReserve =
-      (mappedInput.hasTouchHardware() && !storyUrl.empty()) ? TOUCH_UPDATE_BUTTON_HEIGHT : 0;
+      mappedInput.hasTouchHardware() ? touchFooterButtonCount * TOUCH_FOOTER_BUTTON_HEIGHT : 0;
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_AO3_PAGE_QR));
 
@@ -264,16 +276,25 @@ void Ao3PageQrActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   // Touch (X4 Pro): drawButtonHints() above no-ops on touch hardware (it only draws the
-  // physical-button hint row), leaving its reserved bottom band empty and the Update action with
-  // no touch target at all -- see loop()'s matching tap check. Draw an explicit button filling
-  // that same reserved band instead, only when there's an Update action to trigger.
+  // physical-button hint row), leaving its reserved bottom band empty and the Open/Update actions
+  // with no touch target at all -- see loop()'s matching tap checks. Draw explicit button(s)
+  // filling that same reserved band instead, via the shared TouchActionButtons helper (same
+  // render-time Layout used for both drawing and TouchRegistry hit-testing, so the two can't
+  // drift apart -- see BackupStatsActivity for the same pattern). Open and Update each get their
+  // own row, stacked, when both apply; otherwise whichever one applies takes the one row.
   if (touchButtonReserve > 0) {
-    const int btnH = touchButtonReserve;
-    const Rect updateBtnRect{0, pageHeight - btnH, pageWidth, btnH};
-    renderer.drawRect(updateBtnRect.x, updateBtnRect.y, updateBtnRect.width, updateBtnRect.height);
-    renderer.drawCenteredText(UI_10_FONT_ID, updateBtnRect.y + (btnH - renderer.getLineHeight(UI_10_FONT_ID)) / 2,
-                              tr(STR_AO3_QR_UPDATE));
-    TouchRegistry::getInstance().add(updateBtnRect, UPDATE_BUTTON_ID, TouchRegistry::Item);
+    const Rect container{0, pageHeight - touchButtonReserve, pageWidth, touchButtonReserve};
+    const auto actions =
+        TouchActionButtons::vertical(container, static_cast<uint8_t>(touchFooterButtonCount), TOUCH_FOOTER_BUTTON_HEIGHT, 0);
+    const char* actionLabels[2] = {};
+    int labelCount = 0;
+    if (hasOpenAction) actionLabels[labelCount++] = tr(STR_OPEN);
+    if (hasUpdateAction) actionLabels[labelCount++] = tr(STR_AO3_QR_UPDATE);
+    TouchActionButtons::draw(renderer, actions, actionLabels, 0, -1, UI_10_FONT_ID);
+    for (uint8_t i = 0; i < actions.count; i++) {
+      const int id = (i == 0 && hasOpenAction) ? OPEN_BUTTON_ID : UPDATE_BUTTON_ID;
+      TouchRegistry::getInstance().add(actions.buttons[i], id, TouchRegistry::Item);
+    }
   }
 
   renderer.displayBuffer();
