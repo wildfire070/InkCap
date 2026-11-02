@@ -15,6 +15,7 @@
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "components/CompactHeader.h"
+#include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
@@ -169,7 +170,8 @@ void CalibreConnectActivity::stopWebServer() {
 }
 
 void CalibreConnectActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
+      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
     exitRequested = true;
   }
 
@@ -329,7 +331,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  CompactHeader::drawTitle(renderer, tr(STR_CALIBRE_WIRELESS));
+  TouchHeaderBackButton::drawCompact(renderer, tr(STR_CALIBRE_WIRELESS));
   const auto height = renderer.getLineHeight(UI_10_FONT_ID);
   const auto top = safe.y + (pageHeight - height) / 2;
 
