@@ -680,13 +680,27 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
   renderer.drawText(UI_10_FONT_ID, rect.x + padding, rect.y + rect.height / 2 + 2, tr(STR_START_READING), true);
 }
 
+namespace {
+// Home's own paginated button menu: computes pageItems twice when the
+// unreserved page count would overflow, so the second pass's smaller
+// pageItems leaves room for UITheme::drawMenuPageDots() at the bottom of
+// rect instead of running the last row into it. Single-page menus are
+// unaffected -- the first pass's full-height pageItems is kept as-is.
+int buttonMenuPageItems(const Rect rect, const int buttonCount, const int rowStep, const int maxVisibleItems) {
+  const auto& menuMetrics = UITheme::getInstance().getMetrics();
+  const int fullPageItems = std::clamp((rect.height + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
+  if (buttonCount <= fullPageItems) return fullPageItems;
+  const int reservedHeight = std::max(0, rect.height - UITheme::getMenuPageDotsReserve());
+  return std::clamp((reservedHeight + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
+}
+}  // namespace
+
 int LyraTheme::getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const {
   (void)renderer;
-  (void)buttonCount;
   const auto& menuMetrics = UITheme::getInstance().getMetrics();
   constexpr int maxVisibleItems = 7;
   const int rowStep = menuMetrics.menuRowHeight + menuMetrics.menuSpacing;
-  return std::clamp((rect.height + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
+  return buttonMenuPageItems(rect, buttonCount, rowStep, maxVisibleItems);
 }
 
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
@@ -696,28 +710,19 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
 
   constexpr int maxVisibleItems = 7;
   const int rowStep = menuMetrics.menuRowHeight + menuMetrics.menuSpacing;
-  const int pageItems = std::clamp((rect.height + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
+  const int pageItems = buttonMenuPageItems(rect, buttonCount, rowStep, maxVisibleItems);
   const int totalPages = (buttonCount + pageItems - 1) / pageItems;
+  const int currentPage = std::max(0, selectedIndex) / pageItems;
 
   if (totalPages > 1) {
-    const int scrollAreaHeight = pageItems * rowStep - menuMetrics.menuSpacing;
-    const int scrollBarHeight = (scrollAreaHeight * pageItems) / buttonCount;
-    const int currentPage = std::max(0, selectedIndex) / pageItems;
-    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
-    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
-    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
-    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
-                      scrollBarHeight, true);
+    UITheme::drawMenuPageDots(renderer, rect, totalPages, currentPage);
   }
 
-  const int pageStartIndex = (std::max(0, selectedIndex) / pageItems) * pageItems;
+  const int pageStartIndex = currentPage * pageItems;
 
   for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
     const int displayIndex = i - pageStartIndex;
-    int tileWidth = rect.width - menuMetrics.contentSidePadding * 2;
-    if (totalPages > 1) {
-      tileWidth -= (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset);
-    }
+    const int tileWidth = rect.width - menuMetrics.contentSidePadding * 2;
     Rect tileRect = Rect{rect.x + menuMetrics.contentSidePadding,
                          rect.y + displayIndex * (menuMetrics.menuRowHeight + menuMetrics.menuSpacing), tileWidth,
                          menuMetrics.menuRowHeight};
