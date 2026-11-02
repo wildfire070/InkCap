@@ -218,7 +218,8 @@ void CalibreConnectActivity::loop() {
       }
       if ((i & 0x0F) == 0x0F) {
         yield();
-        if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+        if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
+            TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
           exitRequested = true;
           break;
         }
