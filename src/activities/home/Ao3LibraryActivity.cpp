@@ -54,6 +54,18 @@ constexpr int OVERLAY_ROW_COUNT = 6;
 // that the X4 Pro's recessed bezel visually clips it -- same class of issue UIThemeTokens.h's own
 // listScrollInset already works around for the scroll indicator. Push it further inward on that board
 // specifically; every other board keeps the original position.
+// The manage-panel triangle (bottom-right corner) positions itself relative to the button-hints
+// footer, reusing that row's reserved space even though it's a separate, persistent touch target --
+// not just a hint shown alongside Back/Select/Up/Down text. metrics.buttonHintsHeight is correct for
+// that on button hardware, but is deliberately 0 on touch hardware (UITheme::rebuildMetricVariants():
+// no footer text is drawn there, so the row is reclaimed for content). Using 0 directly made the
+// triangle's effective zone top sit at the screen's full height -- past the last valid pixel row, so
+// no on-screen tap could ever satisfy the ">=" check. Falls back to the same height button hardware
+// uses so the zone (and the triangle drawn inside it) stays a normal, reachable size on touch boards.
+int manageTriangleZoneHeight(const ThemeMetrics& metrics) {
+  return metrics.buttonHintsHeight > 0 ? metrics.buttonHintsHeight : 40;
+}
+
 int managePanelTriangleX(const int screenWidth) {
 #ifndef SIMULATOR
   if (BoardConfig::isX4Pro()) return screenWidth - 36;
@@ -417,7 +429,7 @@ void Ao3LibraryActivity::loop() {
     {
       const auto& metrics = UITheme::getInstance().getMetrics();
       const int screenW = renderer.getScreenWidth();
-      const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
+      const int hintsY = renderer.getScreenHeight() - manageTriangleZoneHeight(metrics);
       int tapX = 0;
       int tapY = 0;
       if (mappedInput.wasScreenTapped(tapX, tapY)) {
@@ -856,8 +868,8 @@ void Ao3LibraryActivity::renderLibrary(RenderLock& lock) {
   if (screenState != ScreenState::MANAGE_PANEL) {
     const auto& metrics = UITheme::getInstance().getMetrics();
     const int tx = managePanelTriangleX(renderer.getScreenWidth());
-    const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
-    const int ty = hintsY + metrics.buttonHintsHeight / 2;
+    const int hintsY = renderer.getScreenHeight() - manageTriangleZoneHeight(metrics);
+    const int ty = hintsY + manageTriangleZoneHeight(metrics) / 2;
 
     // ▲ pointing up
     const int xPts[] = {tx + 6, tx, tx + 12};
@@ -920,8 +932,8 @@ void Ao3LibraryActivity::renderManagePanel() {
   // X4 Pro (see managePanelTriangleX()) to clear that board's recessed bezel.
   {
     const int tx = managePanelTriangleX(renderer.getScreenWidth());
-    const int hintsY = renderer.getScreenHeight() - metrics.buttonHintsHeight;
-    const int ty = hintsY + metrics.buttonHintsHeight / 2;
+    const int hintsY = renderer.getScreenHeight() - manageTriangleZoneHeight(metrics);
+    const int ty = hintsY + manageTriangleZoneHeight(metrics) / 2;
     if (screenState == ScreenState::MANAGE_PANEL) {
       // ▼ pointing down when panel is open
       const int xPts[] = {tx, tx + 12, tx + 6};
