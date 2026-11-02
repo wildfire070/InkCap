@@ -377,6 +377,31 @@ int UITheme::getButtonHintsReserve(const GfxRenderer& renderer) {
   return height > 0 ? height + getButtonHintsBottomInset(renderer) : 0;
 }
 
+int UITheme::getMenuPageDotsReserve() {
+  constexpr int kDotDiameter = 10;
+  constexpr int kBottomMargin = 10;
+  return kDotDiameter + kBottomMargin * 2;
+}
+
+void UITheme::drawMenuPageDots(const GfxRenderer& renderer, const Rect rect, const int totalPages,
+                               const int currentPage) {
+  if (totalPages <= 1) return;
+  constexpr int kDot = 10;
+  constexpr int kGap = 14;
+  constexpr int kBottomMargin = 10;
+  const int totalWidth = totalPages * kDot + (totalPages - 1) * kGap;
+  int x = rect.x + (rect.width - totalWidth) / 2;
+  const int y = rect.y + rect.height - kDot - kBottomMargin;
+  for (int i = 0; i < totalPages; ++i) {
+    if (i == currentPage) {
+      renderer.fillRoundedRect(x, y, kDot, kDot, kDot / 2, Color::Black);
+    } else {
+      renderer.drawRoundedRect(x, y, kDot, kDot, 1, kDot / 2, true);
+    }
+    x += kDot + kGap;
+  }
+}
+
 int UITheme::getHintSafeX(const GfxRenderer& renderer, const int x, const int width) {
   const auto edges = renderer.getViewableInsets().rotated(static_cast<unsigned>(renderer.getOrientation())).edges;
   return std::clamp(x, static_cast<int>(edges[3]),
