@@ -258,9 +258,6 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasBo
   if (hasPlugins) {
     items.push({tr(STR_PLUGINS), UIIcon::Plugins, HomeMenuAction::Plugins});
   }
-  if (hasOpdsServers) {
-    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
-  }
   if (hasBookFusion) {
     items.push({tr(STR_BF_SYNC), BookFusion, HomeMenuAction::BookFusion});
   }
@@ -270,8 +267,12 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasBo
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
-  // Least-used entry: pushed last (after Settings) so it's the first to spill
-  // onto page 2 when the menu overflows, rather than displacing more-used items.
+  // Least-used entries: pushed last (after Settings) so they're the first to
+  // spill onto page 2 when the menu overflows, rather than displacing
+  // more-used items.
+  if (hasOpdsServers) {
+    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
+  }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
@@ -296,9 +297,6 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasBookFusion, b
   if (hasPlugins) {
     items.push({tr(STR_PLUGINS), UIIcon::Plugins, HomeMenuAction::Plugins});
   }
-  if (hasOpdsServers) {
-    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
-  }
   if (hasBookFusion) {
     items.push({tr(STR_BF_SYNC), BookFusion, HomeMenuAction::BookFusion});
   }
@@ -307,8 +305,11 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasBookFusion, b
   }
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
-  // Least-used entry: pushed to the end so it's the first to spill onto page 2
-  // when the menu overflows, rather than displacing more-used items.
+  // Least-used entries: pushed to the end so they're the first to spill onto
+  // page 2 when the menu overflows, rather than displacing more-used items.
+  if (hasOpdsServers) {
+    items.push({tr(STR_OPDS_BROWSER), Opds, HomeMenuAction::OpdsBrowser});
+  }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
