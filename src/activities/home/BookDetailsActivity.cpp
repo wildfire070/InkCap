@@ -215,11 +215,14 @@ void BookDetailsActivity::loop() {
     case MappedInputManager::SwipeDir::Down:
       scrollUp();
       return;
-    // Mirrors the Left/Right button bindings above: touch hardware has no equivalent of
-    // those physical keys, and the footer labels that explain them never render on touch
-    // devices (GUI.drawButtonHints no-ops there), so a horizontal swipe is the only way
-    // to reach prev/next book by touch.
-    case MappedInputManager::SwipeDir::Right:
+    // Touch hardware has no equivalent of the physical Left/Right keys above, and the
+    // footer labels that explain them never render on touch devices (GUI.drawButtonHints
+    // no-ops there), so a horizontal swipe is the only way to reach prev/next book by
+    // touch. Swipe left = next, swipe right = previous -- matches this codebase's own
+    // convention everywhere else a horizontal swipe means forward/back (ReaderUtils.h's
+    // prev/next mapping, LibraryActivity's nextPage, HomeActivity's carousel moveRight()
+    // on a left swipe), not the physical button's own Right=next/Left=previous layout.
+    case MappedInputManager::SwipeDir::Left:
       if (hasNextBook) {
         BookDetailsNavResult res;
         res.next = true;
@@ -227,7 +230,7 @@ void BookDetailsActivity::loop() {
         finish();
       }
       return;
-    case MappedInputManager::SwipeDir::Left:
+    case MappedInputManager::SwipeDir::Right:
       if (hasPreviousBook) {
         BookDetailsNavResult res;
         res.next = false;
