@@ -52,6 +52,18 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // Not persisted; -1 means no return index is pending.
   int ao3LibraryReturnIndex = -1;
 
+  // Set by Ao3EndOfBookActivity's Archive row before it returns control to the paused
+  // EpubReaderActivity beneath it: the fic can't be moved while that reader still holds its
+  // Epub handle open, so the actual move is deferred to EpubReaderActivity's own onExit(),
+  // same as every other AO3 archive path (see pendingAo3ArchiveAction). Not persisted.
+  bool ao3EndOfBookArchiveRequested = false;
+
+  // Set by Ao3EndOfBookActivity's Update row before it finishes: AO3SyncActivity's WiFi connect
+  // pulls in NetworkEvents/WifiSelectionActivity, and launching it from that overlay (rather than
+  // from EpubReaderActivity directly, one stack level shallower) reproduced a real crash in
+  // eink-qemu -- see the class comment on Ao3EndOfBookActivity. Not persisted.
+  bool ao3EndOfBookUpdateRequested = false;
+
   // Returns true if idx was shown within the last checkCount picks.
   // Walks backwards from the most recently written slot.
   bool isRecentSleep(uint16_t idx, uint8_t checkCount) const;
