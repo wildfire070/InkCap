@@ -397,14 +397,22 @@ class EpubReaderActivity final : public Activity {
   uint16_t ao3SeriesPart = 0;
   char ao3SeriesName[128] = {};
   void loadAo3SeriesInfoOnce();
-  void launchAo3SeriesActivity();
-  // AO3 fics get a bespoke end-of-book screen (update-check for WIP fics + series
-  // affordance) in place of the sibling-suggestion EndOfBookOptions menu. Both
-  // are gated on epub->hasAo3Info(), so non-AO3 books are completely unaffected.
+  // AO3 fics get a bespoke end-of-book screen (update-check for WIP fics + series/AO3-page/archive
+  // affordances) in place of the sibling-suggestion EndOfBookOptions menu. Both are gated on
+  // epub->hasAo3Info(), so non-AO3 books are completely unaffected. renderAo3EndOfBook() draws a
+  // plain static frame -- real interaction happens in the touch-first Ao3EndOfBookActivity that
+  // handleAo3EndOfBookInput() launches on top of this reader; that transitional static frame can
+  // show for a moment before the launch lands.
   void renderAo3EndOfBook();
-  // Returns true if it consumed the end-of-book input (Confirm = update-check,
-  // Back = open series); false lets the caller fall through to normal handling.
+  // Launches Ao3EndOfBookActivity once per end-of-book arrival (guarded by
+  // ao3EndOfBookActivityLaunched, reset when the reader pages back out of end-of-book). Always
+  // returns true while atEndOfBook && hasAo3Info(): either it just launched the overlay, or the
+  // overlay is already up and this absorbs the input pass until it returns.
   bool handleAo3EndOfBookInput();
+  bool ao3EndOfBookActivityLaunched = false;
+  // Restored call target for Ao3EndOfBookActivity's Update row (routed back here via
+  // APP_STATE.ao3EndOfBookUpdateRequested rather than launched from that overlay directly -- see
+  // its class comment for why). Identical to this reader's pre-touch-overlay update-check flow.
   void launchAo3UpdateCheck();
   // Shadows Activity::onGoHome (not virtual): when this book was opened from the AO3
   // library, "going home" returns there at the remembered index instead of Home.

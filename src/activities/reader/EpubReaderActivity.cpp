@@ -5,7 +5,6 @@
 #include <Epub/Page.h>
 #include <Epub/PageCountEstimator.h>
 #include <Epub/SpineSizeLookup.h>
-#include <ZipFile.h>  // ZipFile::fnvHash64 for the AO3 origin cache hash
 #include <Epub/blocks/TextBlock.h>
 #include <Epub/hyphenation/Hyphenator.h>
 #include <FontCacheManager.h>
@@ -35,7 +34,7 @@
 #include "../network/AO3SyncActivity.h"
 #include "../settings/DictionarySelectActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
-#include "Ao3EndOfBookSeriesActivity.h"
+#include "Ao3EndOfBookActivity.h"
 #include "BookFontSystem.h"
 #include "BookFusionBookIdStore.h"
 #include "BookFusionSyncActivity.h"
@@ -2491,6 +2490,15 @@ void EpubReaderActivity::onExit() {
     LOG_ERR("ERS", "Failed to save link return stack on exit");
   }
 
+  // Ao3EndOfBookActivity's Archive row set this before navigating away (it can't move the fic
+  // itself -- this reader still holds the Epub handle it was stacked on top of). Consume it here
+  // so the move below runs exactly once this reader actually exits, regardless of whether that
+  // activity returned via finish() or jumped straight to the AO3 Library/file browser.
+  if (APP_STATE.ao3EndOfBookArchiveRequested) {
+    APP_STATE.ao3EndOfBookArchiveRequested = false;
+    pendingAo3ArchiveAction = PendingAo3ArchiveAction::Archive;
+  }
+
   if (pendingArchiveMove && epub) {
     const std::string srcPath = epub->getPath();
     const std::string title = epub->getTitle();
@@ -3321,6 +3329,9 @@ void EpubReaderActivity::loop() {
     RenderLock lock(*this);
     endOfBookOptions.reset();
     endOfBookMenuActive.store(false, std::memory_order_relaxed);
+  }
+  if (!atEndOfBook) {
+    ao3EndOfBookActivityLaunched = false;
   }
 
   // The render task is asynchronous. Prepare suggestions before an input can
@@ -9143,26 +9154,6 @@ void EpubReaderActivity::loadAo3SeriesInfoOnce() {
   }
 }
 
-void EpubReaderActivity::launchAo3SeriesActivity() {
-  if (!epub) {
-    onGoHome();
-    return;
-  }
-
-  const std::string originPath = epub->getPath();
-  const uint64_t originHash = ZipFile::fnvHash64(originPath.c_str(), originPath.size());
-
-  // CompactIndexRecord.seriesName is truncated to 31 chars on write, so the hash
-  // must be computed from the same truncated string to match index records.
-  char truncatedName[32];
-  strncpy(truncatedName, ao3SeriesName, 31);
-  truncatedName[31] = '\0';
-  const uint32_t seriesHash = fnv1a(truncatedName);
-
-  activityManager.replaceActivity(std::make_unique<Ao3EndOfBookSeriesActivity>(
-      renderer, mappedInput, std::string(ao3SeriesName), seriesHash, originHash, originPath));
-}
-
 void EpubReaderActivity::renderAo3EndOfBook() {
   renderer.clearScreen();
 
@@ -9205,20 +9196,46 @@ void EpubReaderActivity::renderAo3EndOfBook() {
 }
 
 bool EpubReaderActivity::handleAo3EndOfBookInput() {
-  // Short Confirm: check AO3 for new chapters (only meaningful for WIP fics).
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() < longPressMenuMs) {
-    if (epub->hasAo3Info() && !epub->isAo3Completed()) {
-      launchAo3UpdateCheck();
-      return true;
-    }
+  if (ao3EndOfBookActivityLaunched) return true;  // overlay is up; absorb input until it returns
+  ao3EndOfBookActivityLaunched = true;
+
+  loadAo3SeriesInfoOnce();  // idempotent; render() normally does this first, but don't rely on timing
+
+  const std::string path = epub->getPath();
+  const std::string title = epub->getTitle();
+  const std::string author = epub->getAuthor();
+  const bool completed = epub->isAo3Completed();
+  std::string seriesName;
+  int seriesPart = 0;
+  if (ao3HasSeries) {
+    seriesName = ao3SeriesName;
+    seriesPart = ao3SeriesPart;
   }
-  // Short Back: open the series view instead of going home (when in a series).
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
-      mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS && footnoteDepth == 0 && ao3HasSeries) {
-    launchAo3SeriesActivity();
-    return true;
-  }
-  return false;
+
+  // Persist the end-of-book position before handing off to the overlay: Update (routed back
+  // through launchAo3UpdateCheck() below) may free this reader's section/network heap, or the
+  // device may restart from inside AO3Sync.
+  saveProgress(currentSpineIndex, nextPageNumber, epub->getSpineItemsCount());
+  section.reset();
+
+  startActivityForResult(
+      std::make_unique<Ao3EndOfBookActivity>(renderer, mappedInput, path, title, author, completed, seriesName,
+                                             seriesPart, ao3LibraryReturnIndex),
+      [this](const ActivityResult&) {
+        if (APP_STATE.ao3EndOfBookUpdateRequested) {
+          APP_STATE.ao3EndOfBookUpdateRequested = false;
+          launchAo3UpdateCheck();
+          return;
+        }
+        // Whatever else closed it (Back, or AO3 Page/Series returning) -- re-evaluate next pass
+        // rather than leaving a dead screen with no relaunch. atEndOfBook is unchanged (still at
+        // the same spine position), so this reshows the same overlay; Go Home/Archive/AO3
+        // Page/Series all leave by a different path (onGoHome/activityManager navigation) and
+        // never reach here.
+        ao3EndOfBookActivityLaunched = false;
+        requestUpdate();
+      });
+  return true;
 }
 
 void EpubReaderActivity::launchAo3UpdateCheck() {
@@ -9230,7 +9247,9 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
   const int eobSpineIndex = currentSpineIndex;
   const int eobPageNumber = nextPageNumber;
 
-  // Persist the end-of-book position before handing off to the network activity.
+  // Persist the end-of-book position before handing off to the network activity. Redundant with
+  // handleAo3EndOfBookInput()'s own saveProgress() in the common case (nothing moved since this
+  // reader reached end-of-book), but cheap, and keeps this function correct standalone.
   saveProgress(eobSpineIndex, eobPageNumber, spineCountBeforeDownload);
 
   // Free the section's heap and cache-file handles: the sync activity needs RAM for
@@ -9257,15 +9276,6 @@ void EpubReaderActivity::launchAo3UpdateCheck() {
                 LOG_ERR("ERS", "Failed to restore archived fic after finding an update: %s", bookPath.c_str());
               } else {
                 currentPath = restoredPath;
-                // Not actually silent-by-design the way the move itself is: unlike
-                // Ao3ReceiveActivity's equivalent restore-before-swap (whose very next step
-                // unconditionally tombstones the index record and defers to the next library
-                // scan either way), nothing downstream of this call re-indexes the fic -- a
-                // reindex failure here leaves it genuinely invisible in AO3 Library, right after
-                // the user saw a real "Update found" confirmation from AO3SyncActivity. Queue the
-                // same alert BookActionActivity/FileBrowserActivity/the standalone Archive/Restore
-                // action show for this case (once freshEpub below can supply a title) instead of
-                // only logging it.
                 if (reindexFailed) {
                   LOG_ERR("ERS", "Restored archived fic but re-scrape failed after finding an update: %s",
                          bookPath.c_str());
