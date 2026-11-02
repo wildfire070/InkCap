@@ -15,8 +15,14 @@
 #include "MappedInputManager.h"
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
+#include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+constexpr int COVER_TAP_ID = 0;
+}  // namespace
 
 namespace {
 constexpr int COVER_TO_TEXT_GAP = 16;
@@ -150,7 +156,8 @@ void BookDetailsActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+      TouchHeaderBackButton::wasTapped(mappedInput, renderer)) {
     finish();
     return;
   }
@@ -208,11 +215,34 @@ void BookDetailsActivity::loop() {
     case MappedInputManager::SwipeDir::Down:
       scrollUp();
       return;
+    // Mirrors the Left/Right button bindings above: touch hardware has no equivalent of
+    // those physical keys, and the footer labels that explain them never render on touch
+    // devices (GUI.drawButtonHints no-ops there), so a horizontal swipe is the only way
+    // to reach prev/next book by touch.
+    case MappedInputManager::SwipeDir::Right:
+      if (hasNextBook) {
+        BookDetailsNavResult res;
+        res.next = true;
+        setResult(ActivityResult(std::move(res)));
+        finish();
+      }
+      return;
+    case MappedInputManager::SwipeDir::Left:
+      if (hasPreviousBook) {
+        BookDetailsNavResult res;
+        res.next = false;
+        setResult(ActivityResult(std::move(res)));
+        finish();
+      }
+      return;
     default:
       break;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && Storage.exists(bookPath.c_str())) {
+  int tappedId;
+  const bool coverTapped = mappedInput.wasItemTapped(tappedId) && tappedId == COVER_TAP_ID;
+  if ((mappedInput.wasReleased(MappedInputManager::Button::Confirm) || coverTapped) &&
+      Storage.exists(bookPath.c_str())) {
     onSelectBook(bookPath);
   }
 }
@@ -223,7 +253,8 @@ void BookDetailsActivity::render(RenderLock&&) {
   const int pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_BOOK_INFO), nullptr);
+  const Rect headerRect = TouchHeaderBackButton::headerRect(renderer, mappedInput);
+  TouchHeaderBackButton::draw(renderer, headerRect, tr(STR_BOOK_INFO), /*readerContext=*/false);
 
   if (loading) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_LOADING));
@@ -233,7 +264,10 @@ void BookDetailsActivity::render(RenderLock&&) {
     return;
   }
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  // headerRect.height, not metrics.headerHeight: TouchHeaderBackButton draws a shorter
+  // compact-style header on touch hardware (see its height()), so the fixed metric would
+  // leave a gap under it there.
+  const int contentTop = headerRect.y + headerRect.height + metrics.verticalSpacing;
   const int viewportBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
   // Cover (left), sized to the Library grid but capped so it can't crowd a short
@@ -247,6 +281,9 @@ void BookDetailsActivity::render(RenderLock&&) {
                                           : static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4);
   const Rect coverRect{metrics.contentSidePadding, contentTop, coverWidth, coverHeight};
   drawCover(renderer, coverRect, coverPath);
+  if (Storage.exists(bookPath.c_str())) {
+    TouchRegistry::getInstance().add(coverRect, COVER_TAP_ID, TouchRegistry::Item);
+  }
 
   // Metadata table (right column).
   const int textX = coverRect.x + coverRect.width + COVER_TO_TEXT_GAP;
