@@ -683,14 +683,14 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 namespace {
 // Home's own paginated button menu: computes pageItems twice when the
 // unreserved page count would overflow, so the second pass's smaller
-// pageItems leaves room for UITheme::drawMenuPageDots() at the bottom of
+// pageItems leaves room for UITheme::drawMenuPageArrows() at the bottom of
 // rect instead of running the last row into it. Single-page menus are
 // unaffected -- the first pass's full-height pageItems is kept as-is.
 int buttonMenuPageItems(const Rect rect, const int buttonCount, const int rowStep, const int maxVisibleItems) {
   const auto& menuMetrics = UITheme::getInstance().getMetrics();
   const int fullPageItems = std::clamp((rect.height + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
   if (buttonCount <= fullPageItems) return fullPageItems;
-  const int reservedHeight = std::max(0, rect.height - UITheme::getMenuPageDotsReserve());
+  const int reservedHeight = std::max(0, rect.height - UITheme::getMenuPageArrowsReserve());
   return std::clamp((reservedHeight + menuMetrics.menuSpacing) / rowStep, 1, maxVisibleItems);
 }
 }  // namespace
@@ -715,7 +715,7 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   const int currentPage = std::max(0, selectedIndex) / pageItems;
 
   if (totalPages > 1) {
-    UITheme::drawMenuPageDots(renderer, rect, totalPages, currentPage);
+    UITheme::drawMenuPageArrows(renderer, rect, totalPages, currentPage);
   }
 
   const int pageStartIndex = currentPage * pageItems;
