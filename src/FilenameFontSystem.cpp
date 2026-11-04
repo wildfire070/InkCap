@@ -25,7 +25,7 @@ void FilenameFontSystem::invalidateForPath(const char* path) {
 
 #if CROSSINK_SCALABLE_FONTS
 namespace {
-constexpr size_t MaxFamilies = 64;
+constexpr size_t MaxFamilies = 96;
 struct ScanScratch {
   char directory[128];
   char path[256];

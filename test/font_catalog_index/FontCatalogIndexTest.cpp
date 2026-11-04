@@ -145,8 +145,9 @@ int main() {
   }
 
   // The family cap must be stable regardless of FAT directory order. A
-  // lexically early family added after more than 128 valid families survives.
-  for (int family = 0; family < 128; ++family) {
+  // lexically early family added after more than MAX_SD_FAMILIES valid
+  // families survives.
+  for (int family = 0; family < SdCardFontRegistry::MAX_SD_FAMILIES; ++family) {
     char path[96];
     std::snprintf(path, sizeof(path), "/.fonts/ZFamily%03d/ZFamily%03d_12.cpfont", family, family);
     put(path, "font");
