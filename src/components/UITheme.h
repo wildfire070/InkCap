@@ -74,11 +74,13 @@ class UITheme {
   static int getHintSafeX(const GfxRenderer& renderer, int x, int width);
   static Rect getHeaderRect(const GfxRenderer& renderer, int height);
   static Rect getHeaderRect(const GfxRenderer& renderer, int height, const Rect& area);
-  // Row of dots (filled = currentPage) centered at the bottom of rect, for a
-  // paginated button menu. Home-only: every other paginated list (GUI.drawList,
-  // the Sort & Filter overlay, etc.) keeps its existing up/down-arrow indicator.
-  static int getMenuPageDotsReserve();
-  static void drawMenuPageDots(const GfxRenderer& renderer, Rect rect, int totalPages, int currentPage);
+  // Triangular up/down page-arrow indicator centered at the bottom of rect,
+  // for a paginated button menu: an up arrow when prior pages exist, a down
+  // arrow when later pages exist, both side by side when both do. Home-only:
+  // every other paginated list (GUI.drawList, the Sort & Filter overlay,
+  // etc.) keeps its own stepped-line up/down-arrow indicator.
+  static int getMenuPageArrowsReserve();
+  static void drawMenuPageArrows(const GfxRenderer& renderer, Rect rect, int totalPages, int currentPage);
 
  private:
   // Global text-size changes select an immutable variant, rather than rewriting

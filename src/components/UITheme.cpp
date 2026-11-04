@@ -377,28 +377,44 @@ int UITheme::getButtonHintsReserve(const GfxRenderer& renderer) {
   return height > 0 ? height + getButtonHintsBottomInset(renderer) : 0;
 }
 
-int UITheme::getMenuPageDotsReserve() {
-  constexpr int kDotDiameter = 10;
+int UITheme::getMenuPageArrowsReserve() {
+  constexpr int kArrowHeight = 10;
   constexpr int kBottomMargin = 10;
-  return kDotDiameter + kBottomMargin * 2;
+  return kArrowHeight + kBottomMargin * 2;
 }
 
-void UITheme::drawMenuPageDots(const GfxRenderer& renderer, const Rect rect, const int totalPages,
-                               const int currentPage) {
+void UITheme::drawMenuPageArrows(const GfxRenderer& renderer, const Rect rect, const int totalPages,
+                                 const int currentPage) {
   if (totalPages <= 1) return;
-  constexpr int kDot = 10;
-  constexpr int kGap = 14;
+  constexpr int kArrowWidth = 16;
+  constexpr int kArrowHeight = 10;
+  constexpr int kGap = 18;
   constexpr int kBottomMargin = 10;
-  const int totalWidth = totalPages * kDot + (totalPages - 1) * kGap;
-  int x = rect.x + (rect.width - totalWidth) / 2;
-  const int y = rect.y + rect.height - kDot - kBottomMargin;
-  for (int i = 0; i < totalPages; ++i) {
-    if (i == currentPage) {
-      renderer.fillRoundedRect(x, y, kDot, kDot, kDot / 2, Color::Black);
-    } else {
-      renderer.drawRoundedRect(x, y, kDot, kDot, 1, kDot / 2, true);
-    }
-    x += kDot + kGap;
+  const bool hasPrevPage = currentPage > 0;
+  const bool hasNextPage = currentPage < totalPages - 1;
+  const int y = rect.y + rect.height - kArrowHeight - kBottomMargin;
+
+  // Up arrow: narrow point at top, wide base at bottom.
+  const auto drawUpArrow = [&](const int centerX) {
+    const int xs[3] = {centerX, centerX - kArrowWidth / 2, centerX + kArrowWidth / 2};
+    const int ys[3] = {y, y + kArrowHeight, y + kArrowHeight};
+    renderer.fillPolygon(xs, ys, 3, true);
+  };
+  // Down arrow: wide base at top, narrow point at bottom.
+  const auto drawDownArrow = [&](const int centerX) {
+    const int xs[3] = {centerX - kArrowWidth / 2, centerX + kArrowWidth / 2, centerX};
+    const int ys[3] = {y, y, y + kArrowHeight};
+    renderer.fillPolygon(xs, ys, 3, true);
+  };
+
+  if (hasPrevPage && hasNextPage) {
+    const int centerX = rect.x + rect.width / 2;
+    drawUpArrow(centerX - kGap / 2 - kArrowWidth / 2);
+    drawDownArrow(centerX + kGap / 2 + kArrowWidth / 2);
+  } else if (hasPrevPage) {
+    drawUpArrow(rect.x + rect.width / 2);
+  } else {
+    drawDownArrow(rect.x + rect.width / 2);
   }
 }
 
