@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "FontLoadError.h"
 #include "ScalableFontSizing.h"
 
 // Borrows the app's render mutex when already held; otherwise owns it for
@@ -65,7 +66,7 @@ class HalScalableFont {
   // The caller must unregister every EpdFont returned by atSize() before
   // changing options because their cached metrics are rebuilt in place.
   bool setRenderOptions(const freeink::font::FtFont::RenderOptions& options);
-  static bool fileSize(const char* path, size_t& size, size_t limit = MaxFileBytes);
+  static bool fileSize(const char* path, size_t& size, size_t limit = MaxFileBytes, FontLoadError* error = nullptr);
   static bool prepareFamily(size_t bytes, size_t faces);
   // Bytes this face holds of its own; a face that shares another's resident copy holds none.
   size_t fileBytes() const { return borrowed_ ? 0 : fileBytes_; }
@@ -85,9 +86,11 @@ class HalScalableFont {
   // stale checksums, so callers must combine this with a real load failure.
   bool integrityMismatch() const { return integrityMismatch_; }
   bool lastFailureLooksLikeFontData() const { return fontDataFailure_; }
+  FontLoadError lastLoadError() const { return lastLoadError_; }
   bool hasCodepoint(uint32_t cp);
   bool probeGlyph(uint32_t cp, uint8_t points);
-  static bool inspectFile(const char* path, Info& info, bool* unavailable = nullptr, size_t limit = MaxFileBytes);
+  static bool inspectFile(const char* path, Info& info, bool* unavailable = nullptr, size_t limit = MaxFileBytes,
+                          FontLoadError* error = nullptr);
   static uint32_t renderingRevision();
   uint32_t fingerprint() const { return hash_; }
   const EpdFont* atSize(uint8_t points);
@@ -127,6 +130,7 @@ class HalScalableFont {
   bool streamFailureLogged_ = false;
   bool integrityMismatch_ = false;
   bool fontDataFailure_ = false;
+  FontLoadError lastLoadError_ = FontLoadError::None;
   uint32_t integrityChecksum_ = 0;
   uint32_t ligatureGlyphs_[5] = {};
   uint32_t hash_ = 0;

@@ -88,7 +88,7 @@ Related docs:
 
 ## Custom Scalable Fonts
 
-On Sticky and X4 Pro (the ESP32-S3 readers), you can use your own TrueType
+On X4 Classic, X4 Pro, and Sticky, you can use your own TrueType
 (`.ttf`) or OpenType (`.otf`) fonts. Copy the files into the `/fonts` folder on
 the SD card, either together or in a folder named after the font family. Restart
 the reader or refresh its font list, then choose the family from the font
@@ -197,13 +197,18 @@ provided by the book itself.
 
 ## Images And Grayscale
 
-EPUB images can be shown, replaced with a placeholder, or hidden. Choose
-**Images** in **Settings > Reader**, or on the Reader Menu's **Layout** tab.
+Choose **Images** in **Settings > Reader**, or on the Reader Menu's **Layout**
+tab for one EPUB book:
 
-**Image Grayscale** controls whether pictures are drawn in shades of gray (on
-by default) or in plain black and white. Gray usually looks better for photos. It is separate from **Text Anti-Aliasing**, which only
-smooths text. Turn it on or off for all books in **Settings > Reader > Image
-Grayscale**, or for one book from the Reader Menu's **Layout** tab.
+- **Display** shows pictures in shades of gray (the default).
+- **Display (B&W)** shows pictures in plain black and white, equivalent to the
+  former **Image Grayscale** setting being off.
+- **Placeholder** replaces pictures with their alternative text.
+- **Suppress** removes pictures.
+
+Gray usually looks better for photos. These options are separate from
+**Text Anti-Aliasing**, which only smooths text. Existing global and per-book
+image preferences are preserved.
 
 ## Select Chapter
 
@@ -221,7 +226,7 @@ Turn it on from **Settings > Reader > Guide Dots**, or from the Reader Menu's
 
 ## Force Paragraph Indents
 
-Some books do not define paragraph indents in a way the firmware understands, which can make the page look like one large wall of text.
+Some books do not show paragraph indents correctly, which can make the page look like one large wall of text.
 
 Force Paragraph Indents adds an indent at each new paragraph regardless of how the book is formatted.
 

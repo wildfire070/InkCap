@@ -14,6 +14,7 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string&, 
 
 ImageToFramebufferDecoder* ImageDecoderFactory::getDecoder(const std::string&) { return nullptr; }
 bool ImageDecoderFactory::isFormatSupported(const std::string&) { return false; }
+bool ImageDecoderFactory::supportsMemorySource(const std::string&) { return false; }
 
 PreviewBlockLocator::PreviewBlockLocator(const char*, IsBlockTagFn) {}
 PreviewBlockLocator::~PreviewBlockLocator() = default;

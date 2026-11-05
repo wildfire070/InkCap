@@ -11,6 +11,7 @@
 #include "Epub/converters/DirectPixelWriter.h"
 #include "lib/Epub/Epub/blocks/ImageBlock.cpp"
 
+bool ImageDecoderFactory::supportsMemorySource(const std::string&) { return false; }
 ImageToFramebufferDecoder* ImageDecoderFactory::getDecoder(const std::string&) { return nullptr; }
 
 namespace {
@@ -586,12 +587,12 @@ TEST(EpubTextGrayscaleTest, CachedNightModeImagesMatchMonochromeAcrossStoragePat
       std::vector<uint8_t> pixels(4 + 16 * 4, 0x1B);
       pixels[0] = pixels[2] = 16;
       pixels[1] = pixels[3] = 0;
-      Storage.put("image.pxc", pixels);
+      Storage.put("image_v2.pxc", pixels);
       HalDisplay display(800, 480);
       GfxRenderer renderer(display);
       renderer.begin();
       renderer.setOrientation(GfxRenderer::Orientation(orientation));
-      ImageBlock image("image.png", "source.png", 16, 16);
+      ImageBlock image("image_v2.png", "source.png", 16, 16);
       renderer.clearScreen(255);
       image.render(renderer, 9, 13, true, false);
       const auto expected = display.bw;

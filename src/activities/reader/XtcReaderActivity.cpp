@@ -252,11 +252,9 @@ void XtcReaderActivity::loop() {
                                                 ((statusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTTOM ||
                                                   statusBarMode == CrossPointSettings::XTC_STATUS_BAR_BOTH) &&
                                                  ReaderUtils::isBottomStatusBarTap(renderer, touch.y, bottomHeight)));
-  if (tappedStatusBar) {
-    if (SETTINGS.tapToHideStatusBar) {
-      statusBarVisible = !statusBarVisible;
-      requestUpdate();
-    }
+  if (SETTINGS.tapToHideStatusBar && tappedStatusBar) {
+    statusBarVisible = !statusBarVisible;
+    requestUpdate();
     return;
   }
 
@@ -1511,6 +1509,18 @@ void XtcReaderActivity::renderPage(const uint32_t pageToRender) {
     }
     renderOverlays(true);
     openingFeedback.finish();
+
+    if (ReaderUtils::displayDeferredGrayscale(renderer, pagesUntilFullRefresh, deferredGrayscalePlanes, [&]() {
+          const auto pass =
+              renderer.getRenderMode() == GfxRenderer::GRAYSCALE_LSB ? XtchRenderPass::Lsb : XtchRenderPass::Msb;
+          if (!streamXtchRenderPass(*xtc, pageToRender, pageWidth, pageHeight, renderer, pass)) return false;
+          renderOverlays(false);
+          return true;
+        })) {
+      pluginEvents.rendered(xtc->getPageCount() ? static_cast<int>((pageToRender + 1ULL) * 10000 / xtc->getPageCount())
+                                                : 0);
+      return;
+    }
 
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(pagesUntilFullRefresh < 0 ? manualScreenRefreshMode() : HalDisplay::HALF_REFRESH);

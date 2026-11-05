@@ -19,6 +19,7 @@ gtest_discover_tests(BookmarkStorePersistenceTest)
 add_executable(ClippingStorePersistenceTest
   ClippingStorePersistenceTest.cpp
   ${REPO_ROOT}/src/ClippingStore.cpp
+  ${REPO_ROOT}/src/clippings/ClippingIdentity.cpp
   ${REPO_ROOT}/src/activities/reader/ReadingStatsUtils.cpp
   ${REPO_ROOT}/src/sync/SyncFiles.cpp
   ${REPO_ROOT}/src/sync/SyncPending.cpp
@@ -32,6 +33,7 @@ target_include_directories(ClippingStorePersistenceTest PRIVATE
   ${REPO_ROOT}/src
   ${REPO_ROOT}/src/activities/reader
   ${REPO_ROOT}/src/sync
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/uzlib/src
