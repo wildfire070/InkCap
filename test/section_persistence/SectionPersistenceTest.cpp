@@ -36,8 +36,10 @@ namespace {
 // do -- every distinct byte either side ever used as a sentinel is listed
 // below and must still be rejected, regardless of which branch originally
 // produced it (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 102;
-constexpr uint8_t kPartialVersion = 0xD7;
+constexpr uint8_t kFullVersion = 103;
+constexpr uint8_t kPartialVersion = 0xD8;
+constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;  // this branch's own former-current, now superseded by v103
+constexpr uint8_t kPreUnicodeSpacePartialVersion = 0xD7;  // (upstream's Unicode space-advance change)
 constexpr uint8_t kGlyphRoundingFullVersion = 101;  // upstream v101 (round SD-font glyph advances), now superseded
 constexpr uint8_t kGlyphRoundingPartialVersion = 0xD6;
 constexpr uint8_t kPreRoundingFullVersion = 100;  // upstream v101's immediate predecessor
@@ -224,14 +226,14 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kGlyphRoundingFullVersion, kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion,
-        kStablePageFullVersion, kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion,
-        kHyphenJustifyFullVersion, kHyphenJustifyPartialVersion, kPreHyphenJustifyFullVersion,
-        kPreHyphenJustifyPartialVersion, kPreHyphenBreakFullVersion, kPreHyphenBreakPartialVersion,
-        kPreImageAlignmentFullVersion, kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion,
-        kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion, kC3BitmapFullVersion,
-        kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion,
-        kUpstreamPublisherDecorationsFullVersion, kUpstreamPublisherDecorationsPartialVersion,
+       {kPreUnicodeSpaceFullVersion, kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
+        kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion, kStablePageFullVersion,
+        kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion, kHyphenJustifyFullVersion,
+        kHyphenJustifyPartialVersion, kPreHyphenJustifyFullVersion, kPreHyphenJustifyPartialVersion,
+        kPreHyphenBreakFullVersion, kPreHyphenBreakPartialVersion, kPreImageAlignmentFullVersion,
+        kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion, kPreFieldsetPartialVersion, kS3BitmapFullVersion,
+        kS3BitmapPartialVersion, kC3BitmapFullVersion, kC3BitmapPartialVersion, kPreviousFullVersion,
+        kPreviousPartialVersion, kUpstreamPublisherDecorationsFullVersion, kUpstreamPublisherDecorationsPartialVersion,
         kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion,
         kBorderSuppressionPartialVersion, kOlderFullVersion, kOlderPartialVersion, kUpstreamBoldItalicFullVersion,
         kUpstreamBoldItalicPartialVersion, kEvenOlderFullVersion, kEvenOlderPartialVersion, kEarlierFullVersion,

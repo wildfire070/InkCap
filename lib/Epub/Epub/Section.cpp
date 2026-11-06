@@ -63,11 +63,12 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v99 (upstream): Preserve normalized reference-text offsets for stable-page reading pace.
 // v100 (upstream): Leave words below drop caps unsplit until full-width layout.
 // v101 (upstream): Round SD-font glyph advances individually to match drawing.
-constexpr uint8_t SECTION_FILE_VERSION = 102;
+// v103 (upstream): Unicode space advances change wrapping and scaled text placement.
+constexpr uint8_t SECTION_FILE_VERSION = 103;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xD7;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xD8;
 constexpr uint32_t HEADER_SIZE =
     4 * sizeof(uint32_t) + sizeof(PublisherFonts) + sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) +
     sizeof(float) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +
@@ -1077,6 +1078,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   build_ = std::move(ctx);
   build_->parser->setPublisherFonts(spec.publisherFonts);
+  build_->parser->setDeferAdvancePrewarm(buildOptions.deferAdvancePrewarm);
   if (!build_->parser->beginParse()) {
     LOG_ERR("SCT", "Failed to begin incremental section parse");
     lastLayoutAbortedForLowMemory_ = build_->parser->wasLowMemoryAbortTriggered();
@@ -1090,6 +1092,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   build_->totalBytes = build_->parser->parseTotalBytes();
   return true;
 }
+
+bool Section::prewarmSomeMore() { return build_ && build_->parser && build_->parser->prewarmSectionAdvanceStep(); }
 
 bool Section::buildSomeMore(const int maxPages) {
   if (!build_ || !build_->parser) {

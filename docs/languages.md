@@ -38,13 +38,21 @@ install the language manually.
 If you have edited the SD copy, downloading an update asks before replacing it.
 Keep a separate copy of any translation you want to save.
 
+## Existing SD folders
+
+If you used an earlier build, move the `languages` and `hyphenation` folders
+from `.crosspoint` into `.crossink` at the SD root, including any
+`languages/fonts` families. CrossInk only reads these sources from `.crossink`.
+Already installed language and hyphenation packs remain active; moving the
+source folders does not require clearing book caches or reinstalling packs.
+
 ## Install a language from SD
 
 1. Download `crossink-languages-<version>.zip` for your firmware from the
    [releases page](https://github.com/uxjulia/CrossInk/releases).
-2. Unzip it and copy the `.crosspoint/languages` folder to the root of your SD
+2. Unzip it and copy the `.crossink/languages` folder to the root of your SD
    card. You only need the language files you want. Turn on **Show hidden files**
-   in your file manager if you cannot see the `.crosspoint` folder.
+   in your file manager if you cannot see the `.crossink` folder.
 3. On the reader, open **Settings > System > Device > Language** and select the
    language. The reader prepares it, saves your choice, and restarts to Home.
 
@@ -86,7 +94,7 @@ replaced. English is always available and cannot be removed.
 
 ### Install from SD
 
-1. Copy the `.crosspoint/hyphenation` folder from the language ZIP to the root
+1. Copy the `.crossink/hyphenation` folder from the language ZIP to the root
    of your SD card.
 2. Open **Settings > Reader > Page Layout > Hyphenation Packs**.
 3. Select the pack marked **Install**. The reader installs it and restarts to
@@ -106,59 +114,46 @@ book cache, and your bookmarks and reading position are kept.
 
 ## Create or edit a translation
 
-You can use [Inky](https://inky.crossink.dev/#language-tools) (recommended), or edit a YAML file in a plain-text editor. See instructions
-below for plain-text editing.
+1. Open [Inky's Language Tools](https://inky.crossink.dev/#language-tools).
+2. Choose a language to edit, or start a new translation.
+3. Edit the menu text and download the language file. Keep any placeholders
+   shown by the tool, since the reader fills these with names or numbers.
+4. Copy the file into `.crossink/languages` on the SD card.
+5. Choose it in **Settings > System > Device > Language** to apply it.
 
-To start a new translation, copy `english_template.yaml` from the language ZIP.
-Give your copy a filename ending in `.yaml`, then set its language code and name at the top:
+Select the language again after each edit. Keep a separate copy of your changes
+before downloading an update. Missing translations appear in English.
 
-```yaml
-_language_code: "MY-LANGUAGE"
-_language_name: "My language"
-_direction: "ltr"
-_keyboard: "EN"
+<a id="add-missing-characters-with-ui-font"></a>
 
-# Keep the STR_ names; edit the quoted text.
-STR_SETTINGS_TITLE: "My settings"
-```
+## Add missing characters with UI Fallback Font
 
-- Use a unique language code starting with a letter, using only letters, digits,
-  hyphens, or underscores. Do not use `EN`, which is reserved for English.
-- Write the language's display name in `_language_name`.
-- Use `ltr` for left-to-right text or `rtl` for right-to-left text.
-- `_keyboard` chooses an existing keyboard layout. `EN` uses English; a
-  translation cannot add a new keyboard layout.
-- Keep these language details above the `STR_` entries.
-- Save as UTF-8 plain text. Keep values in double quotes, one entry per line.
-  Type accented and non-Latin characters directly. Use `\n` for a line break
-  inside a value and `\"` for a quotation mark.
-- Change the quoted text without changing the `STR_` names. You can leave entries
-  empty or remove ones you do not want to translate; they will appear in English.
-- Keep placeholders such as `%s`, `%d`, and `%zu` exactly as they are and in the
-  same order. They are filled in by the reader.
-
-Copy your file into `.crosspoint/languages` on SD and select it through
-**Settings > System > Device > Language**. Select it again after each edit to
-apply the changes. Creating a translation does not require rebuilding firmware.
-
-## Add missing characters with UI Font
-
-On devices with PSRAM such as the X4 Classic, X4 Pro, and Sticky, **UI Font** can fill in characters missing
-from the built-in font, such as Chinese characters in menu text or book titles.
+On supported devices such as the X4 Classic, X4 Pro, and Sticky, **UI Fallback Font**
+can fill in characters missing from the built-in font, such as Chinese characters
+in menu text or book titles.
 It also applies to filenames, dialogs, keyboards, chapter lists, bookmarks, and
 other interface text. It keeps characters the built-in font already supports
 and does not change your reading font. This option is unavailable on the X3 and
 X4.
 
 1. Copy a static `.ttf` or `.otf` font into a family folder, for example
-   `/.crosspoint/languages/fonts/Noto Sans SC/`.
+   `/.crossink/languages/fonts/Noto Sans SC/`.
 2. Include one regular face and, optionally, one bold face. Each file can be up
    to **32 MiB**. Italic faces, variable fonts, font collections, and bitmap
    `.cpfont` files are not supported here.
-3. Open **Settings > System > Device > UI Font** and select the folder's name.
+3. Open **Settings > System > Device > UI Fallback Font** and select the folder's name.
    Select **None** to turn this fallback off.
 
-Keep fonts for book text in `/fonts` or `/.fonts`. A UI font's first use can take
+The picker also lists families it cannot load. Highlight a family to see the
+reason, such as insufficient font memory, unsupported font data, or a folder
+with no regular face or duplicate styles. Selecting it retries the load; if it
+still fails, your previous choice is kept. Empty folders and folders containing
+only bitmap fonts or macOS metadata files are not listed.
+
+Some large fonts may still be too demanding to open. If the picker reports
+insufficient font memory, try a smaller or prepared static font.
+
+Keep fonts for book text in `/fonts` or `/.fonts`. A UI fallback font's first use can take
 longer than later redraws. If a font is missing or unreadable, CrossInk uses its
 built-in font while keeping your saved choice. After changing font files on a
 computer, select the family again or restart the reader.
@@ -170,8 +165,7 @@ font returns when you leave those screens.
 
 Some readers, including X4 Pro devices with their factory storage layout, keep
 installed languages and hyphenation packs in `/.crosspoint/asset-cache.bin` on
-SD. Keep this file on the card. You do not need to repartition or fully erase the
-reader to use language packs.
+SD. Keep this file on the card. You do not need to erase the reader to use language packs.
 
 The original YAML and hyphenation source files can be removed after installation,
 but a replacement SD card needs its own installed packs. If installed packs stop

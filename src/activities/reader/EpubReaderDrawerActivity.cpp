@@ -30,6 +30,7 @@
 #include "StablePageSelectionModel.h"
 #include "activities/reader/ControlsOptionsActivity.h"
 #include "activities/settings/StatusBarSettingsActivity.h"
+#include "util/ImageDisplayMode.h"
 #if CROSSINK_SCALABLE_FONTS
 #include "activities/settings/TtfRenderOptionsActivity.h"
 #endif
@@ -608,14 +609,15 @@ void EpubReaderDrawerActivity::rebuildTtfRenderingRows() {
   state.paneTopIndex = std::min<int16_t>(state.paneTopIndex, static_cast<int16_t>(paneRows.size() - 1));
 }
 
-void EpubReaderDrawerActivity::saveTtfRenderingProfile() {
+bool EpubReaderDrawerActivity::saveTtfRenderingProfile() {
   const char* const family = draft.sdFontFamilyName.data();
-  if (ttfRenderProfile == TTF_RENDER_PROFILES.profileFor(family)) return;
+  if (ttfRenderProfile == TTF_RENDER_PROFILES.profileFor(family)) return true;
   if (!TTF_RENDER_PROFILES.setProfile(family, ttfRenderProfile)) {
     LOG_ERR("ERDM", "Failed to save TTF rendering profile for %s", family);
-    return;
+    return false;
   }
   ttfRenderingChanged = ttfRenderProfile != initialTtfRenderProfile;
+  return true;
 }
 
 void EpubReaderDrawerActivity::finishTtfRenderingEdit() {
@@ -1829,12 +1831,17 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
       saveTtfRenderingProfile();
       requestUpdate();
       return;
-    case RowId::TtfReset:
+    case RowId::TtfReset: {
+      const TtfRenderProfile previous = ttfRenderProfile;
       ttfRenderProfile = {};
+      const bool saved = saveTtfRenderingProfile();
+      if (!saved) ttfRenderProfile = previous;
       rebuildTtfRenderingRows();
-      saveTtfRenderingProfile();
+      static constexpr StrId options[] = {StrId::STR_OK};
+      ttfResetPopup.show(saved ? StrId::STR_TTF_DEFAULTS_RESET : StrId::STR_TTF_RESET_FAILED, options, 1, 0, nullptr);
       requestUpdate();
       return;
+    }
 #endif
     case RowId::FontFamily:
       discoverFonts();
@@ -1917,7 +1924,6 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
       closeAndReturn(false, EpubReaderMenuAction::RESET_BOOK_READER_SETTINGS);
       return;
     case RowId::TextAa:
-    case RowId::ImageGrayscale:
     case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
@@ -2012,9 +2018,6 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
 
 void EpubReaderDrawerActivity::toggleSetting(const RowId row) {
   switch (row) {
-    case RowId::ImageGrayscale:
-      draft.imageGrayscale = !draft.imageGrayscale;
-      break;
     case RowId::TextAa:
       draft.textAntiAliasing = !draft.textAntiAliasing;
       break;
@@ -2046,8 +2049,6 @@ void EpubReaderDrawerActivity::toggleSetting(const RowId row) {
     // Anti-aliasing changes pixels only. Rebuilding the EPUB section here
     // makes the in-drawer preview appear to zoom while the page reflows.
     markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::NonLayout);
-  } else if (row == RowId::ImageGrayscale) {
-    markSettingChanged(ReaderSettingsChangeMask::NonLayout);
   } else {
     const bool previews = row == RowId::Focus || row == RowId::GuideDots;
     markSettingChanged(previews ? ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout
@@ -2110,9 +2111,10 @@ void EpubReaderDrawerActivity::showEnumOptions(const RowId row) {
       break;
     case RowId::Images:
       title = StrId::STR_IMAGES;
-      labels = {tr(STR_IMAGES_DISPLAY), tr(STR_IMAGES_PLACEHOLDER), tr(STR_IMAGES_SUPPRESS)};
-      raw = {0, 1, 2};
-      currentRaw = draft.imageRendering;
+      labels = {tr(STR_IMAGES_DISPLAY), tr(STR_IMAGES_DISPLAY_BW), tr(STR_IMAGES_PLACEHOLDER), tr(STR_IMAGES_SUPPRESS)};
+      raw = {ImageDisplayMode::Grayscale, ImageDisplayMode::BlackAndWhite, ImageDisplayMode::Placeholder,
+             ImageDisplayMode::Hidden};
+      currentRaw = ImageDisplayMode::selected(draft.imageRendering, draft.imageGrayscale);
       break;
     case RowId::RenderMode:
       title = StrId::STR_EPUB_RENDER_MODE;
@@ -2249,7 +2251,7 @@ void EpubReaderDrawerActivity::selectEnumOption(const int index) {
       markSettingChanged(ReaderSettingsChangeMask::Relayout);
       break;
     case RowId::Images:
-      draft.imageRendering = value;
+      ImageDisplayMode::apply(value, draft.imageRendering, draft.imageGrayscale);
       markSettingChanged(ReaderSettingsChangeMask::NonLayout);
       break;
     case RowId::RenderMode:
@@ -2837,6 +2839,17 @@ void EpubReaderDrawerActivity::renderPreviewWithAntiAliasing(const int previewFo
 }
 
 void EpubReaderDrawerActivity::loop() {
+#if CROSSINK_SCALABLE_FONTS
+  if (ttfResetPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (!ttfResetPopup.isActive()) {
+      // The centered popup can cover reader pixels above the drawer. Restore
+      // the book backdrop as well as any draft preview before repainting.
+      activityManager.restoreBackdropBehindCurrentOverlay();
+      previewDirty = true;
+    }
+    return;
+  }
+#endif
   if (mappedInput.wasBottomEdgeUpSwipe()) {
     closeAndReturn(false, EpubReaderMenuAction::GO_HOME, false);
     return;
@@ -3061,6 +3074,9 @@ void EpubReaderDrawerActivity::loop() {
 }
 
 void EpubReaderDrawerActivity::render(RenderLock&&) {
+#if CROSSINK_SCALABLE_FONTS
+  if (ttfResetPopup.processRender(renderer, mappedInput)) return;
+#endif
   const bool buttonDevice = !mappedInput.hasTouchHardware();
   const int16_t drawerEdge =
       buttonDevice ? drawerHeight() : static_cast<int16_t>(renderer.getScreenHeight() - drawerHeight());
@@ -3222,8 +3238,6 @@ const char* EpubReaderDrawerActivity::rowLabel(const RowId row) const {
       return tr(STR_EMBEDDED_STYLE);
     case RowId::Images:
       return tr(STR_IMAGES);
-    case RowId::ImageGrayscale:
-      return tr(STR_IMAGE_GRAYSCALE);
     case RowId::SelectChapter:
       return tr(STR_SELECT_CHAPTER);
     case RowId::GoToPercent:
@@ -3363,9 +3377,10 @@ const char* EpubReaderDrawerActivity::rowValue(const RowId row, char* buffer, co
       return I18N.get(labels[std::min<size_t>(draft.publisherFonts, labels.size() - 1)]);
     }
     case RowId::Images: {
-      static const std::array<StrId, 3> labels = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER,
-                                                  StrId::STR_IMAGES_SUPPRESS};
-      return I18N.get(labels[std::min<size_t>(draft.imageRendering, labels.size() - 1)]);
+      static constexpr std::array<StrId, ImageDisplayMode::Count> labels = {
+          StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_DISPLAY_BW, StrId::STR_IMAGES_PLACEHOLDER,
+          StrId::STR_IMAGES_SUPPRESS};
+      return I18N.get(labels[ImageDisplayMode::selected(draft.imageRendering, draft.imageGrayscale)]);
     }
     case RowId::RenderMode: {
       static const std::array<StrId, 3> labels = {StrId::STR_RENDER_MODE_CROSSINK_DEFAULT,
@@ -3398,7 +3413,6 @@ bool EpubReaderDrawerActivity::rowIsToggle(const RowId row) const {
   switch (row) {
     case RowId::TrackBookStats:
     case RowId::TextAa:
-    case RowId::ImageGrayscale:
     case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
@@ -3449,8 +3463,6 @@ bool EpubReaderDrawerActivity::rowToggleValue(const RowId row) const {
       return bookStatsEnabled;
     case RowId::TextAa:
       return draft.textAntiAliasing;
-    case RowId::ImageGrayscale:
-      return draft.imageGrayscale;
     case RowId::Focus:
       return draft.focusReadingEnabled;
     case RowId::GuideDots:

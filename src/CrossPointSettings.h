@@ -395,6 +395,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   enum INDEXING_METHOD { INDEXING_INCREMENTAL = 0, INDEXING_FULL_SECTION = 1, INDEXING_METHOD_COUNT };
+  static uint8_t defaultIndexingMethod();
 
   enum TILT_PAGE_TURN { TILT_OFF = 0, TILT_ON = 1, TILT_PAGE_TURN_COUNT };
   enum TILT_PAGE_TURN_DIRECTION {
@@ -617,6 +618,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
+  // Quarter-dBm ceiling; 0 preserves the driver's default transmit power.
+  uint8_t wifiTransmitPower = 0;
   // E-ink refresh frequency (default 15 pages)
   uint8_t refreshFrequency = REFRESH_15;
   uint8_t hyphenationEnabled = 0;
@@ -663,7 +666,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t embeddedStyle = 1;
   uint8_t publisherFonts = 1;
   // EPUB section indexing policy. The current chapter keeps its active build.
-  uint8_t indexingMethod = INDEXING_FULL_SECTION;
+  uint8_t indexingMethod = defaultIndexingMethod();
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
   // Guide Dots - places a middle dot between words to guide the eye
@@ -730,6 +733,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontlightBrightness = 60;
   uint8_t frontlightWarmth = 50;  // 0 = cool .. 100 = warm
   uint8_t frontlightOn = 0;
+#if FREEINK_DEVICE_PICCO
+  enum class SlideSwitchAction : uint8_t { Light, NightMode, TouchControls, TiltPageTurn };
+  uint8_t slideSwitchAction = static_cast<uint8_t>(SlideSwitchAction::Light);
+#endif
   // When enabled, restore a previously-on light after sleep. A previous off
   // state falls through to a complete schedule.
   uint8_t frontlightRestoreOnWake = 1;
@@ -740,7 +747,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint16_t frontlightScheduleStart = 0xFFFF;
   uint16_t frontlightScheduleEnd = 0xFFFF;
   // Language setting (Language enum index, default 0 = EN)
-  char filenameFallbackFont[64] = "";  // Folder name under /.crosspoint/languages/fonts; empty disables fallback.
+  char filenameFallbackFont[64] = "";  // Folder name under /.crossink/languages/fonts; empty disables fallback.
   char languageCode[32] = "EN";        // Preferred identity survives temporary English fallback.
   uint64_t languageCacheGeneration = 0;
   // Per-item veto over the reader drawer's More/Location/Settings tabs (Font/Layout tab items
@@ -899,6 +906,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  public:
   float getReaderLineCompression() const;
   unsigned long getSleepTimeoutMs() const;
+  static bool isRefreshNeverAvailable();
   int getRefreshFrequency() const;
 };
 
