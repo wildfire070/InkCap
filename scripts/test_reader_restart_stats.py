@@ -30,6 +30,7 @@ int bookWrites=0, globalWrites=0, dailyFlushes=0, restarts=0, armed=0, transfers
 BookReadingStats savedBook;
 GlobalReadingStats savedGlobal;
 constexpr char GLOBAL_STATS_PATH[]="global", GLOBAL_STATS_BAK_PATH[]="backup";
+namespace StatsStorage { std::string localPath(const std::string& legacyPath, bool=false, bool=false){return legacyPath;} }
 namespace DailyReadingStats { bool flush(){++dailyFlushes;return !dailyFails;} }
 bool BookReadingStats::save(const std::string&)const {
   ++bookWrites; if(bookFails)return false; savedBook=*this; return true;
