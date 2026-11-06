@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <BidiUtils.h>
+#include <BookKey.h>
 #include <Epub/Page.h>
 #include <Epub/PageCountEstimator.h>
 #include <Epub/SpineSizeLookup.h>
@@ -1263,7 +1264,7 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
                                   const std::string& oldCachePath, const std::string& title,
                                   const std::string& author) {
   LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
-  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
+  if (!bookkey::moveFile(srcPath, dstPath)) {
     LOG_ERR("ERS", "Failed to move finished book to '/Read' folder");
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
@@ -2168,6 +2169,9 @@ void EpubReaderActivity::onEnter() {
       },
       [](void* context, const char* source, const int width, const int height, const char* destination) {
         return static_cast<Epub*>(context)->seedOptimizerImageCache(source, width, height, destination);
+      },
+      [](void* context, const char* source, size_t& size) {
+        return static_cast<Epub*>(context)->readItemToPsram(source, size);
       });
 
   // Activate reader-specific front button mapping (if configured).
@@ -3035,14 +3039,12 @@ void EpubReaderActivity::loop() {
           ? std::max(UITheme::getStatusBarHeight(renderer),
                      UITheme::getProgressBarHeight() + UITheme::getReaderStatusBarTextHeight(renderer))
           : UITheme::getStatusBarHeight(renderer);
-  if (touch.tapped &&
+  if (SETTINGS.tapToHideStatusBar && touch.tapped &&
       (ReaderUtils::isBottomStatusBarTap(renderer, touch.y, bottomTapHeight) ||
        ReaderUtils::isTopStatusBarTap(renderer, touch.y,
                                       UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top, renderer)))) {
-    if (SETTINGS.tapToHideStatusBar) {
-      statusBarVisible = !statusBarVisible;
-      requestUpdate();
-    }
+    statusBarVisible = !statusBarVisible;
+    requestUpdate();
     return;
   }
   // A popup selection suppresses the Confirm release that follows its press.
@@ -3137,7 +3139,11 @@ void EpubReaderActivity::loop() {
       releaseGrayscaleStripScratch();
       if (backgroundSectionBuildHasHeap()) {
         const uint32_t loansBefore = renderer.frameBufferLoanCount();
-        const bool built = section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK);
+        // Keep two ready pages ahead before spending a tick on optional font work.
+        const bool prewarmed = section->activeBuildHasCaughtReadablePages() &&
+                               static_cast<int>(section->pageCount) > section->currentPage + 2 &&
+                               section->prewarmSomeMore();
+        const bool built = prewarmed || section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK);
         invalidatePageBufferAfterBuild(loansBefore);
         if (!built) {
           LOG_ERR("ERS", "Background section build failed");
@@ -6694,6 +6700,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               showIndexingPopup();
             }
             buildPopupPending = !showPopup;
+            buildOptions.deferAdvancePrewarm = !anchorJump && !pendingRelayoutReposition &&
+                                               target != std::numeric_limits<uint16_t>::max() &&
+                                               !buildOptions.isPreview();
             const unsigned long buildStartMs = millis();
             bool started;
             {
@@ -7975,6 +7984,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     return true;
   }
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
+  if (needsAnyGrayscale && !pageHasImages &&
+      ReaderUtils::displayDeferredGrayscale(renderer, pagesUntilFullRefresh, deferredGrayscalePlanes, [&]() {
+        composeGrayscaleBuffer();
+        return true;
+      }))
+    return true;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
   const bool overlapRefresh =
       tiledGrayscale && !pageHasImages && pagesUntilFullRefresh > 1 && renderer.supportsAsyncGrayscaleBase();
@@ -8030,7 +8045,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       renderer.preconditionGrayscale();
       pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
     } else if (overlapRefresh) {
-      ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, /*async=*/true);
+      ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, ReaderUtils::PageRefresh::Async);
     } else {
       // Use the grayscale-aware base waveform so the first visible pass is
       // closer to the final anti-aliased result instead of flashing darker

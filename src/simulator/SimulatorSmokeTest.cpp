@@ -13,6 +13,7 @@
 #include <LibraryIndexFile.h>
 #include <Logging.h>
 #include <SDL.h>
+#include <Utf8.h>
 #include <WiFi.h>
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 #include "SilentRestart.h"
 #include "StatsUploadSmokeTest.h"
 #include "UpstreamFeatureSmokeTest.h"
+#include "util/ImageDisplayMode.h"
 #include "util/WordSelectNavigator.h"
 #if CROSSINK_SCALABLE_FONTS
 #include <HalScalableFont.h>
@@ -468,6 +470,91 @@ struct SliderOrientationSmokeTest {
 };
 
 struct ReaderDrawerLayoutSmokeTest {
+  template <typename Capture>
+  static bool verifyImageDisplay(const Capture& capture) {
+    JsonDocument original;
+    SETTINGS.toJson(original);
+    bool valid = true;
+    const SettingInfo* images = nullptr;
+    for (const auto& setting : getBaseSettingsList()) {
+      if (settingKeyIs(setting, "imageGrayscale")) return false;
+      if (settingKeyIs(setting, "imageRendering")) images = &setting;
+    }
+    if (!images || images->enumValues.size() != ImageDisplayMode::Count || !images->valueGetter || !images->valueSetter)
+      return false;
+
+    // Released global settings, including hidden/placeholder with grayscale off.
+    for (uint8_t rendering = 0; rendering < 3; ++rendering) {
+      for (uint8_t grayscale = 0; grayscale < 2; ++grayscale) {
+        JsonDocument legacy;
+        legacy["imageRendering"] = rendering;
+        legacy["imageGrayscale"] = grayscale;
+        SETTINGS.fromJson(legacy.as<JsonVariantConst>());
+        valid &= images->valueGetter() == ImageDisplayMode::selected(rendering, grayscale);
+        JsonDocument saved;
+        SETTINGS.toJson(saved);
+        valid &= saved["imageRendering"].as<int>() == rendering && saved["imageGrayscale"].as<int>() == grayscale;
+        valid &= SETTINGS.saveToFile();
+        SETTINGS.imageRendering = 0;
+        SETTINGS.imageGrayscale = 1;
+        SETTINGS.loadFromFile();
+        valid &= SETTINGS.imageRendering == rendering && SETTINGS.imageGrayscale == grayscale;
+      }
+    }
+    for (uint8_t mode = 0; mode < ImageDisplayMode::Count; ++mode) {
+      images->valueSetter(mode);
+      valid &= images->valueGetter() == mode;
+      const uint8_t rendering = mode == ImageDisplayMode::Placeholder ? 1 : mode == ImageDisplayMode::Hidden ? 2 : 0;
+      valid &= SETTINGS.imageRendering == rendering;
+      if (rendering == 0) valid &= SETTINGS.imageGrayscale == (mode == ImageDisplayMode::Grayscale);
+    }
+    images->valueSetter(ImageDisplayMode::BlackAndWhite);
+    {
+      RenderLock lock;
+      SettingsActivity menu(renderer, mappedInputManager);
+      menu.onEnter();
+      menu.selectedCategoryIndex = 1;
+      menu.setCurrentSettingsForCategory();
+      const auto it = std::find_if(menu.currentSettings->begin(), menu.currentSettings->end(),
+                                   [](const SettingInfo& setting) { return settingKeyIs(setting, "imageRendering"); });
+      valid &= it != menu.currentSettings->end();
+      if (it != menu.currentSettings->end()) {
+        menu.selectedSettingIndex = 1 + static_cast<int>(std::distance(menu.currentSettings->begin(), it));
+        menu.render(std::move(lock));
+        menu.toggleCurrentSetting();
+        valid &= menu.optionPopup.isActive() && menu.optionPopup.simulatorSelectedIndex() == 1 &&
+                 std::strcmp(menu.optionPopup.simulatorOptionLabel(1), tr(STR_IMAGES_DISPLAY_BW)) == 0;
+        menu.render(std::move(lock));
+        capture("image-display-settings");
+      }
+      menu.onExit();
+
+      EpubReaderDrawerActivity drawer(renderer, mappedInputManager, {}, nullptr, 0.0f, 0, 0, false, false, false, false,
+                                      false, false, false, false, true, true, 0, 0, 5, false);
+      drawer.onEnter();
+      drawer.state.tab = ReaderDrawerTab::Layout;
+      for (int mode = 0; mode < ImageDisplayMode::Count; ++mode) {
+        drawer.showEnumOptions(ReaderDrawerCatalogItem::Images);
+        valid &= drawer.enumOptionValues.size() == ImageDisplayMode::Count;
+        drawer.selectEnumOption(mode);
+        valid &= ImageDisplayMode::selected(drawer.draft.imageRendering, drawer.draft.imageGrayscale) == mode;
+      }
+      drawer.showEnumOptions(ReaderDrawerCatalogItem::Images);
+      drawer.selectEnumOption(ImageDisplayMode::BlackAndWhite);
+      drawer.showEnumOptions(ReaderDrawerCatalogItem::Images);
+      valid &= drawer.enumOptionSelectedIndex == 1;
+      char label[32];
+      valid &= std::strcmp(drawer.rowValue(ReaderDrawerCatalogItem::Images, label, sizeof(label)),
+                           tr(STR_IMAGES_DISPLAY_BW)) == 0;
+      drawer.render(std::move(lock));
+      capture("image-display-reader");
+      drawer.onExit();
+    }
+    SETTINGS.fromJson(original.as<JsonVariantConst>());
+    valid &= SETTINGS.saveToFile();
+    return valid;
+  }
+
   template <typename Capture>
   static bool verifyPreview(const Capture& capture) {
 #if CROSSINK_APP_READER_SAMPLE_PREVIEW
@@ -957,6 +1044,54 @@ struct StatusBarFeatureSmokeTest {
     }
     SETTINGS.displayStatusBar.batteryStyle = displayBattery;
     SETTINGS.bottomReaderStatusBar.batteryStyle = readerBottomBattery;
+    return true;
+  }
+  static bool tapRouting() {
+#if CROSSINK_APP_CAP_TOUCH
+    if (!mappedInputManager.hasTouchHardware()) return true;
+    SETTINGS.disableReaderTouchscreen = 0;
+    SETTINGS.disablePageTurnGestures = 0;
+    SETTINGS.pageTurnGesture = CrossPointSettings::TAP_ONLY;
+    SETTINGS.previousPageGesture = CrossPointSettings::TAP_ONLY;
+    SETTINGS.topReaderStatusBar.hidden = false;
+    SETTINGS.bottomReaderStatusBar.hidden = false;
+    SETTINGS.topReaderStatusBar.slots.fill(ReaderStatusBarItem::Battery);
+    SETTINGS.bottomReaderStatusBar.slots.fill(ReaderStatusBarItem::Battery);
+    mappedInputManager.setReaderMode(true);
+    for (int orientation = 0; orientation < 4; ++orientation) {
+      renderer.setOrientation(static_cast<GfxRenderer::Orientation>(orientation));
+      // A known page count isolates input routing from TXT pagination and SD caches.
+      TxtReaderActivity reader(renderer, mappedInputManager,
+                               std::make_unique<Txt>("/books/tap-routing.txt", "/.crosspoint"), 1);
+      reader.totalPages = 20;
+      int top, right, bottom, left;
+      renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+      const int topY = UITheme::getTopStatusBarY(renderer);
+      const int bottomY = renderer.getScreenHeight() - bottom - 1;
+      for (const bool hideOnTap : {false, true}) {
+        SETTINGS.tapToHideStatusBar = hideOnTap;
+        for (const int y : {topY, bottomY}) {
+          for (const bool previous : {false, true}) {
+            reader.currentPage = 5;
+            reader.statusBarVisible = true;
+            const int x = renderer.getScreenWidth() * (previous ? 1 : 5) / 6;
+            // Tapping again must also restore bars hidden by the first tap.
+            for (int tap = 0; tap < 2; ++tap) {
+              mappedInputManager.simulatorInjectTouchDown(x, y);
+              mappedInputManager.simulatorInjectTouchRelease(x, y);
+              reader.loop();
+              mappedInputManager.simulatorClearInputFrame();
+              const int expectedPage = hideOnTap ? 5 : 5 + (tap + 1) * (previous ? -1 : 1);
+              if (reader.currentPage != expectedPage || reader.statusBarVisible != (!hideOnTap || tap == 1))
+                return false;
+            }
+          }
+        }
+      }
+    }
+    mappedInputManager.setReaderMode(false);
+    LOG_INF("SMOKE", "Reader status-bar tap setting and page routing passed in all orientations");
+#endif
     return true;
   }
   static bool txt(RenderLock& lock, const Capture& capture) {
@@ -1824,6 +1959,11 @@ class SimulatorSmokeTest {
     if (!enabled()) return;
 
     try {
+      static bool checkedSpaces = false;
+      if (!checkedSpaces && std::getenv("CROSSINK_SIMULATOR_SMOKE_UNICODE_SPACES")) {
+        checkedSpaces = true;
+        verifyUnicodeSpaces();
+      }
       tickImpl();
     } catch (const std::exception& e) {
       fail("Unhandled exception: %s", e.what());
@@ -1833,6 +1973,79 @@ class SimulatorSmokeTest {
   }
 
  private:
+  static void verifyUnicodeSpaces() {
+    RenderLock lock;
+    // Deliberately omit every special space while providing a visible replacement.
+    static const EpdUnicodeInterval intervals[] = {{0x20, 0x20, 0}, {'M', 'M', 1}, {0xFFFD, 0xFFFD, 2}};
+    static const EpdGlyph glyphs[] = {{0, 0, 80, 0, 0, 0, 0}, {8, 8, 320, 0, 8, 8, 0}, {8, 8, 160, 0, 8, 8, 0}};
+    static const uint8_t bitmap[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    static const EpdFontData data = [] {
+      EpdFontData value{};
+      value.bitmap = bitmap;
+      value.glyph = glyphs;
+      value.intervals = intervals;
+      value.intervalCount = 3;
+      value.ascender = 8;
+      return value;
+    }();
+    static const EpdFont face(&data);
+    constexpr int fontId = -2009;
+    const EpdFontFamily family(&face);
+    renderer.insertFont(fontId, family);
+    const auto blank = [&] {
+      const auto* buffer = renderer.getFrameBuffer();
+      return std::all_of(buffer, buffer + renderer.getBufferSize(), [](uint8_t byte) { return byte == 0xFF; });
+    };
+    for (const uint32_t cp :
+         {0x00A0u, 0x1680u, 0x2000u, 0x2001u, 0x2002u, 0x2003u, 0x2004u, 0x2005u, 0x2006u, 0x2007u, 0x2008u,
+          0x2009u, 0x200Au, 0x200Bu, 0x2028u, 0x2029u, 0x202Fu, 0x205Fu, 0x2060u, 0x2063u, 0x3000u, 0xFEFFu}) {
+      char text[5]{};
+      *utf8AppendCodepoint(text, cp) = 0;
+      int32_t advance = 0;
+      int top = -1;
+      const int expected = fp4::toPixel(family.getSpaceAdvanceX(cp));
+      if (!renderer.getCodepointMetrics(fontId, cp, EpdFontFamily::REGULAR, advance, top) ||
+          advance != family.getSpaceAdvanceX(cp) || top != 0 ||
+          renderer.getTextAdvanceX(fontId, text, EpdFontFamily::REGULAR) != expected)
+        fail("Unicode space metrics mismatch U+%04X", cp);
+      renderer.clearScreen();
+      renderer.drawText(fontId, 40, 40, text);
+      renderer.drawTextRotated90CW(fontId, 40, 200, text);
+      const int scaled = renderer.drawScaledCodepoint(fontId, cp, EpdFontFamily::REGULAR, 40, 80, 512);
+      if (scaled != fp4::toPixel(advance * 2) || !blank()) fail("Unicode space painted ink U+%04X", cp);
+      // A following glyph must land exactly after the measured blank advance.
+      char followed[8]{};
+      char* end = utf8AppendCodepoint(followed, cp);
+      *end++ = 'M';
+      *end = 0;
+      renderer.drawText(fontId, 40, 40, followed);
+      if (!renderer.isPixelBlack(40 + expected, 40)) fail("Unicode space cursor mismatch U+%04X", cp);
+    }
+    renderer.clearScreen();
+    renderer.drawScaledCodepoint(fontId, 0x2603, EpdFontFamily::REGULAR, 40, 80, 256);
+    if (blank()) fail("Unicode spaces suppressed an unrelated missing-glyph box");
+    static const EpdUnicodeInterval oghamInterval[] = {{0x1680, 0x1680, 1}};
+    static const EpdFontData oghamData = [] {
+      auto value = data;
+      value.intervals = oghamInterval;
+      value.intervalCount = 1;
+      return value;
+    }();
+    static const EpdFont oghamFace(&oghamData);
+    renderer.removeFont(fontId);
+    renderer.insertFont(fontId, EpdFontFamily(&oghamFace));
+    renderer.clearScreen();
+    renderer.drawText(fontId, 40, 40, "\xE1\x9A\x80");
+    if (blank() || renderer.getTextAdvanceX(fontId, "\xE1\x9A\x80", EpdFontFamily::REGULAR) != 20)
+      fail("Native Ogham stemline or advance was lost");
+    renderer.clearScreen();
+    renderer.drawScaledCodepoint(fontId, 0x1680, EpdFontFamily::REGULAR, 40, 80, 512);
+    if (blank()) fail("Scaled native Ogham stemline was lost");
+    renderer.removeFont(fontId);
+    renderer.clearScreen();
+    LOG_INF("SMOKE", "Unicode space metrics, blank rendering, rotation and scaling passed");
+  }
+
   enum class ScriptActionType : uint8_t {
     Press,
     Release,
@@ -1907,6 +2120,7 @@ class SimulatorSmokeTest {
   unsigned supportPhase = 0;
   std::string priorSupportExport;
   unsigned filenameFontPhase = 0;
+  unsigned filenameFontErrorPhase = 0;
   unsigned hyphenationPhase = 0;
   unsigned aboutPhase = 0;
   unsigned aboutPass = 0;
@@ -2186,7 +2400,8 @@ class SimulatorSmokeTest {
     const uint8_t savedNext = SETTINGS.pageTurnGesture;
     const uint8_t savedPrevious = SETTINGS.previousPageGesture;
     const int width = renderer.getScreenWidth();
-    const int y = renderer.getScreenHeight() / 2;
+    const int height = renderer.getScreenHeight();
+    const int y = height / 2;
     mappedInputManager.setReaderMode(true);
     for (uint8_t next = 0; next < CrossPointSettings::PAGE_TURN_GESTURE_COUNT; ++next) {
       for (uint8_t previous = 0; previous < CrossPointSettings::PAGE_TURN_GESTURE_COUNT; ++previous) {
@@ -2198,17 +2413,19 @@ class SimulatorSmokeTest {
         const bool previousTap = previous == CrossPointSettings::TAP_AND_SWIPE ||
                                  previous == CrossPointSettings::TAP_ONLY ||
                                  previous == CrossPointSettings::INVERTED_TAP;
-        for (const int x : {0, width / 3 - 1, width / 3, width * 2 / 3 - 1, width * 2 / 3, width - 1}) {
-          mappedInputManager.simulatorInjectTouchDown(x, y);
-          mappedInputManager.simulatorInjectTouchRelease(x, y);
-          const auto result = ReaderUtils::detectTouchPageTurn(renderer, mappedInputManager);
-          const bool nextZone = inverted ? x < width * 2 / 3 : x >= width / 3;
-          const bool expectedNext = nextTap && (!previousTap || nextZone);
-          const bool expectedPrevious = previousTap && (!nextTap || !nextZone);
-          if (!result.tapped || result.next != expectedNext || result.prev != expectedPrevious) {
-            fail("Mixed page tap mismatch: next=%u previous=%u x=%d", next, previous, x);
+        for (const int tapY : {0, height / 10, y, height * 9 / 10, height - 1}) {
+          for (const int x : {0, width / 3 - 1, width / 3, width * 2 / 3 - 1, width * 2 / 3, width - 1}) {
+            mappedInputManager.simulatorInjectTouchDown(x, tapY);
+            mappedInputManager.simulatorInjectTouchRelease(x, tapY);
+            const auto result = ReaderUtils::detectTouchPageTurn(renderer, mappedInputManager);
+            const bool nextZone = inverted ? x < width * 2 / 3 : x >= width / 3;
+            const bool expectedNext = nextTap && (!previousTap || nextZone);
+            const bool expectedPrevious = previousTap && (!nextTap || !nextZone);
+            if (!result.tapped || result.next != expectedNext || result.prev != expectedPrevious) {
+              fail("Mixed page tap mismatch: next=%u previous=%u x=%d", next, previous, x);
+            }
+            mappedInputManager.simulatorClearInputFrame();
           }
-          mappedInputManager.simulatorClearInputFrame();
         }
         for (const bool right : {false, true}) {
           const int startX = right ? 1 : width - 2;
@@ -2227,10 +2444,29 @@ class SimulatorSmokeTest {
         }
       }
     }
+    // Real vertical swipes must never also produce a page tap.
+    for (const bool fromTop : {false, true}) {
+      const int startY = fromTop ? 1 : height - 2;
+      const int endY = fromTop ? height / 2 : height / 4;
+      mappedInputManager.simulatorInjectTouchDown(width / 2, startY);
+      mappedInputManager.simulatorInjectTouchRelease(width / 2, endY);
+      const auto swipe = ReaderUtils::detectTouchPageTurn(renderer, mappedInputManager);
+      if (swipe.tapped || swipe.prev || swipe.next ||
+          !(fromTop ? (mappedInputManager.wasLightPanelGesture() || mappedInputManager.wasMenuGesture())
+                    : mappedInputManager.wasBottomEdgeUpSwipe()))
+        fail("Vertical edge swipe leaked into a page turn or lost its gesture");
+      mappedInputManager.simulatorClearInputFrame();
+    }
+    JsonDocument original;
+    SETTINGS.toJson(original);
+    const auto orientation = renderer.getOrientation();
+    if (!StatusBarFeatureSmokeTest::tapRouting()) fail("Reader status-bar tap routing failed");
+    SETTINGS.fromJson(original.as<JsonVariantConst>());
+    renderer.setOrientation(orientation);
     SETTINGS.pageTurnGesture = savedNext;
     SETTINGS.previousPageGesture = savedPrevious;
     mappedInputManager.setReaderMode(false);
-    LOG_INF("SMOKE", "All 25 mixed page gesture combinations passed");
+    LOG_INF("SMOKE", "All 25 mixed page gesture combinations passed, including edge taps and vertical swipes");
 #endif
   }
 
@@ -2961,6 +3197,82 @@ class SimulatorSmokeTest {
     SETTINGS.fromJson(original.as<JsonVariantConst>());
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
     LOG_INF("SMOKE", "Simulator smoke test passed: Rotate Page 180 shortcut pickers and EPUB/TXT handlers");
+  }
+
+  static void verifyWifiTransmitPowerSettings() {
+    JsonDocument original;
+    SETTINGS.toJson(original);
+    JsonDocument saved;
+    SETTINGS.toJson(saved);
+    const auto all = getSettingsList();
+    const auto advanced = buildSystemAdvancedSettingsList(all);
+    if (advanced.size() != 1 || advanced[0].valuePtr != &CrossPointSettings::wifiTransmitPower ||
+        advanced[0].enumRawValues != std::vector<uint8_t>({0, 60, 34, 20, 8}))
+      fail("Wi-Fi power menu does not expose the supported driver limits");
+
+    for (const uint8_t power : WifiTransmitPower::TRANSMIT_POWER_LEVELS) {
+      saved["wifiTransmitPower"] = power;
+      if (!SETTINGS.fromJson(saved.as<JsonVariantConst>()) || SETTINGS.wifiTransmitPower != power ||
+          WifiTransmitPower::getLimit() != power)
+        fail("Wi-Fi transmit power did not survive JSON import");
+      if (!SETTINGS.saveToFile()) fail("Cannot save Wi-Fi transmit power");
+      SETTINGS.wifiTransmitPower = 255;
+      WifiTransmitPower::setLimit(0);
+      if (!SETTINGS.loadFromFile() || SETTINGS.wifiTransmitPower != power || WifiTransmitPower::getLimit() != power)
+        fail("Wi-Fi transmit power did not survive a settings reload");
+    }
+    saved.remove("wifiTransmitPower");
+    SETTINGS.wifiTransmitPower = 34;
+    SETTINGS.fromJson(saved.as<JsonVariantConst>());
+    if (SETTINGS.wifiTransmitPower != 0 || WifiTransmitPower::getLimit() != 0)
+      fail("Old settings must leave Wi-Fi transmit power at Default");
+    saved["wifiTransmitPower"] = 255;
+    SETTINGS.fromJson(saved.as<JsonVariantConst>());
+    if (SETTINGS.wifiTransmitPower != 0 || WifiTransmitPower::getLimit() != 0)
+      fail("Invalid Wi-Fi transmit power did not fall back to Default");
+
+    SETTINGS.menuNavigation = CrossPointSettings::MENU_NAV_DIRECTIONAL;
+    RenderLock lock;
+    applyRequestedTheme();
+    SettingsActivity editor(renderer, mappedInputManager);
+    editor.onEnter();
+    const auto press = [&](MappedInputManager::Button button) {
+      mappedInputManager.simulatorInjectRelease(button);
+      editor.loop();
+      mappedInputManager.simulatorClearInputFrame();
+    };
+    for (int i = 0; i < 3; ++i) press(MappedInputManager::Button::Confirm);
+    if (editor.simulatorCategoryIndex() != 3) fail("Cannot reach System settings");
+    const auto system = buildSystemSettingsParentList(all);
+    const auto row = std::find_if(system.begin(), system.end(), [](const SettingInfo& setting) {
+      return setting.action == SettingAction::SystemAdvanced;
+    });
+    if (row == system.end()) fail("Advanced settings submenu is missing");
+    for (size_t i = 0; i <= static_cast<size_t>(row - system.begin()); ++i)
+      press(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+    press(MappedInputManager::Button::Confirm);
+    if (editor.simulatorActiveSubmenu() != SettingAction::SystemAdvanced) fail("Cannot open Advanced settings");
+    editor.render(std::move(lock));
+    captureStatusBarScreen("wifi-power-advanced");
+    press(MappedInputManager::Button::Confirm);
+    if (!editor.simulatorOptionPopupActive()) fail("Wi-Fi power picker did not open");
+    editor.render(std::move(lock));
+    captureStatusBarScreen("wifi-power-options");
+    for (int i = 0; i < 2; ++i) press(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+    mappedInputManager.simulatorInjectPress(MappedInputManager::Button::Confirm);
+    editor.loop();
+    mappedInputManager.simulatorClearInputFrame();
+    if (editor.simulatorOptionPopupActive() || SETTINGS.wifiTransmitPower != 34 || WifiTransmitPower::getLimit() != 34)
+      fail("Wi-Fi power picker did not select 8.5 dBm");
+    SETTINGS.wifiTransmitPower = 0;
+    if (!SETTINGS.loadFromFile() || SETTINGS.wifiTransmitPower != 34)
+      fail("Wi-Fi power picker did not persist its selection");
+    editor.render(std::move(lock));
+    captureStatusBarScreen("wifi-power-selected");
+    editor.onExit();
+    SETTINGS.fromJson(original.as<JsonVariantConst>());
+    if (!SETTINGS.saveToFile()) fail("Cannot restore Wi-Fi power test settings");
+    LOG_INF("SMOKE", "Simulator smoke test passed: Wi-Fi transmit power defaults, validation, persistence and picker");
   }
 
   static void verifyTiltPageTurnSettings() {
@@ -5219,12 +5531,16 @@ class SimulatorSmokeTest {
               return setting.action == SettingAction::FilenameFallbackFont;
             }))
           fail("Filename setting missing from Device settings");
-        std::vector<std::string> names;
-        if (!filenameFontSystem.discover(names) || std::find(names.begin(), names.end(), family) == names.end())
+        std::vector<FilenameFontSystem::Family> names;
+        if (!filenameFontSystem.discover(names) || std::none_of(names.begin(), names.end(), [&](const auto& entry) {
+              return entry.name == family && entry.error == FontLoadError::None;
+            }))
           fail("Filename fixture family missing");
-        for (const auto& name : names)
-          if (name == "Variable Only" || name == "Bitmap Only" || name == "Corrupt Only")
-            fail("Unsupported filename font offered");
+        for (const auto& entry : names) {
+          if (entry.name == "Bitmap Only") fail("Bitmap filename font offered");
+          if ((entry.name == "Variable Only" || entry.name == "Corrupt Only") && entry.error == FontLoadError::None)
+            fail("Unsupported filename font lacks a failure reason");
+        }
         activityManager.replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInputManager));
         queueStep("Filename Settings entry", SmokeStep::Start, 4);
         break;
@@ -5256,7 +5572,39 @@ class SimulatorSmokeTest {
         const auto* settings = dynamic_cast<SettingsActivity*>(activityManager.simulatorCurrentActivity());
         if (!settings || !settings->simulatorOptionPopupActive()) fail("Filename picker did not open");
         const auto& names = settings->simulatorFilenameFontNames();
-        const auto found = std::find(names.begin(), names.end(), family);
+        const char* failedFamily = std::getenv("CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT_ERROR");
+        if (!failedFamily) failedFamily = "Corrupt Only";
+        const auto unavailable =
+            std::find_if(names.begin(), names.end(), [&](const auto& entry) { return entry.name == failedFamily; });
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT_ERROR") && unavailable == names.end())
+          fail("Expected failing family is missing from picker");
+        if (unavailable != names.end() && filenameFontErrorPhase < 3) {
+          if (unavailable->error == FontLoadError::None) fail("Unavailable picker family lacks a failure reason");
+          switch (filenameFontErrorPhase++) {
+            case 0:
+              for (int i = 0; i < std::distance(names.begin(), unavailable); ++i)
+                addTap(MappedInputManager::Button::Down);
+              inputScript.push_back(render("Unavailable UI font highlighted", 4));
+              break;
+            case 1:
+              captureStatusBarScreen("filename-font-unavailable");
+              addTap(MappedInputManager::Button::Confirm);
+              inputScript.push_back(render("Unavailable UI font selected", 4));
+              break;
+            case 2:
+              if (SETTINGS.filenameFallbackFont[0] || renderer.filenameFontId(UI_10_FONT_ID) != UI_10_FONT_ID)
+                fail("Failed font selection changed the previous None choice");
+              captureStatusBarScreen("filename-font-load-error");
+              addTap(MappedInputManager::Button::Confirm);  // Dismiss the error.
+              addTap(MappedInputManager::Button::Confirm);  // Reopen the picker.
+              inputScript.push_back(render("UI font picker retry", 4));
+              break;
+          }
+          --filenameFontPhase;
+          break;
+        }
+        const auto found =
+            std::find_if(names.begin(), names.end(), [&](const auto& entry) { return entry.name == family; });
         if (found == names.end()) fail("Filename picker lacks selected family");
         captureStatusBarScreen("filename-font-picker");
         for (int i = 0; i < std::distance(names.begin(), found); ++i) addTap(MappedInputManager::Button::Down);
@@ -7171,6 +7519,13 @@ class SimulatorSmokeTest {
     switch (step) {
       case SmokeStep::Start:
         LOG_INF("SMOKE", "Starting simulator smoke test");
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_UNICODE_SPACES")) {
+          const char* book = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");
+          if (!book || !Storage.exists(book)) fail("Unicode space fixture is missing");
+          activityManager.goToReader(book, true);
+          queueStep("Unicode space EPUB", SmokeStep::Reader, 8);
+          break;
+        }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_HOME_SWIPE")) {
           buildHomeSwipeScript();
           step = SmokeStep::ReaderInput;
@@ -7479,6 +7834,8 @@ class SimulatorSmokeTest {
           inputScript.push_back(render("Empty Library stats upload confirmation", 5));
           addTap(MappedInputManager::Button::Confirm);
           inputScript.push_back(render("Empty Library stats upload result", 100));
+          inputScript.push_back({ScriptActionType::CaptureMenuNavigation, MappedInputManager::Button::Down,
+                                 "all-time-stats-result", 0, 0, 0});
           addTap(MappedInputManager::Button::Back);
           inputScript.push_back(assertActivity("Home"));
           step = SmokeStep::ReaderInput;
@@ -7615,6 +7972,16 @@ class SimulatorSmokeTest {
           activityManager.goToReader(std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK"), true);
           queueStep("Frontlight layout reader", SmokeStep::FrontlightLayout, 12);
           break;
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_WIFI_POWER")) {
+          verifyWifiTransmitPowerSettings();
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_IMAGE_DISPLAY")) {
+          if (!ReaderDrawerLayoutSmokeTest::verifyImageDisplay(captureStatusBarScreen))
+            fail("Combined image display settings, reader choices or persistence failed");
+          LOG_INF("SMOKE", "Simulator smoke test passed: combined image display settings and persistence");
+          std::_Exit(0);
         }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_TILT_SETTINGS")) {
           verifyTiltPageTurnSettings();
@@ -8643,6 +9010,12 @@ class SimulatorSmokeTest {
         }
 #endif
         if (!activityManager.isCurrentActivityNamed("EpubReader")) fail("Completion test requires EPUB reader");
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_UNICODE_SPACES")) {
+          RenderLock lock;
+          captureStatusBarScreen("unicode-spaces-reader");
+          LOG_INF("SMOKE", "Simulator smoke test passed: Unicode spaces and EPUB rendering");
+          std::_Exit(0);
+        }
 #if !CROSSINK_SCALABLE_FONTS
         if (!EpubReaderCompletionSmokeTest::fontReload(
                 *static_cast<EpubReaderActivity*>(activityManager.simulatorCurrentActivity())))

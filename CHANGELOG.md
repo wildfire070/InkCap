@@ -2,23 +2,23 @@
 
 ### Added
 
+- BOOX Picco Support
 - Discover and upload static `.otf` fonts on ESP32-S3 readers, including OpenType CFF fonts and CFF files named `.ttf`, from SD or the Fonts web upload. Variable fonts and font collections remain unsupported (CrossPoint #3646, #3717).
 - Assign Select Chapter to shortcuts, Quick Actions, or touch gestures to open the chapter list directly in EPUB and XTC books.
 - Track active reading seconds by local day, sync daily reading time to CrossPoint Sync, and show today's total and 7-day average on the This Device reading stats page.
 - Preview OPDS book descriptions before downloading, with scrollable text on touch and button devices. Long descriptions show a bounded excerpt.
 - Sync a selected EPUB’s progress or an XTC book’s reading stats from its Library or File Browser context menu; Sync Folder and Sync Books include XTC stats too.
-- Use server filenames for OPDS downloads to match reading progress across devices; missing or unsafe names fall back to Author - Title.
+- Choose Use Server Filename for each OPDS server to match reading progress across devices. When off (the default), or if the server name is missing or unsafe, downloads use the selected Filename format.
 - View device hardware, firmware/build identity, storage, and memory diagnostics in Settings → System → About without exposing network or device identifiers. Export allowlisted diagnostics and global preferences as local support JSON after confirming the scope; optional EPUB overrides are anonymous, and network/device identifiers, credentials, and reading history are excluded.
-- Turn image grayscale on or off globally or for individual EPUB books, independently of text anti-aliasing.
+- Choose Display or Display (B&W) in Images globally or for individual EPUB books, independently of text anti-aliasing.
 - Use Home/Reader shortcuts on touch devices.
 - Customize reader and global status bars: choose Small, Medium, or Large text for each reader bar, set a separate global text size, choose battery display (Icon + %, Icon Only, or % Only) independently for the top, bottom, and global bars, and hide either reader bar without clearing its assigned slots.
 - Finished EPUB and XTC books show a checkmarked book icon in the File Browser and Library list.
 - Calibrate each screen edge in Settings → Display → Screen Calibration to keep text and status bars clear of the bezel. Calibration stays on the device when changing SD cards.
 - Choose Directional or Legacy menu navigation in Controls to restore the previous button behavior in Settings and the reader menu.
-- Sync Books from the new Sync Server section in File Transfer to sync progress, reading stats, and clippings for every book on the SD card in one pass, without needing a Library refresh. Sync Reading Stats and Sync Clippings, shown there when that data is turned on under What to Sync, upload only stats or only clippings without touching reading positions; after a one-time catch-up they send only books changed since the last sync.
+- Sync Books from the new Sync Server section in File Transfer to sync progress, reading stats, and clippings for every book on the SD card in one pass, without needing a Library refresh. Sync Reading Stats and Sync Clippings, shown there when that data is turned on under What to Sync, upload only stats or only clippings without touching reading positions; reading stats use a one-time catch-up and then send only changed books, while clippings sync both ways across local EPUBs.
 - Render publisher drop caps, bordered and shaded blocks, preserved whitespace, and more CSS selectors in EPUBs; scalable fonts also support mixed sizes within a line (CrossPoint #3891).
 - Install and edit interface languages from SD files, including community languages, with English fallback for missing translations. Browser translation editors and release downloads use an automatically generated, versioned English template and compatibility catalog.
-- Choose a UI Font on ESP32-S3 devices to display missing characters in book titles and filenames while retaining the built-in font for supported text.
 - Install, update, and remove EPUB hyphenation packs from SD; English remains built in, and book layouts refresh when their packs change.
 - Show the current chapter title under the book title in the reader menu on button devices and in the X4 Pro pull-down drawer; the drawer tightens its spacing to keep the handle on screen in landscape.
 - Tighten or widen Word Spacing with a -4 to +4 slider and live preview.
@@ -32,7 +32,7 @@
 - Choose a download folder for each OPDS server on the device or web portal, with options to use the shared default or SD root.
 - Choose a sync server type and custom authentication headers; compatible servers can receive ISBN, ASIN, and series metadata when sharing metadata is enabled.
 - Swipe left on File Browser, Library list, and bookmark rows to reveal a delete button, with confirmation before removal (adapted from Uri Tauber, CrossPoint #3712).
-- Fill missing characters throughout the UI, including translated menu labels and dialogs, using the selected UI Font while preserving built-in characters and the reading font.
+- Fill missing characters throughout the UI, including translated menu labels and dialogs, using the selected UI Fallback Font while preserving built-in characters and the reading font.
 - Assign Rotate Page 180° to Power, Home, front-button long presses, and button chords as well as side buttons, from device or web settings.
 - Assign separate front Left and Right long-press shortcuts, with the same actions as side buttons. Existing shared assignments migrate automatically.
 - Pause and resume page-turn taps and swipes with the Disable Page Turn Gestures shortcut, without changing menu access or other touch gestures.
@@ -45,6 +45,7 @@
 - Uninstall an installed plugin after holding Confirm for one second or long-pressing its row, with confirmation before its files are removed (CrossPoint #4100).
 - Choose Cover Overlay to place a transparent sleep image over the current book cover (CrossPoint #3770).
 - Sync combined reading streaks back from CrossPoint Sync, including reading on other devices, while keeping local reading and upload totals separate.
+- Advanced Wi-Fi transmit-power setting with a per-device limit; Default preserves existing radio behavior.
 
 ### Fixed
 
@@ -138,6 +139,16 @@
 - Ask before setting a sleep cover from the image viewer, and use complete translated delete and sleep-cover questions (CrossPoint #3994, #4097).
 - Keep saved EPUB highlights aligned at tight line spacing and preserve letters on adjacent lines (#893).
 - Stabilize X4 battery percentages across page turns and status bars, and keep the percentage visible while the battery reading changes (#904).
+- Remove the misleading submenu arrow from Reset TTF Defaults and show a popup confirming the reset or reporting a save failure.
+- Fix slanted and wrapped EPUB covers from progressive JPEGs on Home and sleep screens (#907).
+- Preserve saved clippings after corrupt or incomplete store loads, recover interrupted replacements before editing, and report clipping-index allocation failures safely.
+- Keep File Transfer responsive after stalled browser replies, malformed uploads, oversized discovery packets, and abandoned upload connections; hotspot captive-portal checks now reach the home page without intercepting WebDAV writes.
+- Retry a failed font catalog download from either touch or buttons, and show font/settings load errors instead of accepting incomplete lists.
+- Allow page-turn taps near the top and bottom screen edges, including over reader status bars when Tap to Hide Status Bar is off.
+- Show TXT and Markdown reading progress on Home after opening books with character spacing support.
+- Keep protected EPUBs readable after renaming or moving them, including moves to the Read folder.
+- Retry queuing a reading change after an SD write fails.
+- Render Unicode spaces, including thin and hair spaces around nested quotes, without missing-character boxes; preserve font-relative spacing and invisible zero-width controls.
 
 ### Changed
 
@@ -172,8 +183,11 @@
 - Match menu button directions and front Up/Down labels to screen orientation on X3, X4 Pro, and X4 Classic while preserving tab navigation and reader page-turn preferences. Slider side buttons follow the screen orientation, with the upper button increasing values and the lower button decreasing them.
 - Reduce temporary allocations while finding EPUB line breaks and disable unused XML parser input-context buffering (CrossPoint #4126, #4118).
 - Revalidate plugin files with content-based ETags so unchanged files do not need to be transferred again (CrossPoint #4193).
-
 - Use themed web confirmations and alerts, accessible file dialogs, and clearer dropdown arrows; preserve upload cancellation and feedback timers (CrossPoint #3984, #4090).
+- Open EPUB chapters sooner by deferring optional SD-font preparation until pages are ready. On PSRAM readers, reuse ZIP directories and decode JPEG/PNG sources without temporary SD extraction when memory permits.
+- Reduce SD writes for EPUB progress and reading statistics.
+- Match Nearby Position Sync to the progress sync comparison design, with progress cards, bars, chapter details, and an Ahead badge.
+- Default to Incremental EPUB indexing on ESP32-S3 readers, while preserving saved global choices and per-book overrides.
 
 ## [v1.6.1] - 2026-10-03
 

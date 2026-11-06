@@ -314,6 +314,11 @@ bool MappedInputManager::shouldMirrorPowerAsConfirmHold() const {
 
 #if CROSSINK_APP_CAP_TOUCH
 bool MappedInputManager::touchInputEnabled() const {
+  // Picco locks touch across the app, but explicitly opened reader controls
+  // must remain usable so the Up + Down recovery menu can re-enable touch.
+  if (deviceUsesGlobalTouchscreenLock())
+    return gpio.hasTouch() && (!SETTINGS.disableReaderTouchscreen || (readerMode && readerTouchscreenOverride) ||
+                               touchscreenRecoveryOverride);
   return gpio.hasTouch() && (!readerMode || !SETTINGS.disableReaderTouchscreen || readerTouchscreenOverride);
 }
 
@@ -437,14 +442,6 @@ bool MappedInputManager::wasScreenLongPress(int& x, int& y) const {
   gpio.suppressTouchContact();
   renderer.tapToLogical(nx, ny, x, y);
   return true;
-}
-
-bool MappedInputManager::isInVerticalEdgeGestureZone(const int y) const {
-  const int screenHeight = renderer.getScreenHeight();
-  if (screenHeight <= 0) return false;
-  const int topEdgeBottom = static_cast<int>(screenHeight * TOP_EDGE_MENU_GESTURE_FRAC_Y);
-  const int bottomEdgeTop = screenHeight - static_cast<int>(screenHeight * bottomEdgeHomeGestureFraction(readerMode));
-  return y <= topEdgeBottom || y >= bottomEdgeTop;
 }
 
 bool MappedInputManager::wasScreenTouchDown(int& x, int& y) const {
@@ -799,11 +796,18 @@ bool MappedInputManager::wasBottomEdgeUpSwipe() const {
   return false;
 }
 
-// Home-key boards (X4 Pro) rearrange the edge gestures: the capacitive key
-// takes over "exit to home", the bottom edge (freed by the key) becomes the
-// menu gesture, and the top edge opens the frontlight quick panel.
+// Picco shares the X4 Pro drawer layout without pretending to have a Home key.
+bool MappedInputManager::usesFrontlightSwipeLayout() const {
+#if FREEINK_DEVICE_PICCO
+  return true;
+#else
+  return hasHomeKeyHardware();
+#endif
+}
+
+// Drawer-layout boards use the bottom edge for menus and the top for light controls.
 bool MappedInputManager::wasMenuGesture() const {
-  return hasHomeKeyHardware() ? wasBottomEdgeUpSwipe() : wasTopEdgeDownSwipe();
+  return usesFrontlightSwipeLayout() ? wasBottomEdgeUpSwipe() : wasTopEdgeDownSwipe();
 }
 
 bool MappedInputManager::wasReaderMenuGesture() const {
@@ -811,21 +815,20 @@ bool MappedInputManager::wasReaderMenuGesture() const {
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
   return direction == SwipeDir::Up;
 #else
-  return hasHomeKeyHardware() ? direction == SwipeDir::Up : direction == SwipeDir::Down;
+  return usesFrontlightSwipeLayout() ? direction == SwipeDir::Up : direction == SwipeDir::Down;
 #endif
 }
 
 bool MappedInputManager::wasReaderHomeGesture() const {
-  // X4 Pro's capacitive Home key remains the reader's Home action. Only the
-  // touch gesture changes in reader mode: other touch boards use an upward
-  // swipe across the page.
+  // Drawer-layout boards reserve upward reader swipes for the menu.
+  // X4 Pro retains its Home key; Picco uses the drawer's Home action.
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
   // Sticky uses swipe up for the bottom reader drawer and swipe down for the
   // reader-details panel. Home remains available from that panel's header.
   return false;
 #else
-  if (hasHomeKeyHardware()) {
-    return wasHomeGesture();
+  if (usesFrontlightSwipeLayout()) {
+    return hasHomeKeyHardware() && wasHomeGesture();
   }
   return wasSwipe() == SwipeDir::Up;
 #endif
@@ -835,7 +838,7 @@ bool MappedInputManager::wasReaderLightPanelGesture() const {
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
   return wasSwipe() == SwipeDir::Down;
 #else
-  return hasHomeKeyHardware() && wasSwipe() == SwipeDir::Down;
+  return usesFrontlightSwipeLayout() && wasSwipe() == SwipeDir::Down;
 #endif
 }
 
@@ -872,7 +875,7 @@ bool MappedInputManager::wasReaderMenuHold() const {
 #endif
 }
 
-bool MappedInputManager::wasLightPanelGesture() const { return hasHomeKeyHardware() && wasTopEdgeDownSwipe(); }
+bool MappedInputManager::wasLightPanelGesture() const { return usesFrontlightSwipeLayout() && wasTopEdgeDownSwipe(); }
 #endif
 
 bool MappedInputManager::wasPressed(const Button button) const {

@@ -1,6 +1,7 @@
 #include "WebDAVHandler.h"
 
 #include <Arduino.h>
+#include <BookKey.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -687,16 +688,11 @@ void WebDAVHandler::handleMove(WebServer& s) {
   // the previous destination content must still be recoverable instead of
   // silently gone with nothing to replace it -- mirrors the .davtmp pattern
   // raw()/PUT already uses for exactly this reason.
-  std::string dstBackupPath;
   sdFontSystem.markRegistryDirtyForPath(dstPath.c_str());
-  if (dstExists) {
-    dstBackupPath = std::string(dstPath.c_str()) + ".davbak";
-    Storage.remove(dstBackupPath.c_str());  // clear any stale backup from a prior failed attempt
-    if (!Storage.rename(dstPath.c_str(), dstBackupPath.c_str())) {
-      file.close();
-      s.send(500, "text/plain", "Failed to prepare overwrite");
-      return;
-    }
+  if (dstExists && (bookkey::hasSidecar(srcPath.c_str()) || bookkey::hasSidecar(dstPath.c_str()))) {
+    file.close();
+    s.send(409, "text/plain", "Move a protected book to an unused filename");
+    return;
   }
 
   // For a single epub, capture its cache path/title/author (a lightweight,
@@ -723,11 +719,10 @@ void WebDAVHandler::handleMove(WebServer& s) {
     clearBookCache(srcPath.c_str());
   }
 
-  bool success = file.rename(dstPath.c_str());
   file.close();
+  const bool success = dstExists ? replaceFile(srcPath, dstPath) : bookkey::moveFile(srcPath.c_str(), dstPath.c_str());
 
   if (success) {
-    if (!dstBackupPath.empty()) Storage.remove(dstBackupPath.c_str());
     if (srcIsEpub) {
       if (!BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle,
                                                 epubAuthor, /*keepInRecents=*/true)) {
@@ -768,7 +763,6 @@ void WebDAVHandler::handleMove(WebServer& s) {
     sdFontSystem.markRegistryDirtyForPath(dstPath.c_str());
     s.send(dstExists ? 204 : 201);
   } else {
-    if (!dstBackupPath.empty()) Storage.rename(dstBackupPath.c_str(), dstPath.c_str());
     s.send(500, "text/plain", "Move failed");
   }
 }

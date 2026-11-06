@@ -83,8 +83,10 @@ class MappedInputManager {
   void setPowerAsConfirmInReaderMode(bool enabled) { powerAsConfirmInReaderMode = enabled; }
 #if CROSSINK_APP_CAP_TOUCH
   void setReaderTouchscreenOverride(bool enabled) { readerTouchscreenOverride = enabled; }
+  void setTouchscreenRecoveryOverride(bool enabled) { touchscreenRecoveryOverride = enabled; }
 #else
   constexpr void setReaderTouchscreenOverride(bool) {}
+  constexpr void setTouchscreenRecoveryOverride(bool) {}
 #endif
 
   void update() const;
@@ -119,7 +121,7 @@ class MappedInputManager {
 #if CROSSINK_APP_CAP_TOUCH
   bool hasTouch() const;
   bool hasTouchHardware() const;
-  // Multi-touch follows the same reader touch gate as all other screen input,
+  // Multi-touch follows the same touch gate as all other screen input,
   // so it cannot bypass the Disable Touchscreen setting.
   bool supportsMultiTouch() const;
   bool getTwoFingerTouch(int& x1, int& y1, int& x2, int& y2) const;
@@ -141,7 +143,6 @@ class MappedInputManager {
   bool wasScreenTapped(int& x, int& y, unsigned long& heldMs) const;
   bool isScreenTouchLongPress(int& x, int& y, unsigned long thresholdMs) const;
   bool wasScreenLongPress(int& x, int& y) const;
-  bool isInVerticalEdgeGestureZone(int y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
   bool isScreenTouchTapCandidate(int& x, int& y, unsigned long& heldMs) const;
   bool isScreenTouchHeld(int& x, int& y) const;
@@ -175,8 +176,7 @@ class MappedInputManager {
   SwipeDir wasSwipe() const;
   bool wasSwipeWithPoints(SwipeDir& direction, int& startX, int& startY, int& endX, int& endY) const;
   bool wasLeftEdgeGesture() const;
-  // An upward swipe that starts in the lower edge band. X4 Pro uses this for
-  // its reader menu because its capacitive key handles Home.
+  // An upward swipe that starts in the lower edge band.
   bool wasBottomEdgeUpSwipe() const;
   // Exit-to-home intent. Boards with a capacitive home key (X4 Pro) use the
   // key's press edge; everywhere else it's the bottom-edge up-swipe.
@@ -184,12 +184,10 @@ class MappedInputManager {
   // Deliver a delayed capacitive Home-key tap through the usual activity route.
   void queueDeferredHomeGesture() { deferredHomeGesture = true; }
   void clearDeferredHomeGesture() const { deferredHomeGesture = false; }
-  // Contextual menu intent (the reader menu). Home-key boards move this to the
-  // bottom-edge up-swipe (freed by the home key); others keep the top-edge
-  // down-swipe.
+  // Contextual menu intent: X4 Pro and Picco use the bottom-edge up-swipe;
+  // other boards keep the top-edge down-swipe.
   bool wasMenuGesture() const;
-  // Frontlight quick panel: top-edge down-swipe, only on home-key boards where
-  // that edge is no longer the menu gesture.
+  // Frontlight quick panel: top-edge down-swipe on X4 Pro and Picco.
   bool wasLightPanelGesture() const;
   // Full-screen vertical reader gestures. These preserve each board's existing
   // action mapping, but intentionally do not apply to reader submenus or lists.
@@ -213,7 +211,6 @@ class MappedInputManager {
   constexpr bool wasScreenTapped(int&, int&, unsigned long&) const { return false; }
   constexpr bool isScreenTouchLongPress(int&, int&, unsigned long) const { return false; }
   constexpr bool wasScreenLongPress(int&, int&) const { return false; }
-  constexpr bool isInVerticalEdgeGestureZone(int) const { return false; }
   constexpr bool wasScreenTouchDown(int&, int&) const { return false; }
   constexpr bool isScreenTouchTapCandidate(int&, int&, unsigned long&) const { return false; }
   constexpr bool isScreenTouchHeld(int&, int&) const { return false; }
@@ -292,7 +289,9 @@ class MappedInputManager {
   uint8_t menuOrientation() const { return navigationContext.load(std::memory_order_relaxed) & (MENU_MODE - 1); }
   bool powerAsConfirmInReaderMode = false;
 #if CROSSINK_APP_CAP_TOUCH
+  bool usesFrontlightSwipeLayout() const;
   bool readerTouchscreenOverride = false;
+  bool touchscreenRecoveryOverride = false;
   EdgeSlide edgeSlideSide = EdgeSlide::None;
   int edgeSlideStartX = 0;
   int edgeSlideStartY = 0;
