@@ -73,6 +73,23 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_TAB = 2;
 constexpr int16_t TOUCH_TAB_BAR_HEIGHT = 50;
+#if CROSSINK_SCALABLE_FONTS
+StrId uiFontErrorString(const FontLoadError error) {
+  switch (error) {
+    case FontLoadError::Memory:
+      return StrId::STR_UI_FONT_MEMORY_ERROR;
+    case FontLoadError::Unsupported:
+      return StrId::STR_UI_FONT_UNSUPPORTED;
+    case FontLoadError::TooLarge:
+      return StrId::STR_UI_FONT_TOO_LARGE;
+    case FontLoadError::InvalidFamily:
+    case FontLoadError::NoFont:
+      return StrId::STR_UI_FONT_FAMILY_ERROR;
+    default:
+      return StrId::STR_FONT_DATA_UNREADABLE;
+  }
+}
+#endif
 }  // namespace
 
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
@@ -81,7 +98,7 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DIS
 namespace {
 constexpr int systemVersionFooterSideMargin = 20;
 constexpr int systemVersionFooterBottomInset = 15;
-constexpr size_t controlsParentBaseCount = 5;
+constexpr size_t controlsParentBaseCount = 3;
 constexpr size_t controlsHomeButtonCount = 4;
 constexpr size_t controlsPowerMinCount = 2;
 constexpr size_t controlsPowerMaxCount = 3;
@@ -312,6 +329,7 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsEdgeGestureSettings.clear();
   systemSettings.clear();
   systemDeviceSettings.clear();
+  systemAdvancedSettings.clear();
   systemFilesCacheSettings.clear();
   fileBrowserSettings.clear();
   systemReadingStatsSettings.clear();
@@ -357,6 +375,7 @@ void SettingsActivity::rebuildSettingsLists() {
   readerScreenMarginSettings = buildReaderScreenMarginSettingsList(allSettings);
   systemSettings = buildSystemSettingsParentList(allSettings);
   systemDeviceSettings = buildSystemDeviceSettingsList(allSettings);
+  systemAdvancedSettings = buildSystemAdvancedSettingsList(allSettings);
   systemFilesCacheSettings = buildSystemFilesCacheSettingsList(allSettings);
   systemReadingStatsSettings = buildSystemReadingStatsSettingsList(allSettings);
   systemGlobalStatsSettings = buildSystemGlobalStatsSettingsList(allSettings);
@@ -368,31 +387,20 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsEdgeGestureSettings = buildControlsEdgeGestureSettingsList(allSettings);
   const size_t expectedSideButtonCount =
       controlsSideButtonBaseCount + (hasSideButtonChordSetting(allSettings) ? 1u : 0u);
-#if CROSSINK_APP_CAP_TOUCH
-  if (!gpio.hasTouch()) {
+  const bool hasFrontButtons = deviceHasFrontButtons();
+  if (hasFrontButtons) {
     controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
   }
   controlsSideButtonSettings = buildControlsSideButtonSettingsList(allSettings);
 
-  const bool hasTouch = gpio.hasTouch();
-  const bool hasHomeKey = gpio.hasHomeKey();
-  const size_t expectedControlsCount = controlsParentBaseCount - (hasTouch ? 1u : 0u) + (hasHomeKey ? 1u : 0u) +
+  // Front Buttons and Menu Navigation are both absent from touch-device menus.
+  const size_t expectedControlsCount = controlsParentBaseCount + SLIDE_SWITCH_SETTINGS_COUNT +
+                                       (hasFrontButtons ? 2u : 0u) + (gpio.hasHomeKey() ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY) ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_NEXT_PAGE) ? 1u : 0u);
-  const size_t expectedFrontButtonCount = hasTouch ? 0u : controlsFrontButtonCount;
-#else
-  controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
-  controlsSideButtonSettings = buildControlsSideButtonSettingsList(allSettings);
-
-  const size_t expectedControlsCount = controlsParentBaseCount + (gpio.hasHomeKey() ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_NEXT_PAGE) ? 1u : 0u);
-  constexpr size_t expectedFrontButtonCount = controlsFrontButtonCount;
-#endif
+  const size_t expectedFrontButtonCount = hasFrontButtons ? controlsFrontButtonCount : 0u;
   if (controlsSettings.size() != expectedControlsCount ||
       (gpio.hasHomeKey() && controlsHomeButtonSettings.size() != controlsHomeButtonCount) ||
       controlsPowerSettings.size() < controlsPowerMinCount || controlsPowerSettings.size() > controlsPowerMaxCount ||
@@ -475,6 +483,9 @@ void SettingsActivity::setCurrentSettingsForCategory() {
         case SettingAction::SystemDevice:
           currentSettings = &systemDeviceSettings;
           break;
+        case SettingAction::SystemAdvanced:
+          currentSettings = &systemAdvancedSettings;
+          break;
         case SettingAction::SystemFilesCache:
           currentSettings = &systemFilesCacheSettings;
           break;
@@ -529,6 +540,8 @@ StrId SettingsActivity::activeSubmenuTitleId() const {
       return StrId::STR_EDGE_GESTURES;
     case SettingAction::SystemDevice:
       return StrId::STR_SYSTEM_DEVICE;
+    case SettingAction::SystemAdvanced:
+      return StrId::STR_SYSTEM_ADVANCED;
     case SettingAction::SystemFilesCache:
       return StrId::STR_SYSTEM_FILES_CACHE;
     case SettingAction::SystemReadingStats:
@@ -601,9 +614,12 @@ void SettingsActivity::openEnumOptionPicker(const SettingInfo& setting) {
   if (currentIndex >= optionCount) currentIndex = 0;
 
   const SettingInfo selectedSetting = setting;
-  const auto note = setting.valuePtr == &CrossPointSettings::sideButtonChordAction && mappedInput.hasTouchHardware()
-                        ? OptionPopup::Note{tr(STR_NOTE), tr(STR_TOUCHSCREEN_ESCAPE_HATCH_NOTE)}
-                        : OptionPopup::Note{};
+  OptionPopup::Note note;
+  if (setting.valuePtr == &CrossPointSettings::wifiTransmitPower) {
+    note = {tr(STR_NOTE), tr(STR_WIFI_TRANSMIT_POWER_HELP)};
+  } else if (setting.valuePtr == &CrossPointSettings::sideButtonChordAction && mappedInput.hasTouchHardware()) {
+    note = {tr(STR_NOTE), tr(STR_TOUCHSCREEN_ESCAPE_HATCH_NOTE)};
+  }
   optionPopup.show(
       setting.nameId, options, currentIndex,
       [this, selectedSetting](int selectedIndex) {
@@ -707,29 +723,38 @@ void SettingsActivity::openFilenameFontPicker() {
   if (!filenameFontSystem.discover(filenameFontNames)) {
     optionPopup.show(
         StrId::STR_FILENAME_FALLBACK_FONT, {tr(STR_OK)}, 0, [this](int) { requestUpdate(); },
-        OptionPopup::Note(tr(STR_FONT_DATA_UNREADABLE), tr(STR_FILENAME_FONT_HINT)));
+        OptionPopup::Note(I18N.get(uiFontErrorString(filenameFontSystem.lastError())), tr(STR_FILENAME_FONT_HINT)));
     requestUpdate();
     return;
   }
-  filenameFontNames.insert(filenameFontNames.begin(), tr(STR_NONE_OPT));
+  filenameFontNames.insert(filenameFontNames.begin(), {tr(STR_NONE_OPT), FontLoadError::None});
   int selected = 0;
   for (size_t i = 1; i < filenameFontNames.size(); ++i) {
-    if (filenameFontNames[i] == SETTINGS.filenameFallbackFont) selected = static_cast<int>(i);
+    if (filenameFontNames[i].name == SETTINGS.filenameFallbackFont) selected = static_cast<int>(i);
   }
   optionPopup.showBorrowed(
       StrId::STR_FILENAME_FALLBACK_FONT,
       OptionLabels(&filenameFontNames, filenameFontNames.size(),
                    [](const void* owner, size_t i) {
-                     return (*static_cast<const std::vector<std::string>*>(owner))[i].c_str();
+                     return (*static_cast<const std::vector<FilenameFontSystem::Family>*>(owner))[i].name.c_str();
                    }),
       selected,
       [this](int index) {
         if (index < 0 || static_cast<size_t>(index) >= filenameFontNames.size()) return;
-        std::strncpy(pendingFilenameFont, index ? filenameFontNames[index].c_str() : "",
+        std::strncpy(pendingFilenameFont, index ? filenameFontNames[index].name.c_str() : "",
                      sizeof(pendingFilenameFont) - 1);
         filenameFontSelectionPending = true;
       },
       OptionPopup::Note("", tr(STR_FILENAME_FONT_HINT)));
+  // At most 65 borrowed-text notes (~2 KiB), allocated once on this cold path
+  // and owned/reused by the popup; too large for the render-task stack.
+  std::vector<OptionPopup::Note> notes;
+  notes.reserve(filenameFontNames.size());
+  for (const auto& family : filenameFontNames) {
+    notes.emplace_back(family.error == FontLoadError::None ? "" : I18N.get(uiFontErrorString(family.error)),
+                       family.error == FontLoadError::None ? tr(STR_FILENAME_FONT_HINT) : "");
+  }
+  optionPopup.setOptionNotes(std::move(notes));
   requestUpdate();
 #endif
 }
@@ -995,6 +1020,7 @@ void SettingsActivity::openStringEditor(const SettingInfo& setting) {
 
 void SettingsActivity::onEnter() {
   Activity::onEnter();
+  if (touchscreenRecovery) mappedInput.setTouchscreenRecoveryOverride(true);
 
   // Reapply the orientation captured before the activity being replaced (for
   // example, a landscape reader) performs its normal portrait reset.
@@ -1066,6 +1092,7 @@ void SettingsActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
 }
 
 void SettingsActivity::onExit() {
+  if (touchscreenRecovery) mappedInput.setTouchscreenRecoveryOverride(false);
   if (!isFileBrowserView()) {
     dictionaryRegistry.clear();
     sdFontSystem.releaseRegistry();
@@ -1128,14 +1155,17 @@ void SettingsActivity::loop() {
     std::strcpy(SETTINGS.filenameFallbackFont, pendingFilenameFont);
     filenameFontSystem.invalidate();
     if (pendingFilenameFont[0]) GUI.drawPopup(renderer, tr(STR_LOADING), true);
-    if (filenameFontSystem.ensureLoaded(renderer) && SETTINGS.saveToFile()) {
+    const bool loaded = filenameFontSystem.ensureLoaded(renderer);
+    if (loaded && SETTINGS.saveToFile()) {
       // The selected font and persisted setting are ready together.
     } else {
+      // Restoring the previous family resets the loader's last failure.
+      const StrId error = loaded ? StrId::STR_UI_FONT_SAVE_ERROR : uiFontErrorString(filenameFontSystem.lastError());
       std::strcpy(SETTINGS.filenameFallbackFont, previous);
       filenameFontSystem.ensureLoaded(renderer);
       optionPopup.show(
           StrId::STR_FILENAME_FALLBACK_FONT, {tr(STR_OK)}, 0, [this](int) { requestUpdate(); },
-          OptionPopup::Note(tr(STR_FONT_DATA_UNREADABLE), tr(STR_FILENAME_FONT_HINT)));
+          OptionPopup::Note(I18N.get(error), ""));
     }
     requestUpdate();
     return;
@@ -1674,6 +1704,7 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::ControlsTwoFingerSwipe:
       case SettingAction::ControlsEdgeGestures:
       case SettingAction::SystemDevice:
+      case SettingAction::SystemAdvanced:
       case SettingAction::SystemFilesCache:
       case SettingAction::SystemReadingStats:
       case SettingAction::SystemGlobalStats:

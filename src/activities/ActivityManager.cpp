@@ -591,7 +591,7 @@ void ActivityManager::loop() {
       }
 #endif
 
-      // Frontlight quick panel: top-edge down-swipe on home-key boards, except
+      // Frontlight quick panel: top-edge down-swipe on drawer-layout boards, except
       // that the open EPUB reader exposes the same action across the whole page.
       // Pushed, so it returns to whatever was underneath — including mid-book.
       const bool lightPanelGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
@@ -1051,7 +1051,8 @@ void ActivityManager::goToNearbyStatsSync() {
   replaceActivity(std::make_unique<NearbyStatsSyncActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings(const bool dismissOnUpSwipe, const bool openLanguageDownloads) {
+void ActivityManager::goToSettings(const bool dismissOnUpSwipe, const bool openLanguageDownloads,
+                                   const bool touchscreenRecovery) {
   preferredHomeBookPath.clear();
   returningHomeThroughSettings = false;
   if (currentActivity && currentActivity->isHomeActivity()) {
@@ -1063,6 +1064,7 @@ void ActivityManager::goToSettings(const bool dismissOnUpSwipe, const bool openL
   }
   auto settings = std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe);
   if (openLanguageDownloads) settings->openLanguageDownloadsOnEnter();
+  if (touchscreenRecovery) settings->enableTouchscreenRecovery();
   replaceActivity(std::move(settings));
 }
 
@@ -1267,8 +1269,9 @@ bool ActivityManager::openReaderSettingsForTouchscreenEscapeHatch() {
   }
 
   if (!currentActivity->openReaderSettingsMenu()) {
-    // TXT has no reader menu, so keep a reliable global Settings fallback.
-    goToSettings();
+    // TXT has no reader menu. Keep its Settings fallback usable while touch
+    // is locked without changing the persisted touchscreen preference.
+    goToSettings(false, false, true);
   }
   return true;
 }
@@ -1515,15 +1518,17 @@ RenderLock::RenderLock(const Mode mode) {
 
 RenderLock::RenderLock([[maybe_unused]] Activity&, const Mode mode) : RenderLock(mode) {}
 
-RenderLock::~RenderLock() {
-  if (isLocked) {
-    activityManager.renderer.unlockFrameBufferMutex();
-    isLocked = false;
-  }
-}
+RenderLock::~RenderLock() { unlock(); }
 
 void RenderLock::unlock() {
   if (isLocked) {
+#if FREEINK_DEVICE_PICCO
+    // A drawing transaction includes all async/grayscale passes. Shut down
+    // only when its owner releases the lock, including direct toast, screenshot
+    // and Quick Lock updates that bypass the activity render task.
+    display.powerOffBetweenFrames();
+#endif
+    // Delegates to GfxRenderer's own recursive mutex -- see the constructor's comment above.
     activityManager.renderer.unlockFrameBufferMutex();
     isLocked = false;
   }

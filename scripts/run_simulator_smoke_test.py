@@ -230,6 +230,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        if args.unicode_spaces:
+            env["CROSSINK_SIMULATOR_SMOKE_UNICODE_SPACES"] = "1"
         factory_flash = None
         if args.factory_flash:
             factory_flash = temp_root / "language-flash.bin"
@@ -260,18 +262,20 @@ def run_smoke(args: argparse.Namespace) -> int:
             if args.asset_captures:
                 env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.asset_captures).resolve())
         if args.language_file:
-            language_path = temp_root / "fs_" / ".crosspoint" / "languages" / "smoke.yaml"
+            language_path = temp_root / "fs_" / ".crossink" / "languages" / "smoke.yaml"
             language_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(Path(args.language_file), language_path)
             env["CROSSINK_LANGUAGE_FLASH"] = str(temp_root / "language-flash.bin")
             installer_env = dict(env, CROSSINK_TEST_SD=str(temp_root / "fs_"))
             installed = subprocess.run(
                 [str(Path(args.language_installer).resolve()), "install", "EN", "0",
-                 "/.crosspoint/languages/smoke.yaml"],
+                 "/.crossink/languages/smoke.yaml"],
                 cwd=temp_root, env=installer_env, text=True, capture_output=True, check=True, timeout=30,
             )
             code, generation = installed.stdout.strip().split("|")
-            (temp_root / "fs_" / ".crosspoint" / "crossink-settings.json").write_text(
+            settings = temp_root / "fs_" / ".crosspoint" / "crossink-settings.json"
+            settings.parent.mkdir(parents=True, exist_ok=True)
+            settings.write_text(
                 json.dumps({"language": code, "languageCacheGeneration": int(generation)})
             )
         if args.hyphenation:
@@ -292,7 +296,7 @@ def run_smoke(args: argparse.Namespace) -> int:
             if not languages:
                 raise ValueError("Hyphenation smoke fixture needs dc:language metadata")
             updated.replace(target)
-            packs = temp_root / "fs_" / ".crosspoint" / "hyphenation"
+            packs = temp_root / "fs_" / ".crossink" / "hyphenation"
             packs.mkdir(parents=True, exist_ok=True)
             data = pack_bytes("de")
             (packs / "hyph-de.cphyph").write_bytes(data)
@@ -302,9 +306,11 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.hyphenation_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.hyphenation_captures).resolve())
         if args.filename_font_dir:
-            shutil.copytree(Path(args.filename_font_dir), temp_root / "fs_" / ".crosspoint" / "languages" / "fonts", dirs_exist_ok=True)
+            shutil.copytree(Path(args.filename_font_dir), temp_root / "fs_" / ".crossink" / "languages" / "fonts", dirs_exist_ok=True)
         if args.filename_font_family:
             env["CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT"] = args.filename_font_family
+        if args.filename_font_error_family:
+            env["CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT_ERROR"] = args.filename_font_error_family
         if args.filename_font_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.filename_font_captures).resolve())
         if args.screen_calibration:
@@ -355,6 +361,10 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_recovery:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_RECOVERY"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
+        if args.wifi_transmit_power:
+            env["CROSSINK_SIMULATOR_SMOKE_WIFI_POWER"] = "1"
+        if args.image_display:
+            env["CROSSINK_SIMULATOR_SMOKE_IMAGE_DISPLAY"] = "1"
         if args.tilt_settings:
             env["CROSSINK_SIMULATOR_SMOKE_TILT_SETTINGS"] = "1"
         if args.receive_folder:
@@ -450,6 +460,10 @@ def run_smoke(args: argparse.Namespace) -> int:
         print("Simulator did not complete bookmark checks", file=sys.stderr)
         return 2
 
+    if args.wifi_transmit_power and "Simulator smoke test passed: Wi-Fi transmit power" not in proc.stdout:
+        print("Simulator did not complete Wi-Fi transmit-power checks", file=sys.stderr)
+        return 2
+
     if args.menu_orientation and "Simulator smoke test passed: menu orientation" not in proc.stdout:
         print("Simulator did not complete the menu orientation checks", file=sys.stderr)
         return 2
@@ -497,12 +511,15 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--unicode-spaces", action="store_true", help="Check native Unicode spacing metrics and blank normal, rotated and scaled rendering")
     parser.add_argument("--factory-flash", action="store_true",
                         help="Use the reported 80 KiB factory partition; verify it remains unchanged (S3 profiles)")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
     parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")
+    parser.add_argument("--wifi-transmit-power", action="store_true", help="Check Wi-Fi power defaults, device picker and persistence")
+    parser.add_argument("--image-display", action="store_true", help="Check combined image choices and saved preference compatibility")
     parser.add_argument("--tilt-settings", action="store_true", help="Check tilt preference visibility, device editing and persistence")
     parser.add_argument("--chapter-percentage", action="store_true", help="Check chapter percentage slot selection, removal, reload and rendered formats")
     parser.add_argument("--centered-status-bar", action="store_true", help="Check Center Status Bar and Separator rows, popups and persistence")
@@ -528,8 +545,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--c3-font-sizes", "--bitmap-font-sizes", dest="c3_font_sizes", action="store_true", help="Check bitmap font sizes, inline layout, page cache, selection and SD reload")
     parser.add_argument("--font-size-book", action="store_true", help="Also render every page of --book with C3 fonts, checking its opening drop cap")
     parser.add_argument("--font-dir", help="Font fixtures copied into isolated /fonts")
-    parser.add_argument("--filename-font-dir", help="TTF family fixtures copied into /.crosspoint/languages/fonts")
+    parser.add_argument("--filename-font-dir", help="TTF family fixtures copied into /.crossink/languages/fonts")
     parser.add_argument("--filename-font-family", help="Check filename font picker, mixed glyphs and storage lifecycle (S3)")
+    parser.add_argument("--filename-font-error-family", help="Family that must remain visible with a load error and preserve the previous choice")
     parser.add_argument("--filename-font-captures", help="Directory for filename font framebuffer captures (PGM)")
     parser.add_argument("--font-recovery", action="store_true", help="Check reader selection recovery after font catalog memory pressure")
     parser.add_argument("--font-family", help="Exercise custom-font size and dictionary lifecycle")
