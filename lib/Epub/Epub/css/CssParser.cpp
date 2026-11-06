@@ -1467,6 +1467,15 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
     return result;
   }
 
+  if (classAttr.empty()) {
+    // No class styles or element.class styles can apply, but a multi-part
+    // ancestor chain (e.g. ".fff_titlepage .title h1") can still carry a
+    // specificity above 255 (each class contributes 256) -- flush every
+    // remaining matched descendant rule instead of dropping it silently.
+    applyThrough(UINT32_MAX);
+    return result;
+  }
+
   // TODO: Support combinations of classes (e.g. style on .class1.class2)
   // 2. Apply class styles (medium priority).
   forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
