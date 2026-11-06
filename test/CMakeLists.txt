@@ -129,6 +129,7 @@ add_subdirectory(library_recent_order)
 add_subdirectory(scalable_fonts)
 add_subdirectory(glyph_bitmap)
 add_subdirectory(daily_reading_stats)
+add_subdirectory(stats_storage)
 add_subdirectory(sync_files)
 add_subdirectory(sync_pending)
 add_subdirectory(sync_ids)
@@ -185,6 +186,9 @@ add_subdirectory(plugin_catalog_paging)
 add_subdirectory(plugin_http_policy)
 add_subdirectory(plugin_bundle)
 
+add_test(NAME PluginDownloadLifecycleRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_plugin_download_lifecycle.py)
+
 add_subdirectory(plugin_picker_layout)
 
 add_subdirectory(plugin_details)
@@ -219,3 +223,5 @@ add_subdirectory(clipping_sync)
 add_subdirectory(progress_slots)
 add_test(NAME PiccoDisplayIdleRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_picco_display_idle.py)
+add_test(NAME PluginNetworkBootRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_plugin_network_boot.py)

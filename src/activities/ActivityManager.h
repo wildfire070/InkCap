@@ -164,7 +164,7 @@ class ActivityManager {
   void goToLibrary();
   void goToBrowser();
   void goToAo3Library(size_t initialIndex = 0);
-  void goToPlugins();
+  bool goToPlugins(bool networkBootReady = false);
   bool goToOpdsServer(uint32_t serverIndex, bool networkBootReady = false);
   void goToReader(std::string path, bool suppressBackRelease = false, bool allowFastInitialRefresh = false,
                   bool cleanImageBaseOnEntry = false, bool keepWakeFrame = false);

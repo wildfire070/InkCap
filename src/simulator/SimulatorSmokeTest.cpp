@@ -84,6 +84,7 @@
 #include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/BookStatsView.h"
 #include "activities/reader/DictionaryDefinitionActivity.h"
+#include "activities/reader/DictionaryWordSelectActivity.h"
 #include "activities/reader/EndOfBookOptions.h"
 #include "activities/reader/EpubReaderActivity.h"
 #include "activities/reader/EpubReaderBookmarkListActivity.h"
@@ -138,10 +139,17 @@
 extern ActivityManager activityManager;
 extern GfxRenderer renderer;
 extern MappedInputManager mappedInputManager;
+extern bool dispatchButtonShortcut(const ButtonShortcutController::Result& result);
 
 // Use a detached reader so these boundary checks cannot race its render task.
 struct EpubReaderCompletionSmokeTest {
   static std::optional<uint32_t> statusAnchor;
+  static bool fontBrowserReturn(EpubReaderActivity& reader, const char* family) {
+    RenderLock lock;
+    const int fontId = sdFontSystem.resolveFontId(family, SETTINGS.readerFontPointSize);
+    return fontId && SETTINGS.getReaderFontId() == fontId && reader.section && !reader.section->isBuilding() &&
+           reader.activeSectionFontId == fontId;
+  }
 #if !CROSSINK_SCALABLE_FONTS
   static bool fontReload(EpubReaderActivity& reader) {
     RenderLock lock;
@@ -474,6 +482,80 @@ struct SliderOrientationSmokeTest {
 };
 
 struct ReaderDrawerLayoutSmokeTest {
+#if CROSSINK_SCALABLE_FONTS
+  template <typename Capture>
+  static bool verifyPublisherBodyFont(RenderLock& lock, Epub& book, Section& section, const uint8_t mode,
+                                      const Capture& capture) {
+    const auto family = section.publisherBodyFontFamily();
+    if (family != CssParser::hashFontFamily("Publisher Body")) return false;
+    auto borrowedBook = std::shared_ptr<Epub>(&book, [](Epub*) {});
+    EpubReaderDrawerActivity editor(renderer, mappedInputManager, borrowedBook, nullptr, 0.0f, 0, 0, false, false,
+                                    false, false, false, false, false, false, true, true, 0, 0, 5, false);
+    struct Probe {
+      uint32_t family;
+      unsigned calls = 0;
+    } probe{family};
+    editor.setPublisherBodyFontProbe(
+        [](void* context) {
+          auto& probe = *static_cast<Probe*>(context);
+          ++probe.calls;
+          return probe.family;
+        },
+        &probe);
+    const auto requestedBeforeMenu = bookFontSystem.requestedFaces();
+    const auto loadedBeforeMenu = bookFontSystem.loadedFaces();
+    editor.onEnter();
+    editor.render(std::move(lock));
+    if (probe.calls) return false;
+    editor.openPane(ReaderDrawerPane::ReaderFont);
+    editor.render(std::move(lock));
+    char buffer[64];
+    bool valid = editor.publisherBodyFontActive() == (mode == 2) && probe.calls == (mode == 2 ? 1U : 0U) &&
+                 bookFontSystem.requestedFaces() == requestedBeforeMenu &&
+                 bookFontSystem.loadedFaces() == loadedBeforeMenu;
+    if (mode == 2) {
+      valid &= std::strcmp(editor.rowValue(ReaderDrawerCatalogItem::FontFamily, buffer, sizeof(buffer)), "Bitter") == 0;
+      // A disabled row publishes no touch target, and direct/button activation is inert.
+      freeink::ui::Interaction hit;
+      for (int y = 0; y < renderer.getScreenHeight(); y += 2) {
+        if (editor.app.hitPublished(renderer.getScreenWidth() / 2, y, EpubReaderDrawerActivity::ACTION_ROW, hit) &&
+            hit.value == 0)
+          valid = false;
+      }
+      editor.activateRow(ReaderDrawerCatalogItem::FontFamily);
+      valid &= editor.state.pane == ReaderDrawerPane::ReaderFont;
+      capture("publisher-body-font-" + std::to_string(renderer.getOrientation()));
+      editor.draft.publisherFonts = 0;
+      valid &= !editor.publisherBodyFontActive();
+      editor.draft.publisherFonts = 2;
+      editor.draft.embeddedStyle = false;
+      valid &= !editor.publisherBodyFontActive();
+      editor.draft.embeddedStyle = true;
+      editor.draft.epubRenderMode = static_cast<uint8_t>(EpubRenderMode::Light);
+      valid &= !editor.publisherBodyFontActive();
+      editor.draft.epubRenderMode = 0;
+    }
+    editor.draft.publisherFonts = 0;
+    editor.render(std::move(lock));
+    freeink::ui::Interaction fallbackHit;
+    bool fallbackTouchable = false;
+    for (int y = 0; y < renderer.getScreenHeight(); y += 2) {
+      if (editor.app.hitPublished(renderer.getScreenWidth() / 2, y, EpubReaderDrawerActivity::ACTION_ROW,
+                                  fallbackHit) &&
+          fallbackHit.value == 0)
+        fallbackTouchable = true;
+    }
+    valid &= fallbackTouchable;
+    editor.publisherBodyFontName[0] = '\0';
+    editor.publisherBodyFontNameResolved = false;
+    probe.family = CssParser::hashFontFamily("Missing Body");
+    editor.draft.publisherFonts = 2;
+    editor.resolvePublisherBodyFontName();
+    valid &= !editor.publisherBodyFontActive();
+    editor.onExit();
+    return valid;
+  }
+#endif
   template <typename Capture>
   static bool verifyImageDisplay(const Capture& capture) {
     JsonDocument original;
@@ -1238,7 +1320,176 @@ struct StatusBarFeatureSmokeTest {
   }
 };
 
+struct DictionaryPagingSmokeTest {
+  static bool run(RenderLock& lock, const StatusBarFeatureSmokeTest::Capture& capture) {
+    using B = MappedInputManager::Button;
+    using C = CrossPointSettings;
+    std::string definition;
+    for (int i = 0; i < 60; ++i) definition += "Dictionary power button paging keeps this definition readable.\n";
+    if (!Storage.writeFile("/.crosspoint/paging-dictionary.dict", definition.c_str()) ||
+        !Storage.writeFile("/.crosspoint/paging-dictionary.ifo",
+                           "StarDict's dict ifo file\nbookname=Paging\nsametypesequence=m\n"))
+      return false;
+    DictLocation location;
+    location.folderPath = "/.crosspoint/paging-dictionary";
+    location.size = static_cast<uint32_t>(definition.size());
+    location.found = true;
+    SETTINGS.sideButtonUpShort = C::PREVIOUS_PAGE;
+    SETTINGS.sideButtonDownShort = C::QUICK_LOCK;
+    mappedInputManager.setReaderMode(false);
+    bool valid = true;
+    for (const bool modal : {false, true}) {
+      auto dictionary =
+          std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInputManager, "Paging", location, true);
+      if (modal) {
+        dictionary->backgroundContext_ = &valid;
+        dictionary->backgroundRender_ = [](void*) { renderer.clearScreen(); };
+      }
+      dictionary->wrapText();
+      if (dictionary->definitionReadFailed_ || dictionary->totalPages < 3) return false;
+      const auto checkPage = [&](const int expected) {
+        if (dictionary->currentPage == expected && !dictionary->isWordSelectMode) return true;
+        LOG_ERR("SMOKE", "Dictionary page expected=%d actual=%d word-select=%d", expected, dictionary->currentPage,
+                dictionary->isWordSelectMode);
+        return false;
+      };
+      const auto releasePower = [&] {
+        mappedInputManager.simulatorInjectRelease(B::Power);
+        // Model the non-reader Power-to-Confirm fallback as well as the page edge.
+        mappedInputManager.injectRelease(B::Confirm);
+        dictionary->loop();
+        mappedInputManager.clearInjectedReleases();
+        mappedInputManager.simulatorClearInputFrame();
+      };
+      SETTINGS.shortPwrBtn = C::PAGE_TURN;
+      SETTINGS.longPwrBtn = C::SLEEP;
+      dictionary->render(std::move(lock));
+      capture(modal ? "dictionary-modal-page-1" : "dictionary-page-1");
+      releasePower();
+      if (!checkPage(1)) return false;
+      dictionary->render(std::move(lock));
+      capture(modal ? "dictionary-modal-page-2" : "dictionary-page-2");
+      releasePower();
+      if (!checkPage(2)) return false;
+      SETTINGS.shortPwrBtn = C::PREVIOUS_PAGE;
+      releasePower();
+      if (!checkPage(1)) return false;
+      releasePower();
+      if (!checkPage(0)) return false;
+      releasePower();
+      if (!checkPage(0)) return false;
+      SETTINGS.shortPwrBtn = C::PAGE_TURN;
+      dictionary->currentPage = dictionary->totalPages - 1;
+      dictionary->loadPage(dictionary->currentPage);
+      releasePower();
+      if (!checkPage(dictionary->totalPages - 1)) return false;
+      // A long release must use the long assignment, not the short one.
+      SETTINGS.longPwrBtn = C::PREVIOUS_PAGE;
+      mappedInputManager.simulatorInjectPress(B::Power);
+      delay(SETTINGS.getPowerButtonLongPressDuration() + 1);
+      dictionary->loop();
+      if (!checkPage(dictionary->totalPages - 1)) return false;
+      releasePower();
+      if (!checkPage(dictionary->totalPages - 2)) return false;
+      // Existing side navigation and word-selection Confirm remain available.
+      mappedInputManager.simulatorInjectRelease(B::PageBack);
+      dictionary->loop();
+      mappedInputManager.simulatorClearInputFrame();
+      if (!checkPage(dictionary->totalPages - 3)) return false;
+      mappedInputManager.simulatorInjectRelease(B::Confirm);
+      dictionary->loop();
+      mappedInputManager.simulatorClearInputFrame();
+      valid &= dictionary->isWordSelectMode;
+    }
+    return valid;
+  }
+};
+
 struct ScreenCalibrationSmokeTest {
+  static bool dictionaryHints(RenderLock& lock, const StatusBarFeatureSmokeTest::Capture& capture) {
+    const auto orientation = renderer.getOrientation();
+    const auto insets = renderer.getViewableInsets();
+    const auto theme = SETTINGS.uiTheme;
+    bool valid = true;
+    renderer.setViewableInsets(ScreenInsets{});
+    for (const auto variant : {CrossPointSettings::CLASSIC, CrossPointSettings::LYRA, CrossPointSettings::MINIMAL}) {
+      SETTINGS.uiTheme = variant;
+      UITheme::getInstance().reload();
+      for (unsigned rotation = 0; rotation < 4; ++rotation) {
+        renderer.setOrientation(GfxRenderer::Portrait);
+        const int x = variant == CrossPointSettings::CLASSIC ? (renderer.getScreenWidth() >= 528 ? 43 : 30)
+                                                             : (renderer.getScreenWidth() >= 528 ? 70 : 63);
+        const int y = renderer.getScreenHeight() - UITheme::getButtonHintsBottomInset(renderer) - 30;
+        renderer.clearScreen();
+        renderer.fillRect(x, y, 2, 2);
+        renderer.setOrientation(static_cast<GfxRenderer::Orientation>(rotation));
+        GUI.drawButtonHints(renderer, "", nullptr, nullptr, nullptr);
+        valid &= renderer.getOrientation() == static_cast<GfxRenderer::Orientation>(rotation);
+        renderer.setOrientation(GfxRenderer::Portrait);
+        valid &= renderer.isPixelBlack(x, y);  // Above the inactive marker, inside the old full-size clear.
+      }
+
+      // Exercise both entry paths with a real selectable word and ink between the hints.
+      for (const bool prepared : {false, true}) {
+        auto page = std::make_unique<Page>();
+        auto block = std::make_shared<TextBlock>(
+            std::vector<std::string>{"Reader", "text"}, std::vector<int16_t>{0, 120},
+            std::vector<EpdFontFamily::Style>{EpdFontFamily::REGULAR, EpdFontFamily::REGULAR}, std::vector<uint8_t>{},
+            std::vector<uint16_t>{}, std::vector<uint16_t>{}, std::vector<uint8_t>{}, std::vector<bool>{false, true});
+        for (int y = 40; y < renderer.getScreenHeight() - 20; y += 36)
+          page->elements.push_back(std::make_unique<PageLine>(block, 20, y));
+        const int sentinelY = renderer.getScreenHeight() - 30;
+        page->elements.push_back(std::make_unique<PageHorizontalRule>(20, 1, 0, sentinelY));
+        auto selection = std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInputManager, std::move(page),
+                                                                        0, 0, "", "", false, prepared);
+        if (!selection->buildWorkingSet(false) || selection->navigator.isEmpty()) return false;
+        if (prepared) selection->renderDefinitionBackground();
+        selection->render(std::move(lock));
+        valid &= renderer.isPixelBlack(5, sentinelY);
+        capture("dictionary-selection-theme-" + std::to_string(variant) + (prepared ? "-prepared" : "-full"));
+        selection->onExit();
+      }
+
+      // Returning from selection must restore old full-size labels from the book,
+      // rather than letting an inactive marker erase an oversized white rectangle.
+      const char* path = "/.crosspoint/hints-dictionary";
+      constexpr char definitionText[] = "Reader text remains visible around the hints.";
+      if (!Storage.writeFile("/.crosspoint/hints-dictionary.dict", definitionText) ||
+          !Storage.writeFile("/.crosspoint/hints-dictionary.ifo",
+                             "StarDict's dict ifo file\nbookname=Hints\nsametypesequence=m\n"))
+        return false;
+      DictLocation location;
+      location.folderPath = path;
+      location.size = sizeof(definitionText) - 1;
+      location.found = true;
+      int redraws = 0;
+      const auto background = [](void* context) {
+        ++*static_cast<int*>(context);
+        renderer.clearScreen();
+        for (int y = 0; y < renderer.getScreenHeight(); y += 32)
+          renderer.drawText(UI_10_FONT_ID, 4, y, "Reader text visible around dictionary hints");
+      };
+      auto definition = std::make_unique<DictionaryDefinitionActivity>(
+          renderer, mappedInputManager, "Reader", location, false, "", false, "", LookupHistory::Status::NotFound,
+          &redraws, background);
+      definition->onEnter();
+      definition->render(std::move(lock));
+      const std::vector<uint8_t> initial(renderer.getFrameBuffer(),
+                                         renderer.getFrameBuffer() + renderer.getBufferSize());
+      if (!definition->enterWordSelectMode()) return false;
+      definition->render(std::move(lock));
+      definition->isWordSelectMode = false;
+      definition->render(std::move(lock));
+      valid &= redraws == 2 && std::equal(initial.begin(), initial.end(), renderer.getFrameBuffer());
+      capture("dictionary-inactive-hints-theme-" + std::to_string(variant));
+      definition->onExit();
+    }
+    SETTINGS.uiTheme = theme;
+    UITheme::getInstance().reload();
+    renderer.setViewableInsets(insets);
+    renderer.setOrientation(orientation);
+    return valid;
+  }
   // Check actual ink, not just layout metadata, across the default/custom boundary.
   static bool safeAreaContract(RenderLock& lock, const StatusBarFeatureSmokeTest::Capture& capture) {
     const auto original = renderer.getViewableInsets();
@@ -1977,6 +2228,81 @@ class SimulatorSmokeTest {
   }
 
  private:
+  static void verifyFrontlightTouchRecovery() {
+#if CROSSINK_APP_CAP_TOUCH
+    if (!deviceUsesGlobalTouchscreenLock()) fail("Touch recovery regression requires the Picco touch-lock policy");
+    for (const bool reader : {false, true}) {
+      for (const bool inheritedRecovery : {false, true}) {
+        SETTINGS.disableReaderTouchscreen = 0;
+        mappedInputManager.setReaderMode(reader);
+        mappedInputManager.setTouchscreenRecoveryOverride(inheritedRecovery);
+        auto panel = std::make_unique<FrontlightPanelActivity>(renderer, mappedInputManager);
+        panel->onEnter();
+        if (!reader && !inheritedRecovery) {
+          activityManager.requestUpdateAndWait();
+          RenderLock lock;
+          panel->render(std::move(lock));
+        }
+        panel->simulatorActivateQuickAction(4);
+        if (!reader && !inheritedRecovery) {
+          RenderLock lock;
+          captureStatusBarScreen("picco-touch-disabled-recovery-hint");
+        }
+        if (!SETTINGS.disableReaderTouchscreen || !mappedInputManager.hasTouch())
+          fail("Frontlight panel lost touch after disabling it");
+        mappedInputManager.simulatorInjectTouchDown(100, 100);
+        mappedInputManager.simulatorInjectTouchRelease(100, 100);
+        int x = 0, y = 0;
+        if (!mappedInputManager.wasScreenTapped(x, y)) fail("Frontlight recovery blocked a real touch event");
+        mappedInputManager.simulatorClearInputFrame();
+        panel->simulatorActivateQuickAction(4);
+        if (SETTINGS.disableReaderTouchscreen) fail("Frontlight panel could not re-enable touch");
+        panel->simulatorActivateQuickAction(4);
+        panel->onExit();
+        if (!SETTINGS.disableReaderTouchscreen || mappedInputManager.hasTouch() != inheritedRecovery ||
+            mappedInputManager.isTouchscreenRecoveryOverrideEnabled() != inheritedRecovery)
+          fail("Frontlight panel did not restore the outer touch-lock state");
+      }
+    }
+    mappedInputManager.setReaderMode(false);
+    mappedInputManager.setTouchscreenRecoveryOverride(false);
+    using Action = ButtonShortcutController::ChordAction;
+    using Event = ButtonShortcutController::Event;
+    for (const auto action : {Action::Disabled, Action::RotateFlip, Action::ToggleTouchscreen}) {
+      for (const bool releaseUpFirst : {false, true}) {
+        SETTINGS.disableReaderTouchscreen = 1;
+        ButtonShortcutController controller;
+        const auto result = controller.updateUpDown(1, true, true, action, true);
+        if (result.event != Event::TouchscreenEscapeHatch || !dispatchButtonShortcut(result) ||
+            SETTINGS.disableReaderTouchscreen || !mappedInputManager.hasTouch())
+          fail("Up + Down did not restore touch outside the reader");
+        if (controller.updateUpDown(2, true, true, action, false).event != Event::None ||
+            controller.updateUpDown(3, !releaseUpFirst, releaseUpFirst, action, false).event != Event::None ||
+            !controller.updateUpDown(4, false, false, action, false).consumeInput)
+          fail("Recovery chord repeated or leaked a button release");
+        SETTINGS.disableReaderTouchscreen = 1;
+        if (!SETTINGS.loadFromFile() || SETTINGS.disableReaderTouchscreen)
+          fail("Recovered touch setting did not survive a reload");
+      }
+    }
+    // A reader without its own menu still opens recovery Settings instead of
+    // silently changing the user's touch preference (the TXT/Markdown path).
+    activityManager.replaceActivity(
+        std::make_unique<HomeReaderSmokeActivity>("TouchRecoveryReader", true, renderer, mappedInputManager));
+    activityManager.loop();
+    SETTINGS.disableReaderTouchscreen = 1;
+    if (!dispatchButtonShortcut({Event::TouchscreenEscapeHatch, true}) || !SETTINGS.disableReaderTouchscreen)
+      fail("Reader recovery changed the touchscreen preference");
+    activityManager.loop();
+    if (!activityManager.isCurrentActivityNamed("Settings") || !mappedInputManager.hasTouch())
+      fail("Reader recovery Settings is not usable");
+    LOG_INF("SMOKE", "Simulator smoke test passed: frontlight touch recovery and outside-reader Up + Down");
+    std::_Exit(0);
+#else
+    fail("Touch recovery regression requires touch hardware");
+#endif
+  }
+
   static void verifyUnicodeSpaces() {
     RenderLock lock;
     // Deliberately omit every special space while providing a visible replacement.
@@ -5185,6 +5511,32 @@ class SimulatorSmokeTest {
         (legacy.readerSettingsOverrideMask & (1U << 21)))
       fail("Publisher mode broke version 12 inheritance");
     Storage.remove(settingsPath.c_str());
+    // Heading/root fonts and inline overrides must not be mistaken for body prose.
+    auto* bodyCss = book.getCssParser();
+    if (!bodyCss || !bodyCss->loadFromCache()) fail("Cannot load body-font probe CSS");
+    const auto probePath = book.getCachePath() + "/body-font-probe.xhtml";
+    for (const auto html :
+         {"<html><body style=\"font-family:'Publisher Accent'\"><h1>Decorative title</h1>"
+          "<p style=\"font-family:'Publisher Body'\">Ordinary paragraph body text.</p></body></html>",
+          "<html><body><h1 style=\"font-family:'Publisher Accent'\">Decorative title</h1>"
+          "<p><span style=\"font-family:'Publisher Body'\">Ordinary paragraph body text.</span></p></body></html>",
+          "<html><body><div style=\"font-family:'Publisher Body'\">Ordinary body text without a p tag.</div>"
+          "</body></html>"}) {
+      if (!Storage.writeFile(probePath.c_str(), html) ||
+          ChapterHtmlSlimParser::publisherBodyFontFamily(probePath, *bodyCss) !=
+              CssParser::hashFontFamily("Publisher Body"))
+        fail("Body probe selected a decorative font");
+    }
+    for (const auto html :
+         {"<html><body><h1 style=\"font-family:'Publisher Accent'\">Decorative title</h1>"
+          "<p style=\"font-family:serif\">Ordinary reader-font body text.</p></body></html>",
+          "<html><body style=\"font-family:'Publisher Accent'\"><h1>Heading only</h1></body></html>"}) {
+      if (!Storage.writeFile(probePath.c_str(), html) ||
+          ChapterHtmlSlimParser::publisherBodyFontFamily(probePath, *bodyCss) != 0)
+        fail("Body probe invented a publisher body font");
+    }
+    Storage.remove(probePath.c_str());
+    bodyCss->clear();
     const int readerFont = sdFontSystem.ensureBuiltInReaderFont(renderer);
     for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise}) {
       renderer.setOrientation(orientation);
@@ -5199,6 +5551,9 @@ class SimulatorSmokeTest {
         spec.publisherFontSignature = mode ? bookFontSystem.signature() : 0;
         Section section(book, 0, renderer, "-publisher-smoke");
         if (!section.createSectionFile(spec) || !section.loadSectionFile(spec)) fail("Publisher layout/cache failed");
+        if (!ReaderDrawerLayoutSmokeTest::verifyPublisherBodyFont(
+                lock, book, section, mode, [&](const std::string& name) { captureStatusBarScreen(name.c_str()); }))
+          fail("Publisher body font name, disabled row or reader fallback failed");
         bool publisherWord = false, readerWord = false;
         for (uint16_t index = 0; index < section.pageCount; ++index) {
           section.currentPage = index;
@@ -5228,6 +5583,17 @@ class SimulatorSmokeTest {
         if (mode == 2 && (!publisherWord || readerWord)) fail("All Text did not use publisher fonts");
         if (mode == 1 && Storage.exists((book.getCachePath() + "/publisher-font-0").c_str()))
           fail("Ignore Body Font extracted the ignored body face");
+        if (mode == 2) {
+          Section incremental(book, 0, renderer, "-publisher-body-incremental");
+          if (!incremental.startBuild(spec) || !incremental.buildSomeMore(1) ||
+              incremental.publisherBodyFontFamily() != CssParser::hashFontFamily("Publisher Body"))
+            fail("Incremental body font probe failed");
+          while (incremental.isBuilding()) {
+            if (!incremental.buildSomeMore(1)) fail("Body font probe prevented incremental build resume");
+          }
+          if (!incremental.loadSectionFile(spec) || incremental.pageCount != section.pageCount)
+            fail("Body font probe changed incremental pages");
+        }
         const uint32_t requested = bookFontSystem.requestedFaces();
         bookFontSystem.close();
         bookFontSystem.ensure(book, renderer, mode != 0);
@@ -5405,6 +5771,70 @@ class SimulatorSmokeTest {
             pages);
   }
 
+  void verifyCpfontHeadingSizes(const char* family) {
+    RenderLock lock;
+    const std::string cssPath = "/cpfont-headings.css";
+    if (!Storage.writeFile(cssPath.c_str(), "h1 { font-size: 1.33em; } h2 { font-size: 1.17em; }"))
+      fail("Cannot write heading stylesheet");
+    CssParser css("/.crosspoint");
+    FsFile file;
+    if (!Storage.openFileForRead("SMOKE", cssPath, file) || !css.loadFromStream(file))
+      fail("Cannot parse heading stylesheet");
+    file.close();
+    if (!css.saveToCache()) fail("Cannot cache heading stylesheet");
+    css.clear();
+    sdFontSystem.setContentSizeScales(css.contentFontSizeScales());
+    SETTINGS.readerFontPointSize = 10;
+    sdFontSystem.ensureLoaded(renderer);
+    const int body = SETTINGS.getReaderFontId();
+    if (renderer.getFontPointSize(body) != 10 || renderer.getFontPointSize(renderer.getFontIdForSize(body, 13)) != 13 ||
+        renderer.getFontPointSize(renderer.getFontIdForSize(body, 12)) != 12)
+      fail("Publisher heading sizes did not replace the fixed 2x target");
+    const std::string htmlPath = "/cpfont-headings.xhtml";
+    if (!Storage.writeFile(htmlPath.c_str(),
+                           "<html><body><h1>Chapter Length</h1>"
+                           "<h2>Among Oddly Engineered Audio</h2><p>Body text at ten points.</p></body></html>"))
+      fail("Cannot write heading excerpt");
+    Epub book("/cpfont-headings.epub", "/.crosspoint");
+    if (!css.loadFromCache()) fail("Cannot load heading CSS");
+    unsigned headings = 0;
+    ChapterHtmlSlimParser parser(
+        book, htmlPath, renderer, body, 1.0f, false, false, 1, 400, 700, false, false, false, 0,
+        [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
+          for (const auto& element : page->elements) {
+            if (element->getTag() != TAG_PageLine) continue;
+            const auto& block = *static_cast<const PageLine&>(*element).getBlock();
+            if (!block.wordCount()) continue;
+            const char* word = block.wordText(0);
+            const unsigned size = !std::strcmp(word, "Chapter") ? 13 : !std::strcmp(word, "Among") ? 12 : 10;
+            if (block.getBlockStyle().fontSize != size) fail("Heading layout used the wrong size");
+            if (size != 10) ++headings;
+          }
+          renderer.setRenderMode(GfxRenderer::BW);
+          renderer.clearScreen();
+          page->renderText(renderer, body, 20, 20);
+          captureStatusBarScreen("cpfont-publisher-headings");
+        },
+        true, "", "", 0, {}, nullptr, &css);
+    if (!parser.parseAndBuildPages() || headings != 2) fail("Publisher heading excerpt did not render");
+    css.clear();
+    sdFontSystem.releaseLoadedFont(renderer);
+    sdFontSystem.ensureLoaded(renderer);
+    if (SETTINGS.getReaderFontId() != body) fail("Heading-size identity changed on reload");
+    const auto dictionary = sdFontSystem.activateDictionaryFont(renderer, family, 8);
+    if (!dictionary.usingDictionaryFont || sdFontSystem.restoreReaderFont(renderer) != body)
+      fail("Dictionary return lost the publisher heading sizes");
+    SETTINGS.readerFontPointSize = 12;
+    sdFontSystem.ensureLoaded(renderer);
+    const int resized = SETTINGS.getReaderFontId();
+    if (renderer.getFontPointSize(renderer.getFontIdForSize(resized, 16)) != 16 ||
+        renderer.getFontPointSize(renderer.getFontIdForSize(resized, 14)) != 14)
+      fail("Heading targets did not follow the new body size");
+    sdFontSystem.setContentSizeScales({512, 192});
+    sdFontSystem.ensureLoaded(renderer);
+    LOG_INF("SMOKE", "Publisher cpfont headings: sizes, layout, reload, dictionary and resize passed");
+  }
+
   void verifyBitmapFontSizes() {
     const auto orientation = renderer.getOrientation();
 #if CROSSINK_SCALABLE_FONTS
@@ -5449,6 +5879,7 @@ class SimulatorSmokeTest {
       if (sdFontSystem.restoreReaderFont(renderer) != original) fail("Bitmap dictionary return lost content sizes");
       verifyBlockFontSizes(original, "bitmap-sd-dictionary-return");
       verifyBitmapBook(original, "sd12");
+      if (std::getenv("CROSSINK_SIMULATOR_SMOKE_CPFONT_HEADINGS")) verifyCpfontHeadingSizes(family);
     }
     renderer.setOrientation(orientation);
     LOG_INF("SMOKE", "Bitmap size snapping, page cache and selection passed");
@@ -7557,8 +7988,70 @@ class SimulatorSmokeTest {
     }
   }
 
+  void tickFontBrowserReturn() {
+    static unsigned phase = 0;
+    const char* family = std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_FAMILY");
+    if (!family) fail("Font browser return requires an SD font fixture");
+    if (phase == 0) {
+      if (!activityManager.isCurrentActivityNamed("WifiSelection")) return;
+      if (sdFontSystem.registry().getFamilyCount() || sdFontSystem.resolveFontId(family, 12))
+        fail("Minimal network boot eagerly loaded reader fonts");
+      // Cancel the real network child, then leave Download Fonts through its
+      // normal result/onExit path without installing or deleting anything.
+      ActivityResult cancelled;
+      cancelled.isCancelled = true;
+      activityManager.simulatorCurrentActivity()->setResult(std::move(cancelled));
+      activityManager.simulatorCurrentActivity()->finish();
+      ++phase;
+      return;
+    }
+    if (phase == 1) {
+      if (!activityManager.isCurrentActivityNamed("Home")) return;
+      if (std::strcmp(SETTINGS.sdFontFamilyName, family) != 0) fail("Font browser changed the saved selection");
+      const int fontId = sdFontSystem.resolveFontId(family, SETTINGS.readerFontPointSize);
+      if (!fontId || SETTINGS.getReaderFontId() != fontId) fail("Font browser return lost the SD font resolver");
+      activityManager.goToReader(std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK"));
+      ++phase;
+      return;
+    }
+    auto* reader = dynamic_cast<EpubReaderActivity*>(activityManager.simulatorCurrentActivity());
+    if (!reader) return;
+    if (!EpubReaderCompletionSmokeTest::fontBrowserReturn(*reader, family)) return;
+    {
+      RenderLock lock;
+      captureStatusBarScreen("font-browser-return");
+    }
+    LOG_INF("SMOKE", "Simulator smoke test passed: font browser return");
+    std::_Exit(0);
+  }
+
   void tickImpl() {
     mappedInputManager.simulatorClearInputFrame();
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_QUICK_LOCK_TOUCH_RECOVERY")) {
+      // Drive the real main loop with timed raw Up + Down chords at 4, 6 and
+      // 8 seconds via CROSSPOINT_SIM_INPUT_SCRIPT: lock, unlock, then recover.
+      static bool initialized = false;
+      static bool touchDisabled = false;
+      if (!initialized) {
+        if (!deviceUsesGlobalTouchscreenLock()) fail("Quick Lock recovery requires the Picco touch-lock policy");
+        SETTINGS.sideButtonChordAction = static_cast<uint8_t>(ButtonShortcutController::ChordAction::QuickLock);
+        SETTINGS.disableReaderTouchscreen = 0;
+        initialized = true;
+      }
+      const auto now = millis();
+      if (now >= 5000 && !touchDisabled) {
+        SETTINGS.disableReaderTouchscreen = 1;
+        touchDisabled = true;
+      }
+      if (now >= 7000 && now < 8000 && !SETTINGS.disableReaderTouchscreen)
+        fail("Touch recovery took priority over the Quick Lock unlock chord");
+      if (now >= 9000) {
+        if (SETTINGS.disableReaderTouchscreen) fail("Touch recovery did not work after unlocking Quick Lock");
+        LOG_INF("SMOKE", "Simulator smoke test passed: Quick Lock unlock precedes touch recovery");
+        std::_Exit(0);
+      }
+      return;
+    }
     if (std::getenv("CROSSINK_SIMULATOR_SMOKE_PLUGINS")) {
       runPluginSmokeTestTick();
       return;
@@ -7575,6 +8068,11 @@ class SimulatorSmokeTest {
         renderCurrentStep(activeStepName);
         activeStepName = nullptr;
       }
+      return;
+    }
+
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_FONT_BROWSER_RETURN")) {
+      tickFontBrowserReturn();
       return;
     }
 
@@ -7619,6 +8117,17 @@ class SimulatorSmokeTest {
     switch (step) {
       case SmokeStep::Start:
         LOG_INF("SMOKE", "Starting simulator smoke test");
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_DICTIONARY_HINTS")) {
+          RenderLock lock;
+          const auto capture = [&](const std::string& name) { captureStatusBarScreen(name.c_str()); };
+          if (!ScreenCalibrationSmokeTest::dictionaryHints(lock, capture)) fail("Dictionary hint pixels changed");
+          LOG_INF("SMOKE", "Simulator smoke test passed: dictionary hint backgrounds and stale labels");
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_FRONTLIGHT_TOUCH_RECOVERY")) {
+          verifyFrontlightTouchRecovery();
+          break;
+        }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_UNICODE_SPACES")) {
           const char* book = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");
           if (!book || !Storage.exists(book)) fail("Unicode space fixture is missing");
@@ -8015,6 +8524,13 @@ class SimulatorSmokeTest {
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_C3_FONT_SIZES")) {
           verifyBitmapFontSizes();
           LOG_INF("SMOKE", "Simulator smoke test passed: bitmap font sizes");
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_DICTIONARY_PAGING")) {
+          RenderLock lock;
+          const auto capture = [&](const std::string& name) { captureStatusBarScreen(name.c_str()); };
+          if (!DictionaryPagingSmokeTest::run(lock, capture)) fail("Dictionary power-button paging failed");
+          LOG_INF("SMOKE", "Simulator smoke test passed: dictionary power-button paging");
           std::_Exit(0);
         }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_DICTIONARY")) verifyDictionaryElisions();

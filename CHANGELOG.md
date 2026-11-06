@@ -46,6 +46,7 @@
 - Choose Cover Overlay to place a transparent sleep image over the current book cover (CrossPoint #3770).
 - Sync combined reading streaks back from CrossPoint Sync, including reading on other devices, while keeping local reading and upload totals separate.
 - Advanced Wi-Fi transmit-power setting with a per-device limit; Default preserves existing radio behavior.
+- Show the publisher’s body font as a disabled Font Family value in the in-book Reader Font menu when "Publisher Font" is set to "All Text"; keep the normal picker available when the body uses the reader font.
 
 ### Fixed
 
@@ -149,6 +150,9 @@
 - Keep protected EPUBs readable after renaming or moving them, including moves to the Read folder.
 - Retry queuing a reading change after an SD write fails.
 - Render Unicode spaces, including thin and hair spaces around nested quotes, without missing-character boxes; preserve font-relative spacing and invisible zero-width controls.
+- Choose optional SD bitmap font sizes from EPUB stylesheet headings instead of always loading a double-size font, while keeping the existing C3 memory limits and safe fallback.
+- Honor Next Page and Previous Page power-button assignments while viewing dictionary definitions.
+- Preserve book text between dictionary button hints and above inactive button markers.
 
 ### Changed
 
@@ -188,6 +192,7 @@
 - Reduce SD writes for EPUB progress and reading statistics.
 - Match Nearby Position Sync to the progress sync comparison design, with progress cards, bars, chapter details, and an Ahead badge.
 - Default to Incremental EPUB indexing on ESP32-S3 readers, while preserving saved global choices and per-book overrides.
+- Move dictionary definition pagination to the bottom right and add a tappable close icon at the top right on touch devices.
 
 ## [v1.6.1] - 2026-10-03
 
