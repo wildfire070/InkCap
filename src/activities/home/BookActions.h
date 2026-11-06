@@ -50,6 +50,9 @@ bool toggleBookStatsTracking(const std::string& fullPath, bool& enabled);
 bool setBookCompletedOnDisk(const std::string& fullPath, bool completed);
 bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed,
                          bool allowMove = true);
-void drawToast(const GfxRenderer& renderer, const char* msg);
+void drawToast(const GfxRenderer& renderer, const char* msg, const char* detail = nullptr);
+enum class TouchscreenToggleSource { Button, FrontlightDrawer };
+// Only drawer toggles need the Picco recovery hint and longer reading time.
+void showTouchscreenToast(const GfxRenderer& renderer, bool readerContext, TouchscreenToggleSource source);
 
 }  // namespace BookActions
