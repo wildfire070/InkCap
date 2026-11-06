@@ -201,6 +201,11 @@ class CssParser {
    */
   bool loadFromCache();
 
+  // Estimate the two most useful non-body bitmap sizes from cached stylesheet
+  // declarations without hydrating rules. Heading selectors take priority.
+  // Values use 1/256 em; absent/invalid CSS retains the default size policy.
+  std::array<uint16_t, 2> contentFontSizeScales() const;
+
   /**
    * True when the last loaded/saved cache is a usable but incomplete CSS parse.
    */

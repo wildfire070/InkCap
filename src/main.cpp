@@ -93,6 +93,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "AppVersion.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DeviceCapabilities.h"
 #include "FilenameFontSystem.h"
 #include "GlobalActions.h"
 #include "HyphenationPackStore.h"
@@ -723,12 +724,8 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       SETTINGS.disableReaderTouchscreen = SETTINGS.disableReaderTouchscreen ? 0 : 1;
       activityManager.persistGlobalSettings();
       LOG_INF("TOUCH", "Touchscreen %s by shortcut", SETTINGS.disableReaderTouchscreen ? "disabled" : "enabled");
-      {
-        RenderLock lock;
-        BookActions::drawToast(
-            renderer, SETTINGS.disableReaderTouchscreen ? tr(STR_TOUCHSCREEN_DISABLED) : tr(STR_TOUCHSCREEN_ENABLED));
-      }
-      delay(1000);
+      BookActions::showTouchscreenToast(renderer, activityManager.isReaderActivity(),
+                                        BookActions::TouchscreenToggleSource::Button);
       activityManager.requestUpdate();
       return true;
     default:
@@ -855,7 +852,9 @@ bool dispatchButtonShortcut(const ButtonShortcutController::Result& result) {
     case ButtonShortcutController::Event::ConfiguredAction:
       return dispatchShortcutAction(chordPowerAction(result.action));
     case ButtonShortcutController::Event::TouchscreenEscapeHatch:
-      return activityManager.openReaderSettingsForTouchscreenEscapeHatch();
+      if (activityManager.openReaderSettingsForTouchscreenEscapeHatch()) return true;
+      return deviceUsesGlobalTouchscreenLock() && SETTINGS.disableReaderTouchscreen &&
+             dispatchShortcutAction(CrossPointSettings::SHORT_PWRBTN::TOGGLE_TOUCHSCREEN);
   }
 
   activityManager.loop();
@@ -1254,10 +1253,11 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
-  if (loadReaderResources) {
-    sdFontSystem.begin(renderer);
-  } else {
-    LOG_DBG("MAIN", "Skipping EPUB scratch workspace and SD reader fonts for minimal network boot");
+  // Network screens can return Home without another reboot. Keep the lookup
+  // callback available for the next reader, without loading font data here.
+  sdFontSystem.begin(renderer, loadReaderResources);
+  if (!loadReaderResources) {
+    LOG_DBG("MAIN", "Deferring SD reader fonts for minimal network boot");
   }
   // Startup notices and minimal-network screens use translated UI text too.
   filenameFontSystem.ensureLoaded(renderer);
@@ -1413,10 +1413,19 @@ void setup() {
       mappedInputManager.suppressNextPowerConfirmRelease();
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
-      // TEMP: continue booting while diagnosing post-flash/reset behavior.
-      // Normal behavior is to go back to sleep when USB power causes a cold boot.
-      LOG_INF("BOOT", "AfterUSBPower route: TEMP continuing boot instead of deep sleep");
-      break;
+      LOG_INF("BOOT", "AfterUSBPower route: returning to sleep");
+#if FREEINK_DEVICE_PICCO
+      // Keep the retained screen and use the normal USB sleep/wake path.
+      Frontlight.begin(0, 0, false);
+      putTiltSensorToSleepForDeepSleep();
+      if (powerManager.holdWhileUsbPowered(gpio)) {
+        piccoUsbWakeToken.arm();
+        ESP.restart();
+        return;
+      }
+#endif
+      powerManager.startDeepSleep(gpio);
+      return;
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
       LOG_INF("BOOT", "AfterFlash route: continuing boot");
@@ -1634,6 +1643,9 @@ void setup() {
       }
       case NetworkBootTarget::OPDS:
         launched = activityManager.goToOpdsServer(snapshotPayload, true);
+        break;
+      case NetworkBootTarget::PLUGINS:
+        launched = activityManager.goToPlugins(true);
         break;
       case NetworkBootTarget::KOREADER_SYNC:
         launched = startGlobalSyncProgress(true, decodeKOReaderSyncOrientation(snapshotPayload));
@@ -1913,8 +1925,9 @@ void loop() {
     return;
   }
 
-  const bool touchscreenEscapeHatch =
-      !modalOwnsInput && gpio.hasTouch() && SETTINGS.disableReaderTouchscreen && activityManager.isReaderActivity();
+  const bool touchscreenEscapeHatch = !modalOwnsInput && !buttonShortcutController.isQuickLocked() && gpio.hasTouch() &&
+                                      SETTINGS.disableReaderTouchscreen &&
+                                      (activityManager.isReaderActivity() || deviceUsesGlobalTouchscreenLock());
   const auto sideButtonShortcutResult = buttonShortcutController.updateUpDown(
       mappedInputManager.buttonSampleTime(), gpio.isPressed(HalGPIO::BTN_UP), gpio.isPressed(HalGPIO::BTN_DOWN),
       configuredSideButtonChordAction(), touchscreenEscapeHatch, modalOwnsInput);
@@ -1938,6 +1951,11 @@ void loop() {
   }
 
   if (buttonShortcutController.isQuickLocked()) {
+#ifdef SIMULATOR
+    // Let this regression inject the slide-switch touch lock while Quick Lock
+    // is active; ordinary smoke scenarios still wait for unlocked input.
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_QUICK_LOCK_TOUCH_RECOVERY")) runSimulatorSmokeTestTick();
+#endif
     const bool longPowerPressed =
         powerPressed && gpio.getPowerButtonHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
     if (buttonShortcutController.tryUnlockLongPower(mappedInputManager.buttonSampleTime(), longPowerPressed)) {

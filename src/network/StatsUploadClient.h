@@ -9,9 +9,12 @@ class StatsUploadClient {
   StatsUploadClient();
   ~StatsUploadClient();
   void close();
-  Result put(const char* endpoint, const char* payload, bool book, bool daily = false, const char* sessionId = nullptr);
-  // Bounded extension download; releases TLS before the caller parses/applies it.
-  Result get(const char* endpoint, char* response, size_t capacity);
+  // Zero for non-book requests; otherwise require acknowledgment of every book.
+  Result put(const char* endpoint, const char* payload, unsigned bookCount, bool daily = false,
+             const char* sessionId = nullptr);
+  // Bounded extension download to a temporary SD file, closed before returning.
+  // Releases TLS before parsing; the caller owns removal of responsePath.
+  Result get(const char* endpoint, const char* responsePath, size_t maxBytes);
   // Read-only capability check against the stats summary endpoint. Records the
   // answer in the credential store; Unsupported means a KOSync-only server.
   // A non-JSON 200 (captive portal, proxy page) is only persisted when
