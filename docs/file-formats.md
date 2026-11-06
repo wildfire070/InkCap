@@ -912,6 +912,45 @@ override a surviving versioned slot on re-upgrade. Export or back up both slots
 before switching firmware. This change does not invalidate EPUB layout caches.
 TXT and XTC progress formats are unchanged.
 
+## Reading-stat device ownership
+
+Reading stats now use device-qualified paths. The qualifier is the same hardware
+identity used by stats uploads: `crossink-` followed by the twelve lowercase hex
+MAC digits. Only the current reader's paths are read, updated, reset, or uploaded:
+
+- `/.crosspoint/global_stats_<reader>.bin` (and `.bak`/`.tmp`).
+- Per-book `stats_v6_<reader>.bin`, older versioned variants, and
+  `stats_<reader>.bin` inside the book cache directory.
+- `/.crosspoint/daily_reading_<reader>/` for daily counters.
+- `/.crosspoint/reading_sessions_<reader>/` for the session outbox.
+
+The existing binary payload versions and wire formats are unchanged. Ownership
+is carried by the path, including when just one device-qualified file is copied.
+Copied files remain stored for their original reader; the receiving reader starts
+its own local counters. This prevents stale copied totals from replacing or
+adding to the original reader's totals on the server. Foreign pending sessions
+are retained rather than uploaded under the receiving reader's identity.
+
+For pre-ownership firmware, `stats_origin.bin` records the legacy owner at the
+`.crosspoint` root, and in a book cache when its legacy stats are encountered.
+Its SyncFiles payload is version 1 (`uint8_t`) followed by the zero-padded
+32-byte reader ID and the standard trailing CRC32. The root claim protects legacy
+books not opened yet; the per-book claim also survives a cache-folder-only copy.
+Claims are committed before moving legacy files. The owner migrates primary,
+backup, and temporary files by rename, or the whole daily/outbox directory.
+An incomplete initial claim can retry before any legacy file has moved; read
+errors and corrupt published claims remain protected. A failed or conflicting
+migration blocks further stats writes until restart so
+an empty failed load cannot overwrite recovered history. Cache cleanup preserves
+all device-qualified stats and origin records; if the bounded preservation list
+is full, cleanup fails before removing files.
+
+Upgrade and open a book on the original reader before copying its card to another
+reader. Old files copied before ownership was recorded cannot be attributed
+reliably; their first upgraded reader claims them. This migration does not repair
+existing duplicated server totals. Keep both slots and origin files in backups.
+No EPUB layout-cache reset or server update is required.
+
 ## Reading-stat save slots
 
 Local `global_stats.bin` and per-book `stats_v6.bin` use the same alternating
@@ -982,6 +1021,13 @@ Binary layout:
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
 ## `section.bin`
+
+### Version 104
+
+Complete caches use `104`; suspended partial caches use `0xD9`. Chapter-wrapper
+closing spacing now stays above the first body paragraph instead of leaking
+below it. Both cache types rebuild automatically; the binary payload is
+unchanged and reading progress is preserved.
 
 ### Version 103
 
@@ -1845,6 +1891,10 @@ buffer; it marks that counter uploaded only after `accepted_daily: 1`. Old serve
 can still accept aggregate stats, but cannot silently discard daily history and
 acknowledge it. Failed requests remain eligible for retry, including recovered
 `.tmp`/`.bak` records. Nearby-device snapshots are never uploaded as local history.
+The global `history_b64` bitmap carries read-day flags only: it must not replace
+existing page estimates or measured daily time on the server. A missing `daily`
+field means no daily measurements in that request, not zero time for its flagged
+dates. Old aggregate totals cannot recover unknown historical daily durations.
 
 ## Internal language cache (v1)
 

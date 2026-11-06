@@ -61,11 +61,12 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v100 (upstream): Leave words below drop caps unsplit until full-width layout.
 // v101 (upstream): Round SD-font glyph advances individually to match drawing.
 // v103 (upstream): Unicode space advances change wrapping and scaled text placement.
-constexpr uint8_t SECTION_FILE_VERSION = 103;
+// v104 (upstream): Spend chapter-wrapper closing spacing before the following paragraph.
+constexpr uint8_t SECTION_FILE_VERSION = 104;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xD8;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xD9;
 constexpr uint32_t HEADER_SIZE =
     4 * sizeof(uint32_t) + sizeof(PublisherFonts) + sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) +
     sizeof(float) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +
@@ -240,6 +241,27 @@ void Section::releaseBuildFile() {
     build_->parser->releaseInputFile();
   }
 }
+
+#if CROSSINK_SCALABLE_FONTS
+uint32_t Section::publisherBodyFontFamily() {
+  // The incremental parser may own this HTML reader. Release it before probing;
+  // it resumes from its saved offset on the next build step.
+  releaseBuildFile();
+  auto* css = epub->getCssParser();
+  if (!css) return 0;
+  const bool ownsCss = !build_ || !build_->cssParser;
+  if (ownsCss && !css->loadFromCache()) {
+    LOG_ERR("SCT", "Cannot load CSS for publisher body font");
+    css->clear();
+    return 0;
+  }
+  const std::string path =
+      build_ ? build_->parsePath : epub->getCachePath() + "/html/" + std::to_string(spineIndex) + ".html";
+  const auto family = ChapterHtmlSlimParser::publisherBodyFontFamily(path, *css);
+  if (ownsCss) css->clear();
+  return family;
+}
+#endif
 
 bool Section::writePublisherFontState() {
   return file.seek(HEADER_SIZE - sizeof(uint32_t) * 9 - sizeof(pageCount)) &&

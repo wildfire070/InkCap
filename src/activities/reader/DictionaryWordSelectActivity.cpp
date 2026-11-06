@@ -270,28 +270,6 @@ void DictionaryWordSelectActivity::prebuildAdvanceTable() {
   }
 }
 
-void DictionaryWordSelectActivity::clearFrontButtonHintArea() {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int hintSize = UITheme::getButtonHintsReserve(renderer);
-  const int screenWidth = renderer.getScreenWidth();
-  const int screenHeight = renderer.getScreenHeight();
-
-  switch (renderer.getOrientation()) {
-    case GfxRenderer::Orientation::Portrait:
-      renderer.fillRect(0, screenHeight - hintSize, screenWidth, hintSize, false);
-      break;
-    case GfxRenderer::Orientation::LandscapeClockwise:
-      renderer.fillRect(0, 0, hintSize, screenHeight, false);
-      break;
-    case GfxRenderer::Orientation::PortraitInverted:
-      renderer.fillRect(0, 0, screenWidth, hintSize, false);
-      break;
-    case GfxRenderer::Orientation::LandscapeCounterClockwise:
-      renderer.fillRect(screenWidth - hintSize, 0, hintSize, screenHeight, false);
-      break;
-  }
-}
-
 void DictionaryWordSelectActivity::renderDefinitionBackground() {
   std::unique_ptr<Page> reloadedPage;
   const Page* backgroundPage = page.get();
@@ -1372,7 +1350,6 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
         // on entry.
         navigator.renderHighlight(renderer, lineHeight, foregroundBlack);
       }
-      clearFrontButtonHintArea();
       DictUtils::drawWordSelectButtonHints(renderer, mappedInput, navigator);
 #if CROSSINK_APP_CAP_TOUCH
       drawTouchSelection();
@@ -1440,7 +1417,6 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
     navigator.renderHighlight(renderer, lineHeight, foregroundBlack);
   }
 
-  clearFrontButtonHintArea();
   DictUtils::drawWordSelectButtonHints(renderer, mappedInput, navigator);
 #if CROSSINK_APP_CAP_TOUCH
   drawTouchSelection();
