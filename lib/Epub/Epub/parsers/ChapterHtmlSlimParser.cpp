@@ -892,13 +892,12 @@ void ChapterHtmlSlimParser::cancelDropCapToWord() {
 
 bool ChapterHtmlSlimParser::layoutText(const bool includeLastLine) {
   auto& style = currentTextBlock->getBlockStyle();
-  // A block resolved to a ladder font (BlockStyle::headingFontId) needs to be
-  // WORD-WRAPPED using that font's own metrics, not the body's -- headings are
-  // short and almost always flush through here. A block with no real
-  // headingFontId but a residual scale (BlockStyle::fontSizeResidualScale) is
-  // laid out against a narrowed virtual width budget; see layoutWidthForBlock.
-  const uint16_t effectiveWidth = static_cast<uint16_t>(std::max(1, int(viewportWidth) - style.totalHorizontalInset()));
-  const uint16_t width = layoutWidthForBlock(style, effectiveWidth);
+  const uint16_t rawWidth = static_cast<uint16_t>(std::max(1, int(viewportWidth) - style.totalHorizontalInset()));
+  // Must match flushLongTextRunIfNeeded()'s/makePages()'s effectiveFontId: a block
+  // resolved to a ladder font (BlockStyle::headingFontId) needs to be WORD-WRAPPED
+  // using that font's own metrics and virtual width, not the body's -- otherwise
+  // every ladder-resolved heading wraps against the wrong (body) font's glyph widths.
+  const uint16_t width = layoutWidthForBlock(style, rawWidth);
   const auto emitLine = [this](std::shared_ptr<TextBlock> line, uint32_t visible, uint32_t reference) {
     addLineToPage(std::move(line), visible, reference);
   };
