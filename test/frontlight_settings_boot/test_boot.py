@@ -32,6 +32,11 @@ def harness():
     validation_start = settings.index('  if (normalizeTwoFingerSwipeActions(*this))')
     validation = settings[validation_start:settings.index('\n\n', validation_start)]
     startup = (ROOT / 'src/main.cpp').read_text().split('void setup() {', 1)[1].split('void loop()', 1)[0]
+    # The AfterUSBPower wake route (Picco) begins the frontlight and returns to
+    # sleep without ever reaching the real boot sequence below -- it is not part
+    # of the continuing-boot ordering this harness replays, so start scanning
+    # after that wake-reason switch to avoid picking up its own Frontlight.begin.
+    startup = startup.split('// SD Card Initialization', 1)[-1]
     calls = re.findall(r'\b(?:Frontlight\.(?:initializeHardware|begin)|SETTINGS\.loadFromFile)\([^;]*\);', startup)
     # Use the real ordering, so moving detection below load reproduces the loss.
     assert sum('SETTINGS.loadFromFile' in call for call in calls) == 1
