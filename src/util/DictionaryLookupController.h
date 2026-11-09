@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Dictionary.h"
 #include "LookupHistory.h"
@@ -128,6 +129,11 @@ class DictionaryLookupController {
   const std::string& getLookupWord() const { return lookupWord; }
   const std::string& getFoundWord() const { return foundWord; }
   const DictLocation& getFoundLocation() const { return foundLocation; }
+  // Additional entries beyond getFoundLocation() when the lookup matched
+  // several records (a headword listed more than once in .idx, or a .syn
+  // form pointing at several distinct headwords). Empty in the common case
+  // of a single match.
+  const std::vector<DictLocation>& getFoundExtraLocations() const { return foundExtraLocations; }
   FoundStatus getFoundStatus() const { return foundStatus; }
   bool getRecordHistory() const { return recordHistory_; }
   bool canCreateClipping() const { return allowCreateClipping_; }
@@ -169,6 +175,7 @@ class DictionaryLookupController {
   std::string lookupWord;
   std::string foundWord;
   DictLocation foundLocation;
+  std::vector<DictLocation> foundExtraLocations;
   std::string altFormWord;
 
   // CLEANUP: on Auto-only commit, delete only this line (threshold/cache/method below drive Auto mode — keep)
