@@ -640,6 +640,17 @@ void DictionaryDefinitionActivity::wrapText() {
   definitionIsHtml_ = slice.isHtml;
   definitionHtmlNeedsPlainFallback_ = false;
 
+  // Resolve each additional combined record's slice once, same as the
+  // primary above (always the same dictionary folder: synonyms and
+  // duplicated .idx headwords never cross dictionaries). An entry whose
+  // slice fails to resolve is dropped rather than shown as an empty label.
+  extraEntries_.clear();
+  extraEntries_.reserve(extraLocations_.size());
+  for (const auto& extraLocation : extraLocations_) {
+    const DictDefinitionSlice extraSlice = Dictionary::resolveDefinitionSlice(extraLocation, info);
+    if (extraSlice.found) extraEntries_.push_back({extraLocation, extraSlice});
+  }
+
   prepareDefinitionFontAdvances();
   loadPage(currentPage);
   // Pick the modal height once per definition. Page turns re-fill the content
@@ -687,11 +698,7 @@ void DictionaryDefinitionActivity::loadPage(int page) {
     return;
   }
 
-  if (definitionIsHtml_) {
-    wrapHtml();
-  } else {
-    wrapPlain();
-  }
+  wrapAllEntries();
 
   totalPages = DictLayout::paginate(collectLineCount_, linesPerPage);
   MemoryBudget::logHeapShape("dict.page_after");
@@ -730,6 +737,60 @@ void DictionaryDefinitionActivity::collectSpanForAdvances(void* ctx, const Style
   self->collectDefinitionAdvanceText(span.text, styleForSpan(span));
 }
 
+void DictionaryDefinitionActivity::collectEntryAdvances(const std::string& folderPath, uint32_t offset,
+                                                        uint32_t size, bool isHtml, bool isPrimary) {
+  const std::string dictPath = folderPath + ".dict";
+  if (isHtml) {
+    const DictHtmlRenderer::SpanSink sink{this, &DictionaryDefinitionActivity::collectSpanForAdvances};
+    if (!htmlRenderer_.renderFromFileStreaming(dictPath.c_str(), offset, size, sink)) {
+      // wrapAllEntries() discovers and handles a non-primary entry's parse
+      // failure on its own; only the primary's failure can be anticipated
+      // here, sparing it a second, known-failing strict-HTML attempt there.
+      if (isPrimary) definitionHtmlNeedsPlainFallback_ = true;
+      LOG_ERR("DICT", "Malformed HTML definition; collecting SD-font advances from plain text");
+      if (!htmlRenderer_.renderPlainTextFromFileStreaming(dictPath.c_str(), offset, size, sink)) {
+        LOG_ERR("DICT", "Failed to collect SD-font advances from definition fallback");
+      }
+    }
+    return;
+  }
+
+  HalFile dictFile;
+  if (!Storage.openFileForRead("DICT", dictPath.c_str(), dictFile)) {
+    LOG_ERR("DICT", "Failed to open definition for SD-font advance preparation");
+    return;
+  }
+  if (!dictFile.seekSet(offset)) {
+    LOG_ERR("DICT", "Failed to seek definition for SD-font advance preparation");
+    dictFile.close();
+    return;
+  }
+
+  // Keep only one word while streaming so UTF-8 sequences split across file
+  // chunks remain intact without retaining the full definition.
+  std::string word;
+  word.reserve(64);
+  uint32_t remaining = size;
+  char chunk[512];
+  while (remaining > 0) {
+    const uint32_t toRead = std::min<uint32_t>(remaining, sizeof(chunk));
+    const int n = dictFile.read(reinterpret_cast<uint8_t*>(chunk), static_cast<int>(toRead));
+    if (n <= 0) break;
+    remaining -= static_cast<uint32_t>(n);
+    for (int i = 0; i < n; i++) {
+      const char c = chunk[i];
+      if (c == '\0' || c == '\n' || c == ' ') {
+        collectDefinitionAdvanceText(word.c_str(), EpdFontFamily::REGULAR);
+        word.clear();
+      } else {
+        word += c;
+      }
+    }
+  }
+  collectDefinitionAdvanceText(word.c_str(), EpdFontFamily::REGULAR);
+  dictFile.close();
+}
+
 void DictionaryDefinitionActivity::prepareDefinitionFontAdvances() {
   const int fontId = getDefinitionFontId();
   if (!renderer.isSdCardFont(fontId) || definitionSize_ == 0) return;
@@ -744,52 +805,14 @@ void DictionaryDefinitionActivity::prepareDefinitionFontAdvances() {
   collectDefinitionAdvanceText(headword.c_str(), EpdFontFamily::BOLD);
   collectDefinitionAdvanceText(kBullet, EpdFontFamily::REGULAR);
 
-  const std::string dictPath = foundLocation.folderPath + ".dict";
-  if (definitionIsHtml_) {
-    const DictHtmlRenderer::SpanSink sink{this, &DictionaryDefinitionActivity::collectSpanForAdvances};
-    if (!htmlRenderer_.renderFromFileStreaming(dictPath.c_str(), definitionOffset_, definitionSize_, sink)) {
-      definitionHtmlNeedsPlainFallback_ = true;
-      LOG_ERR("DICT", "Malformed HTML definition; collecting SD-font advances from plain text");
-      if (!htmlRenderer_.renderPlainTextFromFileStreaming(dictPath.c_str(), definitionOffset_, definitionSize_, sink)) {
-        LOG_ERR("DICT", "Failed to collect SD-font advances from definition fallback");
-        return;
-      }
-    }
-  } else {
-    HalFile dictFile;
-    if (!Storage.openFileForRead("DICT", dictPath.c_str(), dictFile)) {
-      LOG_ERR("DICT", "Failed to open definition for SD-font advance preparation");
-      return;
-    }
-    if (!dictFile.seekSet(definitionOffset_)) {
-      LOG_ERR("DICT", "Failed to seek definition for SD-font advance preparation");
-      dictFile.close();
-      return;
-    }
-
-    // Keep only one word while streaming so UTF-8 sequences split across file
-    // chunks remain intact without retaining the full definition.
-    std::string word;
-    word.reserve(64);
-    uint32_t remaining = definitionSize_;
-    char chunk[512];
-    while (remaining > 0) {
-      const uint32_t toRead = std::min<uint32_t>(remaining, sizeof(chunk));
-      const int n = dictFile.read(reinterpret_cast<uint8_t*>(chunk), static_cast<int>(toRead));
-      if (n <= 0) break;
-      remaining -= static_cast<uint32_t>(n);
-      for (int i = 0; i < n; i++) {
-        const char c = chunk[i];
-        if (c == '\0' || c == '\n' || c == ' ') {
-          collectDefinitionAdvanceText(word.c_str(), EpdFontFamily::REGULAR);
-          word.clear();
-        } else {
-          word += c;
-        }
-      }
-    }
-    collectDefinitionAdvanceText(word.c_str(), EpdFontFamily::REGULAR);
-    dictFile.close();
+  // Combined entries (see wrapAllEntries()) each get their own bold headword
+  // label; register its codepoints too once there is more than one entry.
+  const bool showLabels = !extraEntries_.empty();
+  if (showLabels) collectDefinitionAdvanceText(foundLocation.headword.c_str(), EpdFontFamily::BOLD);
+  collectEntryAdvances(foundLocation.folderPath, definitionOffset_, definitionSize_, definitionIsHtml_, true);
+  for (const auto& extra : extraEntries_) {
+    if (showLabels) collectDefinitionAdvanceText(extra.location.headword.c_str(), EpdFontFamily::BOLD);
+    collectEntryAdvances(extra.location.folderPath, extra.slice.offset, extra.slice.size, extra.slice.isHtml, false);
   }
 
   if (definitionAdvanceCodepointCount_ == 0) return;
@@ -881,52 +904,107 @@ int DictionaryDefinitionActivity::measureWidthAdapter(void* ctx, const char* tex
   return self->renderer.getTextWidth(fontId, text, style);
 }
 
-void DictionaryDefinitionActivity::wrapHtml() {
+// Combines the primary entry (foundLocation/definitionOffset_/
+// definitionSize_/definitionIsHtml_) and every extraEntries_ entry into one
+// continuous wrap pass over a single shared Wrapper. Each entry's content is
+// preceded by its own bold headword label once there is more than one entry
+// — the common single-match case (extraEntries_ empty) shows no label and
+// renders exactly as the old single-entry wrapHtml()/wrapPlain() did.
+void DictionaryDefinitionActivity::wrapAllEntries() {
   const int maxWidth = renderer.getScreenWidth() - leftPadding - rightPadding;
   // Indent step: 3 spaces worth of pixels at regular weight.
   const int bodyFontId = getDefinitionFontId();
   const int indentStep = renderer.getTextWidth(bodyFontId, "   ");
   const int bulletWidth = renderer.getTextWidth(bodyFontId, kBullet);
+  const bool showLabels = !extraEntries_.empty();
 
-  // Fully streamed: the renderer delivers spans one at a time to the Wrapper, the
-  // Wrapper emits completed lines to the page collector, and the collector keeps
-  // only the current page. Neither the whole-definition span/textBuf (renderer)
-  // nor all pages of lines (here) is ever materialized.
-  const std::string dictPath = foundLocation.folderPath + ".dict";
-  const auto streamIntoLayout = [&](const bool plainTextFallback) {
+  enum class AttemptOutcome { Success, NeedsPlainFallback, PrimaryFailed };
+
+  // Fully streamed per entry: the renderer/plain reader delivers spans or
+  // words one at a time to the Wrapper, which emits completed lines to the
+  // page collector, which keeps only the current page. Nothing beyond one
+  // page's lines is ever materialized. forcePlainText redoes every HTML
+  // entry as plain text (set once ANY entry's strict parse fails) rather
+  // than retrying entry by entry, since a mid-entry parse failure can leave
+  // the shared Wrapper's in-progress line in an unknown state.
+  const auto attempt = [&](const bool forcePlainText) {
     DictLayout::Measurer measure{this, &DictionaryDefinitionActivity::measureWidthAdapter};
     DictLayout::LineSink lineSink{this, &DictionaryDefinitionActivity::collectLineSink};
     DictLayout::Wrapper wrapper(DictLayout::WrapMetrics{maxWidth, indentStep, bulletWidth}, measure, lineSink);
-    DefinitionSpanFeedContext feedCtx{this, &wrapper};
-    const DictHtmlRenderer::SpanSink spanSink{&feedCtx, &DictionaryDefinitionActivity::feedSpanToWrapper};
-    const bool ok = plainTextFallback ? htmlRenderer_.renderPlainTextFromFileStreaming(
-                                            dictPath.c_str(), definitionOffset_, definitionSize_, spanSink)
-                                      : htmlRenderer_.renderFromFileStreaming(dictPath.c_str(), definitionOffset_,
-                                                                              definitionSize_, spanSink);
+
+    const size_t entryCount = 1 + extraEntries_.size();
+    for (size_t i = 0; i < entryCount; ++i) {
+      const bool isPrimary = i == 0;
+      const DictLocation& loc = isPrimary ? foundLocation : extraEntries_[i - 1].location;
+      const uint32_t offset = isPrimary ? definitionOffset_ : extraEntries_[i - 1].slice.offset;
+      const uint32_t size = isPrimary ? definitionSize_ : extraEntries_[i - 1].slice.size;
+      const bool isHtml = isPrimary ? definitionIsHtml_ : extraEntries_[i - 1].slice.isHtml;
+
+      if (showLabels) {
+        const StyledSpan label{.text = loc.headword.c_str(), .bold = true, .newlineBefore = true};
+        wrapper.onSpan(label);
+        wrapper.lineBreak();
+      }
+
+      const EntryStreamResult result = streamEntryIntoWrapper(loc.folderPath, offset, size, isHtml, forcePlainText,
+                                                               wrapper);
+      if (result == EntryStreamResult::NeedsPlainFallback) {
+        wrapper.finish();
+        return AttemptOutcome::NeedsPlainFallback;
+      }
+      if (result == EntryStreamResult::Failed) {
+        if (isPrimary) {
+          wrapper.finish();
+          return AttemptOutcome::PrimaryFailed;
+        }
+        // A slice that resolved but then failed to stream (rare — a true I/O
+        // problem, not malformed markup). Drop just this entry's label and
+        // body rather than losing every other combined entry over it.
+        LOG_ERR("DICT", "Dropping unreadable combined entry \"%s\"", loc.headword.c_str());
+      }
+    }
     wrapper.finish();
-    return ok;
+    return AttemptOutcome::Success;
   };
 
-  // Both paths reset and stream one span at a time, so recovery never
-  // materializes the full definition. Once strict parsing fails, page turns
-  // reuse the known-good fallback without repeating the failed parse.
-  if (!definitionHtmlNeedsPlainFallback_ && !streamIntoLayout(false)) {
+  // Once a page turn already discovered the primary needs the plain-text
+  // fallback, every later page reuses that instead of repeating the failed
+  // HTML parse.
+  AttemptOutcome outcome = attempt(definitionHtmlNeedsPlainFallback_);
+  if (outcome == AttemptOutcome::NeedsPlainFallback) {
     definitionHtmlNeedsPlainFallback_ = true;
     LOG_ERR("DICT", "Malformed HTML definition; displaying plain text");
-  }
-  if (definitionHtmlNeedsPlainFallback_) {
-    // The strict pass may already have emitted the valid prefix. Reset the page
-    // collector before replaying the complete definition as plain text.
+    // The failed attempt may already have emitted a valid prefix. Reset the
+    // page collector before replaying the complete sequence as plain text.
     layoutLines.clear();
     layoutSegments.clear();
     pagePool_.clear();
     collectLineCount_ = 0;
-    if (!streamIntoLayout(true)) {
-      LOG_ERR("DICT", "Failed to read definition plain-text fallback");
-      definitionReadFailed_ = true;
-    }
+    outcome = attempt(true);
+  }
+  if (outcome == AttemptOutcome::PrimaryFailed) {
+    LOG_ERR("DICT", "Failed to read definition");
+    definitionReadFailed_ = true;
   }
   // Only the kept page's span text was ever copied into layoutLines.
+}
+
+DictionaryDefinitionActivity::EntryStreamResult DictionaryDefinitionActivity::streamEntryIntoWrapper(
+    const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml, bool forcePlainText,
+    DictLayout::Wrapper& wrapper) {
+  const std::string dictPath = folderPath + ".dict";
+  if (!isHtml) {
+    return streamPlainEntryIntoWrapper(dictPath, offset, size, wrapper) ? EntryStreamResult::Ok
+                                                                        : EntryStreamResult::Failed;
+  }
+
+  DefinitionSpanFeedContext feedCtx{this, &wrapper};
+  const DictHtmlRenderer::SpanSink spanSink{&feedCtx, &DictionaryDefinitionActivity::feedSpanToWrapper};
+  const bool ok = forcePlainText
+                      ? htmlRenderer_.renderPlainTextFromFileStreaming(dictPath.c_str(), offset, size, spanSink)
+                      : htmlRenderer_.renderFromFileStreaming(dictPath.c_str(), offset, size, spanSink);
+  if (ok) return EntryStreamResult::Ok;
+  return forcePlainText ? EntryStreamResult::Failed : EntryStreamResult::NeedsPlainFallback;
 }
 
 void DictionaryDefinitionActivity::feedSpanToWrapper(void* ctx, const StyledSpan& span) {
@@ -961,15 +1039,10 @@ void DictionaryDefinitionActivity::feedSpanToWrapper(void* ctx, const StyledSpan
 // Plain text path: word-wrap into single-segment REGULAR lines
 // ---------------------------------------------------------------------------
 
-void DictionaryDefinitionActivity::wrapPlain() {
-  const int screenWidth = renderer.getScreenWidth();
-  const int maxWidth = screenWidth - leftPadding - rightPadding;
+bool DictionaryDefinitionActivity::streamPlainEntryIntoWrapper(const std::string& dictPath, uint32_t offset,
+                                                               uint32_t size, DictLayout::Wrapper& wrapper) {
   std::string currentWord;
   currentWord.reserve(64);
-
-  DictLayout::Measurer measure{this, &DictionaryDefinitionActivity::measureWidthAdapter};
-  DictLayout::LineSink sink{this, &DictionaryDefinitionActivity::collectLineSink};
-  DictLayout::Wrapper wrapper(DictLayout::WrapMetrics{maxWidth, 0, 0}, measure, sink);
 
   auto feedWord = [&]() {
     if (currentWord.empty()) return;
@@ -987,29 +1060,27 @@ void DictionaryDefinitionActivity::wrapPlain() {
   const StyledSpan space{.text = " "};
 
   // Stream from .dict file — the full definition is never held in RAM.
-  const std::string dictPath = foundLocation.folderPath + ".dict";
   HalFile dictFile;
   if (!Storage.openFileForRead("DICT", dictPath.c_str(), dictFile)) {
     LOG_ERR("DICT", "Failed to open definition %s", dictPath.c_str());
-    definitionReadFailed_ = true;
-    return;
+    return false;
   }
-  if (!dictFile.seekSet(definitionOffset_)) {
+  if (!dictFile.seekSet(offset)) {
     LOG_ERR("DICT", "Failed to seek definition %s", dictPath.c_str());
-    definitionReadFailed_ = true;
     dictFile.close();
-    return;
+    return false;
   }
 
-  uint32_t remaining = definitionSize_;
+  uint32_t remaining = size;
   char chunk[512];
+  bool ok = true;
 
   while (remaining > 0) {
     uint32_t toRead = remaining < sizeof(chunk) ? remaining : static_cast<uint32_t>(sizeof(chunk));
     int n = dictFile.read(reinterpret_cast<uint8_t*>(chunk), static_cast<int>(toRead));
     if (n <= 0) {
       LOG_ERR("DICT", "Failed reading definition %s", dictPath.c_str());
-      definitionReadFailed_ = true;
+      ok = false;
       break;
     }
     remaining -= static_cast<uint32_t>(n);
@@ -1032,8 +1103,8 @@ void DictionaryDefinitionActivity::wrapPlain() {
   }
 
   feedWord();
-  wrapper.finish();
   dictFile.close();
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -1304,6 +1375,7 @@ void DictionaryDefinitionActivity::loop() {
           dictionarySwitchLookupInProgress = false;
           headword = controller.getFoundWord();
           foundLocation = controller.getFoundLocation();
+          extraLocations_ = controller.getFoundExtraLocations();
           wrapText();  // resets currentPage to 0 and loads page 0
           if (wasBackNav) {
             chain_.pop();

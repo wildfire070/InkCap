@@ -124,6 +124,27 @@ class Dictionary {
   static DictLocation locateWithStemVariants(const std::string& word, bool* matchedStem,
                                              const DictLookupCallbacks& cbs = {}, const char* cachePath = nullptr);
 
+  // Maximum number of entries combined into one lookup result when several
+  // records match (a headword listed more than once in .idx, or a .syn entry
+  // pointing at several distinct headwords). Bounds memory/row growth for a
+  // pathological dictionary; real StarDict duplicates are typically 2-3.
+  static constexpr size_t MAX_COMBINED_ENTRIES = 4;
+
+  // Like locate(), but collects every adjacent case-insensitive match instead
+  // of only the first (a headword can be listed more than once in .idx: one
+  // entry per part of speech, or two spellings that compare equal
+  // case-insensitively, e.g. "Polish"/"polish"). Always returns at least one
+  // element; check element 0's `found`/`readError` the way locate()'s result
+  // is checked.
+  static std::vector<DictLocation> locateAll(const std::string& word, const DictLookupCallbacks& cbs = {},
+                                             const char* cachePath = nullptr);
+
+  // Like locateWithStemVariants(), but returns every matching entry via
+  // locateAll()'s semantics.
+  static std::vector<DictLocation> locateAllWithStemVariants(const std::string& word, bool* matchedStem,
+                                                              const DictLookupCallbacks& cbs = {},
+                                                              const char* cachePath = nullptr);
+
   // Look up word in .idx (via .idx.oft if present). Returns definition or empty string.
   static std::string lookup(const std::string& word, const DictLookupCallbacks& cbs = {},
                             const char* cachePath = nullptr);
@@ -134,9 +155,11 @@ class Dictionary {
   // rendered as text.
   static DictDefinitionSlice resolveDefinitionSlice(const DictLocation& location, const DictInfo& info);
 
-  // Look up word in .syn (via .syn.oft if present).
-  // Returns the canonical headword from .idx, or empty string if not found.
-  static std::string resolveAltForm(const std::string& word, const char* cachePath = nullptr);
+  // Look up word in .syn (via .syn.oft if present). Collects every distinct
+  // canonical headword from .idx that the alternate form resolves to (one
+  // alternate form can map to several base headwords), bounded by
+  // MAX_COMBINED_ENTRIES. Empty when not found.
+  static std::vector<std::string> resolveAltFormAll(const std::string& word, const char* cachePath = nullptr);
 
   static std::string cleanWord(const std::string& word);
   static std::vector<std::string> getStemVariants(const std::string& word);
@@ -170,6 +193,17 @@ class Dictionary {
   static bool openLookupSession(LookupSession& session, const char* cachePath);
   static void closeLookupSession(LookupSession& session);
   static DictLocation locateInSession(LookupSession& session, const std::string& word, const DictLookupCallbacks& cbs);
+
+  // Shared by locateInSession and locateAllInSession: resolves the
+  // [startByte, endByte) scan bounds for word in session via whichever
+  // accelerator the session has open, degrading it on a broken accelerator.
+  static void resolveSessionBounds(LookupSession& session, const std::string& word, uint32_t* startByte,
+                                   uint32_t* endByte);
+
+  // Like locateInSession, but collects every adjacent case-insensitive match
+  // (bounded by MAX_COMBINED_ENTRIES) instead of stopping at the first.
+  static std::vector<DictLocation> locateAllInSession(LookupSession& session, const std::string& word,
+                                                      const DictLookupCallbacks& cbs);
 
   // Read a null-terminated word from an open file into buf (max bufSize-1 chars).
   // Returns the number of characters read (excluding null), or -1 on error.

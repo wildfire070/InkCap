@@ -1191,7 +1191,8 @@ void DictionaryWordSelectActivity::loop() {
           renderDefinitionBackground();
         }
         auto definition = makeUniqueNoThrow<DictionaryDefinitionActivity>(
-            renderer, mappedInput, controller.getFoundWord(), controller.getFoundLocation(), true, cachePath,
+            renderer, mappedInput, controller.getFoundWord(), controller.getFoundLocation(),
+            controller.getFoundExtraLocations(), true, cachePath,
             controller.getRecordHistory(), controller.getLookupWord(),
             DictionaryLookupController::toHistStatus(controller.getFoundStatus()), this,
             &DictionaryWordSelectActivity::renderDefinitionBackgroundCallback, dictionaryFontFamilyName_,

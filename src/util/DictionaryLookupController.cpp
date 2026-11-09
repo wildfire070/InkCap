@@ -74,6 +74,7 @@ void DictionaryLookupController::startLookup(const std::string& word, bool recor
   }
   foundWord.clear();
   foundLocation = DictLocation{};
+  foundExtraLocations.clear();
   lookupProgress = 0;
   lookupDone = false;
   lookupCancelled = false;
@@ -199,16 +200,25 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
 #endif
     ) {
       setState(LookupState::Idle);
-      std::string canonical = Dictionary::resolveAltForm(altFormWord, cachePath.c_str());
-      if (!canonical.empty()) {
-        auto loc = Dictionary::locate(canonical, {}, cachePath.c_str());
-        if (loc.found) {
-          foundWord = std::move(loc.headword);
-          foundLocation = std::move(loc);
-          foundStatus = nextIsSuggestion ? FoundStatus::Suggestion : FoundStatus::AltForm;
-          nextIsSuggestion = false;
-          return LookupEvent::FoundDefinition;
+      // A synonym can resolve to several distinct headwords; combine each
+      // one's own entries (itself possibly more than one — a duplicated
+      // .idx headword) into one bounded result list.
+      std::vector<DictLocation> combined;
+      for (const auto& canonical : Dictionary::resolveAltFormAll(altFormWord, cachePath.c_str())) {
+        if (combined.size() >= Dictionary::MAX_COMBINED_ENTRIES) break;
+        for (auto& loc : Dictionary::locateAll(canonical, {}, cachePath.c_str())) {
+          if (!loc.found) continue;
+          combined.push_back(std::move(loc));
+          if (combined.size() >= Dictionary::MAX_COMBINED_ENTRIES) break;
         }
+      }
+      if (!combined.empty()) {
+        foundWord = combined.front().headword;
+        foundLocation = combined.front();
+        foundExtraLocations.assign(combined.begin() + 1, combined.end());
+        foundStatus = nextIsSuggestion ? FoundStatus::Suggestion : FoundStatus::AltForm;
+        nextIsSuggestion = false;
+        return LookupEvent::FoundDefinition;
       }
       handleLookupFailed();
       return LookupEvent::None;
@@ -610,7 +620,10 @@ void DictionaryLookupController::runLookup() {
     logDictionaryLookupTaskEnd();
     return;
   }
-  foundLocation = Dictionary::locateWithStemVariants(lookupWord, &lookupMatchedStem, cbs, cachePath.c_str());
+  std::vector<DictLocation> located =
+      Dictionary::locateAllWithStemVariants(lookupWord, &lookupMatchedStem, cbs, cachePath.c_str());
+  foundLocation = located.front();
+  foundExtraLocations.assign(located.begin() + 1, located.end());
   lookupReadError = foundLocation.readError;
   lookupCancelled = lookupCancelRequested.load();
   lookupDone = true;
