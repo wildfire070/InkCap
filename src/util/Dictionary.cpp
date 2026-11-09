@@ -843,22 +843,24 @@ void Dictionary::closeLookupSession(LookupSession& session) {
   session.idx.close();
 }
 
-DictLocation Dictionary::locateInSession(LookupSession& session, const std::string& word,
-                                         const DictLookupCallbacks& cbs) {
-  DictLocation result;
-  uint32_t startByte = 0;
-  uint32_t endByte = session.idxFileSize;
+// Resolves the [startByte, endByte) scan bounds for word in session, degrading
+// session.acceleratorKind on a broken accelerator. Shared by locateInSession and
+// locateAllInSession so both probe identical bounds for the same word.
+void Dictionary::resolveSessionBounds(LookupSession& session, const std::string& word, uint32_t* startByte,
+                                      uint32_t* endByte) {
+  *startByte = 0;
+  *endByte = session.idxFileSize;
 
   switch (session.acceleratorKind) {
     case LookupAccelerator::Cspt:
-      if (!binarySearchCspt(session.accelerator, word.c_str(), session.idxFileSize, &startByte, &endByte, true)) {
+      if (!binarySearchCspt(session.accelerator, word.c_str(), session.idxFileSize, startByte, endByte, true)) {
         // A structurally valid but unreadable .cspt should degrade to .oft for
         // this and later probes, matching the single-locate fallback order.
         session.accelerator.close();
         const std::string oftPath = DictPaths(session.folderPath).idxOft();
         if (Storage.openFileForRead("DICT", oftPath.c_str(), session.accelerator)) {
           session.acceleratorKind = LookupAccelerator::Oft;
-          findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), &startByte, &endByte,
+          findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), startByte, endByte,
                          true);
         } else {
           session.acceleratorKind = LookupAccelerator::None;
@@ -866,20 +868,28 @@ DictLocation Dictionary::locateInSession(LookupSession& session, const std::stri
       }
       break;
     case LookupAccelerator::Oft:
-      findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), &startByte, &endByte, true);
+      findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), startByte, endByte, true);
       break;
     case LookupAccelerator::QuickIndex:
       if (!binarySearchQuickIndex(session.accelerator, session.idx, session.qidxSampleCount, word.c_str(),
-                                  session.idxFileSize, &startByte, &endByte)) {
+                                  session.idxFileSize, startByte, endByte)) {
         session.accelerator.close();
         session.acceleratorKind = LookupAccelerator::None;
-        startByte = 0;
-        endByte = session.idxFileSize;
+        *startByte = 0;
+        *endByte = session.idxFileSize;
       }
       break;
     case LookupAccelerator::None:
       break;
   }
+}
+
+DictLocation Dictionary::locateInSession(LookupSession& session, const std::string& word,
+                                         const DictLookupCallbacks& cbs) {
+  DictLocation result;
+  uint32_t startByte = 0;
+  uint32_t endByte = session.idxFileSize;
+  resolveSessionBounds(session, word, &startByte, &endByte);
 
   if (cbs.onProgress) cbs.onProgress(cbs.ctx, 70);
 
@@ -982,6 +992,127 @@ DictLocation Dictionary::locateWithStemVariants(const std::string& word, bool* m
   return result;
 }
 
+// Like locateInSession, but collects every adjacent case-insensitive match
+// instead of stopping at the first (a headword can be listed more than once in
+// .idx: one entry per part of speech, or two spellings that compare equal
+// case-insensitively, e.g. "Polish"/"polish"). Bounded by MAX_COMBINED_ENTRIES
+// so a pathological dictionary cannot grow this unbounded.
+std::vector<DictLocation> Dictionary::locateAllInSession(LookupSession& session, const std::string& word,
+                                                         const DictLookupCallbacks& cbs) {
+  std::vector<DictLocation> results;
+  uint32_t startByte = 0;
+  uint32_t endByte = session.idxFileSize;
+  resolveSessionBounds(session, word, &startByte, &endByte);
+
+  if (cbs.onProgress) cbs.onProgress(cbs.ctx, 70);
+
+  if (!session.idx.seekSet(startByte)) {
+    LOG_ERR("DICT", "Failed to seek index %s", session.folderPath.c_str());
+    DictLocation err;
+    err.readError = true;
+    return {err};
+  }
+
+  bool readError = false;
+  while (static_cast<uint32_t>(session.idx.position()) < session.idxFileSize) {
+    if (cbs.shouldCancel && cbs.shouldCancel(cbs.ctx)) break;
+
+    int len = readWordInto(session.idx, wordBuf, sizeof(wordBuf));
+    if (len < 0) {
+      LOG_ERR("DICT", "Failed reading index entry from %s", session.folderPath.c_str());
+      readError = true;
+      break;
+    }
+
+    uint8_t suffix[12];
+    if (session.idx.read(suffix, session.suffixBytes) != session.suffixBytes) {
+      LOG_ERR("DICT", "Truncated index entry in %s", session.folderPath.c_str());
+      readError = true;
+      break;
+    }
+
+    const int cmp = cistrcmp(wordBuf, word.c_str());
+    if (cmp == 0) {
+      if (session.suffixBytes == 12 && readBigEndian32(suffix) != 0) {
+        LOG_ERR("DICT", "64-bit dictionary offset exceeds supported range");
+        break;
+      }
+      if (results.size() < MAX_COMBINED_ENTRIES) {
+        const uint8_t sizeOffset = session.suffixBytes == 12 ? 8 : 4;
+        DictLocation loc;
+        loc.headword.assign(wordBuf, static_cast<size_t>(len));
+        loc.offset = session.suffixBytes == 12 ? readBigEndian32(suffix + 4) : readBigEndian32(suffix);
+        loc.size = readBigEndian32(suffix + sizeOffset);
+        loc.found = true;
+        results.push_back(std::move(loc));
+      }
+      continue;
+    }
+
+    if (cmp > 0) break;
+  }
+
+  if (cbs.onProgress) cbs.onProgress(cbs.ctx, 100);
+
+  // Always return at least one element, matching locate()'s single-result
+  // contract: callers check element 0's found/readError the same way.
+  if (results.empty()) {
+    DictLocation miss;
+    miss.readError = readError;
+    return {miss};
+  }
+  return results;
+}
+
+std::vector<DictLocation> Dictionary::locateAll(const std::string& word, const DictLookupCallbacks& cbs,
+                                                const char* cachePath) {
+  LookupSession session;
+  if (!openLookupSession(session, cachePath)) {
+    DictLocation result;
+    result.readError = !session.folderPath.empty();
+    return {result};
+  }
+  std::vector<DictLocation> results = locateAllInSession(session, word, cbs);
+  for (auto& result : results) result.folderPath = session.folderPath;
+  closeLookupSession(session);
+  return results;
+}
+
+std::vector<DictLocation> Dictionary::locateAllWithStemVariants(const std::string& word, bool* matchedStem,
+                                                                 const DictLookupCallbacks& cbs,
+                                                                 const char* cachePath) {
+  if (matchedStem) *matchedStem = false;
+  LookupSession session;
+  if (!openLookupSession(session, cachePath)) {
+    DictLocation result;
+    result.readError = !session.folderPath.empty();
+    return {result};
+  }
+
+  std::vector<DictLocation> results = locateAllInSession(session, word, cbs);
+  const bool anyFound = std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.found; });
+  const bool anyReadError =
+      std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.readError; });
+  if (!anyFound && !anyReadError && !(cbs.shouldCancel && cbs.shouldCancel(cbs.ctx))) {
+    const auto stems = getStemVariants(word);
+    for (const auto& stem : stems) {
+      results = locateAllInSession(session, stem, cbs);
+      const bool stemFound = std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.found; });
+      if (stemFound) {
+        if (matchedStem) *matchedStem = true;
+        break;
+      }
+      const bool stemReadError =
+          std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.readError; });
+      if (stemReadError || (cbs.shouldCancel && cbs.shouldCancel(cbs.ctx))) break;
+    }
+  }
+
+  for (auto& result : results) result.folderPath = session.folderPath;
+  closeLookupSession(session);
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Lookup (convenience wrapper — locate + read into string)
 // ---------------------------------------------------------------------------
@@ -1045,15 +1176,20 @@ std::string Dictionary::wordAtOrdinal(const std::string& folderPath, uint32_t or
   return std::string(wordBuf, static_cast<size_t>(len));
 }
 
-std::string Dictionary::resolveAltForm(const std::string& word, const char* cachePath) {
+// Collects every distinct headword a .syn entry resolves to, instead of only
+// the first (one alternate form can map to several base headwords — e.g. an
+// inflected form shared by two verbs, or a synonym recorded under more than
+// one case variant). Bounded by MAX_COMBINED_ENTRIES.
+std::vector<std::string> Dictionary::resolveAltFormAll(const std::string& word, const char* cachePath) {
+  std::vector<std::string> results;
   std::string folderPath = readDictPath(cachePath);
-  if (folderPath.empty()) return "";
+  if (folderPath.empty()) return results;
 
   DictPaths dp(folderPath);
-  if (!Storage.exists(dp.syn().c_str())) return "";
+  if (!Storage.exists(dp.syn().c_str())) return results;
 
   HalFile syn;
-  if (!Storage.openFileForRead("DICT", dp.syn().c_str(), syn)) return "";
+  if (!Storage.openFileForRead("DICT", dp.syn().c_str(), syn)) return results;
 
   const uint32_t synFileSize = static_cast<uint32_t>(syn.fileSize());
   uint32_t startByte = 0;
@@ -1064,10 +1200,9 @@ std::string Dictionary::resolveAltForm(const std::string& word, const char* cach
 
   syn.seekSet(startByte);
 
-  bool fallbackFound = false;
-  uint32_t fallbackIdx = 0;
-  // As with .idx lookup, include a case-equivalent entry that begins exactly
-  // on the next accelerator boundary.
+  // As with .idx lookup, the start bound deliberately precedes any
+  // case-equivalent samples, so a match exactly on the next accelerator
+  // boundary is included too.
   while (static_cast<uint32_t>(syn.position()) < synFileSize) {
     int len = readWordInto(syn, wordBuf, sizeof(wordBuf));
     if (len < 0) break;
@@ -1080,13 +1215,11 @@ std::string Dictionary::resolveAltForm(const std::string& word, const char* cach
       // Big-endian original word index in .idx
       uint32_t originalIdx = (static_cast<uint32_t>(idxBuf[0]) << 24) | (static_cast<uint32_t>(idxBuf[1]) << 16) |
                              (static_cast<uint32_t>(idxBuf[2]) << 8) | static_cast<uint32_t>(idxBuf[3]);
-      if (strcmp(wordBuf, word.c_str()) == 0) {
-        syn.close();
-        return wordAtOrdinal(folderPath, originalIdx);
-      }
-      if (!fallbackFound) {
-        fallbackFound = true;
-        fallbackIdx = originalIdx;
+      if (results.size() < MAX_COMBINED_ENTRIES) {
+        std::string headword = wordAtOrdinal(folderPath, originalIdx);
+        if (!headword.empty() && std::find(results.begin(), results.end(), headword) == results.end()) {
+          results.push_back(std::move(headword));
+        }
       }
       continue;
     }
@@ -1095,7 +1228,7 @@ std::string Dictionary::resolveAltForm(const std::string& word, const char* cach
   }
 
   syn.close();
-  return fallbackFound ? wordAtOrdinal(folderPath, fallbackIdx) : "";
+  return results;
 }
 
 // ---------------------------------------------------------------------------
