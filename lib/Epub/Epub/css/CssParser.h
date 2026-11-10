@@ -87,10 +87,6 @@ class CssParser {
   static size_t maxSourceBytes() { return psramHeapAvailable() ? 512U * 1024U : 128U * 1024U; }
 
   static constexpr size_t MAX_DESCENDANT_RULES = 100;
-  // Ancestor-context parts a descendant selector may carry ahead of its subject
-  // (e.g. ".fff_titlepage .title h1" has 2). 4 comfortably covers the deepest
-  // selector observed in real EPUB stylesheets (4-part) with headroom to spare.
-  static constexpr size_t MAX_DESCENDANT_CONTEXT_PARTS = 4;
   static constexpr size_t CSS_INDEX_BYTES_PER_RULE = 8;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
