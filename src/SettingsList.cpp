@@ -301,6 +301,9 @@ void forEachBaseSetting(SettingVisitor visitor, void* context) {
       "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM));
   add(SettingInfo::Toggle(StrId::STR_CUSTOM_BOOTSCREEN, &CrossPointSettings::customBootscreenEnabled,
                           "customBootscreenEnabled", StrId::STR_CAT_SYSTEM));
+  add(SettingInfo::Enum(StrId::STR_WAKE_BOOT_MODE, &CrossPointSettings::wakeBootMode,
+                        {StrId::STR_WAKE_BOOT_RESUME, StrId::STR_WAKE_BOOT_HOME}, "wakeBootMode",
+                        StrId::STR_CAT_SYSTEM));
   add(SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                           StrId::STR_CAT_SYSTEM));
   add(SettingInfo::Toggle(StrId::STR_HIDE_FILE_EXTENSION, &CrossPointSettings::hideFileExtension, "hideFileExtension",

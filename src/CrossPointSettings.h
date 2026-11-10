@@ -93,6 +93,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     XTC_STATUS_BAR_MODE_COUNT
   };
   enum HIDE_CLOCK_MODE { HIDE_CLOCK_NEVER = 0, HIDE_CLOCK_IN_READER = 1, HIDE_CLOCK_ALWAYS = 2, HIDE_CLOCK_MODE_COUNT };
+  // Where a physical wake-from-sleep or cold boot lands. Internal silent
+  // reboots (OTA, network screens, etc.) are unaffected by this setting.
+  enum WAKE_BOOT_MODE { WAKE_BOOT_RESUME = 0, WAKE_BOOT_HOME = 1, WAKE_BOOT_MODE_COUNT };
   // Persisted date-format values mirror HalClock::DateFormat.
   enum DATE_FORMAT {
     DATE_FORMAT_MONTH_DAY_YEAR_LONG = 0,
@@ -541,6 +544,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t pageTurnGesture = TAP_AND_SWIPE;
   uint8_t previousPageGesture = TAP_AND_SWIPE;
   uint8_t customBootscreenEnabled = 1;
+  uint8_t wakeBootMode = WAKE_BOOT_RESUME;
   uint8_t tapToHideStatusBar = 1;
   // Disables all touchscreen input while a reader is active. Reader menus temporarily override this.
   uint8_t disableReaderTouchscreen = 0;
