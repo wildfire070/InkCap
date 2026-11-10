@@ -10,6 +10,7 @@ target_include_directories(OpdsServerStoreTest PRIVATE
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/Epub
+  ${REPO_ROOT}/include
 )
 target_link_libraries(OpdsServerStoreTest PRIVATE crosspoint_test_common GTest::gtest_main ArduinoJson)
 gtest_discover_tests(OpdsServerStoreTest)

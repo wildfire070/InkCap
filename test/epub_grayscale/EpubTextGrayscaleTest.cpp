@@ -592,7 +592,10 @@ TEST(EpubTextGrayscaleTest, CachedNightModeImagesMatchMonochromeAcrossStoragePat
       GfxRenderer renderer(display);
       renderer.begin();
       renderer.setOrientation(GfxRenderer::Orientation(orientation));
-      ImageBlock image("image_v2.png", "source.png", 16, 16);
+      // getCachePath() now appends "_v2" itself (upstream's own cache-format revision
+      // bump), so the source name must not also carry it or the two "_v2" suffixes
+      // stack ("image_v2_v2.pxc") and miss the fixture written above.
+      ImageBlock image("image.png", "source.png", 16, 16);
       renderer.clearScreen(255);
       image.render(renderer, 9, 13, true, false);
       const auto expected = display.bw;

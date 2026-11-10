@@ -227,9 +227,26 @@ def run_smoke(args: argparse.Namespace) -> int:
         temp_root = Path(temp_dir_name)
         simulator_book_path = prepare_fs(temp_root, book)
 
+        if args.custom_sleep_images:
+            # Small square with black/white halves: Fit needs centered margins,
+            # Crop must fill the viewport, and both must scale the source up.
+            size = 80
+            pixels = b"".join(bytes([0 if x < size // 2 else 255]) * 3 for x in range(size)) * size
+            header = struct.pack("<2sIHHIIIIHHIIIIII", b"BM", 54 + len(pixels), 0, 0, 54, 40,
+                                 size, size, 1, 24, 0, len(pixels), 0, 0, 0, 0)
+            (temp_root / "fs_" / "sleep-test.bmp").write_bytes(header + pixels)
+            (temp_root / "fs_" / "sleep-replacement.bmp").write_bytes(header + bytes(255 - b for b in pixels))
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        if args.sleep_screen_colors:
+            env["CROSSINK_SIMULATOR_SMOKE_SLEEP_SCREEN_COLORS"] = "1"
+        if args.sleep_screen_captures:
+            env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sleep_screen_captures).resolve())
+        if args.custom_sleep_images:
+            env["CROSSINK_SIMULATOR_SMOKE_CUSTOM_SLEEP_IMAGES"] = "1"
+            if args.about_captures:
+                env["CROSSINK_UPSTREAM_FEATURE_CAPTURES"] = str(Path(args.about_captures).resolve())
         if args.font_browser_return:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_BROWSER_RETURN"] = "1"
             env["CROSSPOINT_SIM_SILENT_REBOOT_MAGIC"] = str(0xC1EAB007)
@@ -323,9 +340,11 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_FILENAME_FONT_ERROR"] = args.filename_font_error_family
         if args.filename_font_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.filename_font_captures).resolve())
-        if args.screen_calibration:
+        if args.screen_calibration or args.theme_calibration:
             env["CROSSINK_SIMULATOR_SMOKE_CALIBRATION"] = "1"
             env["CROSSINK_CALIBRATION_PATH"] = str(temp_root / "device-calibration.nvs")
+        if args.theme_calibration:
+            env["CROSSINK_SIMULATOR_SMOKE_THEME_CALIBRATION"] = "1"
         if args.status_bar_lifecycle:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_LIFECYCLE"] = "1"
         if args.chapter_percentage:
@@ -415,6 +434,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.sync_server_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sync_server_captures).resolve())
             env["CROSSINK_SIMULATOR_SMOKE_SYNC_SERVER_CAPTURES"] = "1"
+        if args.interval_layout:
+            env["CROSSINK_SIMULATOR_SMOKE_INTERVAL_LAYOUT"] = "1"
         if args.menu_orientation:
             env["CROSSINK_SIMULATOR_SMOKE_MENU_ORIENTATION"] = "1"
         if args.home_swipe:
@@ -478,6 +499,10 @@ def run_smoke(args: argparse.Namespace) -> int:
         print("Simulator did not complete Wi-Fi transmit-power checks", file=sys.stderr)
         return 2
 
+    if args.interval_layout and "Simulator smoke test passed: interval layout" not in proc.stdout:
+        print("Simulator did not complete the interval layout checks", file=sys.stderr)
+        return 2
+
     if args.menu_orientation and "Simulator smoke test passed: menu orientation" not in proc.stdout:
         print("Simulator did not complete the menu orientation checks", file=sys.stderr)
         return 2
@@ -533,6 +558,9 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sleep-screen-colors", action="store_true", help="Check retained sleep screen colors, Dark Mode preference and default fallback")
+    parser.add_argument("--sleep-screen-captures", help="Directory for Page Overlay display-color captures (PGM)")
+    parser.add_argument("--custom-sleep-images", action="store_true", help="Check custom BMP Fit/Crop, orientation and cached redraws; captures via --about-captures")
     parser.add_argument("--dictionary-hints", action="store_true", help="Check dictionary hints preserve surrounding book pixels and clear old labels")
     parser.add_argument("--unicode-spaces", action="store_true", help="Check native Unicode spacing metrics and blank normal, rotated and scaled rendering")
     parser.add_argument("--factory-flash", action="store_true",
@@ -547,6 +575,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chapter-percentage", action="store_true", help="Check chapter percentage slot selection, removal, reload and rendered formats")
     parser.add_argument("--centered-status-bar", action="store_true", help="Check Center Status Bar and Separator rows, popups and persistence")
     parser.add_argument("--status-bar-feature", action="store_true", help="Check status bar visibility, independent sizes, disk reload and rendered theme/orientation matrix")
+    parser.add_argument("--theme-calibration", action="store_true", help="Check Minimal/Dashboard home and sleep artwork against calibrated bounds")
     parser.add_argument("--screen-calibration", action="store_true", help="Check screen calibration button/touch editing, save, cancel, reset and rotations")
     parser.add_argument("--receive-folder", action="store_true", help="Check receive folder selection, navigation and cancellation")
     parser.add_argument("--receive-folder-captures", help="Directory for receive folder picker framebuffer captures (PGM)")
@@ -596,6 +625,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-notes", action="store_true", help="Check the one-time What's New screen (Download, Update, touch Later vs swipe, landscape hints) and the Settings Release Notes entry; captures via --about-captures")
     parser.add_argument("--about-captures", help="Directory for About framebuffer captures (PGM)")
     parser.add_argument("--sync-server-captures", help="Directory for Sync Server settings captures (PGM)")
+    parser.add_argument("--interval-layout", action="store_true", help="Check interval picker spacing and touch targets in all rotations and UI scales; captures via --about-captures")
     parser.add_argument("--menu-orientation", action="store_true", help="Check physical menu labels/actions in all rotations independently of reader preferences; captures via --about-captures")
     parser.add_argument("--home-swipe", action="store_true", help="Check bottom-edge Home swipes, ordinary list swipes, and reader menu gestures on touch devices")
     parser.add_argument("--home-themes", action="store_true", help="Compare drawer theme changes with fresh Home renders (X4 Pro)")

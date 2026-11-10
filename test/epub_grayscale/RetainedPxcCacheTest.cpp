@@ -209,7 +209,10 @@ TEST_F(RetainedPxcCacheTest, RegeneratingTheSamePathInvalidatesRetainedPixels) {
   Storage.remove("image_v2.pxc");
   SeedContext seed{.bytes = cache(width, height, 1)};
   ImageBlock::setExtractor(&seed, nullptr, seedCache);
-  ImageBlock image("image_v2.jpg", "source.jpg", width, height);
+  // getCachePath() now appends "_v2" itself (upstream's own cache-format revision
+  // bump), so the source name must not also carry it or the two "_v2" suffixes stack
+  // ("image_v2_v2.pxc") and miss the fixture written above.
+  ImageBlock image("image.jpg", "source.jpg", width, height);
   image.prepareCache();
   ASSERT_EQ(seed.calls, 1);
 

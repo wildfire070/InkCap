@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 
 // App-facing transport for the CrossPoint stats snapshot API.
@@ -12,6 +13,8 @@ class StatsUploadClient {
   // Zero for non-book requests; otherwise require acknowledgment of every book.
   Result put(const char* endpoint, const char* payload, unsigned bookCount, bool daily = false,
              const char* sessionId = nullptr);
+  // Upload a staged JSON file through a fixed transport window; no full payload in RAM.
+  Result putFile(const char* endpoint, const char* path, unsigned bookCount);
   // Bounded extension download to a temporary SD file, closed before returning.
   // Releases TLS before parsing; the caller owns removal of responsePath.
   Result get(const char* endpoint, const char* responsePath, size_t maxBytes);
@@ -22,7 +25,9 @@ class StatsUploadClient {
   Result probe(bool trustHtml = false);
   // Bounded calendar download. Old servers may omit this endpoint.
   Result downloadStreak();
+  static int lastHttpCode;  // Foreground request; copy before starting another sync part.
   static const char* errorString(Result result);
+  static const char* formatResult(char* buffer, size_t capacity, Result result, int httpCode);
   // A server without the extension API is not an upload failure: progress-only
   // servers simply have nothing to receive stats or clippings.
   static bool failed(Result result) {
@@ -35,6 +40,8 @@ class StatsUploadClient {
   static bool deviceId(char* out, size_t capacity);
 
  private:
+  Result putBody(const char* endpoint, const char* payload, unsigned bookCount, bool daily, const char* sessionId,
+                 const char* filePath);
   struct Impl;
   std::unique_ptr<Impl> impl;
 };
