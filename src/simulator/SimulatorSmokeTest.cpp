@@ -44,6 +44,7 @@
 #endif
 #include <AppVersion.h>
 #include <ArduinoJson.h>
+#include <Bitmap.h>
 #include <Epub/hyphenation/Hyphenator.h>
 #include <SupportInfo.h>
 
@@ -66,6 +67,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #include "activities/home/AlertActivity.h"
 #include "activities/home/BookActions.h"
 #include "activities/home/FileBrowserActivity.h"
@@ -121,6 +123,8 @@
 #include "components/HeaderDate.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
+#include "components/themes/dashboard/DashboardTheme.h"
+#include "components/themes/minimal/MinimalTheme.h"
 #include "simulator/SimulatorHomeKeyInput.h"
 #include "sync/BookSyncFile.h"
 #include "sync/SyncIds.h"
@@ -136,6 +140,7 @@ extern ActivityManager activityManager;
 extern GfxRenderer renderer;
 extern MappedInputManager mappedInputManager;
 extern bool dispatchButtonShortcut(const ButtonShortcutController::Result& result);
+extern CrossPointSettings::SHORT_PWRBTN getPowerButtonAction();
 
 // Use a detached reader so these boundary checks cannot race its render task.
 struct EpubReaderCompletionSmokeTest {
@@ -400,6 +405,7 @@ struct EpubReaderCompletionSmokeTest {
       if (reader->bookPageEstimate.pagesPerByte() != 0) return false;
       reader->section.reset();
       // Deleting book stats must clear both display fallback and text pace.
+      if (!BookReadingStats::remove(reader->epub->getCachePath())) return false;
       reader->resetCurrentBookStatsAfterDelete();
       uint32_t deletedSeconds = 0;
       if (reader->estimateTimeLeftSeconds(true, deletedSeconds) ||
@@ -444,6 +450,40 @@ std::optional<uint32_t> EpubReaderCompletionSmokeTest::statusAnchor;
 // Inspect values after dispatching physical key edges through each real slider loop.
 struct SliderOrientationSmokeTest {
   static int value(const IntervalSelectionActivity& slider) { return slider.value; }
+  static bool clearsHeader(const IntervalSelectionActivity& slider) {
+    const auto header = slider.pickerHeaderRect();
+    const auto layout = slider.legacyLayout();
+    const auto bar = slider.legacyBarRect();
+    return layout.visible && layout.showSteps && layout.valueY > header.y + header.height &&
+           bar.y - IntervalSelectionLayout::knobOverhang >=
+               layout.valueY + slider.renderer.getLineHeight(UI_12_FONT_ID);
+  }
+  static bool routesTouches(IntervalSelectionActivity& slider) {
+#if CROSSINK_APP_CAP_TOUCH
+    const auto bar = slider.legacyBarRect();
+    const auto layout = slider.legacyLayout();
+    auto& input = slider.mappedInput;
+    const int original = slider.value;
+    const auto tap = [&](const int x, const int y) {
+      input.simulatorInjectTouchDown(x, y);
+      slider.loop();
+      input.simulatorClearInputFrame();
+      input.simulatorInjectTouchRelease(x, y);
+      slider.loop();
+      input.simulatorClearInputFrame();
+    };
+    tap(bar.x + bar.width * 3 / 4, bar.y + bar.height / 2);
+    const int raised = slider.value;
+    const auto safe = UITheme::getInstance().getScreenSafeArea(slider.renderer, false, false);
+    tap(safe.x + safe.width / 8, layout.stepsY + 28);
+    const bool ok = raised > original && slider.value == raised - slider.largeStep;
+    slider.value = original;
+    return ok;
+#else
+    (void)slider;
+    return true;
+#endif
+  }
   static int value(const EpubReaderPercentSelectionActivity& slider) { return slider.value; }
   static void open(EpubReaderDrawerActivity& drawer, const ReaderDrawerPane pane, const uint8_t focus) {
     drawer.openPane(pane);
@@ -558,7 +598,8 @@ struct ReaderDrawerLayoutSmokeTest {
     SETTINGS.toJson(original);
     bool valid = true;
     const SettingInfo* images = nullptr;
-    for (const auto& setting : getBaseSettingsList()) {
+    const auto settings = getBaseSettingsList();
+    for (const auto& setting : settings) {
       if (settingKeyIs(setting, "imageGrayscale")) return false;
       if (settingKeyIs(setting, "imageRendering")) images = &setting;
     }
@@ -1150,9 +1191,15 @@ struct StatusBarFeatureSmokeTest {
       renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
       const int topY = UITheme::getTopStatusBarY(renderer);
       const int bottomY = renderer.getScreenHeight() - bottom - 1;
+      // Include near misses beyond the old 32 px targets, both bezel margins,
+      // and the first page-turn pixel just outside each expanded target.
+      const int topEnd = topY + std::max(64, UITheme::getReaderStatusBarHeight(ReaderStatusBarPosition::Top, renderer));
+      const int bottomStart = renderer.getScreenHeight() - bottom - std::max(64, UITheme::getStatusBarHeight(renderer));
       for (const bool hideOnTap : {false, true}) {
         SETTINGS.tapToHideStatusBar = hideOnTap;
-        for (const int y : {topY, bottomY}) {
+        for (const int y : {0, topY, topY + 48, topEnd - 1, topEnd, renderer.getScreenHeight() / 2, bottomStart - 1,
+                            bottomStart, bottomY - 48, bottomY, renderer.getScreenHeight() - 1}) {
+          const bool toggleBars = hideOnTap && (y < topEnd || y >= bottomStart);
           for (const bool previous : {false, true}) {
             reader.currentPage = 5;
             reader.statusBarVisible = true;
@@ -1163,8 +1210,8 @@ struct StatusBarFeatureSmokeTest {
               mappedInputManager.simulatorInjectTouchRelease(x, y);
               reader.loop();
               mappedInputManager.simulatorClearInputFrame();
-              const int expectedPage = hideOnTap ? 5 : 5 + (tap + 1) * (previous ? -1 : 1);
-              if (reader.currentPage != expectedPage || reader.statusBarVisible != (!hideOnTap || tap == 1))
+              const int expectedPage = toggleBars ? 5 : 5 + (tap + 1) * (previous ? -1 : 1);
+              if (reader.currentPage != expectedPage || reader.statusBarVisible != (!toggleBars || tap == 1))
                 return false;
             }
           }
@@ -1402,6 +1449,167 @@ struct DictionaryPagingSmokeTest {
 };
 
 struct ScreenCalibrationSmokeTest {
+  static bool themeCoverFixture(const Epub& epub, const int width, const int height) {
+    const int stride = ((width + 31) / 32) * 4;
+    BmpHeader header{};
+    header.fileHeader.bfType = 0x4d42;
+    header.fileHeader.bfSize = sizeof(header) + stride * height;
+    header.fileHeader.bfOffBits = sizeof(header);
+    header.infoHeader.biSize = 40;
+    header.infoHeader.biWidth = width;
+    header.infoHeader.biHeight = height;
+    header.infoHeader.biPlanes = 1;
+    header.infoHeader.biBitCount = 1;
+    header.infoHeader.biSizeImage = stride * height;
+    header.infoHeader.biClrUsed = 2;
+    header.colors[1] = {255, 255, 255, 0};
+    auto file = Storage.open(epub.getAdaptiveThumbBmpPath(width, height).c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+    if (!file) return false;
+    bool ok = file.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
+    std::vector<uint8_t> row(stride, 0xff);
+    std::fill_n(row.begin(), stride / 2, 0);
+    for (int y = 0; y < height; ++y) ok &= file.write(row.data(), row.size()) == row.size();
+    file.close();
+    return ok;
+  }
+  static bool themeArtwork(const StatusBarFeatureSmokeTest::Capture& capture) {
+    const auto originalInsets = renderer.getViewableInsets();
+    const auto originalOrientation = renderer.getOrientation();
+    const auto originalTheme = SETTINGS.uiTheme;
+    const auto originalTracking = SETTINGS.trackReadingStats;
+    bool valid = true;
+    const ScreenInsets cases[] = {ScreenInsets{}, ScreenInsets{{{32, 32, 32, 32}}}, ScreenInsets{{{32, 0, 32, 32}}},
+                                  ScreenInsets{{{0, 32, 0, 0}}}};
+    RecentBook book;
+    book.path = "/books/calibration.epub";
+    book.title = "A long book title that wraps onto two lines inside the calibrated screen";
+    book.author = "An author with a long name";
+    Epub epub(book.path, "/.crosspoint");
+    Storage.mkdir(epub.getCachePath().c_str());
+    if (!themeCoverFixture(epub, MinimalMetrics::homeCoverImageWidth, MinimalMetrics::homeCoverImageHeight) ||
+        !themeCoverFixture(epub, DashboardMetrics::homeCoverImageWidth, DashboardMetrics::homeCoverImageHeight))
+      return false;
+    BookReadingStats stats{};
+    stats.totalReadingSeconds = 123456789;
+    stats.totalPagesTurned = 12345;
+    stats.sessionCount = 42;
+    GlobalReadingStats global{};
+    global.totalReadingSeconds = 123456789;
+    global.completedBooks = 12345;
+    MinimalTheme minimal;
+    DashboardTheme dashboard;
+    for (const auto theme : {CrossPointSettings::MINIMAL, CrossPointSettings::DASHBOARD}) {
+      SETTINGS.uiTheme = theme;
+      UITheme::getInstance().reload();
+      for (unsigned index = 0; index < 4; ++index) {
+        renderer.setViewableInsets(cases[index]);
+        for (unsigned rotation = 0; rotation < 4; ++rotation) {
+          renderer.setOrientation(static_cast<GfxRenderer::Orientation>(rotation));
+          const auto check = [&](const char* screen, const bool backgroundBlack, const bool hints) {
+            const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, hints, false);
+            int ink = 0;
+            for (int y = 0; y < renderer.getScreenHeight(); ++y) {
+              for (int x = 0; x < renderer.getScreenWidth(); ++x) {
+                if (renderer.isPixelBlack(x, y) == backgroundBlack) continue;
+                ++ink;
+                if (x < safe.x || y < safe.y || x >= safe.x + safe.width || y >= safe.y + safe.height) {
+                  LOG_ERR("SMOKE", "Theme calibration: %s theme=%d case=%u rotation=%u pixel=%d,%d", screen, theme,
+                          index, rotation, x, y);
+                  return false;
+                }
+              }
+            }
+            return ink > 100;
+          };
+          for (const bool tracking : {false, true}) {
+            SETTINGS.trackReadingStats = tracking;
+            uint64_t missingCoverHash = 0;
+            for (const int coverMode : {0, 1, 2}) {
+              const bool empty = coverMode == 2;
+              book.coverBmpPath = coverMode == 1 ? "/calibration-cover.bmp" : "";
+              renderer.clearScreen();
+              const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+              const auto& metrics = UITheme::getInstance().getMetrics();
+              const int top = metrics.homeTopPadding + UITheme::getHeaderRect(renderer, 0).y - metrics.topPadding;
+              bool rendered = false, stored = false, restored = false;
+              GUI.drawRecentBookCover(
+                  renderer, Rect{safe.x, top, safe.width, metrics.homeCoverTileHeight},
+                  empty ? std::vector<RecentBook>{} : std::vector<RecentBook>{book}, 0, rendered, stored, restored,
+                  [] { return false; }, &stats, 42.0f, &global, "A long chapter title that must stay above the footer");
+              valid &= check(empty ? "empty-home" : "home", false, true);
+              uint64_t hash = 1469598103934665603ull;
+              for (size_t i = 0; i < renderer.getBufferSize(); ++i)
+                hash = (hash ^ renderer.getFrameBuffer()[i]) * 1099511628211ull;
+              if (coverMode == 0) missingCoverHash = hash;
+              if (coverMode == 1 && hash == missingCoverHash) {
+                LOG_ERR("SMOKE", "Calibrated cover was replaced by its placeholder");
+                valid = false;
+              }
+              if (coverMode == 1 && tracking && rotation == 0 && index == 2)
+                capture("calibrated-home-" + std::to_string(theme));
+            }
+            book.coverBmpPath = "/calibration-cover.bmp";
+            for (const bool inverted : {false, true}) {
+              if (theme == CrossPointSettings::MINIMAL) {
+                minimal.drawSleepScreen(renderer, book, &stats, 42.0f, inverted);
+                valid &= check("minimal-sleep", !inverted, false);
+                minimal.drawStatsSleepScreen(renderer, book, &stats, &global, 42.0f, inverted);
+                valid &= check("minimal-stats-sleep", !inverted, false);
+              } else {
+                dashboard.drawSleepScreen(renderer, book, &stats, &global, 42.0f, "Chapter title", inverted);
+                valid &= check("dashboard-sleep", !inverted, false);
+              }
+              if (tracking && rotation == 0 && index == 2)
+                capture("calibrated-sleep-" + std::to_string(theme) + (inverted ? "-inverted" : ""));
+            }
+          }
+        }
+      }
+      // Home can remain alive while its drawer opens Settings. Restoring its
+      // retained cover after a stats toggle must equal a completely fresh draw.
+      renderer.setOrientation(GfxRenderer::Portrait);
+      renderer.setViewableInsets(cases[2]);
+      const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+      const auto& metrics = UITheme::getInstance().getMetrics();
+      const int top = metrics.homeTopPadding + UITheme::getHeaderRect(renderer, 0).y - metrics.topPadding;
+      const Rect content{safe.x, top, safe.width, metrics.homeCoverTileHeight};
+      std::vector<uint8_t> coverBuffer(renderer.getBufferSize());
+      bool rendered = false, stored = false, restored = false;
+      SETTINGS.trackReadingStats = false;
+      renderer.clearScreen();
+      GUI.drawRecentBookCover(
+          renderer, content, {book}, 0, rendered, stored, restored,
+          [&] {
+            std::copy_n(renderer.getFrameBuffer(), coverBuffer.size(), coverBuffer.data());
+            return true;
+          },
+          &stats, 42.0f, &global, "Chapter title");
+      SETTINGS.trackReadingStats = true;
+      std::copy(coverBuffer.begin(), coverBuffer.end(), renderer.getFrameBuffer());
+      restored = true;
+      GUI.drawRecentBookCover(
+          renderer, content, {book}, 0, rendered, stored, restored, [] { return false; }, &stats, 42.0f, &global,
+          "Chapter title");
+      const std::vector<uint8_t> cached(renderer.getFrameBuffer(),
+                                        renderer.getFrameBuffer() + renderer.getBufferSize());
+      renderer.clearScreen();
+      rendered = stored = restored = false;
+      GUI.drawRecentBookCover(
+          renderer, content, {book}, 0, rendered, stored, restored, [] { return false; }, &stats, 42.0f, &global,
+          "Chapter title");
+      if (!std::equal(cached.begin(), cached.end(), renderer.getFrameBuffer())) {
+        LOG_ERR("SMOKE", "Stats toggle retained stale Home artwork for theme %d", theme);
+        valid = false;
+      }
+    }
+    SETTINGS.uiTheme = originalTheme;
+    SETTINGS.trackReadingStats = originalTracking;
+    UITheme::getInstance().reload();
+    renderer.setViewableInsets(originalInsets);
+    renderer.setOrientation(originalOrientation);
+    return valid;
+  }
+
   static bool dictionaryHints(RenderLock& lock, const StatusBarFeatureSmokeTest::Capture& capture) {
     const auto orientation = renderer.getOrientation();
     const auto insets = renderer.getViewableInsets();
@@ -2021,6 +2229,32 @@ std::optional<uint32_t> ScreenCalibrationSmokeTest::epubOffset;
 int ScreenCalibrationSmokeTest::epubWidth = 0;
 
 struct ReaderMenuOrientationSmokeTest {
+  template <typename Reader>
+  static bool resetCounter(Reader& reader, const std::string& cache) {
+    if (!Storage.ensureDirectoryExists(cache.c_str())) return false;
+    reader.stats = BookReadingStats::load(cache);
+    reader.stats.totalReadingSeconds = 3600;
+    if (!reader.stats.save(cache) || !BookReadingStats::remove(cache)) return false;
+    const auto reset = BookReadingStats::load(cache);
+    if (reset.counterId.bytes == StatsCounterId{}.bytes) return false;
+    reader.resetCurrentBookStatsAfterDelete();
+    if (reader.stats.totalReadingSeconds != 0 || reader.stats.counterId.bytes != reset.counterId.bytes) return false;
+    reader.stats.totalReadingSeconds = 60;
+    if (!reader.stats.save(cache)) return false;
+    const auto saved = BookReadingStats::load(cache);
+    return saved.totalReadingSeconds == 60 && saved.counterId.bytes == reset.counterId.bytes;
+  }
+  static bool resetCounters() {
+    auto epub = std::make_unique<Epub>("/books/counter.epub", "/.crosspoint");
+    const auto epubCache = epub->getCachePath();
+    EpubReaderActivity epubReader(renderer, mappedInputManager, std::move(epub),
+                                  EpubReaderActivity::BookReaderSettingsData{}, 1);
+    if (!resetCounter(epubReader, epubCache)) return false;
+    auto xtc = std::make_unique<Xtc>("/books/counter.xtc", "/.crosspoint");
+    const auto xtcCache = xtc->getCachePath();
+    XtcReaderActivity xtcReader(renderer, mappedInputManager, std::move(xtc), 1);
+    return resetCounter(xtcReader, xtcCache);
+  }
   template <typename Reader>
   static OptionPopup& popup(Reader& reader) {
     return reader.quickActionsPopup;
@@ -2880,6 +3114,46 @@ class SimulatorSmokeTest {
     std::fclose(image);
   }
 
+  static void verifyIntervalLayout() {
+    RenderLock lock;
+    applyRequestedTheme();
+    const auto savedInsets = renderer.getViewableInsets();
+    const auto savedOrientation = renderer.getOrientation();
+    const auto savedScale = SETTINGS.uiScale;
+    MappedInputManager input(gpio, renderer);
+    input.setMenuMode(true);
+    ButtonNavigator::setMappedInputManager(input);
+    // Calibration moves the header. Absolute content coordinates must not
+    // creep back in when device geometry or UI scale changes.
+    for (const auto orientation : {GfxRenderer::Portrait, GfxRenderer::LandscapeClockwise,
+                                   GfxRenderer::PortraitInverted, GfxRenderer::LandscapeCounterClockwise}) {
+      renderer.setOrientation(orientation);
+      for (const uint8_t scale : {CrossPointSettings::UI_SCALE_SMALL, CrossPointSettings::UI_SCALE_LARGE}) {
+        SETTINGS.uiScale = scale;
+        for (const bool calibrated : {false, true}) {
+          renderer.setViewableInsets(calibrated ? ScreenInsets{{{32, 16, 24, 12}}} : ScreenInsets{});
+          IntervalSelectionActivity autoTurn(renderer, input, "AutoTurnLayout", StrId::STR_AUTO_TURN_INTERVAL_SECONDS,
+                                             30, 5, 120, 1, 5, StrId::STR_NONE_OPT, true);
+          autoTurn.onEnter();
+          if (!SliderOrientationSmokeTest::clearsHeader(autoTurn))
+            fail("Auto page turn overlaps header (orientation=%d scale=%d calibrated=%d)", orientation, scale,
+                 calibrated);
+          if (input.hasTouchHardware() && !SliderOrientationSmokeTest::routesTouches(autoTurn))
+            fail("Auto page turn touch targets do not follow the controls (orientation=%d)", orientation);
+          autoTurn.render(std::move(lock));
+          captureStatusBarScreen(("auto-turn-" + std::to_string(orientation) + "-scale-" + std::to_string(scale) +
+                                  (calibrated ? "-calibrated" : ""))
+                                     .c_str());
+          autoTurn.onExit();
+        }
+      }
+    }
+    renderer.setViewableInsets(savedInsets);
+    renderer.setOrientation(savedOrientation);
+    SETTINGS.uiScale = savedScale;
+    ButtonNavigator::setMappedInputManager(mappedInputManager);
+  }
+
   static void verifyMenuOrientation() {
     RenderLock lock;
     applyRequestedTheme();
@@ -3602,6 +3876,53 @@ class SimulatorSmokeTest {
   }
 
   static void verifyTiltPageTurnSettings() {
+    // Device/web lists own their descriptors. Persistence visits the identical
+    // catalog without retaining a global copy or depending on UI lifetimes.
+    {
+      auto first = getBaseSettingsList();
+      const auto second = getBaseSettingsList();
+      if (first.size() > getBaseSettingsCapacity()) fail("Settings capacity is too small");
+      size_t index = 0;
+      forEachBaseSetting([&](const SettingInfo& setting) {
+        if (index >= second.size()) fail("Streamed catalog has extra descriptors");
+        const auto& expected = second[index++];
+        if (setting.nameId != expected.nameId || setting.type != expected.type ||
+            setting.valuePtr != expected.valuePtr || setting.value16Ptr != expected.value16Ptr ||
+            setting.stringOffset != expected.stringOffset || setting.stringMaxLen != expected.stringMaxLen ||
+            setting.obfuscated != expected.obfuscated || setting.key != expected.key ||
+            setting.enumValues != expected.enumValues || setting.enumRawValues != expected.enumRawValues ||
+            setting.enumStringValues != expected.enumStringValues)
+          fail("Streamed settings descriptor differs from owned catalog");
+      });
+      if (index != second.size()) fail("Streamed catalog is missing descriptors");
+      first.front().enumRawValues.clear();
+      if (second.front().enumRawValues.empty()) fail("Settings lists share mutable storage");
+      JsonDocument saved;
+      SETTINGS.toJson(saved);
+      for (const auto& setting : second) {
+        if (!setting.key || (!setting.valuePtr && !setting.value16Ptr && !setting.stringOffset)) continue;
+        const std::string key = std::string(setting.key) + (setting.obfuscated ? "_obf" : "");
+        if (saved[key].isNull()) fail("Persisted descriptor missing from settings JSON: %s", key.c_str());
+      }
+      const uint8_t originalTracking = SETTINGS.trackReadingStats;
+      const uint8_t originalShortcut = SETTINGS.shortPwrBtn;
+      SETTINGS.trackReadingStats = 0;
+      SETTINGS.shortPwrBtn = CrossPointSettings::READING_STATS;
+      JsonDocument disabled;
+      SETTINGS.toJson(disabled);
+      SETTINGS.fromJson(disabled.as<JsonVariantConst>());
+      if (SETTINGS.shortPwrBtn != CrossPointSettings::READING_STATS)
+        fail("Disabled stats tracking discarded a persisted shortcut");
+      const auto hidden = getSettingsList();
+      const auto power = std::find_if(hidden.begin(), hidden.end(),
+                                      [](const SettingInfo& setting) { return settingKeyIs(setting, "shortPwrBtn"); });
+      if (power == hidden.end() || std::find(power->enumRawValues.begin(), power->enumRawValues.end(),
+                                             CrossPointSettings::READING_STATS) != power->enumRawValues.end())
+        fail("Stats shortcut still offered while tracking is disabled");
+      SETTINGS.trackReadingStats = originalTracking;
+      SETTINGS.shortPwrBtn = originalShortcut;
+      LOG_INF("SMOKE", "Settings catalog ownership and streamed persistence checks passed (%zu entries)", index);
+    }
     JsonDocument original;
     SETTINGS.toJson(original);
     const auto all = getSettingsList();
@@ -3610,15 +3931,26 @@ class SimulatorSmokeTest {
       const auto direction = std::find_if(rows.begin(), rows.end(), [](const SettingInfo& setting) {
         return settingKeyIs(setting, "tiltPageTurnDirection");
       });
+      const auto sensitivity = std::find_if(rows.begin(), rows.end(), [](const SettingInfo& setting) {
+        return settingKeyIs(setting, "tiltSensitivity");
+      });
       const auto nextOnly = std::find_if(rows.begin(), rows.end(), [](const SettingInfo& setting) {
         return settingKeyIs(setting, "tiltNextPageOnly");
       });
       if (!QuickActions::supportsTiltPageTurn()) {
-        if (direction != rows.end() || nextOnly != rows.end()) fail("Tilt settings exposed without a gyroscope");
+        if (direction != rows.end() || sensitivity != rows.end() || nextOnly != rows.end())
+          fail("Tilt settings exposed without a gyroscope");
         return;
       }
-      if (direction == rows.end() || nextOnly == rows.end() || nextOnly != direction + 1 ||
-          nextOnly->type != SettingType::TOGGLE || nextOnly->nameId != StrId::STR_TILT_NEXT_PAGE_ONLY ||
+      if (direction == rows.end() || sensitivity == rows.end() || sensitivity != direction + 1 ||
+          sensitivity->type != SettingType::ENUM || sensitivity->nameId != StrId::STR_TILT_SENSITIVITY ||
+          sensitivity->valuePtr != &CrossPointSettings::tiltSensitivity ||
+          sensitivity->enumValues != std::vector<StrId>({StrId::STR_SENSITIVITY_LOW, StrId::STR_SENSITIVITY_NORMAL,
+                                                         StrId::STR_SENSITIVITY_HIGH}) ||
+          std::count_if(rows.begin(), rows.end(),
+                        [](const SettingInfo& setting) { return settingKeyIs(setting, "tiltSensitivity"); }) != 1 ||
+          nextOnly == rows.end() || nextOnly != sensitivity + 1 || nextOnly->type != SettingType::TOGGLE ||
+          nextOnly->nameId != StrId::STR_TILT_NEXT_PAGE_ONLY ||
           nextOnly->valuePtr != &CrossPointSettings::tiltNextPageOnly ||
           std::count_if(rows.begin(), rows.end(),
                         [](const SettingInfo& setting) { return settingKeyIs(setting, "tiltNextPageOnly"); }) != 1)
@@ -3626,6 +3958,25 @@ class SimulatorSmokeTest {
     };
     verifyRows(all);
     verifyRows(controls);
+    if (SETTINGS.tiltSensitivity != TiltSensitivity::TILT_NORMAL) fail("Tilt sensitivity must default to Normal");
+    JsonDocument sensitivitySettings;
+    SETTINGS.toJson(sensitivitySettings);
+    for (const uint8_t sensitivity : {TiltSensitivity::TILT_LOW, TiltSensitivity::TILT_NORMAL, TiltSensitivity::TILT_HIGH}) {
+      sensitivitySettings["tiltSensitivity"] = sensitivity;
+      SETTINGS.fromJson(sensitivitySettings.as<JsonVariantConst>());
+      if (SETTINGS.tiltSensitivity != sensitivity) fail("Tilt sensitivity JSON import changed a valid value");
+      if (!SETTINGS.saveToFile()) fail("Cannot save tilt sensitivity");
+      SETTINGS.tiltSensitivity = 255;
+      if (!SETTINGS.loadFromFile() || SETTINGS.tiltSensitivity != sensitivity)
+        fail("Tilt sensitivity did not survive disk reload");
+    }
+    sensitivitySettings.remove("tiltSensitivity");
+    SETTINGS.fromJson(sensitivitySettings.as<JsonVariantConst>());
+    if (SETTINGS.tiltSensitivity != TiltSensitivity::TILT_NORMAL) fail("Old settings must restore Normal tilt sensitivity");
+    sensitivitySettings["tiltSensitivity"] = 255;
+    SETTINGS.tiltSensitivity = TiltSensitivity::TILT_HIGH;
+    SETTINGS.fromJson(sensitivitySettings.as<JsonVariantConst>());
+    if (SETTINGS.tiltSensitivity != TiltSensitivity::TILT_NORMAL) fail("Invalid tilt sensitivity must fall back to Normal");
     if (!QuickActions::supportsTiltPageTurn()) {
       SETTINGS.tiltPageTurn = 1;
       SETTINGS.tiltPageTurnDirection = 2;
@@ -3687,6 +4038,23 @@ class SimulatorSmokeTest {
     SETTINGS.tiltNextPageOnly = 0;
     if (!SETTINGS.loadFromFile() || SETTINGS.tiltNextPageOnly != 1)
       fail("Controls row did not persist tilt preference");
+    // Exercise the real sensitivity picker and its persisted selection.
+    press(mappedInputManager.menuButton(MappedInputManager::Button::Up));
+    press(MappedInputManager::Button::Confirm);
+    if (!editor.simulatorOptionPopupActive()) fail("Tilt sensitivity picker did not open");
+    editor.render(std::move(lock));
+    captureStatusBarScreen("tilt-sensitivity-options");
+    press(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+    mappedInputManager.simulatorInjectPress(MappedInputManager::Button::Confirm);
+    editor.loop();
+    mappedInputManager.simulatorClearInputFrame();
+    if (editor.simulatorOptionPopupActive() || SETTINGS.tiltSensitivity != TiltSensitivity::TILT_HIGH)
+      fail("Tilt sensitivity picker did not select High");
+    editor.render(std::move(lock));
+    captureStatusBarScreen("tilt-sensitivity-high");
+    SETTINGS.tiltSensitivity = TiltSensitivity::TILT_NORMAL;
+    if (!SETTINGS.loadFromFile() || SETTINGS.tiltSensitivity != TiltSensitivity::TILT_HIGH)
+      fail("Tilt sensitivity picker did not persist High");
     editor.onExit();
     SETTINGS.fromJson(original.as<JsonVariantConst>());
     if (!SETTINGS.saveToFile()) fail("Cannot restore tilt test settings");
@@ -6476,6 +6844,14 @@ class SimulatorSmokeTest {
   }
 
   void tickCalibration() {
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_THEME_CALIBRATION")) {
+      RenderLock lock;
+      if (!ScreenCalibrationSmokeTest::themeArtwork(
+              [this](const std::string& name) { captureStatusBarScreen(name.c_str()); }))
+        fail("Theme calibration artwork escaped the safe area");
+      LOG_INF("SMOKE", "Simulator smoke test passed: Minimal/Dashboard calibrated home and sleep artwork");
+      std::_Exit(0);
+    }
     if (scriptIndex < inputScript.size()) {
       runReaderInputScript();
       return;
@@ -7925,8 +8301,87 @@ class SimulatorSmokeTest {
     std::_Exit(0);
   }
 
+  void tickSleepScreenColors() {
+    // A sleep transition must save/exit the outgoing reader without delivering
+    // another input frame, including any stale hold exposed after capture stops.
+    struct SleepInputProbe final : Activity {
+      int& loops;
+      bool& exited;
+      SleepInputProbe(int& loops, bool& exited)
+          : Activity("SleepInputProbe", ::renderer, mappedInputManager), loops(loops), exited(exited) {}
+      void loop() override { ++loops; }
+      void onExit() override { exited = true; }
+    };
+    int outgoingLoops = 0;
+    bool outgoingExited = false;
+    SETTINGS.sleepScreen = CrossPointSettings::OVERLAY;
+    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
+    activityManager.replaceActivity(std::make_unique<SleepInputProbe>(outgoingLoops, outgoingExited));
+    activityManager.loop();
+    activityManager.goToSleep();
+    if (outgoingLoops || !outgoingExited || !activityManager.isCurrentActivityNamed("Sleep"))
+      fail("Sleep dispatched outgoing input or skipped reader cleanup");
+
+    RenderLock lock;
+    SETTINGS.shortPwrBtn = CrossPointSettings::SLEEP;
+    SETTINGS.longPwrBtn = CrossPointSettings::TOGGLE_DARK_MODE;
+    mappedInputManager.simulatorInjectRelease(MappedInputManager::Button::Power);
+    if (getPowerButtonAction() != CrossPointSettings::SLEEP) fail("Short Power selected the long-press action");
+    mappedInputManager.simulatorClearInputFrame();
+    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
+    APP_STATE.openEpubPath.clear();
+    APP_STATE.lastSleepFromReader = false;
+    const char* captures = std::getenv("CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES");
+    for (const bool inverted : {false, true}) {
+      SETTINGS.screenInverted = inverted;
+      for (const auto mode : {CrossPointSettings::OVERLAY, CrossPointSettings::QUICK_RESUME, CrossPointSettings::DARK,
+                              CrossPointSettings::LIGHT, CrossPointSettings::BLANK}) {
+        SETTINGS.sleepScreen = mode;
+        display.setInverted(inverted);
+        renderer.clearScreen();
+        renderer.drawText(UI_12_FONT_ID, 30, 40, "Page Overlay");
+        renderer.drawText(UI_12_FONT_ID, 30, 80, "Keep the current page colors.");
+        SleepActivity sleep(renderer, mappedInputManager, false);
+        sleep.onEnter();
+        const bool retained = mode == CrossPointSettings::OVERLAY || mode == CrossPointSettings::QUICK_RESUME;
+        if (display.isInverted() != (retained && inverted)) fail("Sleep screen changed page colors");
+        if (SETTINGS.screenInverted != inverted) fail("Sleep screen changed the Dark Mode preference");
+        if (mode == CrossPointSettings::OVERLAY && renderer.isPixelBlack(10, 10))
+          fail("Page Overlay changed the logical background");
+        if (captures && mode == CrossPointSettings::OVERLAY) {
+          std::filesystem::create_directories(captures);
+          const auto path = std::filesystem::path(captures) / (inverted ? "overlay-dark.pgm" : "overlay-light.pgm");
+          FILE* image = std::fopen(path.c_str(), "wb");
+          if (!image) fail("Cannot open sleep screen capture");
+          std::fprintf(image, "P5\n%d %d\n255\n", renderer.getScreenWidth(), renderer.getScreenHeight());
+          for (int y = 0; y < renderer.getScreenHeight(); ++y)
+            for (int x = 0; x < renderer.getScreenWidth(); ++x)
+              std::fputc(renderer.isPixelBlack(x, y) != display.isInverted() ? 0 : 255, image);
+          if (std::fclose(image) != 0) fail("Cannot save sleep screen capture");
+        }
+      }
+    }
+    SETTINGS.sleepScreen = CrossPointSettings::OVERLAY;
+    SETTINGS.screenInverted = 1;
+    if (!Storage.writeFile("/sleep.bmp", "invalid bitmap")) fail("Cannot create broken overlay fixture");
+    SleepActivity fallback(renderer, mappedInputManager, false);
+    fallback.onEnter();
+    if (display.isInverted() || SETTINGS.screenInverted != 1)
+      fail("Page Overlay fallback inverted the default sleep screen or changed Dark Mode");
+    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
+    SleepActivity timeout(renderer, mappedInputManager, false, {}, true);
+    timeout.onEnter();
+    if (!display.isInverted()) fail("Timed Quick Resume lost Dark Mode");
+    LOG_INF("SMOKE", "Simulator smoke test passed: sleep screen colors and fallback");
+    std::_Exit(0);
+  }
+
   void tickImpl() {
     mappedInputManager.simulatorClearInputFrame();
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_SLEEP_SCREEN_COLORS")) {
+      tickSleepScreenColors();
+      return;
+    }
     if (std::getenv("CROSSINK_SIMULATOR_SMOKE_QUICK_LOCK_TOUCH_RECOVERY")) {
       // Drive the real main loop with timed raw Up + Down chords at 4, 6 and
       // 8 seconds via CROSSPOINT_SIM_INPUT_SCRIPT: lock, unlock, then recover.
@@ -8086,6 +8541,13 @@ class SimulatorSmokeTest {
           LOG_INF("SMOKE", "Stats upload transport smoke passed");
           std::_Exit(0);
         }
+        if (std::getenv("CROSSINK_STATS_TEST_READER_RESET")) {
+          if (!ReaderMenuOrientationSmokeTest::resetCounters()) fail("Live reader reset lost its counter identity");
+          LOG_INF("SMOKE", "EPUB and XTC live reader counter resets passed");
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SYNC_DIAGNOSTICS_CAPTURES"))
+          verifySyncDiagnosticsScreens(renderer, mappedInputManager);
         verifyStatsUploadContract();
         if (prepareReadingUploadSmokeTest()) {
           WiFi.mode(WIFI_STA);
@@ -8336,7 +8798,8 @@ class SimulatorSmokeTest {
           SETTINGS.trackReadingStats = 1;
           WiFi.mode(WIFI_STA);
           WiFi.begin("stats-smoke");
-          activityManager.replaceActivity(std::make_unique<StatsUploadActivity>(renderer, mappedInputManager));
+          activityManager.replaceActivity(std::make_unique<StatsUploadActivity>(
+              renderer, mappedInputManager, std::string{}, StatsUploadActivity::Scope::ReadingStats));
           inputScript.clear();
           scriptIndex = 0;
           inputCompletionStep = SmokeStep::StatsUploadEmptyDone;
@@ -8406,6 +8869,11 @@ class SimulatorSmokeTest {
           sdFontSystem.setSettingsPersistenceCallback(nullptr, nullptr);
           sdFontSystem.releaseRegistry();
           LOG_INF("SMOKE", "Simulator smoke test passed: font recovery");
+          std::_Exit(0);
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_INTERVAL_LAYOUT")) {
+          verifyIntervalLayout();
+          LOG_INF("SMOKE", "Simulator smoke test passed: interval layout");
           std::_Exit(0);
         }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_MENU_ORIENTATION")) {

@@ -36,8 +36,15 @@ namespace {
 // every distinct byte either side ever used as a sentinel is listed below and
 // must still be rejected, regardless of which branch originally produced it
 // (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 104;
-constexpr uint8_t kPartialVersion = 0xD9;
+//
+// Upstream's 2.0.0 release prep squashed and renamed several of its own
+// historical entries (e.g. "kOlderFullVersion"/"kLastReleaseFullVersion" now
+// point at values this branch already tracks under other names below) --
+// those renames carry no new byte values, so they're not duplicated here.
+constexpr uint8_t kFullVersion = 106;
+constexpr uint8_t kPartialVersion = 0xDB;
+constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
+constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
 constexpr uint8_t kPreChapterSpacingPartialVersion = 0xD8;
 constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;  // InkCap's own former-current, now superseded by v103
@@ -72,6 +79,12 @@ constexpr uint8_t kBorderSuppressionFullVersion = 84;  // upstream v84 (border s
                                                        // v84 bundle (images/indents/headings/bold-italic) -- same byte
 constexpr uint8_t kBorderSuppressionPartialVersion = 0xC5;        // upstream's partial marker for its v84
 constexpr uint8_t kInkCapPreviousPartialVersion = 0xFE;           // InkCap's own former-current partial marker (v84)
+// Upstream's 2.0.0 release prep renamed its own former "kOlderFullVersion"/"kLastReleaseFullVersion"
+// to point at 79/0xF4 and 83/0xC4 respectively -- both values are already tracked below under this
+// branch's own names (kEarlierFullVersion, kUpstreamHangulPartialVersion's paired kOlderFullVersion),
+// so the rename carries no new byte value and isn't duplicated here.
+constexpr uint8_t kListLayoutFullVersion = 80;  // upstream v80: list margin/padding layout
+constexpr uint8_t kListLayoutPartialVersion = 0xC1;
 constexpr uint8_t kOlderFullVersion = 83;  // InkCap's own v83 (previous); also upstream's v83 (Hangul) -- same byte
 constexpr uint8_t kOlderPartialVersion = 0xFC;
 constexpr uint8_t kUpstreamHangulPartialVersion = 0xC4;  // upstream's partial marker for its v83 (Hangul)
@@ -226,7 +239,8 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreChapterSpacingFullVersion, kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
+       {kPreSourceRangeFullVersion, kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
+        kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
         kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
         kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion,
         kStablePageFullVersion, kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion,
@@ -236,7 +250,8 @@ TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
         kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion, kC3BitmapFullVersion,
         kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion, kParagraphSpacingFullVersion,
         kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion,
-        kInkCapPreviousPartialVersion, kOlderFullVersion, kOlderPartialVersion, kUpstreamHangulPartialVersion,
+        kInkCapPreviousPartialVersion, kListLayoutFullVersion, kListLayoutPartialVersion, kOlderFullVersion,
+        kOlderPartialVersion, kUpstreamHangulPartialVersion,
         kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamPaddingPartialVersion, kEarlierFullVersion,
         kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion, kLastReleaseFullVersion,
         kLastReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {

@@ -9,7 +9,7 @@ inline struct TestHeap {
   unsigned getMaxAllocHeap() const { return largest; }
 } ESP;
 inline struct TestHttpReply {
-  std::string body;
+  std::string body, uploaded;
   int status = 200;
   bool complete = true, validUrl = true, connected = false;
   unsigned streamedRequests = 0;
@@ -37,7 +37,10 @@ class SecureHttpClient {
     }
     return testHttp.status;
   }
-  int sendRequest(const char*, const uint8_t*, size_t, const Callback& callback) { return GET(callback); }
+  int sendRequest(const char*, const uint8_t* data, size_t length, const Callback& callback) {
+    testHttp.uploaded.assign(reinterpret_cast<const char*>(data), length);
+    return GET(callback);
+  }
   bool responseComplete() const { return complete; }
 
  private:

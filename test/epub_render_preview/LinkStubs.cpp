@@ -25,7 +25,9 @@ CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, int, uint16_t, uin
     : renderer_(renderer), tableStyle_(tableStyle), characterSpacing_(characterSpacing) {}
 bool CompactTableLayout::beginRow() { return true; }
 bool CompactTableLayout::beginCell(bool, uint8_t, uint32_t, const BlockStyle&) { return true; }
-bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t) { return true; }
+bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t, uint32_t) {
+  return true;
+}
 bool CompactTableLayout::endCell(const std::vector<std::pair<int, FootnoteEntry>>&) { return true; }
 CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow&, std::vector<std::shared_ptr<TextBlock>>&,
                                                             std::vector<FootnoteEntry>&, uint32_t&) {
