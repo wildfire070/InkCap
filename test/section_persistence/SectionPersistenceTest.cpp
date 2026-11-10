@@ -36,8 +36,15 @@ namespace {
 // do -- every distinct byte either side ever used as a sentinel is listed
 // below and must still be rejected, regardless of which branch originally
 // produced it (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 104;
-constexpr uint8_t kPartialVersion = 0xD9;
+//
+// Upstream's 2.0.0 release prep squashed and renamed several of its own
+// historical entries (e.g. "kOlderFullVersion"/"kLastReleaseFullVersion" now
+// point at values this branch already tracks under other names below) --
+// those renames carry no new byte values, so they're not duplicated here.
+constexpr uint8_t kFullVersion = 106;
+constexpr uint8_t kPartialVersion = 0xDB;
+constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
+constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
 constexpr uint8_t kPreChapterSpacingPartialVersion = 0xD8;
 constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;  // this branch's own former-current, now superseded by v103
@@ -76,18 +83,26 @@ constexpr uint8_t kOlderFullVersion = 83;  // this branch's own v83 (Hangul-boun
 constexpr uint8_t kOlderPartialVersion = 0xFC;
 // Upstream's own version 83 (bold/italic inheritance) landed on the same
 // integer as this branch's own prior version 83 above by coincidence -- the
-// two are different formats; both must be rejected.
+// two are different formats; both must be rejected. (Upstream's 2.0.0 squash
+// renamed this one to "kLastReleaseFullVersion" on its own side; same byte.)
 constexpr uint8_t kUpstreamBoldItalicFullVersion = 83;
 constexpr uint8_t kUpstreamBoldItalicPartialVersion = 0xC4;
 constexpr uint8_t kEvenOlderFullVersion = 82;  // this branch's own v82 (character spacing port, now retired)
 constexpr uint8_t kEvenOlderPartialVersion = 0xFB;
+// Upstream's squash renamed this one to "kOlderFullVersion" on its own side; same byte.
 constexpr uint8_t kEarlierFullVersion = 79;
 constexpr uint8_t kEarlierPartialVersion = 0xF4;
+// Upstream's squash renamed this one to "kEarlierFullVersion" on its own side; same byte.
 constexpr uint8_t kLastReleaseFullVersion = 78;
 constexpr uint8_t kLastReleasePartialVersion = 0xF2;
 constexpr uint8_t kPreReleaseFullVersion = 77;
 constexpr uint8_t kPreReleasePartialVersion = 0xF3;
 constexpr uint8_t kPreviousReleasePrepPartialVersion = 0x80;
+// Upstream's own v80 (ordered lists, marker suppression, list-container insets, see
+// Section.cpp's history) -- tracked only as bare literals on upstream's own side, named
+// here for consistency with the rest of this list.
+constexpr uint8_t kListLayoutFullVersion = 80;
+constexpr uint8_t kListLayoutPartialVersion = 0xC1;
 
 ReaderRenderSpec renderSpec() {
   ReaderRenderSpec spec;
@@ -228,7 +243,8 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreChapterSpacingFullVersion, kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
+       {kPreSourceRangeFullVersion, kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
+        kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
         kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
         kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion, kStablePageFullVersion,
         kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion, kHyphenJustifyFullVersion,
@@ -239,9 +255,10 @@ TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
         kPreviousPartialVersion, kUpstreamPublisherDecorationsFullVersion, kUpstreamPublisherDecorationsPartialVersion,
         kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion,
         kBorderSuppressionPartialVersion, kOlderFullVersion, kOlderPartialVersion, kUpstreamBoldItalicFullVersion,
-        kUpstreamBoldItalicPartialVersion, kEvenOlderFullVersion, kEvenOlderPartialVersion, kEarlierFullVersion,
-        kEarlierPartialVersion, kLastReleaseFullVersion, kLastReleasePartialVersion, kPreReleaseFullVersion,
-        kPreReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {
+        kUpstreamBoldItalicPartialVersion, kEvenOlderFullVersion, kEvenOlderPartialVersion, kListLayoutFullVersion,
+        kListLayoutPartialVersion, kEarlierFullVersion, kEarlierPartialVersion, kLastReleaseFullVersion,
+        kLastReleasePartialVersion, kPreReleaseFullVersion, kPreReleasePartialVersion,
+        kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
     harness.appendPages(1);

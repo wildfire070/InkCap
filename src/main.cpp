@@ -236,8 +236,7 @@ EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitte
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
-EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
-EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
+EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, nullptr);
 
 #endif
 EpdFont smallFont(&inter_8_regular);
@@ -1860,7 +1859,7 @@ void loop() {
 #endif
   if (!buttonShortcutController.isQuickLocked()) {
     halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.tiltPageTurnDirection, SETTINGS.orientation,
-                         activityManager.isReaderActivity());
+                         activityManager.isReaderActivity(), SETTINGS.tiltSensitivity);
   }
 
   renderer.setFadingFix(SETTINGS.fadingFix);

@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 
+#include "ArrayHeap.h"
 #include "ClippingStore.h"
 #include "activities/reader/ReadingStatsUtils.h"
 #include "clippings/ClippingIdentity.h"
@@ -92,6 +93,7 @@ class ClippingSync : public ::testing::Test {
     maxClippingTestArrayAllocation = SIZE_MAX;
     EXPECT_EQ(openBookmarkReaders, 0);
     EXPECT_FALSE(Storage.files.contains("/.crosspoint/clipping-sync/download.tmp"));
+    EXPECT_FALSE(Storage.files.contains("/.crosspoint/clipping-sync/upload.tmp"));
     EXPECT_EQ(Storage.files.at("/My Clippings.txt"), "local export\n");
   }
   void load() { ASSERT_TRUE(CLIPPINGS.loadForBook(BOOK, "Title", "Author", "epub")); }
@@ -110,6 +112,7 @@ void SyncPending::SessionMarker::mark(const std::string&, uint8_t) {}
 
 // In-memory transport exercises the production serializer, pagination parser,
 // store and retry flow; no test code substitutes the merge implementation.
+int StatsUploadClient::lastHttpCode = 0;
 struct StatsUploadClient::Impl {};
 StatsUploadClient::StatsUploadClient() = default;
 StatsUploadClient::~StatsUploadClient() = default;
@@ -130,6 +133,12 @@ Result StatsUploadClient::put(const char*, const char* payload, unsigned, bool, 
   serializeJson(item, row);
   remote[id] = row;
   return Result::Ok;
+}
+Result StatsUploadClient::putFile(const char* endpoint, const char* path, unsigned count) {
+  auto found = Storage.files.find(path);
+  if (found == Storage.files.end()) return Result::InvalidResponse;
+  EXPECT_EQ(found->second.find('\x01'), std::string::npos);
+  return put(endpoint, found->second.c_str(), count);
 }
 Result StatsUploadClient::get(const char* endpoint, const char* responsePath, size_t maxBytes) {
   ++getCount;
@@ -352,6 +361,12 @@ TEST_F(ClippingSync, ReadsLegacyVersionsAndKeepsExistingServerIdentity) {
       const std::string id = version == 6 ? "original-id" : "00dd471ed33eb756";
       if (pullFirst) {
         addRemote(id, "hello");
+        JsonDocument incoming;
+        ASSERT_FALSE(deserializeJson(incoming, remote.at(id)));
+        incoming["start_offset"] = 100;
+        incoming["end_offset"] = 105;
+        remote[id].clear();
+        serializeJson(incoming, remote[id]);
         ASSERT_EQ(ClippingsUpload::download(BOOK, DOCUMENT), Result::Ok);
         EXPECT_EQ(savedKey(0), scope() + id);
       }
@@ -361,10 +376,14 @@ TEST_F(ClippingSync, ReadsLegacyVersionsAndKeepsExistingServerIdentity) {
       load();
       ASSERT_EQ(CLIPPINGS.clippingCount(), 1U);
       EXPECT_EQ(CLIPPINGS.clippingAt(0)->layoutSignature, version >= 3 ? 42U : 0U);
+      if (pullFirst) {
+        EXPECT_EQ(CLIPPINGS.clippingAt(0)->sourceStart, 100U);
+        EXPECT_EQ(CLIPPINGS.clippingAt(0)->sourceEnd, 105U);
+      }
       EXPECT_EQ(CLIPPINGS.clippingAt(0)->tableSelection, version >= 4 ? 7 : UINT16_MAX);
       ASSERT_TRUE(CLIPPINGS.removeClippingAt(0));
       CLIPPINGS.unload();
-      EXPECT_EQ(static_cast<uint8_t>(Storage.files.at(storePath())[0]), 7);
+      EXPECT_EQ(static_cast<uint8_t>(Storage.files.at(storePath())[0]), 8);
       ASSERT_EQ(ClippingsUpload::sync(BOOK, DOCUMENT), Result::Ok);
       load();
       EXPECT_FALSE(CLIPPINGS.hasClippings());
@@ -608,4 +627,90 @@ TEST_F(ClippingSync, UploadThenDownloadCompletesWithoutWorstCaseResponseAllocati
   EXPECT_EQ(ClippingsUpload::sync(BOOK, DOCUMENT), Result::Ok);
   EXPECT_EQ(putCount, 1U);
   EXPECT_GT(getCount, 0U);
+}
+
+TEST_F(ClippingSync, ImportsNearIndexLimitsWithoutHoldingTwoBookIndexes) {
+  for (const unsigned count : {127, 128, 254, 255, 256}) {
+    SCOPED_TRACE(count);
+    Storage.files.clear();
+    Storage.files["/My Clippings.txt"] = "local export\n";
+    load();
+    for (unsigned i = 0; i < count; ++i) {
+      ASSERT_EQ(CLIPPINGS.addClipping(0, i, i, 300, 0, 1, 2, "Chapter", UINT16_MAX, "local-" + std::to_string(i),
+                                      UINT16_MAX, 42),
+                ClippingStore::AddResult::Added);
+    }
+    CLIPPINGS.unload();
+    arrayHeap::live = arrayHeap::peak = 0;
+    const size_t slots = std::min<size_t>(count + 1, CLIPPING_MAX_PER_BOOK);
+    arrayHeap::limit = slots * (sizeof(Clipping) + sizeof(uint32_t) + sizeof(uint8_t)) + 256;
+    arrayHeap::tracking = true;
+    Clipping clip;
+    bool full = false;
+    const bool merged = ClippingStore::mergeFromSync(BOOK, clip, "incoming", scope() + "incoming", false, &full);
+    arrayHeap::tracking = false;
+    EXPECT_EQ(merged, count < CLIPPING_MAX_PER_BOOK);
+    EXPECT_EQ(full, count == CLIPPING_MAX_PER_BOOK);
+    EXPECT_EQ(arrayHeap::live, 0U);
+    EXPECT_LE(arrayHeap::peak, arrayHeap::limit);
+    load();
+    EXPECT_EQ(CLIPPINGS.clippingCount(), slots);
+    CLIPPINGS.unload();
+  }
+}
+
+TEST_F(ClippingSync, FailedImportAllocationPreservesStoreAndRetry) {
+  addLocal();
+  const auto before = Storage.files.at(storePath());
+  arrayHeap::live = arrayHeap::peak = 0;
+  arrayHeap::limit = 1;
+  arrayHeap::tracking = true;
+  Clipping clip;
+  bool full = false;
+  const bool merged = ClippingStore::mergeFromSync(BOOK, clip, "incoming", scope() + "incoming", false, &full);
+  arrayHeap::tracking = false;
+  EXPECT_FALSE(merged);
+  EXPECT_FALSE(full);
+  EXPECT_EQ(arrayHeap::live, 0U);
+  EXPECT_EQ(Storage.files.at(storePath()), before);
+  EXPECT_TRUE(ClippingStore::mergeFromSync(BOOK, clip, "incoming", scope() + "incoming", false, &full));
+}
+
+TEST_F(ClippingSync, UploadsWorstCaseEscapingWithoutLargeArrayAllocation) {
+  load();
+  const std::string text(4096, '\x01');
+  ASSERT_EQ(CLIPPINGS.addClipping(2, 3, 4, 20, 5, 6, 7, "Chapter", 12, text, UINT16_MAX, 42),
+            ClippingStore::AddResult::Added);
+  CLIPPINGS.unload();
+  maxClippingTestArrayAllocation = 8192;
+  ASSERT_EQ(ClippingsUpload::upload(BOOK, DOCUMENT), Result::Ok);
+  ASSERT_EQ(remote.size(), 1U);
+  JsonDocument json;
+  ASSERT_FALSE(deserializeJson(json, remote.begin()->second));
+  EXPECT_EQ(json["text"].as<std::string>(), text);
+}
+
+TEST_F(ClippingSync, SourceRangesRoundTripWithoutSharingLayoutCoordinates) {
+  load();
+  ASSERT_EQ(CLIPPINGS.addClipping(2, 3, 3, 20, 0, 1, 2, "Chapter", 12, "same phrase", UINT16_MAX, 42, 100, 111),
+            ClippingStore::AddResult::Added);
+  CLIPPINGS.unload();
+  ASSERT_EQ(ClippingsUpload::upload(BOOK, DOCUMENT), Result::Ok);
+  ASSERT_EQ(remote.size(), 1U);
+  JsonDocument uploaded;
+  ASSERT_FALSE(deserializeJson(uploaded, remote.begin()->second));
+  EXPECT_EQ(uploaded["start_offset"].as<uint32_t>(), 100U);
+  EXPECT_EQ(uploaded["end_offset"].as<uint32_t>(), 111U);
+  addRemote("anchored", "other phrase");
+  JsonDocument incoming;
+  ASSERT_FALSE(deserializeJson(incoming, remote.at("anchored")));
+  incoming["start_offset"] = 300;
+  incoming["end_offset"] = 312;
+  serializeJson(incoming, remote["anchored"] = "");
+  ASSERT_EQ(ClippingsUpload::download(BOOK, DOCUMENT), Result::Ok);
+  load();
+  ASSERT_EQ(CLIPPINGS.clippingCount(), 2U);
+  EXPECT_EQ(CLIPPINGS.clippingAt(1)->sourceStart, 300U);
+  EXPECT_EQ(CLIPPINGS.clippingAt(1)->sourceEnd, 312U);
+  EXPECT_EQ(CLIPPINGS.clippingAt(1)->layoutSignature, 0U);
 }

@@ -98,6 +98,7 @@ add_subdirectory(input_release_guard)
 add_subdirectory(release_suppression)
 add_subdirectory(bitmap_resample)
 add_subdirectory(koreader_http_bounds)
+add_subdirectory(bmp_to_bmp)
 add_subdirectory(jpeg_decoder)
 add_subdirectory(pxc_v2)
 add_subdirectory(memory_policy)
@@ -139,6 +140,7 @@ add_subdirectory(support_info)
 add_subdirectory(log_retention)
 add_subdirectory(screen_calibration)
 add_subdirectory(keyboard_tips)
+add_subdirectory(interval_selection_layout)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_subdirectory(frontlight_settings_boot)
 add_test(NAME TransferReliabilityRegression
@@ -154,74 +156,72 @@ add_test(NAME UploadFailureRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_upload_cancellation.py)
 add_test(NAME StorageAndBrowsingRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_storage_and_browsing_ports.py)
+add_test(NAME RecentTxtProgressRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_recent_txt_progress.py)
+add_test(NAME DecodedImageRevisionRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_decoded_image_revision.py)
 add_test(NAME OptimizerCacheSeedRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_optimizer_cache_seed.py)
 add_test(NAME WifiAutoConnectRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_wifi_auto_connect.py)
 add_subdirectory(book_loading_feedback)
 add_subdirectory(otf_fonts)
-
 add_subdirectory(asset_catalog)
 add_subdirectory(asset_download)
 add_subdirectory(asset_companion_index)
 add_subdirectory(asset_companion_store)
-
 add_subdirectory(http_header)
-
 add_subdirectory(swipe_delete)
 
 add_subdirectory(cover_tone_curve)
 add_subdirectory(touch_action_buttons)
-
 add_test(NAME LanguageAssetPublicationRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_language_asset_publication.py)
+add_test(NAME ReleaseDownloadPreparationRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_release_download_preparation.py)
 
 add_subdirectory(reading_session_journal)
-
 add_subdirectory(reading_session_checkpoint)
-
 add_subdirectory(protected_paths)
 add_subdirectory(plugin_manifest_classification)
 add_subdirectory(plugin_catalog_paging)
 add_subdirectory(plugin_http_policy)
 add_subdirectory(plugin_bundle)
-
 add_test(NAME PluginDownloadLifecycleRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_plugin_download_lifecycle.py)
-
 add_subdirectory(plugin_picker_layout)
-
 add_subdirectory(plugin_details)
-
 add_subdirectory(reader_session)
 add_subdirectory(reader_plugin_events)
-
 add_subdirectory(hal_power_manager)
 add_subdirectory(hal_frontlight)
 add_subdirectory(picco_slide_switch)
 add_subdirectory(input_wake)
 add_subdirectory(button_navigation)
 add_subdirectory(button_capture)
-
 add_test(NAME ReaderRestartStatsRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_reader_restart_stats.py)
-
 add_test(NAME ReaderStatsLatencyRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/scripts/test_reader_stats_latency.py)
-
 add_test(NAME BookmarkListMemoryRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_bookmark_list_memory.py)
-
 add_subdirectory(bookmark_store)
-
 add_test(NAME UpstreamPortRegressions
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_upstream_ports.py)
-
 add_subdirectory(gif_support)
-
 add_subdirectory(clipping_sync)
 add_subdirectory(progress_slots)
 add_test(NAME PiccoDisplayIdleRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_picco_display_idle.py)
 add_test(NAME PluginNetworkBootRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_plugin_network_boot.py)
+FetchContent_GetProperties(arduinojson)
+add_test(NAME PluginJobHeapRegression
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_plugin_job_heap.py
+    --json-include ${arduinojson_SOURCE_DIR}/src)
+find_program(NODE_EXECUTABLE node)
+if(NODE_EXECUTABLE)
+  add_test(NAME TransferWebSocketRegression
+    COMMAND ${NODE_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_transfer_websocket.cjs)
+endif()
+add_subdirectory(progress_sync)

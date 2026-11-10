@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "ReaderFontSizeStep.h"
+#include "TiltSensitivity.h"
 #include "util/ReaderStatusBarConfig.h"
 
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
@@ -734,6 +735,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t tiltPageTurn = TILT_OFF;
   uint8_t tiltPageTurnDirection = TILT_LEFT_RIGHT;
   uint8_t tiltNextPageOnly = 0;
+  uint8_t tiltSensitivity = TiltSensitivity::TILT_NORMAL;
   // Frontlight quick-panel state (boards with FREEINK_CAP_FRONTLIGHT, e.g. X4
   // Pro). Applied at boot, edited only from the frontlight panel; persisted as
   // category-less entries so they stay out of the Settings screen. Writes are

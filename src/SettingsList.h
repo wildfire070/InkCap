@@ -13,6 +13,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -84,7 +85,7 @@ inline bool settingKeyIs(const SettingInfo& setting, const char* key) {
 
 inline bool isTiltPageTurnSetting(const SettingInfo& setting) {
   return settingKeyIs(setting, "tiltPageTurn") || settingKeyIs(setting, "tiltPageTurnDirection") ||
-         settingKeyIs(setting, "tiltNextPageOnly");
+         settingKeyIs(setting, "tiltNextPageOnly") || settingKeyIs(setting, "tiltSensitivity");
 }
 
 inline bool isPageGestureSettingDisabled(const SettingInfo& setting) {
@@ -572,7 +573,10 @@ inline void appendShortcutOptions(SettingInfo& setting, const ShortcutOptionCata
     if (catalog == ShortcutOptionCatalog::HomeButton &&
         (action == CrossPointSettings::HOME_READER || action == CrossPointSettings::BACK_HOME))
       continue;
-    if (!QuickActions::isActionAvailable(static_cast<uint8_t>(action))) continue;
+    // Persist a saved stats shortcut even while tracking is disabled. The UI
+    // removes it in getSettingsList(); availability must not invalidate storage.
+    if (action != CrossPointSettings::READING_STATS && !QuickActions::isActionAvailable(static_cast<uint8_t>(action)))
+      continue;
     const uint8_t rawValue = shortcutRawValue(catalog, action);
     if (rawValue == SHORTCUT_OPTION_UNAVAILABLE) continue;
     setting.enumValues.push_back(QuickActions::actionLabel(static_cast<uint8_t>(action)));
@@ -620,10 +624,8 @@ inline SettingInfo buildSideButtonActionSetting(const StrId nameId, uint8_t Cros
 // Each entry has a key (for JSON API) and category (for grouping).
 // ACTION-type entries and entries without a key are device-only.
 //
-// The static list is constructed exactly once (master's optimization, #1086 +
-// #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
-// can use it directly; mutable device UI lists use getSettingsList(), which
-// returns an owned copy and can add SD-card font and dictionary options.
+// UI consumers own their descriptors; persistence visits and releases each entry.
+// Counts include conditional publisher-font, touch and slide-switch entries.
 // Companion picker. The options are the generated character names, so adding a
 // .grid file surfaces a new choice with no change here.
 inline SettingInfo buildCompanionCharacterSetting() {
@@ -668,11 +670,22 @@ inline constexpr size_t SLIDE_SWITCH_SETTINGS_COUNT = 1;
 inline constexpr size_t SLIDE_SWITCH_SETTINGS_COUNT = 0;
 #endif
 
-inline size_t getBaseSettingsCapacity() {
-  return BASE_SETTINGS_CAPACITY + (QuickActions::supportsTiltPageTurn() ? 3 : 0) + SLIDE_SWITCH_SETTINGS_COUNT;
+inline size_t getBaseSettingsCapacity() { return BASE_SETTINGS_CAPACITY + 4 + SLIDE_SWITCH_SETTINGS_COUNT; }
+
+using SettingVisitor = void (*)(SettingInfo&&, void*);
+// Inspect or move each descriptor during the callback; borrowed references expire on return.
+void forEachBaseSetting(SettingVisitor visitor, void* context);
+
+template <typename Visitor>
+void forEachBaseSetting(Visitor&& visitor) {
+  forEachBaseSetting(
+      [](SettingInfo&& setting, void* context) {
+        (*static_cast<std::remove_reference_t<Visitor>*>(context))(std::move(setting));
+      },
+      &visitor);
 }
 
-const std::vector<SettingInfo>& getBaseSettingsList();
+std::vector<SettingInfo> getBaseSettingsList();
 
 inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
                                                 const DictionaryRegistry* dictRegistry = nullptr) {
@@ -949,6 +962,7 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   const bool hasTiltPageTurnSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN);
   const bool hasTiltPageTurnDirectionSetting = hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
   const bool hasTiltNextPageOnlySetting = hasSettingByName(allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY);
+  const bool hasTiltSensitivitySetting = hasSettingByName(allSettings, StrId::STR_TILT_SENSITIVITY);
   const bool hasTapsGestures = hasSettingByName(allSettings, StrId::STR_NEXT_PAGE);
   const bool hasFrontButtons = deviceHasFrontButtons();
   const bool hasHomeKey = gpio.hasHomeKey();
@@ -956,7 +970,8 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   std::vector<SettingInfo> settings;
   settings.reserve(3 + SLIDE_SWITCH_SETTINGS_COUNT + (hasHomeKey ? 1u : 0u) + (hasFrontButtons ? 2u : 0u) +
                    (hasTiltPageTurnSetting ? 1u : 0u) + (hasTiltPageTurnDirectionSetting ? 1u : 0u) +
-                   (hasTiltNextPageOnlySetting ? 1u : 0u) + (hasTapsGestures ? 1u : 0u));
+                   (hasTiltNextPageOnlySetting ? 1u : 0u) + (hasTiltSensitivitySetting ? 1u : 0u) +
+                   (hasTapsGestures ? 1u : 0u));
   if (hasHomeKey) {
     settings.push_back(SettingInfo::Submenu(StrId::STR_HOME_BUTTON, SettingAction::ControlsHomeButton));
   }
@@ -971,6 +986,7 @@ inline std::vector<SettingInfo> buildControlsSettingsParentList(const std::vecto
   }
   if (hasTiltPageTurnSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN);
   if (hasTiltPageTurnDirectionSetting) addSettingByName(settings, allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION);
+  if (hasTiltSensitivitySetting) addSettingByName(settings, allSettings, StrId::STR_TILT_SENSITIVITY);
   if (hasTiltNextPageOnlySetting) addSettingByName(settings, allSettings, StrId::STR_TILT_NEXT_PAGE_ONLY);
   if (hasFrontButtons) addSettingByKey(settings, allSettings, "menuNavigation");
 #if FREEINK_DEVICE_PICCO
