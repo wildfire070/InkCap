@@ -36,8 +36,14 @@ namespace {
 // do -- every distinct byte either side ever used as a sentinel is listed
 // below and must still be rejected, regardless of which branch originally
 // produced it (a stale file on a real SD card could be from either history).
-constexpr uint8_t kFullVersion = 104;
-constexpr uint8_t kPartialVersion = 0xD9;
+//
+// Upstream's 2.0.0 release prep squashed and renamed several of its own
+// historical entries (e.g. "kOlderFullVersion"/"kLastReleaseFullVersion" now
+// point at values this branch already tracks under other names below) --
+// those renames carry no new byte values, so they're not duplicated here.
+constexpr uint8_t kFullVersion = 106;
+constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
+constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
 constexpr uint8_t kPreChapterSpacingPartialVersion = 0xD8;
 constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;  // this branch's own former-current, now superseded by v103
@@ -60,6 +66,7 @@ constexpr uint8_t kPreImageAlignmentFullVersion = 94;
 constexpr uint8_t kPreImageAlignmentPartialVersion = 0xCF;
 constexpr uint8_t kPreFieldsetFullVersion = 93;
 constexpr uint8_t kPreFieldsetPartialVersion = 0xCE;
+constexpr uint8_t kPartialVersion = 0xDB;
 constexpr uint8_t kS3BitmapFullVersion = 90;
 constexpr uint8_t kS3BitmapPartialVersion = 0xCB;
 constexpr uint8_t kC3BitmapFullVersion = 89;
@@ -75,6 +82,12 @@ constexpr uint8_t kParagraphSpacingFullVersion = 85;  // upstream v85/86: hyphen
 constexpr uint8_t kParagraphSpacingPartialVersion = 0xC6;
 constexpr uint8_t kBorderSuppressionFullVersion = 84;  // upstream v84: suppressed CSS borders
 constexpr uint8_t kBorderSuppressionPartialVersion = 0xC5;
+// upstream's 2.0.0 release prep renamed its own former "kOlderFullVersion"/"kLastReleaseFullVersion"
+// to point at 79/0xF4 and 83/0xC4 respectively -- both values are already tracked below under this
+// branch's own names (kEarlierFullVersion, kUpstreamHangulFullVersion), so the rename carries no new
+// byte value and isn't duplicated here.
+constexpr uint8_t kListLayoutFullVersion = 80;  // upstream v80: list margin/padding layout
+constexpr uint8_t kListLayoutPartialVersion = 0xC1;
 constexpr uint8_t kOlderFullVersion = 84;  // this branch's own former-current (image/indent/heading/bold bundle)
 constexpr uint8_t kOlderPartialVersion = 0xFE;
 constexpr uint8_t kEvenOlderFullVersion = 83;  // this branch's own prior version
@@ -235,7 +248,8 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreChapterSpacingFullVersion, kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
+       {kPreSourceRangeFullVersion, kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
+        kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
         kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
         kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion,
         kStablePageFullVersion, kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion,
@@ -245,7 +259,8 @@ TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
         kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion, kPreFieldsetPartialVersion, kS3BitmapFullVersion,
         kS3BitmapPartialVersion, kC3BitmapFullVersion, kC3BitmapPartialVersion, kPreviousFullVersion,
         kPreviousPartialVersion, kParagraphSpacingFullVersion, kParagraphSpacingPartialVersion,
-        kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion, kOlderFullVersion, kOlderPartialVersion,
+        kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion, kListLayoutFullVersion,
+        kListLayoutPartialVersion, kOlderFullVersion, kOlderPartialVersion,
         kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamHangulFullVersion, kUpstreamHangulPartialVersion,
         kAncientFullVersion, kAncientPartialVersion, kUpstreamPaddingFullVersion, kUpstreamPaddingPartialVersion,
         kEarlierFullVersion, kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion,

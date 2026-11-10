@@ -76,7 +76,9 @@ class CssParser {
   // 23: upstream's own further bump to 22 (border/white-space/float/initial-letter
   // CSS parsing) landed alongside this branch's 21 above; bumped past both again.
   // 24: added style.cssFloat (float: left/right driving image-wrap layout, distinct from the
-  // existing floatLeft drop-cap heuristic).
+  // existing floatLeft drop-cap heuristic). Upstream's 2.0.0 release prep reset its own
+  // counter back down to 21 as part of a history squash (no format change behind it,
+  // confirmed via its diff) -- stays below this branch's 24, so no further bump needed.
   static constexpr uint8_t CSS_CACHE_VERSION = 24;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers

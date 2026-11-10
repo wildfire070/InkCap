@@ -505,7 +505,7 @@ void ActivityManager::renderTaskLoop() {
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       // Apply Night Mode to each activity's normal-polarity frame. SleepActivity
-      // preserves it only for Quick Resume and clears it for other sleep screens.
+      // preserves it for retained pages and clears it for generated sleep screens.
       display.setInverted(SETTINGS.screenInverted != 0);
 #if defined(CROSSINK_LANGUAGE_BENCHMARK)
       language_benchmark::beginFrame(currentActivity->name.c_str());
@@ -613,6 +613,10 @@ void ActivityManager::loop() {
     mappedInput.setPowerAsConfirmInReaderMode(false);
   }
 
+  processPendingActivities();
+}
+
+void ActivityManager::processPendingActivities() {
   // A deferred full-stack replace waits until its requester has popped and every
   // result handler has settled, then runs as an ordinary Replace.
   while (pendingAction != PendingAction::None || (afterReturnActivity && afterReturnOwnerExited)) {
@@ -1181,7 +1185,10 @@ void ActivityManager::goToSleep(bool fromTimeout) {
     return;
   }
   replaceActivity(std::move(sleepActivity));
-  loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
+  // Input capture has stopped. Do not poll the outgoing reader again: the
+  // fallback input state can still contain the Power hold from boot, turning a
+  // short sleep press into a reader long-press shortcut. onExit still saves it.
+  processPendingActivities();  // Sleep renders synchronously in onEnter before the caller powers down.
 }
 
 void ActivityManager::goToBoot() { replaceActivity(std::make_unique<BootActivity>(renderer, mappedInput)); }

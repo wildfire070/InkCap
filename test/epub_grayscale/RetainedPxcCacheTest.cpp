@@ -209,7 +209,7 @@ TEST_F(RetainedPxcCacheTest, RegeneratingTheSamePathInvalidatesRetainedPixels) {
   Storage.remove("image_v2.pxc");
   SeedContext seed{.bytes = cache(width, height, 1)};
   ImageBlock::setExtractor(&seed, nullptr, seedCache);
-  ImageBlock image("image_v2.jpg", "source.jpg", width, height);
+  ImageBlock image("image.jpg", "source.jpg", width, height);
   image.prepareCache();
   ASSERT_EQ(seed.calls, 1);
 

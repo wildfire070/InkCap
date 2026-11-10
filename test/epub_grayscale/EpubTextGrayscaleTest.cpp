@@ -592,7 +592,7 @@ TEST(EpubTextGrayscaleTest, CachedNightModeImagesMatchMonochromeAcrossStoragePat
       GfxRenderer renderer(display);
       renderer.begin();
       renderer.setOrientation(GfxRenderer::Orientation(orientation));
-      ImageBlock image("image_v2.png", "source.png", 16, 16);
+      ImageBlock image("image.png", "source.png", 16, 16);
       renderer.clearScreen(255);
       image.render(renderer, 9, 13, true, false);
       const auto expected = display.bw;

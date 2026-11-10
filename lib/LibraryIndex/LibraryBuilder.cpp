@@ -23,6 +23,7 @@
 #include "LibraryFileTypes.h"
 #include "LibraryIndexFile.h"
 #include "LibraryMetadataCache.h"
+#include "LibraryScanPolicy.h"
 #include "LibrarySort.h"
 #include "LibraryText.h"
 
@@ -796,7 +797,7 @@ struct DedupFrame {
 };
 
 void walk(WalkState& st, const std::string& path, const int depth) {
-  if (st.failed || depth > LIBRARY_MAX_DEPTH) return;
+  if (st.failed || depth > LIBRARY_MAX_DEPTH || isLibraryResourceDirectory(path)) return;
 
   const uint16_t dedupBase = st.activeDedupCount;
   const DedupFrame dedupFrame{st, dedupBase};
@@ -1872,6 +1873,7 @@ bool buildLibraryIndex(const char* rootPath, BuildStats& stats, const bool readM
   buildControl = BuildControl{};
   buildControl.callbacks = callbacks;
   buildControl.lastPollMs = buildControl.lastProgressMs = millis();
+  if (rootPath && *rootPath && normalizeLibraryRootAliases(rootPath).empty()) rootPath = "/";
   const bool ok = rebuildLibraryIndex(rootPath, stats, readMetadata);
   if (!ok && stats.failure == BuildFailure::None)
     stats.failure = buildControl.cancelled ? BuildFailure::Cancelled : BuildFailure::Error;
