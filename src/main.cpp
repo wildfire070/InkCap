@@ -1719,9 +1719,10 @@ void setup() {
     const auto homeRefreshMode = gpio.deviceIsX3() ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
     activityManager.goHome(HomeMenuItem::NONE, homeRefreshMode);
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
-             mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
-    // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
-    // crashed (indicated by readerActivityLoadCount > 0)
+             mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0 ||
+             SETTINGS.wakeBootMode == CrossPointSettings::WAKE_BOOT_HOME) {
+    // Boot to home screen if no book is open, last sleep was not from reader, back button is held, reader activity
+    // crashed (indicated by readerActivityLoadCount > 0), or the user has set Wake Destination to Home Screen
     // A splashless wake keeps the retained sleep frame on the panel for the
     // reader to repaint over. Landing on home instead, home has to clear it.
     if (resume == BootResume::SplashlessWake) HomeActivity::notePanelHoldsRetainedFrame();
