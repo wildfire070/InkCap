@@ -1039,10 +1039,28 @@ DictLocation Dictionary::locateWithStemVariants(const std::string& word, bool* m
 // Like locateInSession, but collects every adjacent case-insensitive match
 // instead of stopping at the first (a headword can be listed more than once in
 // .idx: one entry per part of speech, or two spellings that compare equal
-// case-insensitively, e.g. "Polish"/"polish"). Bounded by MAX_COMBINED_ENTRIES
-// so a pathological dictionary cannot grow this unbounded.
+// case-insensitively, e.g. "Polish"/"polish"). Tries the exact word via
+// locateAllExactInSession, then retries once with strippedLookupFallback() on
+// zero matches -- mirrors locateInSession's exact-then-fallback composition
+// so vowel-mark-insensitive lookup (Hebrew/Arabic) also reaches this,
+// the multi-match path real on-device lookups actually use.
 std::vector<DictLocation> Dictionary::locateAllInSession(LookupSession& session, const std::string& word,
-                                                         const DictLookupCallbacks& cbs) {
+                                                          const DictLookupCallbacks& cbs) {
+  std::vector<DictLocation> results = locateAllExactInSession(session, word, cbs);
+  const bool anyFound = std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.found; });
+  if (anyFound) return results;
+  const bool anyReadError =
+      std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.readError; });
+  if (anyReadError || (cbs.shouldCancel && cbs.shouldCancel(cbs.ctx))) return results;
+  const std::string fallback = strippedLookupFallback(word);
+  if (!fallback.empty() && fallback != word) return locateAllExactInSession(session, fallback, cbs);
+  return results;
+}
+
+// Bounded by MAX_COMBINED_ENTRIES so a pathological dictionary cannot grow
+// this unbounded.
+std::vector<DictLocation> Dictionary::locateAllExactInSession(LookupSession& session, const std::string& word,
+                                                               const DictLookupCallbacks& cbs) {
   std::vector<DictLocation> results;
   uint32_t startByte = 0;
   uint32_t endByte = session.idxFileSize;
