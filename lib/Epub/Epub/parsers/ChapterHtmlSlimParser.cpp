@@ -464,6 +464,120 @@ class BodyFontProbe {
   }
 };
 
+// A prefix scan measures the chapter's real running-text size before any page is laid out, the
+// same way BodyFontProbe measures its real body font. Some publisher stylesheets set every
+// paragraph's font-size to a value other than the body's nominal 100% (e.g. CSS "small" on every
+// <p>) -- CrossInk/CrossPoint's reader-size setting already picks a comfortable reading size, so
+// a book that then shrinks all of its own body text reads smaller than the user chose, with no
+// setting to undo it. This measures what fraction of the chapter's real body-text characters sit
+// at which font-size multiplier and reports the dominant one, so the caller can rescale every
+// block's multiplier to make that dominant bucket read as 1.0 again -- a heading at 1.5x the
+// (wrongly small) body stays 1.5x the (corrected) body, preserving the book's own proportions.
+constexpr size_t BODY_SIZE_SCAN_BYTES = 64 * 1024;
+
+class BodySizeProbe {
+  static constexpr size_t MAX_DEPTH = 16;
+  static constexpr size_t MAX_BUCKETS = 12;
+  struct Frame {
+    float multiplier = 1.0f;
+    bool inBody = false;
+    bool ignored = false;
+  };
+  struct Bucket {
+    float multiplier = 0.0f;
+    uint32_t bytes = 0;
+  };
+  const CssParser& css;
+  CssStyle resolvedStyle;
+  std::vector<CssAncestorEntry> ancestors;
+  std::array<Frame, MAX_DEPTH> frames{};
+  std::array<Bucket, MAX_BUCKETS> buckets{};
+  size_t depth = 0;
+
+  static void XMLCALL start(void* context, const XML_Char* name, const XML_Char** attrs) {
+    auto& self = *static_cast<BodySizeProbe*>(context);
+    const size_t index = self.depth++;
+    if (index >= MAX_DEPTH) return;
+    std::string_view classes, id, inlineStyle;
+    bool hidden = false;
+    if (attrs) {
+      for (size_t i = 0; attrs[i]; i += 2) {
+        if (strcmp(attrs[i], "class") == 0) classes = attrs[i + 1];
+        if (strcmp(attrs[i], "id") == 0) id = attrs[i + 1];
+        if (strcmp(attrs[i], "style") == 0) inlineStyle = attrs[i + 1];
+        if (strcmp(attrs[i], "hidden") == 0) hidden = true;
+      }
+    }
+    auto& style = self.resolvedStyle;
+    self.ancestors.resize(index);
+    style = self.css.resolveStyle(name, classes, self.ancestors, id);
+    self.ancestors.push_back({static_cast<int>(index), std::string(name), std::string(classes.substr(0, 255)),
+                              std::string(id.substr(0, 255))});
+    if (!inlineStyle.empty()) style.applyOver(CssParser::parseInlineStyle(inlineStyle));
+    auto& frame = self.frames[index];
+    frame = index == 0 ? Frame{} : self.frames[index - 1];  // inherits the parent's resolved size
+    if (style.defined.fontSizeMultiplier) frame.multiplier = style.fontSizeMultiplier;
+    if (strcmp(name, "body") == 0) frame.inBody = true;
+    // Headings, captions, tables, blockquotes and asides are deliberately sized differently from
+    // running body text, so they would skew the census rather than describe it. Matches
+    // BodyFontProbe's own ignore set.
+    frame.ignored = frame.ignored || hidden || style.display == CssDisplay::None ||
+                    matches(name, SKIP_TAGS, std::size(SKIP_TAGS)) || strcmp(name, "template") == 0 ||
+                    matches(name, HEADER_TAGS, std::size(HEADER_TAGS)) || strcmp(name, "blockquote") == 0 ||
+                    strcmp(name, "table") == 0 || strcmp(name, "nav") == 0 || strcmp(name, "aside") == 0 ||
+                    strcmp(name, "figure") == 0 || strcmp(name, "pre") == 0 || strcmp(name, "caption") == 0;
+  }
+
+  static void XMLCALL end(void* context, const XML_Char*) {
+    auto& self = *static_cast<BodySizeProbe*>(context);
+    if (self.depth > 0) --self.depth;
+  }
+
+  static void XMLCALL text(void* context, const XML_Char* text, const int length) {
+    auto& self = *static_cast<BodySizeProbe*>(context);
+    if (self.depth == 0 || self.depth > MAX_DEPTH) return;
+    const auto& frame = self.frames[self.depth - 1];
+    if (!frame.inBody || frame.ignored) return;
+    uint32_t bytes = 0;
+    for (int i = 0; i < length; ++i) {
+      if (!isWhitespace(text[i])) ++bytes;
+    }
+    if (bytes == 0) return;
+    // Buckets are keyed by multiplier with a small tolerance: distinct CSS declarations can
+    // round-trip through float parsing to values that should count as the same bucket (e.g. "80%"
+    // and "0.8em").
+    for (auto& bucket : self.buckets) {
+      if (bucket.bytes == 0 || std::fabs(bucket.multiplier - frame.multiplier) < 0.01f) {
+        bucket.multiplier = frame.multiplier;
+        bucket.bytes += bytes;
+        return;
+      }
+    }
+  }
+
+  static void XMLCALL entity(void* context, const XML_Char* text, const int length) {
+    if (length >= 3 && text[0] == '&' && text[length - 1] == ';') BodySizeProbe::text(context, "x", 1);
+  }
+
+ public:
+  explicit BodySizeProbe(const CssParser& css) : css(css) { ancestors.reserve(MAX_DEPTH); }
+
+  void attach(XML_Parser parser) {
+    XML_SetUserData(parser, this);
+    XML_SetElementHandler(parser, start, end);
+    XML_SetCharacterDataHandler(parser, text);
+    XML_SetDefaultHandlerExpand(parser, entity);
+  }
+
+  // The multiplier the most body-text characters were measured at, or 1.0 if nothing was
+  // measured (no body text found in the scanned prefix, or it's evenly split).
+  float dominantMultiplier() const {
+    const auto best =
+        std::max_element(buckets.begin(), buckets.end(), [](const Bucket& a, const Bucket& b) { return a.bytes < b.bytes; });
+    return best->bytes ? best->multiplier : 1.0f;
+  }
+};
+
 }  // namespace
 
 bool isHeaderOrBlock(const char* name) {
@@ -1706,13 +1820,18 @@ void ChapterHtmlSlimParser::finalizePendingCloseBorderBoxes() {
 void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
   if (blockStyle.fontResolved) return;
   blockStyle.fontResolved = true;
-  if (blockStyle.fontSizeMultiplier == 1.0f) return;
+  // The stored multiplier is the raw CSS value and stays that way (it round-trips through the
+  // section cache file); bodySizeScale_ only affects how it resolves to an actual rendered size
+  // here. When no shrink was detected this is bodySizeScale_ == 1.0, an exact no-op identical to
+  // the un-rescaled behavior.
+  const float effectiveMultiplier = blockStyle.fontSizeMultiplier * bodySizeScale_;
+  if (std::fabs(effectiveMultiplier - 1.0f) < 0.001f) return;
 
 #if CROSSINK_SCALABLE_FONTS
   const uint8_t basePoints = renderer.getFontPointSize(fontId);
   if (basePoints) {
     const uint8_t desiredPoints = static_cast<uint8_t>(
-        std::clamp(std::lround(basePoints * blockStyle.fontSizeMultiplier),
+        std::clamp(std::lround(basePoints * effectiveMultiplier),
                    long(ScalableContentMinPointSize), long(ScalableContentMaxPointSize)));
     const int exact = renderer.getFontIdForSize(fontId, desiredPoints);
     if (exact != fontId) {
@@ -1722,7 +1841,7 @@ void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
   }
 #endif
 
-  const FontSizeLadder::Resolved resolved = fontSizeLadder_.resolve(blockStyle.fontSizeMultiplier * 100.0f);
+  const FontSizeLadder::Resolved resolved = fontSizeLadder_.resolve(effectiveMultiplier * 100.0f);
   if (resolved.fontId == 0) {
     // No ladder (e.g. an SD-card body font, whose id never matches a built-in
     // family's rungs) or the nearest rung is just the body font itself --
@@ -5162,6 +5281,48 @@ bool ChapterHtmlSlimParser::detectBodyFont() {
   return true;
 }
 
+bool ChapterHtmlSlimParser::detectBodySizeScale() {
+  // The bounded ancestor/bucket tables exceed the task's small stack budget.
+  auto probe = makeUniqueNoThrow<BodySizeProbe>(*cssParser);
+  if (!probe) {
+    LOG_ERR("EHP", "OOM: body size probe");
+    return false;
+  }
+  probe->attach(activeParser);
+  size_t consumed = 0;
+  while (parseFile_.available() > 0 && consumed < BODY_SIZE_SCAN_BYTES) {
+    void* const buffer = XML_GetBuffer(activeParser, PARSE_BUFFER_SIZE);
+    if (!buffer) {
+      LOG_ERR("EHP", "OOM: body size scan buffer");
+      return false;
+    }
+    const size_t length = parseFile_.read(buffer, PARSE_BUFFER_SIZE);
+    if (length == 0) {
+      LOG_ERR("EHP", "Body size scan read failed");
+      return false;
+    }
+    consumed += length;
+    if (XML_ParseBuffer(activeParser, static_cast<int>(length), parseFile_.available() == 0) == XML_STATUS_ERROR) {
+      // The layout pass reports malformed XML and handles tolerated trailing data.
+      break;
+    }
+    delay(1);
+  }
+  const float dominant = probe->dominantMultiplier();
+  // A dominant bucket away from the nominal 1.0 means most of this chapter's real body text was
+  // declared at that size, not 1.0 -- rescale everything so it reads as 1.0 again. Clamped the
+  // same way fontSizeResidualScale is: a measurement this far off is more likely a mis-scan (an
+  // unusual chapter with little or no ordinary body text) than a real publisher-wide shrink.
+  bodySizeScale_ = (dominant > 0.01f) ? std::clamp(1.0f / dominant, 0.5f, 2.0f) : 1.0f;
+  LOG_DBG("EHP", "Body size scale %.3f (dominant multiplier %.3f from %u bytes)", bodySizeScale_, dominant,
+          static_cast<unsigned>(consumed));
+  if (!XML_ParserReset(activeParser, nullptr) || !parseFile_.seek(0)) {
+    LOG_ERR("EHP", "Failed to rewind after body size scan");
+    return false;
+  }
+  return true;
+}
+
 uint32_t ChapterHtmlSlimParser::publisherBodyFontFamily(const std::string& path, const CssParser& css) {
   FsFile file;
   if (!Storage.openFileForRead("EHP", path, file)) return 0;
@@ -5263,6 +5424,13 @@ bool ChapterHtmlSlimParser::beginParse() {
   }
 
   if (publisherFonts == PublisherFonts::Accents && embeddedStyle && !isLightMode() && cssParser && !detectBodyFont()) {
+    abortParse();
+    return false;
+  }
+  // Without embedded CSS there's nothing for a publisher to have shrunk the body text with --
+  // every block's font-size multiplier is already the structural default (1.0), so there's
+  // nothing to measure or correct.
+  if (embeddedStyle && cssParser && !detectBodySizeScale()) {
     abortParse();
     return false;
   }

@@ -130,6 +130,13 @@ class ChapterHtmlSlimParser {
   bool detectBodyFont();
   static bool scanBodyFont(XML_Parser parser, FsFile& file, const CssParser& css, uint32_t& family,
                            bool preferParagraph);
+  // Measured once per chapter build (see BodySizeProbe/detectBodySizeScale): the factor every
+  // block's fontSizeMultiplier is rescaled by in resolveBlockFont(), so a publisher stylesheet
+  // that declares every paragraph's font-size away from the nominal 100% reads at the user's
+  // actual chosen reading size again. 1.0 (the default, and what a chapter with no detected
+  // shrink keeps) is a complete no-op.
+  float bodySizeScale_ = 1.0f;
+  bool detectBodySizeScale();
   uint8_t imageRendering;
   std::string contentBase;
   std::string imageBasePath;
