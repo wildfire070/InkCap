@@ -4,6 +4,7 @@
 #include <Epub.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -117,7 +118,13 @@ void Ao3ReceiveActivity::startWebServer() {
     LOG_DBG("AO3R", "mDNS started: http://%s.local/", HOSTNAME);
   }
 
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("AO3R", "Not enough memory to start web server");
+    state = Ao3ReceiveState::ERROR;
+    requestUpdate();
+    return;
+  }
   webServer->begin();
   webServer->enableAo3Receive(Ao3ReceiveUtils::receiveFolder());
 

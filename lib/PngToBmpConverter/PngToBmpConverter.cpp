@@ -69,6 +69,25 @@ enum PngColorType : uint8_t {
   PNG_COLOR_RGBA = 6,
 };
 
+// Whether bitDepth is one the PNG spec allows for colorType (Table 11.1). Unpacking code
+// downstream (convertScanlineToGray's sub-byte paths) divides by bitDepth and shifts by it;
+// an invalid value here (e.g. a palette image claiming 16 bits) is not caught by sizing code
+// that only ever assigns a correct bytesPerPixel for the color type, not for the bit depth.
+bool isValidBitDepth(const uint8_t colorType, const uint8_t bitDepth) {
+  switch (colorType) {
+    case PNG_COLOR_GRAYSCALE:
+      return bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8 || bitDepth == 16;
+    case PNG_COLOR_PALETTE:
+      return bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8;
+    case PNG_COLOR_RGB:
+    case PNG_COLOR_GRAYSCALE_ALPHA:
+    case PNG_COLOR_RGBA:
+      return bitDepth == 8 || bitDepth == 16;
+    default:
+      return false;
+  }
+}
+
 // PNG filter types
 enum PngFilter : uint8_t {
   PNG_FILTER_NONE = 0,
@@ -523,6 +542,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
 
   // Skip IHDR CRC
   pngFile.seekCur(4);
+
+  if (!isValidBitDepth(colorType, bitDepth)) {
+    LOG_ERR("PNG", "Bit depth %u is invalid for color type %u", bitDepth, colorType);
+    return false;
+  }
 
   if (compression != 0 || filter != 0) {
     LOG_ERR("PNG", "Unsupported compression/filter method");

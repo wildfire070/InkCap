@@ -1869,11 +1869,14 @@ bool Epub::extractItemToFile(const std::string& itemHref, const std::string& des
   }
 
   const uint32_t start = millis();
-  const bool success = readItemContentsToStream(itemHref, out, chunkSize);
+  bool success = readItemContentsToStream(itemHref, out, chunkSize);
   const uint32_t written = millis();
   const size_t bytes = out.size();
   out.flush();
-  out.close();
+  // A close() that fails leaves the file's size on the card unwritten -- as short as a failed
+  // write would be, and just as wrong to trust as a complete extract (callers that extract once
+  // and keep the result, e.g. the optimizer's PXC cache, would otherwise keep it for good).
+  if (!out.close()) success = false;
   LOG_DBG("EBP", "Extracted %s: ok=%d bytes=%u stream=%ums flush/close=%ums chunk=%u", itemHref.c_str(), success,
           static_cast<unsigned>(bytes), static_cast<unsigned>(written - start),
           static_cast<unsigned>(millis() - written), static_cast<unsigned>(chunkSize));
