@@ -37,11 +37,12 @@ TEST_F(ClippingDownloadTransport, UploadsFileAndRequiresCompleteAcknowledgment) 
   testHttp.complete = false;
   EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::InvalidResponse);
   testHttp.complete = true;
-  // A short SD read is now caught before any HTTP activity starts (the upload is buffered
-  // fully up front, like the SIMULATOR path above, since freeink-sdk has no streaming-upload
-  // API) -- InvalidResponse, matching that same existing read-failure path, not Network.
+  // The upload now streams (SecureHttpClient::sendRequestStream), reading the file
+  // during the live HTTP transfer rather than fully up front, so a short SD read
+  // here surfaces as a failed send (status <= 0) -- Network, same as any other
+  // mid-transfer connection failure, not InvalidResponse.
   shortReadAfter = 512;
-  EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::InvalidResponse);
+  EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::Network);
   shortReadAfter = -1;
 }
 
