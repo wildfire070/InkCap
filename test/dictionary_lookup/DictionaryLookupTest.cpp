@@ -108,6 +108,24 @@ TEST_F(DictionaryLookup, PreservesNfcCasePreferenceAndStemming) {
   EXPECT_EQ(Dictionary::locateWithStemVariants("running", &stem).headword, "run");
   EXPECT_TRUE(stem);
 }
+TEST_F(DictionaryLookup, MultiMatchPathAlsoAppliesVowelMarkFallback) {
+  // locateAll()/locateAllWithStemVariants() -- the multi-match functions the
+  // real on-device lookup flow (DictionaryLookupController::runLookup())
+  // actually calls -- must apply the same Hebrew/Arabic vowel-stripped
+  // fallback as locate()/locateWithStemVariants() above, not just find a
+  // headword's extra duplicate entries.
+  index({"שלום", "run"});
+  const auto located = Dictionary::locateAll("שָׁלוֹם");
+  ASSERT_FALSE(located.empty());
+  EXPECT_TRUE(located.front().found);
+  EXPECT_EQ(located.front().headword, "שלום");
+  bool stem = true;
+  const auto withStem = Dictionary::locateAllWithStemVariants("שָׁלוֹם", &stem);
+  ASSERT_FALSE(withStem.empty());
+  EXPECT_TRUE(withStem.front().found);
+  EXPECT_EQ(withStem.front().headword, "שלום");
+  EXPECT_FALSE(stem);  // matched via the stripped fallback, not a stem variant
+}
 TEST_F(DictionaryLookup, AcceleratorBoundariesPreserveOriginalIndexOrdering) {
   for (const std::string accelerator : {"", "oft", "cspt", "qidx"}) {
     for (const size_t boundary : {16u, 32u, 256u, 512u}) {
