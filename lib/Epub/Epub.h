@@ -125,6 +125,25 @@ class Epub {
   CssParseStatus parseCssFiles(bool forceRebuild = false) const;
   void discoverCssFilesFromZip();
   void releaseCssFileList();
+  // A TOC the OPF declares can fail to parse on a fragmented heap (NCX/nav
+  // parser setup refused) rather than the book genuinely having none. Tracked
+  // in a 1-byte "toc.retry" sidecar so the reader's next open can retry
+  // instead of permanently caching a lost TOC. Counted *before* the parse
+  // attempt, so a crash mid-attempt still uses up a try; cleared on success.
+  // hasPendingTocRetry() is public: callers decide whether a cached-but-
+  // TOC-less book should be treated as "uncached" (show the indexing popup,
+  // force a rebuild) before calling load().
+  void recordLostTocRetryAttempt() const;
+  void clearLostTocRetry() const;
+  // Resolves every spine item's ZIP central-directory stat in one pass and
+  // caches it on zipDirectoryCache (shared across every ZipFile this Epub
+  // constructs), so readItemContentsToMemory/Stream for a spine href no
+  // longer needs loadFileStatSlim's own per-call scan. Images are not
+  // covered (spine items only, bounded by chapter count rather than the
+  // book's full, much larger entry count -- see the heap-guard discipline
+  // this mirrors). Heap-guarded; skips silently, never aborts, on a tight
+  // heap or an already-attempted session.
+  void prewarmSpineZipStats() const;
 
  public:
   enum class XLocationLoadMode : uint8_t {
@@ -143,8 +162,21 @@ class Epub {
   // hit the fast path instead of rebuilding. Cheap: no parsing, just a stat.
   static bool hasCache(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
+  // retryLostToc: when true, a cached-but-TOC-less book with a retry still due
+  // (hasPendingTocRetry()) is rebuilt instead of reused as-is. Only the
+  // reader's own open opts in; metadata-only/background callers do not, so
+  // they never pay an unexpected rebuild or show the indexing popup for this.
+  // prewarmSpineStats: when true, runs prewarmSpineZipStats() once load()
+  // succeeds. Opt-in for the same reason: it's only worth its one-time cost
+  // (and its own heap-guarded allocation) for a caller about to actually
+  // read the book's chapters, not a metadata-only/background open.
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false,
-            XLocationLoadMode xLocationLoadMode = XLocationLoadMode::Immediate, bool cacheCumulativeSpineSizes = false);
+            XLocationLoadMode xLocationLoadMode = XLocationLoadMode::Immediate, bool cacheCumulativeSpineSizes = false,
+            bool retryLostToc = false, bool prewarmSpineStats = false);
+  // True when a prior build's TOC was lost to a fragmented heap and a retry
+  // (see load()'s retryLostToc) is still due. Cheap: one sidecar byte, no
+  // cache load. Usable right after construction, before load().
+  bool hasPendingTocRetry() const;
   // Title and author only, without building the spine/TOC/CSS/cover caches
   // load() does. Reuses an existing metadata cache when there is one unless
   // allowCachedMetadata is false. Cache invalidation is the caller's job, so

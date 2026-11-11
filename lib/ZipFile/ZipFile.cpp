@@ -554,6 +554,28 @@ bool ZipFile::prepareDirectoryCache() {
 }
 
 bool ZipFile::loadFileStatSlim(const char* filename, FileStatSlim* fileStat) {
+  // Spine items pre-resolved once per reading session (Epub::prewarmSpineZipStats):
+  // unlike fileStatSlimCache below, this is a deliberately partial cache (spine
+  // items only, not every zip entry -- see ZipDirectoryCache.h), so a miss here
+  // falls through to the rest of this function instead of failing outright.
+  if (directoryCache && directoryCache->spineStatCount > 0) {
+    const size_t nameLen = strlen(filename);
+    const uint64_t hash = fnvHash64(filename, nameLen);
+    const SpineZipStat* const begin = directoryCache->spineStats.get();
+    const SpineZipStat* const end = begin + directoryCache->spineStatCount;
+    auto it = std::lower_bound(begin, end, hash, [](const SpineZipStat& a, uint64_t h) { return a.hrefHash < h; });
+    while (it != end && it->hrefHash == hash) {
+      if (it->hrefLen == static_cast<uint16_t>(nameLen)) {
+        fileStat->method = it->method;
+        fileStat->compressedSize = it->compressedSize;
+        fileStat->uncompressedSize = it->uncompressedSize;
+        fileStat->localHeaderOffset = it->localHeaderOffset;
+        return true;
+      }
+      ++it;
+    }
+  }
+
   if (!fileStatSlimCache.empty()) {
     const auto it = fileStatSlimCache.find(filename);
     if (it != fileStatSlimCache.end()) {
@@ -805,6 +827,51 @@ int ZipFile::fillUncompressedSizes(const SizeTarget* targets, const size_t targe
     while (it != targetEnd && it->hash == hash && it->len == nameLen) {
       if (it->index < sizeCount) {
         sizes[it->index] = entry.uncompressedSize;
+        matched++;
+      }
+      ++it;
+    }
+
+    if (matched >= expectedMatches) {
+      break;
+    }
+  }
+
+  return matched;
+}
+
+int ZipFile::fillFileStatSlims(const SizeTarget* targets, const size_t targetCount, FileStatSlim* stats,
+                               const size_t statsCount) {
+  if (targets == nullptr || stats == nullptr || targetCount == 0) {
+    return 0;
+  }
+
+  const ScopedOpenClose zip{*this};
+  if (!zip) return 0;
+
+  if (!loadZipDetails()) return 0;
+
+  int matched = 0;
+  const auto expectedMatches = static_cast<int>(targetCount);
+  const SizeTarget* const targetEnd = targets + targetCount;
+  char itemName[ZIP_MAX_STORED_NAME_LEN + 1];
+  CentralDirCursor cursor(file, zipDetails.centralDirOffset);
+  CentralDirEntry entry;
+
+  while (cursor.next(entry, itemName)) {
+    if (!entry.nameStored) continue;
+
+    const uint16_t nameLen = entry.nameLen;
+    uint64_t hash = fnvHash64(itemName, nameLen);
+    SizeTarget key = {hash, nameLen, 0};
+
+    auto it = std::lower_bound(targets, targetEnd, key, [](const SizeTarget& a, const SizeTarget& b) {
+      return a.hash < b.hash || (a.hash == b.hash && a.len < b.len);
+    });
+
+    while (it != targetEnd && it->hash == hash && it->len == nameLen) {
+      if (it->index < statsCount) {
+        stats[it->index] = {entry.method, entry.compressedSize, entry.uncompressedSize, entry.localHeaderOffset};
         matched++;
       }
       ++it;

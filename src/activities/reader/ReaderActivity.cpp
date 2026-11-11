@@ -59,7 +59,9 @@ ReaderActivity::EpubOpenResult ReaderActivity::loadEpub(const std::string& path)
   // First open: building the spine/TOC index (book.bin) takes a couple of seconds. Show the
   // indexing popup so it isn't a silent wait on the home screen. The cachePath/hash is known at
   // construction, so this check is valid before load(); a cached open loads in a blink -> no popup.
-  const bool uncached = !Storage.exists((epub->getCachePath() + "/book.bin").c_str());
+  // A book whose cached TOC was lost to a fragmented heap (not genuinely absent) still has a
+  // retry due; treat it as uncached too, since load()'s retryLostToc below will rebuild it.
+  const bool uncached = !Storage.exists((epub->getCachePath() + "/book.bin").c_str()) || epub->hasPendingTocRetry();
   if (uncached) {
     // The popup replaces the restored Quick Resume frame, so the reader must clean it.
     allowFastInitialRefresh = false;
@@ -72,7 +74,7 @@ ReaderActivity::EpubOpenResult ReaderActivity::loadEpub(const std::string& path)
   GfxRenderer::FrameBufferLoan loan(renderer);
   const bool loaded = epub->load(
       true, result.readerSettings.hasSafeModeOverride || result.readerSettings.readerSettings.embeddedStyle == 0,
-      Epub::XLocationLoadMode::Immediate, true);
+      Epub::XLocationLoadMode::Immediate, true, /*retryLostToc=*/true, /*prewarmSpineStats=*/true);
   if (loaded) epub->ensureOptimizerImageIndex();
   loan.end();
   if (loaded && openingFeedback.showIfPending(renderer)) allowFastInitialRefresh = false;
