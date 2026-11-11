@@ -41,8 +41,10 @@ namespace {
 // historical entries (e.g. "kOlderFullVersion"/"kLastReleaseFullVersion" now
 // point at values this branch already tracks under other names below) --
 // those renames carry no new byte values, so they're not duplicated here.
-constexpr uint8_t kFullVersion = 106;
-constexpr uint8_t kPartialVersion = 0xDB;
+constexpr uint8_t kFullVersion = 107;
+constexpr uint8_t kPartialVersion = 0xDC;
+constexpr uint8_t kPreHeadingGroupFullVersion = 106;  // this branch's own former-current (per-word source
+constexpr uint8_t kPreHeadingGroupPartialVersion = 0xDB;  // ranges), superseded by upstream's v107 (heading groups)
 constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
 constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
@@ -243,7 +245,8 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreSourceRangeFullVersion, kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
+       {kPreHeadingGroupFullVersion, kPreHeadingGroupPartialVersion, kPreSourceRangeFullVersion,
+        kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
         kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
         kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
         kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion, kStablePageFullVersion,

@@ -115,7 +115,8 @@ class Dictionary {
   // can continue to locate(), which falls back to scanning the full .idx.
   static bool prepareQuickIndex(const DictLookupCallbacks& cbs = {}, const char* cachePath = nullptr);
 
-  // Search .idx via .cspt, .oft, or .qidx when present. Returns file location without reading content.
+  // Search .idx via .cspt, .oft, or .qidx, trying the supplied spelling first,
+  // then a Hebrew/Arabic vowel-stripped query on a miss. Index ordering is unchanged.
   static DictLocation locate(const std::string& word, const DictLookupCallbacks& cbs = {},
                              const char* cachePath = nullptr);
 
@@ -190,11 +191,15 @@ class Dictionary {
     LookupAccelerator acceleratorKind = LookupAccelerator::None;
   };
 
+  static std::vector<std::string> resolveExactAltFormAll(const std::string& word, const char* cachePath);
+  static DictLocation locateExactInSession(LookupSession& session, const std::string& word,
+                                           const DictLookupCallbacks& cbs);
+
   static bool openLookupSession(LookupSession& session, const char* cachePath);
   static void closeLookupSession(LookupSession& session);
   static DictLocation locateInSession(LookupSession& session, const std::string& word, const DictLookupCallbacks& cbs);
 
-  // Shared by locateInSession and locateAllInSession: resolves the
+  // Shared by locateExactInSession and locateAllInSession: resolves the
   // [startByte, endByte) scan bounds for word in session via whichever
   // accelerator the session has open, degrading it on a broken accelerator.
   static void resolveSessionBounds(LookupSession& session, const std::string& word, uint32_t* startByte,
