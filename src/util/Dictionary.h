@@ -206,9 +206,14 @@ class Dictionary {
                                    uint32_t* endByte);
 
   // Like locateInSession, but collects every adjacent case-insensitive match
-  // (bounded by MAX_COMBINED_ENTRIES) instead of stopping at the first.
+  // (bounded by MAX_COMBINED_ENTRIES) instead of stopping at the first. Tries
+  // the exact word via locateAllExactInSession, then retries once with
+  // strippedLookupFallback() on zero matches -- the same exact-then-fallback
+  // shape locateInSession/locateExactInSession already use for a single result.
   static std::vector<DictLocation> locateAllInSession(LookupSession& session, const std::string& word,
                                                       const DictLookupCallbacks& cbs);
+  static std::vector<DictLocation> locateAllExactInSession(LookupSession& session, const std::string& word,
+                                                            const DictLookupCallbacks& cbs);
 
   // Read a null-terminated word from an open file into buf (max bufSize-1 chars).
   // Returns the number of characters read (excluding null), or -1 on error.
