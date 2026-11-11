@@ -100,7 +100,7 @@ class CrossPointWebServer {
     bool success = false;
     size_t size = 0;
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;
-    std::vector<uint8_t> buffer = std::vector<uint8_t>(UPLOAD_BUFFER_SIZE);
+    std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(UPLOAD_BUFFER_SIZE);
     size_t bufferPos = 0;
   } upload;
   struct FontUploadState {
@@ -109,7 +109,7 @@ class CrossPointWebServer {
     bool valid = true;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
-    std::vector<uint8_t> buffer = std::vector<uint8_t>(BUFFER_SIZE);
+    std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(BUFFER_SIZE);
     size_t bufferPos = 0;
   } fontUpload;
   using UploadCancelCheck = bool (*)(void*);

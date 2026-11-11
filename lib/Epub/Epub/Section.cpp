@@ -106,6 +106,17 @@ size_t sectionHtmlStreamChunkSize(const bool preview) {
 
 std::string sectionBackupPath(const std::string& filePath) { return filePath + ".bak"; }
 
+// Chapters bucketed into subfolders rather than one flat "sections/" folder: opening a file by
+// path searches its parent directory from the first entry, so a book of hundreds or thousands
+// of chapters paid that cost against an ever-larger single folder on every chapter open. 32 is
+// small enough to keep each bucket's own directory-search cost negligible while still cutting
+// the per-open cost by roughly the chapter count divided by this constant.
+constexpr int CHAPTERS_PER_CACHE_FOLDER = 32;
+
+std::string sectionCacheDir(const std::string& cachePath, const int spineIndex) {
+  return cachePath + "/sections/" + std::to_string(spineIndex / CHAPTERS_PER_CACHE_FOLDER);
+}
+
 void recoverSectionCacheBackup(const std::string& filePath) {
   const std::string backupPath = sectionBackupPath(filePath);
   if (!Storage.exists(backupPath.c_str())) return;
@@ -156,8 +167,8 @@ Section::Section(Epub& epub, const int spineIndex, GfxRenderer& renderer, const 
     : epub(&epub),
       spineIndex(spineIndex),
       renderer(renderer),
-      filePath(epub.getCachePath() + "/sections/" + std::to_string(spineIndex) + (cacheSuffix ? cacheSuffix : "") +
-               ".bin") {
+      filePath(sectionCacheDir(epub.getCachePath(), spineIndex) + "/" + std::to_string(spineIndex) +
+               (cacheSuffix ? cacheSuffix : "") + ".bin") {
   recoverSectionCacheBackup(filePath);
 }
 
@@ -572,8 +583,8 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
 
   // Create cache directory if it doesn't exist
   {
-    const auto sectionsDir = epub->getCachePath() + "/sections";
-    Storage.mkdir(sectionsDir.c_str());
+    const auto sectionsDir = sectionCacheDir(epub->getCachePath(), spineIndex);
+    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "sections/"
   }
 
   // Reuse the previously unzipped HTML if we already have it. The unzipped HTML is keyed only on the
@@ -937,8 +948,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
           ESP.getMaxAllocHeap());
 
   {
-    const auto sectionsDir = epub->getCachePath() + "/sections";
-    Storage.mkdir(sectionsDir.c_str());
+    const auto sectionsDir = sectionCacheDir(epub->getCachePath(), spineIndex);
+    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "sections/"
   }
 
   const bool reusedHtml = Storage.exists(htmlPath.c_str());

@@ -61,10 +61,13 @@ class CrossPointWebServer {
     // 4KB is a good balance: large enough to reduce syscall overhead, small enough
     // to keep individual write times short and the server responsive
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;  // 4KB buffer
-    std::vector<uint8_t> buffer;
+    // Nothrow: a failed allocation here (out-of-line, see .cpp) leaves buffer null rather than
+    // aborting the device under -fno-exceptions. UPLOAD_FILE_START checks it and refuses the
+    // upload instead of using it.
+    std::unique_ptr<uint8_t[]> buffer;
     size_t bufferPos = 0;
 
-    UploadState() { buffer.resize(UPLOAD_BUFFER_SIZE); }
+    UploadState();
   } upload;
 
   CrossPointWebServer();
@@ -162,10 +165,11 @@ class CrossPointWebServer {
     bool valid = false;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
-    std::vector<uint8_t> buffer;
+    // Nothrow: see UploadState::buffer above.
+    std::unique_ptr<uint8_t[]> buffer;
     size_t bufferPos = 0;
 
-    FontUploadState() { buffer.resize(BUFFER_SIZE); }
+    FontUploadState();
   } fontUpload;
 
   // OPDS server handlers

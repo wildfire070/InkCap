@@ -411,6 +411,10 @@ CrossPointWebServer::CrossPointWebServer() {}
 
 CrossPointWebServer::~CrossPointWebServer() { stop(); }
 
+CrossPointWebServer::UploadState::UploadState() : buffer(makeUniqueNoThrow<uint8_t[]>(UPLOAD_BUFFER_SIZE)) {}
+
+CrossPointWebServer::FontUploadState::FontUploadState() : buffer(makeUniqueNoThrow<uint8_t[]>(BUFFER_SIZE)) {}
+
 void CrossPointWebServer::begin() {
   if (running) {
     LOG_DBG("WEB", "Web server already running");
@@ -1141,7 +1145,7 @@ static unsigned long uploadStartTime = 0;
 
 static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
   if (state.bufferPos > 0 && state.file) {
-    const size_t written = state.file.write(state.buffer.data(), state.bufferPos);
+    const size_t written = state.file.write(state.buffer.get(), state.bufferPos);
 
     if (written != state.bufferPos) {
       LOG_DBG("WEB", "[UPLOAD] Buffer flush failed: expected %d, wrote %d", state.bufferPos, written);
@@ -1167,6 +1171,13 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
 
   if (upload.status == UPLOAD_FILE_START) {
     if (state.file) abortUpload(state);
+    // The buffer's nothrow allocation (UploadState's constructor) may have failed; refuse
+    // rather than write through a null pointer.
+    if (!state.buffer) {
+      state.error = "Not enough free memory to accept an upload";
+      LOG_ERR("WEB", "[UPLOAD] No upload buffer available");
+      return;
+    }
     state.fileName = StringUtils::sanitizeFilename(upload.filename.c_str()).c_str();
     state.size = 0;
     state.success = false;
@@ -1247,7 +1258,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         const size_t space = UploadState::UPLOAD_BUFFER_SIZE - state.bufferPos;
         const size_t toCopy = (remaining < space) ? remaining : space;
 
-        memcpy(state.buffer.data() + state.bufferPos, data, toCopy);
+        memcpy(state.buffer.get() + state.bufferPos, data, toCopy);
         state.bufferPos += toCopy;
         data += toCopy;
         remaining -= toCopy;
@@ -2776,6 +2787,13 @@ void CrossPointWebServer::handleFontUploadData() {
       fontUpload.bytesWritten = 0;
       fontUpload.bufferPos = 0;
 
+      // The buffer's nothrow allocation (FontUploadState's constructor) may have failed;
+      // refuse rather than write through a null pointer.
+      if (!fontUpload.buffer) {
+        LOG_ERR("WEB", "No font upload buffer available");
+        break;
+      }
+
       if (!FontInstaller::isValidFamilyName(family.c_str())) {
         LOG_ERR("WEB", "Invalid font family name: %s", family.c_str());
         break;
@@ -2841,13 +2859,13 @@ void CrossPointWebServer::handleFontUploadData() {
       while (remaining > 0) {
         size_t space = FontUploadState::BUFFER_SIZE - fontUpload.bufferPos;
         size_t chunk = (remaining < space) ? remaining : space;
-        memcpy(fontUpload.buffer.data() + fontUpload.bufferPos, src, chunk);
+        memcpy(fontUpload.buffer.get() + fontUpload.bufferPos, src, chunk);
         fontUpload.bufferPos += chunk;
         src += chunk;
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          const size_t written = fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
           if (written != fontUpload.bufferPos) {
             LOG_ERR("WEB", "Font upload write failed: expected %zu, wrote %zu", fontUpload.bufferPos, written);
             abortFontUpload();
@@ -2867,7 +2885,7 @@ void CrossPointWebServer::handleFontUploadData() {
       }
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        const size_t written = fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        const size_t written = fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
         if (written != fontUpload.bufferPos) {
           LOG_ERR("WEB", "Font upload final flush failed: expected %zu, wrote %zu", fontUpload.bufferPos, written);
           fontUpload.valid = false;
