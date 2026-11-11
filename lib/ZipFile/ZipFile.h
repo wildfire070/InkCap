@@ -135,6 +135,13 @@ class ZipFile {
   // targets must be sorted by (hash, len). sizes[target.index] receives uncompressedSize.
   // Returns number of targets matched.
   int fillUncompressedSizes(const SizeTarget* targets, size_t targetCount, uint32_t* sizes, size_t sizeCount);
+  // Same one-pass walk as fillUncompressedSizes, but resolves each target's
+  // full FileStatSlim (method, both sizes, local header offset) instead of
+  // just uncompressedSize -- enough to open the entry's data directly,
+  // skipping loadFileStatSlim's own scan for callers that pre-resolve a
+  // known set of entries (e.g. a book's spine items) up front.
+  // targets must be sorted by (hash, len). stats[target.index] receives the result.
+  int fillFileStatSlims(const SizeTarget* targets, size_t targetCount, FileStatSlim* stats, size_t statsCount);
   // Batch lookup for duplicate detection. Targets must be sorted by (hash,
   // len); identities[target.index] receives the ZIP entry's CRC and sizes.
   // Returns matches, or -1 on open/header/directory read failure.
