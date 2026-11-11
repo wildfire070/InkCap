@@ -113,14 +113,13 @@ Rect fittedBitmapRect(const Bitmap& bitmap, const Rect& target) {
   return Rect{target.x + (target.width - drawnW) / 2, target.y + (target.height - drawnH) / 2, drawnW, drawnH};
 }
 
-std::string coverPathForRect(const RecentBook& book) {
+std::string coverPathForRect(const RecentBook& book, const Rect& coverRect) {
   if (book.coverBmpPath.empty()) {
     return {};
   }
   if (FsHelpers::hasEpubExtension(book.path)) {
     const std::string adaptivePath =
-        Epub(book.path, "/.crosspoint")
-            .getAdaptiveThumbBmpPath(DashboardMetrics::homeCoverImageWidth, DashboardMetrics::homeCoverImageHeight);
+        Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(coverRect.width, coverRect.height);
     if (Storage.exists(adaptivePath.c_str())) {
       return adaptivePath;
     }
@@ -139,8 +138,7 @@ std::string coverPathForRect(const RecentBook& book) {
       return altPath;
     }
   }
-  return UITheme::getCoverThumbPath(book.coverBmpPath, DashboardMetrics::homeCoverImageWidth,
-                                    DashboardMetrics::homeCoverImageHeight);
+  return UITheme::getCoverThumbPath(book.coverBmpPath, coverRect.width, coverRect.height, false);
 }
 
 void drawMissingBookCover(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book) {
@@ -171,7 +169,7 @@ void drawMissingBookCover(const GfxRenderer& renderer, const Rect& coverRect, co
 void drawBookCover(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book,
                    const Color backgroundColor) {
   bool hasCover = false;
-  const std::string coverBmpPath = coverPathForRect(book);
+  const std::string coverBmpPath = coverPathForRect(book, coverRect);
   if (!coverBmpPath.empty() && Storage.exists(coverBmpPath.c_str())) {
     FsFile file;
     if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
@@ -625,6 +623,20 @@ void drawBookText(const GfxRenderer& renderer, const Rect& text, const RecentBoo
   }
 }
 }  // namespace
+
+Rect DashboardTheme::getHomeCoverRect(const GfxRenderer& renderer) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int top = metrics.homeTopPadding + UITheme::getHeaderRect(renderer, 0).y - metrics.topPadding;
+  return layoutForContent(renderer, CalibratedThemeLayout::content(
+                                        renderer, Rect{safe.x, top, safe.width, metrics.homeCoverTileHeight}, true))
+      .cover;
+}
+
+Rect DashboardTheme::getSleepCoverRect(const GfxRenderer& renderer) {
+  return layoutForContent(renderer, CalibratedThemeLayout::sleep(renderer, DashboardMetrics::values.homeTopPadding))
+      .cover;
+}
 
 void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                          int selectorIndex, bool& coverRendered, bool& coverBufferStored,
