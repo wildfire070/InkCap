@@ -2891,6 +2891,50 @@ TEST_F(ChapterHtmlSlimParserTest, BodyFontProbeSkipsInvisibleTitlesAndRubyFallba
   EXPECT_EQ(parser.parseFile_.position(), 0u);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, BodySizeProbeMeasuresAUniformlyShrunkBody) {
+  // A publisher stylesheet that shrinks every paragraph to "small" (80% of body): the real
+  // failure mode this feature fixes (e.g. "Die Bucherdiebin" setting every <p> to CSS small).
+  cssParser.rulesBySelector_["p"] = CssParser::parseInlineStyle("font-size: small");
+  cssParser.rulesBySelector_["h1"] = CssParser::parseInlineStyle("font-size: 150%");
+  parser.parseFile_.setContents(
+      "<html><body><h1>A chapter heading, much shorter than the body text below it.</h1>"
+      "<p>The quick brown fox jumps over the lazy dog, again and again, many times over, to make "
+      "this paragraph long enough that its byte count dominates the short heading above it.</p>"
+      "<p>A second paragraph of ordinary body prose, just as long as the first one, so the "
+      "measurement is not swayed by a single short paragraph alone.</p></body></html>");
+  parser.activeParser = XML_ParserCreate(nullptr);
+  ASSERT_NE(parser.activeParser, nullptr);
+  ASSERT_TRUE(parser.detectBodySizeScale());
+  // Measured dominant multiplier was 0.8 (the <p> rule); the correction cancels it back to 1.0.
+  EXPECT_NEAR(parser.bodySizeScale_, 1.0f / 0.8f, 0.01f);
+  EXPECT_EQ(parser.parseFile_.position(), 0u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BodySizeProbeStaysANoOpWhenNothingIsShrunk) {
+  cssParser.rulesBySelector_["h1"] = CssParser::parseInlineStyle("font-size: 150%");
+  parser.parseFile_.setContents(
+      "<html><body><h1>A short heading.</h1>"
+      "<p>Ordinary body prose with no font-size override at all, which is the overwhelmingly "
+      "common case and must measure as a complete no-op.</p></body></html>");
+  parser.activeParser = XML_ParserCreate(nullptr);
+  ASSERT_TRUE(parser.detectBodySizeScale());
+  EXPECT_NEAR(parser.bodySizeScale_, 1.0f, 0.001f);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BodySizeScaleCorrectsResolvedBlockFont) {
+  // End-to-end: a block at the shrunk body size (0.8) resolves to the SAME effective size as an
+  // unstyled block once the measured correction (1.25) is applied, not a visibly smaller one.
+  parser.bodySizeScale_ = 1.25f;
+  parser.setFontSizeLadder(FontSizeLadder{});
+  BlockStyle shrunkBody;
+  shrunkBody.fontSizeMultiplier = 0.8f;
+  parser.resolveBlockFont(shrunkBody);
+  EXPECT_EQ(shrunkBody.headingFontId, 0);
+  EXPECT_NEAR(shrunkBody.fontSizeResidualScale, 1.0f, 0.01f);
+  // The stored multiplier itself is untouched (it round-trips through the section cache file).
+  EXPECT_FLOAT_EQ(shrunkBody.fontSizeMultiplier, 0.8f);
+}
+
 TEST(PublisherFontCss, StreamsFontFaceAndNormalRulesTogether) {
   CssParser css{"/tmp"};
   HalFile file;
