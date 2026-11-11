@@ -97,9 +97,10 @@ static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5"
 // CssDisplay::Inline handling below, which skips the block-starting behavior
 // for those. ul/ol are block-level so list containers get proper insets.
 // figure/fieldset (upstream) round out the common block-level containers.
-static constexpr const char* const BLOCK_TAGS[] = {"p",  "li",     "div",    "br",      "blockquote", "ul",
-                                                     "ol", "dt",     "dd",     "details", "summary",
-                                                     "figure", "fieldset"};
+// hgroup (upstream) groups a heading with its subheading(s) for shared spacing/alignment.
+static constexpr const char* const BLOCK_TAGS[] = {"p",      "li",       "div",    "br",     "blockquote", "ul",
+                                                     "ol",     "dt",       "dd",     "details", "summary",
+                                                     "figure", "fieldset", "hgroup"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
 // dfn/cite carry the same browser-default italic styling as i/em -- confirmed
 // on real books that use <dfn> for foreign-language dialogue and <cite> for
@@ -3729,6 +3730,20 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     userAlignmentBlockStyle.alignment = requestedAlign == CssTextAlign::None ? CssTextAlign::Justify : requestedAlign;
   }
 
+  // A heading group's subtitle follows the group's alignment even when prose has a reader override.
+  if (strcmp(name, "hgroup") == 0) {
+    self->headingGroupDepth = self->depth;
+  } else if (self->embeddedStyle && self->headingGroupDepth >= 0 && self->depth == self->headingGroupDepth + 1 &&
+             strcmp(name, "p") == 0) {
+    const auto alignment = cssStyle.hasTextAlign()
+                               ? cssStyle.textAlign
+                               : self->blockStyleBuf_[self->blockStyleCount_ - 1].publisherAlignment;
+    if (alignment != CssTextAlign::None) {
+      userAlignmentBlockStyle.alignment = alignment;
+      userAlignmentBlockStyle.textAlignDefined = true;
+    }
+  }
+
   // Figures lay out artwork and captions, independently of the reader's prose alignment.
   if (self->embeddedStyle && strcmp(name, "figure") == 0 && cssStyle.hasTextAlign()) {
     userAlignmentBlockStyle.alignment = cssStyle.textAlign;
@@ -4878,6 +4893,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     self->currentTextRunBytes = 0;
     self->nextWordContinues = false;
   }
+  if (self->headingGroupDepth == self->depth) self->headingGroupDepth = -1;
   if (self->headingDepth == self->depth) {
     self->headingDepth = -1;
   }
