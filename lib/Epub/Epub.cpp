@@ -745,6 +745,107 @@ bool Epub::parseTocNavFile() const {
   return true;
 }
 
+namespace {
+// A book.bin built with the TOC lost to a fragmented heap retries on the
+// reader's next few opens rather than staying TOC-less until the cache is
+// cleared by hand. Capped so a book whose TOC never parses (a genuinely
+// malformed NCX/nav, not a transient OOM) stops paying a rebuild per open.
+constexpr uint8_t kMaxTocRetryAttempts = 3;
+}  // namespace
+
+bool Epub::hasPendingTocRetry() const {
+  HalFile f;
+  if (!Storage.openFileForRead("EBP", cachePath + "/toc.retry", f)) return false;
+  const int count = f.read();
+  f.close();
+  return count >= 0 && count < kMaxTocRetryAttempts;
+}
+
+void Epub::recordLostTocRetryAttempt() const {
+  uint8_t count = 0;
+  HalFile in;
+  if (Storage.openFileForRead("EBP", cachePath + "/toc.retry", in)) {
+    const int existing = in.read();
+    in.close();
+    if (existing >= 0) count = static_cast<uint8_t>(existing);
+  }
+  if (count >= kMaxTocRetryAttempts) return;  // already exhausted; no point rewriting
+  HalFile out;
+  if (Storage.openFileForWrite("EBP", cachePath + "/toc.retry", out)) {
+    out.write(static_cast<uint8_t>(count + 1));
+    out.close();
+  }
+}
+
+void Epub::clearLostTocRetry() const { Storage.remove((cachePath + "/toc.retry").c_str()); }
+
+void Epub::prewarmSpineZipStats() const {
+  if (zipDirectoryCache.spineStatsAttempted) return;  // once per reading session is enough
+  zipDirectoryCache.spineStatsAttempted = true;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return;
+
+  const int spineCount = bookMetadataCache->getSpineCount();
+  if (spineCount <= 0) return;
+
+  // Two short-lived arrays (targets, resolved stats) plus the one that
+  // actually persists on zipDirectoryCache -- this is a one-time, book-open
+  // cost, not a per-frame growth, but still degrades gracefully rather than
+  // risk starving the chapter read that follows right after it returns.
+  const size_t perArrayBytes = static_cast<size_t>(spineCount) * sizeof(ZipFile::FileStatSlim);
+  constexpr uint32_t MIN_FREE_HEAP_RESERVE = 24576;
+  if (ESP.getFreeHeap() < perArrayBytes * 2 + MIN_FREE_HEAP_RESERVE || ESP.getMaxAllocHeap() < perArrayBytes) {
+    LOG_DBG("EBP", "Skipping spine zip-stat prewarm: %u free, %u max alloc, %zu wanted", ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap(), perArrayBytes);
+    return;
+  }
+
+  auto targets = makeUniqueNoThrow<ZipFile::SizeTarget[]>(static_cast<size_t>(spineCount));
+  auto stats = makeUniqueNoThrow<ZipFile::FileStatSlim[]>(static_cast<size_t>(spineCount));
+  if (!targets || !stats) return;
+
+  for (int i = 0; i < spineCount; ++i) {
+    const auto entry = bookMetadataCache->getSpineEntry(i);
+    const uint64_t hash = ZipFile::fnvHash64(entry.href.c_str(), entry.href.size());
+    targets[i] = {hash, static_cast<uint16_t>(entry.href.size()), static_cast<uint16_t>(i)};
+    // Sentinel for "this spine item's zip entry was not found": a real,
+    // readable entry can never sit at the ZIP64-reserved offset 0xFFFFFFFF
+    // (the same sentinel this codebase's own directory-cache parsing already
+    // treats as "needs the extended field, not a plain 32-bit offset").
+    // fillFileStatSlims only ever overwrites a matched index, so an
+    // unmatched spine href (a malformed book, not expected in practice)
+    // leaves its slot at this sentinel instead of zero-initialized-but-wrong.
+    stats[i].localHeaderOffset = UINT32_MAX;
+  }
+  std::sort(targets.get(), targets.get() + spineCount, [](const ZipFile::SizeTarget& a, const ZipFile::SizeTarget& b) {
+    return a.hash < b.hash || (a.hash == b.hash && a.len < b.len);
+  });
+
+  ZipFile zip(filepath, &zipDirectoryCache);
+  if (zip.fillFileStatSlims(targets.get(), static_cast<size_t>(spineCount), stats.get(),
+                            static_cast<size_t>(spineCount)) <= 0) {
+    return;
+  }
+
+  auto spineStats = makeUniqueNoThrow<SpineZipStat[]>(static_cast<size_t>(spineCount));
+  if (!spineStats) return;
+  uint16_t resolvedCount = 0;
+  for (int i = 0; i < spineCount; ++i) {
+    const auto& stat = stats[targets[i].index];
+    if (stat.localHeaderOffset == UINT32_MAX) continue;  // this spine href's entry wasn't found
+    SpineZipStat& out = spineStats[resolvedCount++];
+    out.hrefHash = targets[i].hash;
+    out.hrefLen = targets[i].len;
+    out.method = stat.method;
+    out.compressedSize = stat.compressedSize;
+    out.uncompressedSize = stat.uncompressedSize;
+    out.localHeaderOffset = stat.localHeaderOffset;
+  }
+  if (resolvedCount == 0) return;
+
+  zipDirectoryCache.spineStats = std::move(spineStats);
+  zipDirectoryCache.spineStatCount = resolvedCount;
+}
+
 void Epub::discoverCssFilesFromZip() {
   const std::string& opfDir = contentBasePath;
   ZipFile zf(filepath, &zipDirectoryCache);
@@ -966,7 +1067,8 @@ bool Epub::openProtection() const {
 
 // load in the meta data for the epub file
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLocationLoadMode xLocationLoadMode,
-                const bool cacheCumulativeSpineSizes, const bool skipScraping) {
+                const bool cacheCumulativeSpineSizes, const bool skipScraping, const bool retryLostToc,
+                const bool prewarmSpineStats) {
   zipDirectoryCache.clear();
   lastLoadFailure = OpenFailure::InvalidOrUnreadable;
   // Enforce access before loading any previously rendered cache.
@@ -991,8 +1093,21 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
     return false;
   }
 
-  // Try to load existing cache first
-  if (bookMetadataCache->load()) {
+  // Try to load existing cache first. A cache that was built without a TOC
+  // because parsing it failed (not because the book has none) still has a
+  // retry due; retryLostToc callers rebuild instead of reusing it as-is --
+  // starting from a fresh, unloaded cache object, since the load() call just
+  // above already mutated this one's internal state even though its result
+  // is then discarded.
+  const bool existingCacheLoaded = bookMetadataCache->load();
+  if (existingCacheLoaded && retryLostToc && hasPendingTocRetry()) {
+    bookMetadataCache.reset();
+    bookMetadataCache = makeBookMetadataCacheNoThrow(cachePath, cacheCumulativeSpineSizes);
+    if (!bookMetadataCache) {
+      lastLoadFailure = OpenFailure::OutOfMemory;
+      return false;
+    }
+  } else if (existingCacheLoaded) {
     if (!skipLoadingCss) {
       // Rebuild CSS cache when missing, invalid, or previously incomplete.
       bool rebuildCssCache = false;
@@ -1076,6 +1191,10 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
       }
     }
 
+    if (prewarmSpineStats) {
+      prewarmSpineZipStats();
+    }
+
     lastLoadFailure = OpenFailure::None;
     return true;
   }
@@ -1125,6 +1244,18 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   }
 
   bool tocParsed = false;
+  const bool tocDeclared = !tocNavItem.empty() || !tocNcxItem.empty();
+  // Captured before recordLostTocRetryAttempt() below updates the sidecar, so
+  // we can tell a genuine recovery (was retrying, now parsed) from an
+  // ordinary first-time success, which has nothing stale to invalidate.
+  const bool wasRetryingLostToc = tocDeclared && hasPendingTocRetry();
+  // Counted before the parse attempt: a setup failure here is a fragmented
+  // heap refusing the NCX/nav parser, not the book lacking a TOC, and a crash
+  // mid-attempt should still use up a retry rather than looping on the same
+  // failure forever.
+  if (tocDeclared) {
+    recordLostTocRetryAttempt();
+  }
 
   // Try EPUB 3 nav document first (preferred)
   if (!tocNavItem.empty()) {
@@ -1139,6 +1270,14 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   if (!tocParsed) {
     LOG_ERR("EBP", "Warning: Could not parse any TOC format");
     // Continue anyway - book will work without TOC
+  } else if (tocDeclared) {
+    clearLostTocRetry();
+    if (wasRetryingLostToc) {
+      // Section caches built while the TOC was lost have no tocAnchors, so
+      // any TOC-anchor page break mid-chapter never fired; drop them so the
+      // now-recovered TOC is honored on next build.
+      Storage.removeDir((cachePath + "/sections").c_str());
+    }
   }
 
   if (!bookMetadataCache->endTocPass()) {
@@ -1200,6 +1339,10 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
     } else {
       BookIds::markAo3Checked(filepath);
     }
+  }
+
+  if (prewarmSpineStats) {
+    prewarmSpineZipStats();
   }
 
   lastLoadFailure = OpenFailure::None;
