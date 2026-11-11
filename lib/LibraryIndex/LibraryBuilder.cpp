@@ -796,13 +796,25 @@ struct DedupFrame {
   ~DedupFrame() { state.activeDedupCount = base; }
 };
 
-void walk(WalkState& st, const std::string& path, const int depth) {
-  if (st.failed || depth > LIBRARY_MAX_DEPTH || isLibraryResourceDirectory(path)) return;
+// preOpenedDir, when given, already IS this folder (the caller's own directory-listing entry,
+// already confirmed to be a directory) and is taken over rather than reopened: opening it by
+// path instead would search its parent from the first entry again, which costs real time in a
+// folder of many subfolders (measured 27ms each on a 1,800-subfolder card).
+void walk(WalkState& st, const std::string& path, const int depth, HalFile* preOpenedDir = nullptr) {
+  if (st.failed || depth > LIBRARY_MAX_DEPTH || isLibraryResourceDirectory(path)) {
+    if (preOpenedDir && *preOpenedDir) preOpenedDir->close();
+    return;
+  }
 
   const uint16_t dedupBase = st.activeDedupCount;
   const DedupFrame dedupFrame{st, dedupBase};
 
-  HalFile dir = Storage.open(path.c_str());
+  HalFile dir;
+  if (preOpenedDir) {
+    dir = std::move(*preOpenedDir);
+  } else {
+    dir = Storage.open(path.c_str());
+  }
   if (!dir || !dir.isDirectory()) {
     LOG_ERR("LIBIDX", "cannot open library directory %s", path.c_str());
     if (dir) dir.close();
@@ -843,17 +855,26 @@ void walk(WalkState& st, const std::string& path, const int depth) {
     const uint32_t size = isDir ? 0 : static_cast<uint32_t>(entry.fileSize());
     const uint32_t creationTime = isDir ? 0 : entry.creationTime();
     const uint32_t modificationTime = isDir ? 0 : entry.modificationTime();
-    entry.close();
+    // A directory entry stays open: the recursive walk() below takes it over instead of
+    // reopening the same folder by path. A file entry has nothing further to do with it.
+    if (!isDir) entry.close();
 
-    if (st.nameBuf[0] == '\0' || isHiddenOrSidecar(st.nameBuf) || (isDir && isSystemDirectory(st.nameBuf))) continue;
+    if (st.nameBuf[0] == '\0' || isHiddenOrSidecar(st.nameBuf) || (isDir && isSystemDirectory(st.nameBuf))) {
+      if (isDir) entry.close();
+      continue;
+    }
     const std::string name(st.nameBuf);
 
     if (isDir) {
       const std::string childPath = joinLibraryPath(path, name);
-      if (childPath == ARCHIVE_FOLDER) continue;  // archived books stay out of the Library until restored
+      if (childPath == ARCHIVE_FOLDER) {
+        entry.close();  // archived books stay out of the Library until restored
+        continue;
+      }
       const size_t resumePosition = dir.position();
       dir.close();
-      walk(st, childPath, depth + 1);
+      entry.rewindDirectory();
+      walk(st, childPath, depth + 1, &entry);
       if (st.failed) return;
 
       dir = Storage.open(path.c_str());

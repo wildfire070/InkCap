@@ -511,7 +511,10 @@ static int tinf_inflate_uncompressed_block(TINF_DATA *d)
         invlength = uzlib_get_byte(d);
         invlength += 256 * uzlib_get_byte(d);
         /* check length */
-        if (length != (~invlength & 0x0000ffff)) return TINF_DATA_ERROR;
+        /* InkCap: d->eof here means the length/invlength bytes themselves ran out, not just a
+           coincidentally-zero byte -- uzlib_get_byte() zero-fills past end of input, which would
+           otherwise let a cut-short stream pass this check by accident. */
+        if (d->eof || length != (~invlength & 0x0000ffff)) return TINF_DATA_ERROR;
 
         /* increment length to properly return TINF_DONE below, without
            producing data at the same time */
@@ -526,6 +529,12 @@ static int tinf_inflate_uncompressed_block(TINF_DATA *d)
     }
 
     unsigned char c = uzlib_get_byte(d);
+    /* InkCap: the input ended inside this stored block (a cut stream, or a card read that
+       failed). Its remaining bytes are missing, not zeros -- uzlib_get_byte() zero-fills on
+       EOF, which previously let a block short-read to its full declared length, producing a
+       file of the right size with a zeroed tail (e.g. a JPEG/PNG cover a deflater stored
+       uncompressed, since it would not compress further). */
+    if (d->eof) return TINF_DATA_ERROR;
     TINF_PUT(d, c);
     return TINF_OK;
 }
