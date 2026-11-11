@@ -123,6 +123,11 @@ layout may shift the destination page.
 
 ## `/.crosspoint/home_carousel_cache_<index>.bin`
 
+### Version 7
+
+Lift the carousel artwork to leave room for the reading details above the menu.
+Version 6 snapshots rebuild automatically; the binary layout is unchanged.
+
 ### Version 6
 
 The v1.6.1 release normalizes development version 8 to version 6, one step
@@ -1123,7 +1128,13 @@ clippings, progress or statistics. The PXC byte layout itself is unchanged.
 
 ## `section.bin`
 
-### Version 106 (current development)
+### Version 107 (current development)
+
+Complete caches use `107` and suspended partial caches use `0xDC`. Both rebuild
+to apply publisher spacing and subtitle alignment in chapter heading groups.
+The binary payload is unchanged.
+
+### Version 106
 
 The post-RC development cache revisions are retained when merging the release
 branch, so the first 2.0.0 RC's `84` / `0xC5` caches cannot bypass the newer
