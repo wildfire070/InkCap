@@ -414,7 +414,11 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
 void CrossPointWebServerActivity::startWebServer() {
   // Create the web server instance
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("WEBACT", "ERROR: Not enough memory to start web server!");
+    return;
+  }
   leaveRequested = false;
   webServer->setUploadCancelCheck(
       [](void* context) { return static_cast<CrossPointWebServerActivity*>(context)->checkUploadCancellation(); },

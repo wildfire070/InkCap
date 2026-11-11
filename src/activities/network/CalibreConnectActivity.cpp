@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <LibraryBuilder.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -154,7 +155,14 @@ void CalibreConnectActivity::startWebServer() {
     LOG_DBG("CAL", "mDNS started: http://%s.local/", HOSTNAME);
   }
 
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("CAL", "Not enough memory to start web server");
+    RenderLock lock;
+    state = CalibreConnectState::ERROR;
+    requestUpdate();
+    return;
+  }
   webServer->begin();
 
   RenderLock lock;
