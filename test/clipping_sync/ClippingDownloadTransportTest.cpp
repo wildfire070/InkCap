@@ -37,11 +37,12 @@ TEST_F(ClippingDownloadTransport, StreamsUploadAndRequiresCompleteAcknowledgment
   testHttp.complete = false;
   EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::InvalidResponse);
   testHttp.complete = true;
-  // Buffering now happens before the HTTP request is sent at all (freeink-sdk
-  // has no sendRequestStream() API), so a short read during buffering is a
-  // pre-flight failure (InvalidResponse), not a mid-transfer Network error.
+  // The upload now streams (SecureHttpClient::sendRequestStream), reading the file
+  // during the live HTTP transfer rather than fully up front, so a short SD read
+  // here surfaces as a failed send (status <= 0) -- Network, same as any other
+  // mid-transfer connection failure, not InvalidResponse.
   shortReadAfter = 512;
-  EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::InvalidResponse);
+  EXPECT_EQ(client.putFile("/clippings", "/upload.tmp", 1), Result::Network);
   shortReadAfter = -1;
 }
 

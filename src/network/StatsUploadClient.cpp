@@ -142,26 +142,14 @@ StatsUploadClient::Result StatsUploadClient::putBody(const char* endpoint, const
     size += length;
     return true;
   };
-  // freeink-sdk has no sendRequestStream() API; buffer the whole file instead,
-  // guarded against the same low-memory conditions already checked above.
-  std::string buffered;
-  if (filePath) {
-    constexpr uint32_t MIN_FREE_HEAP_FOR_UPLOAD_BUFFER = 24576;
-    constexpr uint32_t MIN_MAX_ALLOC_HEAP_FOR_UPLOAD_BUFFER = 16384;
-    if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_UPLOAD_BUFFER ||
-        ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP_FOR_UPLOAD_BUFFER || source.size() > ESP.getMaxAllocHeap()) {
-      LOG_ERR("StatsSync", "Insufficient memory to buffer upload file (%u bytes)", unsigned(source.size()));
-      http.end();
-      return request.finish(Result::LowMemory);
-    }
-    buffered.resize(source.size());
-    if (source.read(buffered.data(), buffered.size()) != static_cast<int>(buffered.size())) {
-      http.end();
-      return request.finish(Result::InvalidResponse);
-    }
-  }
+  const auto read = [](void* context, size_t offset, uint8_t* data, size_t length) -> size_t {
+    auto& file = *static_cast<FsFile*>(context);
+    if (!file.seekSet(offset)) return 0;
+    const int count = file.read(data, length);
+    return count < 0 ? 0 : static_cast<size_t>(count);
+  };
   const int status = filePath
-                         ? http.sendRequest("PUT", reinterpret_cast<const uint8_t*>(buffered.data()), buffered.size(), receive)
+                         ? http.sendRequestStream("PUT", source.size(), read, &source, receive)
                          : http.sendRequest("PUT", reinterpret_cast<const uint8_t*>(payload), strlen(payload), receive);
   complete = http.responseComplete();
 #endif
