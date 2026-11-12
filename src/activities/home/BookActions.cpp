@@ -411,6 +411,16 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
     }
   } else if (allowMove && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
             !BookMoveUtils::isInArchiveFolder(fullPath) && fullPath.rfind("/Read/", 0) != 0) {
+    // This EPUB has not been opened by the reader, so getTitle()/getAuthor()
+    // would be empty. Load only metadata before migrating the saved items.
+    Epub epub(fullPath, "/.crosspoint");
+    std::string title;
+    std::string author;
+    if (!epub.loadMetadata(title, author)) {
+      LOG_ERR("BookActions", "Could not load metadata for completed book: %s", fullPath.c_str());
+    }
+    if (title.empty()) title = displayName.empty() ? fullPath.substr(fullPath.find_last_of('/') + 1) : displayName;
+    const std::string oldCachePath = epub.getCachePath();
     const std::string dstPath = BookMoveUtils::buildReadFolderDestination(fullPath);
     LOG_INF("BookActions", "Moving completed epub: %s -> %s", fullPath.c_str(), dstPath.c_str());
     if (!bookkey::moveFile(fullPath, dstPath)) {
@@ -421,7 +431,14 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
                displayName.c_str());
       APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
       APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+      return true;
     }
+    // Re-added: this call was dropped when InkCap's archive two-way-sync refactor (3aed4b80)
+    // and a later upstream merge combined without carrying it into the Read-folder branch --
+    // without it, moving a finished book to Read/ left its cache, recents entry, bookmarks and
+    // clippings keyed to the old path.
+    BookMoveUtils::migrateMovedEpubState(fullPath, dstPath, oldCachePath, title, author,
+                                         !SETTINGS.removeReadBooksFromRecents);
   }
 
   return true;

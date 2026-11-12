@@ -1121,7 +1121,17 @@ clippings, progress or statistics. The PXC byte layout itself is unchanged.
 
 ## `section.bin`
 
-### Version 107 (current development)
+### Version 108 (current development)
+
+Complete caches use `108` and suspended partial caches use `0xDD`. Both rebuild
+automatically because runtime TrueType/OpenType advances no longer round up
+before the final pixel snap, which can change line breaks and word positions.
+The scalable-font adapter revision advances to `10` so built-in and SD outline
+font identities also reflect the changed metrics. Kerning, bitmap fonts and
+`.cpfont` metrics are unchanged. The binary payload, book metadata and saved
+reading progress are preserved.
+
+### Version 107
 
 Complete caches use `107` and suspended partial caches use `0xDC`. Both rebuild
 to apply publisher spacing and subtitle alignment in chapter heading groups.
@@ -2121,3 +2131,16 @@ Clipping uploads use `/.crosspoint/clipping-sync/upload.tmp` as a disposable JSO
 `/.crossink/sync.log` on the SD card records foreground sync request outcomes. Each line contains Unix UTC seconds, uptime in milliseconds, the HTTP method, a redacted API route, the HTTP status (0 before a response; negative for transport errors), and a fixed outcome label. UTC may be unset before the reader synchronizes its clock; uptime still orders the events within that boot. Credentials, server addresses, request/response bodies, book names, document IDs, and reading content are excluded.
 
 The current log rotates before exceeding 64 KiB to `/.crossink/sync.previous.log`, replacing the older backup. Both files can be copied from the card, or downloaded in the File Transfer web portal after enabling Show Hidden Files and opening `.crossink`. There is no cache format change or cache reset requirement. A missing/full/read-only SD card can prevent logging; this does not change the sync result.
+
+## Device screen calibration (NVS)
+
+Namespace `screen-cal`, key `bounds`, stored on the device rather than SD.
+Version 2 is ten bytes: `S`, `C`, version (`2`), four portrait edge insets
+(top/right/bottom/left, 0–32 pixels), top and bottom portrait corner clearances
+(0–96 pixels each), then XOR of the preceding nine bytes. Corner clearances
+set horizontal bounds for status bars and headers; they do not move the bars
+vertically or shrink the reading viewport. They rotate with the physical corners.
+Save writes all six values together; Reset and Cancel only affect the working
+copy until Save. Eight-byte version 1 records retain their four edges and inherit
+the device's default corner clearances; the next saved adjustment writes version 2.
+Older firmware does not understand version 2 and falls back to its defaults.

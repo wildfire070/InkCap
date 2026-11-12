@@ -34,9 +34,11 @@ def harness():
     startup = (ROOT / 'src/main.cpp').read_text().split('void setup() {', 1)[1].split('void loop()', 1)[0]
     # The AfterUSBPower wake route (Picco) begins the frontlight and returns to
     # sleep without ever reaching the real boot sequence below -- it is not part
-    # of the continuing-boot ordering this harness replays, so start scanning
-    # after that wake-reason switch to avoid picking up its own Frontlight.begin.
-    startup = startup.split('// SD Card Initialization', 1)[-1]
+    # of the continuing-boot ordering this harness replays. Strip just that case
+    # body (rather than truncating the whole switch) so a future call added to
+    # another wake route is still caught by this regression test.
+    startup = re.sub(r'case HalGPIO::WakeupReason::AfterUSBPower:.*?(?=case HalGPIO::WakeupReason::)',
+                     '', startup, count=1, flags=re.S)
     calls = re.findall(r'\b(?:Frontlight\.(?:initializeHardware|begin)|SETTINGS\.loadFromFile)\([^;]*\);', startup)
     # Use the real ordering, so moving detection below load reproduces the loss.
     assert sum('SETTINGS.loadFromFile' in call for call in calls) == 1

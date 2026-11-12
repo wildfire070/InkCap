@@ -5,6 +5,11 @@
 #include "HalTiltSensor.h"
 #include "ReaderTiltPageTurn.h"
 
+static_assert(TiltSensitivity::LOW_SENSITIVITY == 0);
+static_assert(TiltSensitivity::NORMAL == 1);
+static_assert(TiltSensitivity::HIGH_SENSITIVITY == 2);
+static_assert(LOW == 0 && HIGH == 1);
+
 unsigned long testNow = 0;
 #if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
 constexpr float NORMAL_THRESHOLD = 200.0f;
@@ -37,7 +42,7 @@ bool triggers(float rate, uint8_t sensitivity) {
 
 int main() {
   // Normal, missing and invalid preferences retain the original strict boundary.
-  for (const uint8_t level : {uint8_t(TiltSensitivity::TILT_NORMAL), uint8_t(255)}) {
+  for (const uint8_t level : {uint8_t(TiltSensitivity::NORMAL), uint8_t(255)}) {
     assert(!triggers(NORMAL_THRESHOLD, level));
     assert(triggers(NORMAL_THRESHOLD + 1, level));
     assert(!triggers(-NORMAL_THRESHOLD, level));
@@ -45,7 +50,7 @@ int main() {
   }
   {
     HalTiltSensor sensor;
-    start(sensor, TiltSensitivity::TILT_NORMAL);
+    start(sensor, TiltSensitivity::NORMAL);
     testNow = 1000;
     Imu::sample = {NORMAL_THRESHOLD, 0, 0};
     sensor.update(1, 1, 0, true);  // Existing four-argument callers keep Normal.
@@ -55,11 +60,12 @@ int main() {
     sensor.update(1, 1, 0, true);
     assert(sensor.wasTiltedForward());
   }
-  assert(triggers(NORMAL_THRESHOLD - 20, TiltSensitivity::TILT_HIGH));
-  assert(!triggers(NORMAL_THRESHOLD - 20, TiltSensitivity::TILT_NORMAL));
-  assert(!triggers(NORMAL_THRESHOLD + 10, TiltSensitivity::TILT_LOW));
-  assert(triggers(NORMAL_THRESHOLD * 1.2f, TiltSensitivity::TILT_LOW));
-  for (const uint8_t level : {TiltSensitivity::TILT_LOW, TiltSensitivity::TILT_NORMAL, TiltSensitivity::TILT_HIGH}) {
+  assert(triggers(NORMAL_THRESHOLD - 20, TiltSensitivity::HIGH_SENSITIVITY));
+  assert(!triggers(NORMAL_THRESHOLD - 20, TiltSensitivity::NORMAL));
+  assert(!triggers(NORMAL_THRESHOLD + 10, TiltSensitivity::LOW_SENSITIVITY));
+  assert(triggers(NORMAL_THRESHOLD * 1.2f, TiltSensitivity::LOW_SENSITIVITY));
+  for (const uint8_t level :
+       {TiltSensitivity::LOW_SENSITIVITY, TiltSensitivity::NORMAL, TiltSensitivity::HIGH_SENSITIVITY}) {
     const float strong = NORMAL_THRESHOLD * 1.2f;
     // Presets must remain reachable within the physical gyro range.
     assert(strong < (NORMAL_THRESHOLD == 200 ? 245.0f : 512.0f));

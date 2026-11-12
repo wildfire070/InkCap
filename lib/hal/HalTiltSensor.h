@@ -69,7 +69,7 @@ class HalTiltSensor {
 
   // Poll the accelerometer and update tilt gesture state.
   void update(const uint8_t enabled, const uint8_t direction, const uint8_t orientation, const bool inReader,
-              const uint8_t sensitivity = TiltSensitivity::TILT_NORMAL);
+              const uint8_t sensitivity = TiltSensitivity::NORMAL);
 
   // Returns true once per tilt-forward gesture (next page direction).
   // Consumed on read — subsequent calls return false until next gesture.

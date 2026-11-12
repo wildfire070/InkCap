@@ -240,6 +240,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        if args.touch_availability:
+            env["CROSSINK_SIMULATOR_SMOKE_TOUCH_AVAILABILITY"] = "1"
         if args.sleep_screen_colors:
             env["CROSSINK_SIMULATOR_SMOKE_SLEEP_SCREEN_COLORS"] = "1"
         if args.sleep_screen_captures:
@@ -435,6 +437,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_FILE_BROWSER_SYNC_RETURN"] = "1"
         if args.file_browser_sync_return:
             env["CROSSINK_SIMULATOR_SMOKE_FILE_BROWSER_SYNC_RETURN"] = "1"
+        if args.reader_top_drawer:
+            env["CROSSINK_SIMULATOR_SMOKE_READER_TOP_DRAWER"] = "1"
         if args.frontlight_sync:
             env["CROSSINK_SIMULATOR_SMOKE_FRONTLIGHT_SYNC"] = "1"
         if args.frontlight_layout:
@@ -449,6 +453,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             env["CROSSINK_SIMULATOR_SMOKE_SUPPORT_EXPORT"] = "1"
         if args.bookmarks:
             env["CROSSINK_SIMULATOR_SMOKE_BOOKMARKS"] = "1"
+        if args.clipping_metadata:
+            env["CROSSINK_SIMULATOR_SMOKE_CLIPPING_METADATA"] = "1"
         if args.about:
             env["CROSSINK_SIMULATOR_SMOKE_ABOUT"] = "1"
         if args.release_notes:
@@ -458,6 +464,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.sync_server_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.sync_server_captures).resolve())
             env["CROSSINK_SIMULATOR_SMOKE_SYNC_SERVER_CAPTURES"] = "1"
+        if args.settings_back:
+            env["CROSSINK_SIMULATOR_SMOKE_SETTINGS_BACK"] = "1"
         if args.interval_layout:
             env["CROSSINK_SIMULATOR_SMOKE_INTERVAL_LAYOUT"] = "1"
         if args.menu_orientation:
@@ -523,6 +531,10 @@ def run_smoke(args: argparse.Namespace) -> int:
         print("Simulator did not complete Wi-Fi transmit-power checks", file=sys.stderr)
         return 2
 
+    if args.settings_back and "Simulator smoke test passed: settings back zones" not in proc.stdout:
+        print("Simulator did not complete the Settings back-zone checks", file=sys.stderr)
+        return 2
+
     if args.interval_layout and "Simulator smoke test passed: interval layout" not in proc.stdout:
         print("Simulator did not complete the interval layout checks", file=sys.stderr)
         return 2
@@ -533,6 +545,10 @@ def run_smoke(args: argparse.Namespace) -> int:
 
     if args.release_notes and "Simulator smoke test passed: release notes" not in proc.stdout:
         print("Simulator did not complete the release notes checks", file=sys.stderr)
+        return 2
+
+    if args.clipping_metadata and "Simulator smoke test passed: clipping metadata" not in proc.stdout:
+        print("Simulator did not complete clipping metadata checks", file=sys.stderr)
         return 2
 
     if args.clipping_selection and "Simulator smoke test passed: touch clipping actions" not in proc.stdout:
@@ -582,6 +598,7 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--touch-availability", action="store_true", help="Check Home redraws after delayed touch startup and hardware loss")
     parser.add_argument("--sleep-screen-colors", action="store_true", help="Check retained sleep screen colors, Dark Mode preference and default fallback")
     parser.add_argument("--sleep-screen-captures", help="Directory for Page Overlay display-color captures (PGM)")
     parser.add_argument("--custom-sleep-images", action="store_true", help="Check custom BMP Fit/Crop, orientation and cached redraws; captures via --about-captures")
@@ -639,16 +656,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--screenshot-out", help="Copy any screenshots taken during the run into this directory before cleanup")
     parser.add_argument("--context-menu-sync-return", choices=["file-browser", "library"], help="Check context-menu sync return across network reboots")
     parser.add_argument("--file-browser-sync-return", action="store_true", help="Check browser sync return across network reboots")
+    parser.add_argument("--reader-top-drawer", action="store_true", help="Check capability-based reader top drawer, details/light controls, dismissal, bottom menu and Home action")
     parser.add_argument("--frontlight-sync", action="store_true", help="Check frontlight sync outside the reader with stats enabled and disabled (X4 Pro)")
     parser.add_argument("--frontlight-layout", action="store_true", help="Check frontlight drawer bounds, handle swipes/taps, reader return and explicit Home across scales, orientations and themes (X4 Pro)")
     parser.add_argument("--frontlight-captures", help="Directory for frontlight layout framebuffer captures (PGM)")
     parser.add_argument("--opds-catalog", action="store_true", help="Check OPDS catalog release and download return flows")
     parser.add_argument("--support-export", action="store_true", help="Check support export privacy, scopes, cancellation and failure preservation")
     parser.add_argument("--bookmarks", action="store_true", help="Check long bookmark lists from Home and the reader, scrolling, deletion and jumps; captures via --about-captures")
+    parser.add_argument("--clipping-metadata", action="store_true", help="Check finished-book metadata migration, blank saved-book recovery and filename fallback; captures via --about-captures")
     parser.add_argument("--about", action="store_true", help="Check About navigation, paging and read-only snapshots across scales/orientations")
     parser.add_argument("--release-notes", action="store_true", help="Check the one-time What's New screen (Download, Update, touch Later vs swipe, landscape hints) and the Settings Release Notes entry; captures via --about-captures")
     parser.add_argument("--about-captures", help="Directory for About framebuffer captures (PGM)")
     parser.add_argument("--sync-server-captures", help="Directory for Sync Server settings captures (PGM)")
+    parser.add_argument("--settings-back", action="store_true", help="Check consistent back headers, tap targets and navigation across screens, themes, orientations and sizes (touch profiles)")
     parser.add_argument("--interval-layout", action="store_true", help="Check interval picker spacing and touch targets in all rotations and UI scales; captures via --about-captures")
     parser.add_argument("--menu-orientation", action="store_true", help="Check physical menu labels/actions in all rotations independently of reader preferences; captures via --about-captures")
     parser.add_argument("--home-swipe", action="store_true", help="Check bottom-edge Home swipes, ordinary list swipes, and reader menu gestures on touch devices")
@@ -657,6 +677,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)
     args = parser.parse_args()
+    if args.touch_availability and args.env not in ("sticky-simulator", "x4-pro-simulator"):
+        parser.error("--touch-availability requires a touch simulator")
+    if args.settings_back and args.env not in ("x4-pro-simulator", "sticky-simulator"):
+        parser.error("--settings-back requires a touch simulator profile")
     if args.font_browser_return and (not args.font_dir or not args.font_family):
         parser.error("--font-browser-return requires --font-dir and --font-family")
     if args.reader_font_layout and (args.env != "x4-pro-simulator" or not args.font_dir or not args.font_family):
