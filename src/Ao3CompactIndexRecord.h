@@ -2,6 +2,15 @@
 #include <Memory.h>
 #include <stdint.h>
 
+// How many freeform/genre tags are scraped per fic, and how many bytes (incl. null terminator) each
+// one gets. Shared by Ao3LibraryMetadata (the sidecar, still only shows the first 2-4 as pills -- its
+// own display loops keep their own small hardcoded bounds, unaffected by this) and CompactIndexRecord
+// below (the searchable index -- see Ao3LibraryActivity's Library search). Sized from a real sample of
+// ~300 AO3 fics: 32 tags covers ~90% of fics completely (p90), 28 chars covers ~85%+ of individual tags
+// without truncation.
+constexpr int AO3_SEARCH_TAG_COUNT = 32;
+constexpr int AO3_SEARCH_TAG_MAX_LEN = 28;
+
 #pragma pack(push, 1)
 struct CompactIndexRecord {
   char title[64];          // truncated title
@@ -17,11 +26,12 @@ struct CompactIndexRecord {
   char rating;             // G, T, M, E, - (same encoding as Ao3LibraryMetadata::rating)
   uint8_t isCompleted;     // 0 or 1, from Ao3LibraryMetadata::isCompleted
   uint8_t flags;           // bit 0 = tombstone (deleted), bit 1 = finished (user-marked)
+  char tags[AO3_SEARCH_TAG_COUNT][AO3_SEARCH_TAG_MAX_LEN];  // widened freeform/genre tags, search-only
 };
 #pragma pack(pop)
 
-// Exactly 245 bytes on disk
-static_assert(sizeof(CompactIndexRecord) == 245, "CompactIndexRecord must be exactly 245 bytes");
+// Exactly 245 + (32*28) = 1141 bytes on disk (AO3X format v4)
+static_assert(sizeof(CompactIndexRecord) == 1141, "CompactIndexRecord must be exactly 1141 bytes");
 
 // How many live books the AO3 library will hold depends on the device: each takes ~44 bytes of RAM
 // while the library is open (see ViewEntry), plus hash sets and sort copies. Devices without PSRAM

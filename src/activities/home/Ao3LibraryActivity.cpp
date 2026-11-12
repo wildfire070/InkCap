@@ -7,6 +7,7 @@
 #include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <LibraryText.h>
 #include <Serialization.h>
 #include <Utf8.h>
 #include <ZipFile.h>
@@ -26,8 +27,10 @@
 #include "../../components/TouchHeaderBackButton.h"
 #include "../../components/TouchRegistry.h"
 #include "../../components/UITheme.h"
+#include "../../components/icons/listIcons.h"
 #include "../../fontIds.h"
 #include "../../util/Ao3ReceiveUtils.h"
+#include "../util/KeyboardEntryActivity.h"
 #include "Ao3IndexActivity.h"
 #include "Ao3LibrarySettingsActivity.h"
 #include "Ao3ReceivedReviewActivity.h"
@@ -44,11 +47,16 @@ namespace {
 constexpr char PENDING_SCAN_MARKER[] = "/.crosspoint/pending_ao3_scan";
 
 // Sort & Filter overlay geometry, shared by renderFilterOverlay() and the tap-outside-to-close check.
+// A Search row was added above Rating (see the search bar at the top of renderFilterOverlay()),
+// pushing every other row's Y offset and these row indices down by one -- OVERLAY_HEIGHT grew to match.
 constexpr int OVERLAY_START_Y = 48;
-constexpr int OVERLAY_HEIGHT = 340;
-constexpr int OVERLAY_ROW_SHOW = 4;
-constexpr int OVERLAY_ROW_CONFIRM = 5;
-constexpr int OVERLAY_ROW_COUNT = 6;
+constexpr int OVERLAY_HEIGHT = 404;
+constexpr int OVERLAY_ROW_SEARCH = 0;
+constexpr int OVERLAY_ROW_SHOW = 5;
+constexpr int OVERLAY_ROW_CONFIRM = 6;
+constexpr int OVERLAY_ROW_COUNT = 7;
+// Vertical space the new Search row + its surrounding margins reserve at the top of the overlay.
+constexpr int SEARCH_ROW_RESERVE = 64;
 
 // The Manage Panel's triangle indicator (in the button-hints bar) sits close enough to the right edge
 // that the X4 Pro's recessed bezel visually clips it -- same class of issue UIThemeTokens.h's own
@@ -344,11 +352,11 @@ void Ao3LibraryActivity::loop() {
           char magic[4];
           uint8_t version;
           uint16_t recordCount;
-          // Reject the pre-fnvHash64 index format (version < 3): its records are a
+          // Reject any pre-tag-search index format (version < 4): its records are a
           // different size, so reading them here would misalign (matches the same
           // guard in Ao3IndexActivity::buildIndexedHashes).
           if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-              memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
+              memcmp(magic, "AO3X", 4) == 0 && version == 4 && recordCount <= MAX_INDEX_RECORDS) {
             f.seek(12);  // skip rest of header
             uint16_t liveCount = 0;
             CompactIndexRecord rec;
@@ -438,6 +446,7 @@ void Ao3LibraryActivity::loop() {
           mappedInput.suppressCurrentTouchContact();
           screenState = ScreenState::FILTER_PANEL;
           pendingState = activeState;
+          pendingSearchQuery = activeSearchQuery;
           overlayRowIndex = 0;
           requestUpdate(true);
           return;
@@ -474,6 +483,7 @@ void Ao3LibraryActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
       screenState = ScreenState::FILTER_PANEL;
       pendingState = activeState;
+      pendingSearchQuery = activeSearchQuery;
       overlayRowIndex = 0;
       requestUpdate(true);
       return;
@@ -522,7 +532,7 @@ void Ao3LibraryActivity::loop() {
       int tappedItem = -1;
       if (mappedInput.wasItemTapped(tappedItem) && tappedItem >= 0 && tappedItem < OVERLAY_ROW_COUNT) {
         mappedInput.suppressCurrentTouchContact();
-        overlayRowIndex = tappedItem;  // rows 0..4, Confirm = 5
+        overlayRowIndex = tappedItem;  // 0=Search, rows 1..5, Confirm = 6
         confirmViaTap = true;
         // fall through to the Confirm handler below.
       } else {
@@ -570,7 +580,20 @@ void Ao3LibraryActivity::loop() {
     }
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || confirmViaTap) {
-      if (overlayRowIndex == 0) {
+      if (overlayRowIndex == OVERLAY_ROW_SEARCH) {
+        // Search row: open the keyboard. Matches title/author/series/tags (see recordMatchesSearch) --
+        // staged in pendingSearchQuery like every other row, only takes effect on Confirm below.
+        startActivityForResult(
+            std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH),
+                                                   pendingSearchQuery, 48, InputType::Text),
+            [this](const ActivityResult& result) {
+              const auto* text = std::get_if<KeyboardResult>(&result.data);
+              if (!result.isCancelled && text) pendingSearchQuery = text->text;
+              requestUpdate(true);
+            });
+        requestUpdate(true);
+        return;
+      } else if (overlayRowIndex == 1) {
         // Rating row: cycle Any -> G -> T -> M -> E -> Not Rated -> Any
         switch (pendingState.rating) {
           case 0:
@@ -592,7 +615,7 @@ void Ao3LibraryActivity::loop() {
             pendingState.rating = 0;
             break;
         }
-      } else if (overlayRowIndex == 1) {
+      } else if (overlayRowIndex == 2) {
         // Completion row (Automatic mode): cycle Any -> Complete -> Incomplete -> Any
         switch (pendingState.completion) {
           case -1:
@@ -605,7 +628,7 @@ void Ao3LibraryActivity::loop() {
             pendingState.completion = -1;
             break;
         }
-      } else if (overlayRowIndex == 2) {
+      } else if (overlayRowIndex == 3) {
         // Sort by cycle: Title -> Author -> Word Count -> Date Added -> Series -> Title
         switch (pendingState.sortMode) {
           case SortMode::ALPHABETIC:
@@ -624,7 +647,7 @@ void Ao3LibraryActivity::loop() {
             pendingState.sortMode = SortMode::ALPHABETIC;
             break;
         }
-      } else if (overlayRowIndex == 3) {
+      } else if (overlayRowIndex == 4) {
         // Order cycle
         pendingState.ascending = !pendingState.ascending;
       } else if (overlayRowIndex == OVERLAY_ROW_SHOW) {
@@ -635,10 +658,12 @@ void Ao3LibraryActivity::loop() {
       } else if (overlayRowIndex == OVERLAY_ROW_CONFIRM) {
         // Confirm Button pressed
         SortFilterState previous = activeState;
+        std::string previousQuery = activeSearchQuery;
         activeState = pendingState;
+        activeSearchQuery = pendingSearchQuery;
         screenState = ScreenState::LIBRARY;
         saveSortFilterState();
-        applyStateChange(previous, activeState);
+        applyStateChange(previous, activeState, previousQuery, activeSearchQuery);
       }
       requestUpdate(true);
       return;
@@ -960,14 +985,39 @@ void Ao3LibraryActivity::renderFilterOverlay() {
   // Margins
   const int margin = 20;
 
+  // Search bar: opens the keyboard, matching title/author/series/tags across the whole library (see
+  // recordMatchesSearch). Drawn above the "Sort & Filter" heading, matching an approved mockup --
+  // its own geometry, not drawOverlayRow's label+pill shape. Selection is conveyed the same way every
+  // other row conveys it here: a LightGray fill behind an otherwise normally-colored foreground.
+  {
+    const int barY = startY + 16;
+    const int barH = 40;
+    const int barW = screenWidth - 2 * margin;
+    const bool searchSelected = (overlayRowIndex == OVERLAY_ROW_SEARCH);
+    if (searchSelected) {
+      renderer.fillRoundedRect(margin, barY, barW, barH, 10, true, true, true, true, LightGray);
+    }
+    renderer.drawRoundedRect(margin, barY, barW, barH, 1, 10, true);
+    constexpr int iconSize = 24;
+    const int iconX = margin + 12;
+    const int iconY = barY + (barH - iconSize) / 2;
+    renderer.drawIcon(icon_search_24_bits, iconX, iconY, iconSize);
+    const bool hasQuery = !pendingSearchQuery.empty();
+    const std::string displayText = hasQuery ? pendingSearchQuery : std::string(tr(STR_SEARCH));
+    renderer.drawText(UI_10_FONT_ID, iconX + iconSize + 10, barY + barH / 2 - 7, displayText.c_str(), hasQuery);
+    TouchRegistry::getInstance().add(Rect{margin, barY, barW, barH}, OVERLAY_ROW_SEARCH, TouchRegistry::Item);
+  }
+
   // Ubuntu 12pt Bold Header "Sort & Filter"
-  renderer.drawText(UI_12_FONT_ID, margin + 12, startY + 20, "Sort & Filter", true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, margin + 12, startY + 20 + SEARCH_ROW_RESERVE, "Sort & Filter", true,
+                    EpdFontFamily::BOLD);
 
   // helper to draw pill or label
   auto drawOverlayRow = [&](int rowIndex, const char* label, const char* val, bool disabled = false) {
-    // Rows 0-1 are the filters, rows 2-3 the sort group (extra gap above it), row 4 the view selector.
+    // rowIndex 1-2 are the filters, 3-4 the sort group (extra gap above it), OVERLAY_ROW_SHOW the view
+    // selector -- offsets indexed by (rowIndex - 1) since row 0 (Search) has its own geometry above.
     static constexpr int ROW_OFFSETS[] = {61, 101, 161, 201, 241};
-    const int rowY = startY + ROW_OFFSETS[rowIndex];
+    const int rowY = startY + SEARCH_ROW_RESERVE + ROW_OFFSETS[rowIndex - 1];
     const bool isSelected = (overlayRowIndex == rowIndex);
 
     if (isSelected && !disabled) {
@@ -1017,15 +1067,15 @@ void Ao3LibraryActivity::renderFilterOverlay() {
       ratingVal = "Not Rated";
       break;
   }
-  drawOverlayRow(0, "Rating", ratingVal);
+  drawOverlayRow(1, "Rating", ratingVal);
 
-  // Row 1: Completion
+  // Row 2: Completion
   const char* completionVal = pendingState.completion == 1   ? "Complete"
                               : pendingState.completion == 0 ? "Incomplete"
                                                              : "Any";
-  drawOverlayRow(1, "Completion", completionVal);
+  drawOverlayRow(2, "Completion", completionVal);
 
-  // Row 2: Sort By
+  // Row 3: Sort By
   const char* sortLabel = "Title";
   switch (pendingState.sortMode) {
     case SortMode::ALPHABETIC:
@@ -1044,16 +1094,16 @@ void Ao3LibraryActivity::renderFilterOverlay() {
       sortLabel = "Series";
       break;
   }
-  drawOverlayRow(2, "Sort by", sortLabel);
+  drawOverlayRow(3, "Sort by", sortLabel);
 
-  // Row 3: Order
-  drawOverlayRow(3, "Order", pendingState.ascending ? "Ascending" : "Descending");
+  // Row 4: Order
+  drawOverlayRow(4, "Order", pendingState.ascending ? "Ascending" : "Descending");
 
-  // Row 4: Show (which slice of the library the list shows)
+  // Row 5: Show (which slice of the library the list shows)
   drawOverlayRow(OVERLAY_ROW_SHOW, "Show", viewLabel(pendingState.view));
 
-  // Row 5: Confirm Button
-  const int btnY = startY + 290;
+  // Row 6: Confirm Button
+  const int btnY = startY + SEARCH_ROW_RESERVE + 290;
   const int btnW = screenWidth - margin * 2;
   const int btnH = 36;
   const bool confirmSelected = (overlayRowIndex == OVERLAY_ROW_CONFIRM);
@@ -1066,7 +1116,7 @@ void Ao3LibraryActivity::renderFilterOverlay() {
     renderer.drawRoundedRect(margin, btnY, btnW, btnH, 1, 8, true);
     renderer.drawCenteredText(UI_12_FONT_ID, btnY + 2, "Confirm", true, EpdFontFamily::BOLD);
   }
-  // Register the Confirm button as tappable item 5 (X4 Pro); no-op on button-only builds.
+  // Register the Confirm button as tappable item 6 (X4 Pro); no-op on button-only builds.
   TouchRegistry::getInstance().add(Rect{margin, btnY, btnW, btnH}, OVERLAY_ROW_CONFIRM, TouchRegistry::Item);
 }
 
@@ -1475,6 +1525,25 @@ bool Ao3LibraryActivity::passesFilter(const ViewEntry& v, const FilterHashes& h)
   return true;
 }
 
+bool Ao3LibraryActivity::recordMatchesSearch(const CompactIndexRecord& rec, const std::string& foldedNeedle) const {
+  if (foldedNeedle.empty()) return true;
+  std::string combined;
+  combined.reserve(sizeof(rec.title) + sizeof(rec.author) + sizeof(rec.seriesName) +
+                   AO3_SEARCH_TAG_COUNT * AO3_SEARCH_TAG_MAX_LEN);
+  combined.append(rec.title);
+  combined.push_back(' ');
+  combined.append(rec.author);
+  combined.push_back(' ');
+  combined.append(rec.seriesName);
+  for (int i = 0; i < AO3_SEARCH_TAG_COUNT && rec.tags[i][0]; i++) {
+    combined.push_back(' ');
+    combined.append(rec.tags[i]);
+  }
+  std::string folded;
+  library::foldInto(combined, folded);
+  return library::matchesQuery(folded, foldedNeedle);
+}
+
 void Ao3LibraryActivity::rebuildViewEntries() {
   // viewEntries is read by render()/renderLibrary() under its own lock, and
   // this is called from several loop()-task sites (initial load, filter
@@ -1509,7 +1578,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   const bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
                       f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(&reserved, 1) == 1;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4) {
     f.close();
     indexState = IndexState::CORRUPT;
     return;
@@ -1533,6 +1602,9 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   const bool markedView = activeState.view == LibraryView::MARKED_FOR_LATER;
   std::vector<uint8_t> markedInIndex(markedView ? viewOrder_.size() : 0, 0);
 
+  // Folded once, not per record -- matches the plain Library's own applyFilter() (see LibraryActivity.cpp).
+  const std::string foldedSearchQuery = library::fold(activeSearchQuery);
+
   CompactIndexRecord rec;
   for (uint16_t i = 0; i < recordCount; i++) {
     if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
@@ -1542,6 +1614,7 @@ void Ao3LibraryActivity::rebuildViewEntries() {
       if (pos >= 0) markedInIndex[pos] = 1;
     }
     if (hideFinished && (rec.flags & 0x02)) continue;  // Skip finished
+    if (!recordMatchesSearch(rec, foldedSearchQuery)) continue;
     ViewEntry v = buildViewEntry(rec);
     if (passesFilter(v, filterHashes)) {
       viewEntries.push_back(v);
@@ -1552,7 +1625,9 @@ void Ao3LibraryActivity::rebuildViewEntries() {
   }
   f.close();
 
-  if (markedView) addUnindexedMarked(markedInIndex, filterHashes, hideFinished);
+  // An active search can't be evaluated against an unindexed fic (no CompactIndexRecord, so no tags
+  // to match) -- excluded for the same reason an active rating/completion filter already excludes them.
+  if (markedView && foldedSearchQuery.empty()) addUnindexedMarked(markedInIndex, filterHashes, hideFinished);
 
   resortViewEntries();
   indexState = IndexState::OK;
@@ -1593,8 +1668,10 @@ void Ao3LibraryActivity::addUnindexedMarked(const std::vector<uint8_t>& markedIn
   }
 }
 
-void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const SortFilterState& next) {
-  bool filterChanged = prev.rating != next.rating || prev.completion != next.completion || prev.view != next.view;
+void Ao3LibraryActivity::applyStateChange(const SortFilterState& prev, const SortFilterState& next,
+                                         const std::string& prevQuery, const std::string& nextQuery) {
+  bool filterChanged = prev.rating != next.rating || prev.completion != next.completion || prev.view != next.view ||
+                       prevQuery != nextQuery;
 
   bool sortChanged = prev.sortMode != next.sortMode || prev.ascending != next.ascending;
 

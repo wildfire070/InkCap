@@ -80,8 +80,15 @@ class Ao3LibraryActivity final : public Activity {
   SortFilterState activeState;
   SortFilterState pendingState;
   std::string ao3Folder;
-  int overlayRowIndex = 0;      // 0=Rating, 1=Completion, 2=Sort By, 3=Order, 4=Show, 5=Confirm
+  int overlayRowIndex = 0;      // 0=Search, 1=Rating, 2=Completion, 3=Sort By, 4=Order, 5=Show, 6=Confirm
   int managePanelRowIndex = 0;  // 0=Index New Books, 1=AO3 Library Settings
+
+  // Library search -- matches title/author/series/tags (see CompactIndexRecord::tags). Not part of
+  // SortFilterState: that's a POD struct persisted via a raw blob read/write, and a std::string can't
+  // join it that way. Same staged pending/active split as the rest of the overlay: only takes effect
+  // (and triggers a rebuild) when the overlay's own Confirm button is pressed.
+  std::string activeSearchQuery;
+  std::string pendingSearchQuery;
 
   // Cache hashes of the active Marked for Later / New Chapters view, in the store's own order.
   // Empty for the other views. Both stores are capped at 10, so linear lookups are fine.
@@ -133,8 +140,13 @@ class Ao3LibraryActivity final : public Activity {
   void resortViewEntries();
   void rebuildViewEntries();
   void addUnindexedMarked(const std::vector<uint8_t>& markedInIndex, const FilterHashes& filters, bool hideFinished);
-  void applyStateChange(const SortFilterState& prev, const SortFilterState& next);
+  void applyStateChange(const SortFilterState& prev, const SortFilterState& next, const std::string& prevQuery,
+                       const std::string& nextQuery);
   bool passesFilter(const ViewEntry& v, const FilterHashes& h) const;
+  // Folds title/author/seriesName/tags into one haystack and matches it against an already-folded
+  // search query (see library::fold/matchesQuery). foldedNeedle empty means "no active search" --
+  // callers should skip this entirely in that case rather than pay the concatenation cost per record.
+  bool recordMatchesSearch(const CompactIndexRecord& rec, const std::string& foldedNeedle) const;
   bool isStoreView() const {
     return activeState.view == LibraryView::MARKED_FOR_LATER || activeState.view == LibraryView::NEW_CHAPTERS;
   }
