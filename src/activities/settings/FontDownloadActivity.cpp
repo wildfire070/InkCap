@@ -875,7 +875,17 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     char destPath[192];
     FontInstaller::buildFontPath(family.installName.c_str(), file.name, destPath, sizeof(destPath));
     char tempPath[208];
-    snprintf(tempPath, sizeof(tempPath), "%s.tmp", destPath);
+    // ".tmp" goes before the real extension, not after: fontfiles::isScalable()
+    // (consulted both directly below and inside validateCpfontFile()) sniffs a
+    // path's last 4 characters for ".ttf"/".otf", which a trailing ".tmp" would
+    // defeat, misrouting a real scalable-font download into the bitmap-magic
+    // check and failing its validation.
+    const char* destExt = strrchr(destPath, '.');
+    if (destExt) {
+      snprintf(tempPath, sizeof(tempPath), "%.*s.tmp%s", static_cast<int>(destExt - destPath), destPath, destExt);
+    } else {
+      snprintf(tempPath, sizeof(tempPath), "%s.tmp", destPath);
+    }
 
     if (Storage.exists(destPath)) {
       uint32_t existingCrc = 0;

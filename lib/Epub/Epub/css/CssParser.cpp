@@ -1524,43 +1524,69 @@ uint32_t CssParser::selectorSecondaryHash(std::string_view selector) {
 }
 
 bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
-  auto writeBytes = [&file](const void* data, const size_t len) -> bool {
-    return len == 0 || file.write(reinterpret_cast<const uint8_t*>(data), len) == len;
+  // Composed in one buffer and written once: this used to be ~35-40 separate
+  // file.write() calls per rule (one per field), each paying SdFat's per-call
+  // sector-transaction overhead regardless of how few bytes it carried -- for
+  // a few hundred rules (an ordinary stylesheet) that's tens of thousands of
+  // tiny card writes for the one-time compile. CSS_FIXED_STYLE_BYTES's own
+  // static_assert keeps this buffer exactly the right size for the field list
+  // below; the on-disk byte layout and order are unchanged, so no cache
+  // version bump is needed.
+  uint8_t buf[CSS_FIXED_STYLE_BYTES];
+  size_t pos = 0;
+  auto putByte = [&](const uint8_t value) { buf[pos++] = value; };
+  auto putBytes = [&](const void* data, const size_t len) {
+    memcpy(buf + pos, data, len);
+    pos += len;
   };
-  auto writeByte = [&writeBytes](const uint8_t value) -> bool { return writeBytes(&value, sizeof(value)); };
-  auto writeLength = [&writeBytes, &writeByte](const CssLength& len) -> bool {
-    return writeBytes(&len.value, sizeof(len.value)) && writeByte(static_cast<uint8_t>(len.unit));
+  auto putLength = [&](const CssLength& len) {
+    putBytes(&len.value, sizeof(len.value));
+    putByte(static_cast<uint8_t>(len.unit));
   };
 
-  if (!writeByte(static_cast<uint8_t>(style.textAlign)) || !writeByte(static_cast<uint8_t>(style.fontStyle)) ||
-      !writeByte(static_cast<uint8_t>(style.fontWeight)) || !writeByte(static_cast<uint8_t>(style.textDecoration)) ||
-      !writeByte(static_cast<uint8_t>(style.fontVariantCaps)) || !writeLength(style.textIndent) ||
-      !writeLength(style.marginTop) || !writeLength(style.marginBottom) || !writeLength(style.marginLeft) ||
-      !writeLength(style.marginRight) || !writeLength(style.paddingTop) || !writeLength(style.paddingBottom) ||
-      !writeLength(style.paddingLeft) || !writeLength(style.paddingRight) || !writeLength(style.imageHeight) ||
-      !writeLength(style.imageWidth) || !writeLength(style.fontSize) ||
-      !writeByte(static_cast<uint8_t>(style.display)) ||
-      !writeByte(static_cast<uint8_t>(style.backgroundBlack ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.verticalAlign)) || !writeByte(static_cast<uint8_t>(style.direction)) ||
-      !writeByte(static_cast<uint8_t>(style.pageBreakBefore ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.pageBreakAfter ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.listStyleType)) || !writeByte(style.borderStyleSuppressed) ||
-      !writeByte(style.borderWidthSuppressed) || !writeByte(style.borderStyleDefined) ||
-      !writeByte(style.borderWidthDefined) || !writeByte(style.preserveWhitespace) ||
-      !writeByte(static_cast<uint8_t>(style.borderTop ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.borderRight ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.borderBottom ? 1 : 0)) ||
-      !writeByte(static_cast<uint8_t>(style.borderLeft ? 1 : 0)) ||
-      !writeBytes(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier))) {
-    return false;
-  }
+  putByte(static_cast<uint8_t>(style.textAlign));
+  putByte(static_cast<uint8_t>(style.fontStyle));
+  putByte(static_cast<uint8_t>(style.fontWeight));
+  putByte(static_cast<uint8_t>(style.textDecoration));
+  putByte(static_cast<uint8_t>(style.fontVariantCaps));
+  putLength(style.textIndent);
+  putLength(style.marginTop);
+  putLength(style.marginBottom);
+  putLength(style.marginLeft);
+  putLength(style.marginRight);
+  putLength(style.paddingTop);
+  putLength(style.paddingBottom);
+  putLength(style.paddingLeft);
+  putLength(style.paddingRight);
+  putLength(style.imageHeight);
+  putLength(style.imageWidth);
+  putLength(style.fontSize);
+  putByte(static_cast<uint8_t>(style.display));
+  putByte(static_cast<uint8_t>(style.backgroundBlack ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.verticalAlign));
+  putByte(static_cast<uint8_t>(style.direction));
+  putByte(static_cast<uint8_t>(style.pageBreakBefore ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.pageBreakAfter ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.listStyleType));
+  putByte(style.borderStyleSuppressed);
+  putByte(style.borderWidthSuppressed);
+  putByte(style.borderStyleDefined);
+  putByte(style.borderWidthDefined);
+  putByte(style.preserveWhitespace);
+  putByte(static_cast<uint8_t>(style.borderTop ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.borderRight ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.borderBottom ? 1 : 0));
+  putByte(static_cast<uint8_t>(style.borderLeft ? 1 : 0));
+  putBytes(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier));
 
   for (const auto& side : style.borders) {
-    if (!writeByte(side.width) || !writeByte(static_cast<uint8_t>(side.style))) return false;
+    putByte(side.width);
+    putByte(static_cast<uint8_t>(side.style));
   }
-  if (!writeByte(style.shaded) || !writeByte(style.floatLeft) || !writeByte(style.initialLetter) ||
-      !writeByte(static_cast<uint8_t>(style.cssFloat)))
-    return false;
+  putByte(style.shaded);
+  putByte(style.floatLeft);
+  putByte(style.initialLetter);
+  putByte(static_cast<uint8_t>(style.cssFloat));
   uint64_t definedBits = 0;
   if (style.defined.textAlign) definedBits |= 1 << 0;
   if (style.defined.fontStyle) definedBits |= 1 << 1;
@@ -1598,94 +1624,95 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   if (style.defined.fontSizeMultiplier) definedBits |= 1ull << 33;
   if (style.defined.fontFamily) definedBits |= 1ull << 34;
   if (style.defined.cssFloat) definedBits |= 1ull << 35;
-  return writeBytes(&definedBits, sizeof(definedBits)) && writeBytes(&style.fontFamily, sizeof(style.fontFamily));
+  putBytes(&definedBits, sizeof(definedBits));
+  putBytes(&style.fontFamily, sizeof(style.fontFamily));
+
+  return file.write(buf, CSS_FIXED_STYLE_BYTES) == CSS_FIXED_STYLE_BYTES;
 }
 
 bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
-  auto readLength = [&file](CssLength& len) -> bool {
-    if (file.read(&len.value, sizeof(len.value)) != sizeof(len.value)) return false;
-    uint8_t unitVal;
-    if (file.read(&unitVal, 1) != 1) return false;
-    len.unit = static_cast<CssUnit>(unitVal);
-    return true;
+  // Mirrors writeCssStylePayload: one read into a fixed buffer instead of
+  // ~35-40 separate file.read() calls, each previously paying the same
+  // per-call SD-card overhead as the write side. Every validation check
+  // below is unchanged from the per-field version -- only where the bytes
+  // come from (a buffer slot vs. a fresh file.read()) is different.
+  uint8_t buf[CSS_FIXED_STYLE_BYTES];
+  if (file.read(buf, CSS_FIXED_STYLE_BYTES) != static_cast<int>(CSS_FIXED_STYLE_BYTES)) return false;
+  size_t pos = 0;
+  auto getByte = [&]() -> uint8_t { return buf[pos++]; };
+  auto getBytes = [&](void* dest, const size_t len) {
+    memcpy(dest, buf + pos, len);
+    pos += len;
+  };
+  auto getLength = [&](CssLength& len) {
+    memcpy(&len.value, buf + pos, sizeof(len.value));
+    pos += sizeof(len.value);
+    len.unit = static_cast<CssUnit>(buf[pos++]);
   };
 
-  uint8_t enumVal;
-  if (file.read(&enumVal, 1) != 1) return false;
-  style.textAlign = static_cast<CssTextAlign>(enumVal);
-  if (file.read(&enumVal, 1) != 1) return false;
-  style.fontStyle = static_cast<CssFontStyle>(enumVal);
-  if (file.read(&enumVal, 1) != 1) return false;
-  style.fontWeight = static_cast<CssFontWeight>(enumVal);
-  if (file.read(&enumVal, 1) != 1) return false;
-  style.textDecoration = static_cast<CssTextDecoration>(enumVal & CSS_TEXT_DECORATION_MASK);
-  if (file.read(&enumVal, 1) != 1) return false;
-  style.fontVariantCaps = static_cast<CssFontVariantCaps>(enumVal);
-  if (!readLength(style.textIndent) || !readLength(style.marginTop) || !readLength(style.marginBottom) ||
-      !readLength(style.marginLeft) || !readLength(style.marginRight) || !readLength(style.paddingTop) ||
-      !readLength(style.paddingBottom) || !readLength(style.paddingLeft) || !readLength(style.paddingRight) ||
-      !readLength(style.imageHeight) || !readLength(style.imageWidth) || !readLength(style.fontSize)) {
-    return false;
-  }
-  uint8_t displayVal;
-  if (file.read(&displayVal, 1) != 1) return false;
-  style.display = static_cast<CssDisplay>(displayVal);
-  uint8_t backgroundBlackVal = 0;
-  if (file.read(&backgroundBlackVal, 1) != 1) return false;
-  style.backgroundBlack = backgroundBlackVal != 0;
-  uint8_t verticalAlignVal = 0;
-  if (file.read(&verticalAlignVal, 1) != 1) return false;
-  style.verticalAlign = static_cast<CssVerticalAlign>(verticalAlignVal);
-  uint8_t directionVal = 0;
-  if (file.read(&directionVal, 1) != 1) return false;
-  style.direction = static_cast<CssTextDirection>(directionVal);
-  uint8_t pageBreakVal = 0;
-  if (file.read(&pageBreakVal, 1) != 1) return false;
-  style.pageBreakBefore = pageBreakVal != 0;
-  if (file.read(&pageBreakVal, 1) != 1) return false;
-  style.pageBreakAfter = pageBreakVal != 0;
-  uint8_t listStyleTypeVal = 0;
-  if (file.read(&listStyleTypeVal, 1) != 1 || listStyleTypeVal > static_cast<uint8_t>(CssListStyleType::None)) {
-    return false;
-  }
+  style.textAlign = static_cast<CssTextAlign>(getByte());
+  style.fontStyle = static_cast<CssFontStyle>(getByte());
+  style.fontWeight = static_cast<CssFontWeight>(getByte());
+  style.textDecoration = static_cast<CssTextDecoration>(getByte() & CSS_TEXT_DECORATION_MASK);
+  style.fontVariantCaps = static_cast<CssFontVariantCaps>(getByte());
+  getLength(style.textIndent);
+  getLength(style.marginTop);
+  getLength(style.marginBottom);
+  getLength(style.marginLeft);
+  getLength(style.marginRight);
+  getLength(style.paddingTop);
+  getLength(style.paddingBottom);
+  getLength(style.paddingLeft);
+  getLength(style.paddingRight);
+  getLength(style.imageHeight);
+  getLength(style.imageWidth);
+  getLength(style.fontSize);
+  style.display = static_cast<CssDisplay>(getByte());
+  style.backgroundBlack = getByte() != 0;
+  style.verticalAlign = static_cast<CssVerticalAlign>(getByte());
+  style.direction = static_cast<CssTextDirection>(getByte());
+  style.pageBreakBefore = getByte() != 0;
+  style.pageBreakAfter = getByte() != 0;
+  const uint8_t listStyleTypeVal = getByte();
+  if (listStyleTypeVal > static_cast<uint8_t>(CssListStyleType::None)) return false;
   style.listStyleType = static_cast<CssListStyleType>(listStyleTypeVal);
-  if (file.read(&style.borderStyleSuppressed, 1) != 1 || file.read(&style.borderWidthSuppressed, 1) != 1 ||
-      file.read(&style.borderStyleDefined, 1) != 1 || file.read(&style.borderWidthDefined, 1) != 1 ||
-      ((style.borderStyleDefined | style.borderWidthDefined) & ~0x0F) != 0 ||
+  style.borderStyleSuppressed = getByte();
+  style.borderWidthSuppressed = getByte();
+  style.borderStyleDefined = getByte();
+  style.borderWidthDefined = getByte();
+  if (((style.borderStyleDefined | style.borderWidthDefined) & ~0x0F) != 0 ||
       (style.borderStyleSuppressed & ~style.borderStyleDefined) != 0 ||
       (style.borderWidthSuppressed & ~style.borderWidthDefined) != 0)
     return false;
 
-  uint8_t whitespace = 0;
-  if (file.read(&whitespace, 1) != 1 || whitespace > 1) return false;
+  const uint8_t whitespace = getByte();
+  if (whitespace > 1) return false;
   style.preserveWhitespace = whitespace != 0;
-  uint8_t borderVal = 0;
-  if (file.read(&borderVal, 1) != 1) return false;
-  style.borderTop = borderVal != 0;
-  if (file.read(&borderVal, 1) != 1) return false;
-  style.borderRight = borderVal != 0;
-  if (file.read(&borderVal, 1) != 1) return false;
-  style.borderBottom = borderVal != 0;
-  if (file.read(&borderVal, 1) != 1) return false;
-  style.borderLeft = borderVal != 0;
-  if (file.read(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier)) != sizeof(style.fontSizeMultiplier)) {
-    return false;
-  }
+  style.borderTop = getByte() != 0;
+  style.borderRight = getByte() != 0;
+  style.borderBottom = getByte() != 0;
+  style.borderLeft = getByte() != 0;
+  getBytes(&style.fontSizeMultiplier, sizeof(style.fontSizeMultiplier));
   for (auto& side : style.borders) {
-    uint8_t raw = 0;
-    if (file.read(&side.width, 1) != 1 || side.width > 8 || file.read(&raw, 1) != 1 || raw > 4) return false;
+    side.width = getByte();
+    if (side.width > 8) return false;
+    const uint8_t raw = getByte();
+    if (raw > 4) return false;
     side.style = static_cast<CssBorderStyle>(raw);
   }
-  uint8_t shaded = 0, floated = 0, cssFloatVal = 0;
-  if (file.read(&shaded, 1) != 1 || shaded > 1 || file.read(&floated, 1) != 1 || floated > 1 ||
-      file.read(&style.initialLetter, 1) != 1 || style.initialLetter > 4 || file.read(&cssFloatVal, 1) != 1 ||
-      cssFloatVal > static_cast<uint8_t>(CssFloat::Right))
-    return false;
+  const uint8_t shaded = getByte();
+  if (shaded > 1) return false;
+  const uint8_t floated = getByte();
+  if (floated > 1) return false;
+  style.initialLetter = getByte();
+  if (style.initialLetter > 4) return false;
+  const uint8_t cssFloatVal = getByte();
+  if (cssFloatVal > static_cast<uint8_t>(CssFloat::Right)) return false;
   style.shaded = shaded;
   style.floatLeft = floated;
   style.cssFloat = static_cast<CssFloat>(cssFloatVal);
   uint64_t definedBits = 0;
-  if (file.read(&definedBits, sizeof(definedBits)) != sizeof(definedBits)) return false;
+  getBytes(&definedBits, sizeof(definedBits));
   style.defined.textAlign = (definedBits & 1 << 0) != 0;
   style.defined.fontStyle = (definedBits & 1 << 1) != 0;
   style.defined.fontWeight = (definedBits & 1 << 2) != 0;
@@ -1722,7 +1749,7 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.defined.fontSizeMultiplier = (definedBits & 1ull << 33) != 0;
   style.defined.fontFamily = (definedBits & 1ull << 34) != 0;
   style.defined.cssFloat = (definedBits & 1ull << 35) != 0;
-  if (file.read(&style.fontFamily, sizeof(style.fontFamily)) != sizeof(style.fontFamily)) return false;
+  getBytes(&style.fontFamily, sizeof(style.fontFamily));
   if (style.hasFontSize() && (!std::isfinite(style.fontSize.value) || style.fontSize.value <= 0 ||
                               static_cast<uint8_t>(style.fontSize.unit) > static_cast<uint8_t>(CssUnit::Percent)))
     return false;

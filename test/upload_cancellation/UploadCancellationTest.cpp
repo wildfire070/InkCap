@@ -44,11 +44,20 @@ struct HalFile {
 };
 struct StorageMock {
   std::vector<std::string> removed;
+  // Defaults true: in real use the staged .part file genuinely exists once
+  // written, which is exactly the case the publish-failure cleanup below
+  // (Storage.exists() then remove()) needs to actually fire.
+  bool existsResult = true;
   bool remove(const char* path) {
     removed.emplace_back(path);
     return true;
   }
+  bool exists(const char*) { return existsResult; }
 } Storage;
+namespace DownloadFileSwap {
+inline bool succeeds = true;
+inline bool publishFrom(const std::string&, const std::string&, bool = false) { return succeeds; }
+}  // namespace DownloadFileSwap
 struct FontSystem {
   void markRegistryDirtyForPath(const char*) {}
 } sdFontSystem;
@@ -106,6 +115,7 @@ class CrossPointWebServer {
   struct FontUploadState {
     HalFile file;
     std::string filePath = "/fonts/Test/Regular.cpfont";
+    std::string finalPath = "/fonts/Test/Regular.cpfont";
     bool valid = true;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
@@ -160,6 +170,20 @@ int main() {
     assert(font ? server.fontUpload.valid : server.upload.success);
     assert((font ? server.fontUpload.file.bytes.size() : server.upload.file.bytes.size()) == 6077);
     assert(!(font ? server.fontUpload.file.isOpen() : server.upload.file.isOpen()));
+
+    // Font-only: a validated upload that still fails to publish (the
+    // DownloadFileSwap rename-aside-then-swap itself failing) reports
+    // failure and cleans up the staged file, never touching the real one.
+    if (font) {
+      DownloadFileSwap::succeeds = false;
+      Storage.removed.clear();
+      CrossPointWebServer swapFailed;
+      send(swapFailed, true, UPLOAD_FILE_WRITE, 80);
+      send(swapFailed, true, UPLOAD_FILE_END);
+      assert(!swapFailed.fontUpload.valid);
+      assert(Storage.removed == std::vector<std::string>{swapFailed.fontUpload.filePath});
+      DownloadFileSwap::succeeds = true;
+    }
 
     for (int cancelStatus : {UPLOAD_FILE_WRITE, UPLOAD_FILE_END}) {
       Storage.removed.clear();

@@ -16,6 +16,7 @@
 #include <ArduinoJson.h>
 #include <BoardConfig.h>
 #include <DeviceSecret.h>
+#include <DownloadFileSwap.h>
 #include <FontFileTypes.h>
 #include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hash.h>
@@ -2783,6 +2784,7 @@ void CrossPointWebServer::handleFontUploadData() {
       fontUpload.file = HalFile();
       fontUpload.familyName.clear();
       fontUpload.filePath.clear();
+      fontUpload.finalPath.clear();
       fontUpload.valid = false;
       fontUpload.bytesWritten = 0;
       fontUpload.bufferPos = 0;
@@ -2821,11 +2823,23 @@ void CrossPointWebServer::handleFontUploadData() {
 
       char path[192];
       FontInstaller::buildFontPath(family.c_str(), filename.c_str(), path, sizeof(path));
-      fontUpload.filePath = path;
+      fontUpload.finalPath = path;
+      // Written to a .part sibling, never path itself: opening path directly
+      // for write would truncate an already-installed font of the same name
+      // before a single byte of the new upload was verified, with no way
+      // back if the upload then failed or was cancelled partway through.
+      // ".part" goes before the real extension, not after: fontfiles::isScalable()
+      // sniffs a path's last 4 characters for ".ttf"/".otf", and both the write-size
+      // guard below and FontInstaller::finishUpload()'s own validateCpfontFile() call
+      // rely on that still matching while the upload is staged under this name.
+      const size_t extAt = fontUpload.finalPath.find_last_of('.');
+      fontUpload.filePath = extAt == std::string::npos
+                                ? fontUpload.finalPath + ".part"
+                                : fontUpload.finalPath.substr(0, extAt) + ".part" + fontUpload.finalPath.substr(extAt);
       sdFontSystem.markRegistryDirty();
 
-      if (!Storage.openFileForWrite("WEB", path, fontUpload.file)) {
-        LOG_ERR("WEB", "Failed to open font file for write: %s", path);
+      if (!Storage.openFileForWrite("WEB", fontUpload.filePath.c_str(), fontUpload.file)) {
+        LOG_ERR("WEB", "Failed to open font file for write: %s", fontUpload.filePath.c_str());
         break;
       }
 
@@ -2844,6 +2858,8 @@ void CrossPointWebServer::handleFontUploadData() {
       // Validate the complete file after closing it; multipart chunks may
       // split the signature at any byte boundary.
 #if CROSSINK_SCALABLE_FONTS
+      // filePath still ends in the real extension (".part" is inserted before
+      // it, not appended after), so isScalable()'s last-4-char sniff is unaffected.
       const auto& path = fontUpload.filePath;
       if (fontfiles::isScalable(path.c_str()) &&
           fontUpload.bytesWritten + fontUpload.bufferPos + upload.currentSize > 2 * 1024 * 1024) {
@@ -2901,6 +2917,18 @@ void CrossPointWebServer::handleFontUploadData() {
       if (!fontUpload.filePath.empty())
         fontUpload.valid = FontInstaller::finishUpload(fontUpload.filePath.c_str(), fontUpload.valid);
 
+      // finishUpload() already removed an invalid .part; a valid one still
+      // needs publishing over finalPath -- renamed aside and restored on
+      // failure, so a font already installed under this name is never lost
+      // to a swap that didn't complete.
+      if (fontUpload.valid) {
+        fontUpload.valid = DownloadFileSwap::publishFrom(fontUpload.finalPath, fontUpload.filePath);
+        if (!fontUpload.valid) {
+          LOG_ERR("WEB", "Could not publish uploaded font: %s", fontUpload.finalPath.c_str());
+          if (Storage.exists(fontUpload.filePath.c_str())) Storage.remove(fontUpload.filePath.c_str());
+        }
+      }
+
       LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
       break;
     }
@@ -2916,9 +2944,10 @@ void CrossPointWebServer::handleFontUpload() {
   if (fontUpload.valid) {
     sdFontSystem.markRegistryDirty();
     server->send(200, "application/json", "{\"ok\":true}");
-    LOG_DBG("WEB", "Font upload complete: %s", fontUpload.filePath.c_str());
+    LOG_DBG("WEB", "Font upload complete: %s", fontUpload.finalPath.c_str());
     fontUpload.valid = false;
     fontUpload.filePath.clear();
+    fontUpload.finalPath.clear();
   } else {
     server->send(400, "application/json", "{\"error\":\"Unsupported or damaged font file\"}");
   }

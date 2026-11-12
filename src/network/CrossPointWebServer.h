@@ -161,7 +161,12 @@ class CrossPointWebServer {
   struct FontUploadState {
     HalFile file;
     std::string familyName;
+    // Where the upload is actually written: finalPath + ".part", so a font
+    // that already exists under this name is never truncated in place --
+    // only published over it (via DownloadFileSwap, rename-aside-then-swap)
+    // once the complete upload has validated.
     std::string filePath;
+    std::string finalPath;
     bool valid = false;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
