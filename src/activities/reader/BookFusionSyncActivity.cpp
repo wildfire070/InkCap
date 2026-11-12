@@ -553,8 +553,8 @@ void BookFusionSyncActivity::render(RenderLock&&) {
       if (remotePercent > localPercent + SAME_PROGRESS_EPSILON) strncat(remoteBuf, tr(STR_BF_AHEAD_SUFFIX), 15);
       lines.push_back({remoteBuf, false});
 
-      char countBuf[48];
       if (localHighlightCount > 0) {
+        char countBuf[48];
         snprintf(countBuf, sizeof(countBuf), tr(STR_BF_HIGHLIGHTS_SYNCED_FORMAT), syncedHighlightCount,
                  localHighlightCount);
         lines.push_back({countBuf, false});

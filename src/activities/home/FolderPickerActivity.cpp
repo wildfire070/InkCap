@@ -166,7 +166,7 @@ void FolderPickerActivity::loop() {
         if (lastSlash == 0) {
           currentPath = "/";
         } else {
-          currentPath = currentPath.substr(0, lastSlash);
+          currentPath.resize(lastSlash);
         }
         loadDirectories();
         selectorIndex = 0;

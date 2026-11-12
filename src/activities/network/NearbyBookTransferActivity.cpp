@@ -797,10 +797,10 @@ void NearbyBookTransferActivity::loop() {
     return;
   }
 
-  int tx = 0;
-  int ty = 0;
   if (mappedInput.hasTouch() &&
       (state_ == State::OfferPrompt || state_ == State::CollisionPrompt || state_ == State::Success)) {
+    int tx = 0;
+    int ty = 0;
     const Rect safeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
     const uint8_t actionCount =
         state_ == State::CollisionPrompt ? 3 : (state_ == State::Success && mode_ != Mode::Receive ? 1 : 2);

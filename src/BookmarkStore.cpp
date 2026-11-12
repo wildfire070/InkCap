@@ -672,6 +672,8 @@ bool BookmarkStore::migrateForFilePath(const std::string& oldFilePath, const std
       return false;
     }
     if (!mergeBookmarks(migratedBookmarks, legacyBookmarks)) return false;
+    // Only read by the LOG_INF below, which compiles away entirely on envs with LOG_LEVEL < 1.
+    // cppcheck-suppress unreadVariable
     sourceNeedsRewrite = sourceNeedsRewrite || legacyNeedsRewrite;
     loadedSourceBookmarks = true;
   }
@@ -682,6 +684,8 @@ bool BookmarkStore::migrateForFilePath(const std::string& oldFilePath, const std
 
   BookmarkStore destReader;
   destReader.bookFilePath = newFilePath;
+  // Only read by the LOG_INF below, which compiles away entirely on envs with LOG_LEVEL < 1.
+  // cppcheck-suppress unreadVariable
   bool hasDestBookmarks = false;
 
   if (hasBookmarkFile(dstCurrentPath)) {
@@ -693,6 +697,7 @@ bool BookmarkStore::migrateForFilePath(const std::string& oldFilePath, const std
     }
     if (!mergeBookmarks(existingBookmarks, migratedBookmarks)) return false;
     migratedBookmarks = std::move(existingBookmarks);
+    // cppcheck-suppress unreadVariable
     hasDestBookmarks = true;
   }
 
@@ -706,6 +711,7 @@ bool BookmarkStore::migrateForFilePath(const std::string& oldFilePath, const std
     }
     if (!mergeBookmarks(existingLegacyBookmarks, migratedBookmarks)) return false;
     migratedBookmarks = std::move(existingLegacyBookmarks);
+    // cppcheck-suppress unreadVariable
     hasDestBookmarks = true;
   }
 

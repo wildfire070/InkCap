@@ -84,6 +84,8 @@ void logWifiStationEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       LOG_INF("WIFI", "STA event: connected to AP");
       break;
     case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
+      // Only read by the LOG_INF below, which compiles away entirely on envs with LOG_LEVEL < 1.
+      // cppcheck-suppress unreadVariable
       const uint8_t* ip = reinterpret_cast<const uint8_t*>(&info.got_ip.ip_info.ip.addr);
       LOG_INF("WIFI", "STA event: got IP %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
       break;
@@ -432,8 +434,14 @@ void WifiSelectionActivity::processWifiScanResults() {
     LOG_ERR("WIFI", "WiFi scan returned %d networks, capping to %d", scanResult, MAX_SCAN_NETWORKS);
   }
 
-  // Scan complete, process results: deduplicate in-place, keeping strongest signal
+  // Scan complete, process results: deduplicate in-place, keeping strongest signal.
+  // Both are read by the LOG_INF below, which compiles away entirely on envs with
+  // LOG_LEVEL < 1 -- cppcheck's "narrow the scope" suggestion would be wrong in
+  // general (it's read after the block below closes), it's only true under that
+  // build configuration.
+  // cppcheck-suppress variableScope
   int hiddenNetworks = 0;
+  // cppcheck-suppress variableScope
   int duplicateNetworks = 0;
   {
     // See onEnter()'s identical guard for why. Held across this whole

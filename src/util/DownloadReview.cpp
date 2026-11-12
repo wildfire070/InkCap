@@ -78,9 +78,7 @@ std::vector<Entry> readPending() {
 
 void appendPending(const std::string& path, const std::string& collisionOrigin) {
   std::vector<Entry> entries = readPending();
-  for (const auto& entry : entries) {
-    if (entry.path == path) return;
-  }
+  if (std::any_of(entries.begin(), entries.end(), [&](const Entry& e) { return e.path == path; })) return;
   entries.push_back({path, collisionOrigin});
   writePending(entries);
 }

@@ -29,7 +29,7 @@ constexpr int COVER_TO_TEXT_GAP = 16;
 constexpr int ROW_V_PAD = 6;
 
 // Draw a single "Label: value" table row; returns the y for the next row.
-int drawInfoRow(GfxRenderer& renderer, int x, int y, int width, const char* label, const std::string& value) {
+int drawInfoRow(const GfxRenderer& renderer, int x, int y, int width, const char* label, const std::string& value) {
   // Fixed gap between label and value: trailing spaces have zero advance width in
   // the font, so we can't rely on a "Label: " space to separate them.
   constexpr int LABEL_VALUE_GAP = 6;

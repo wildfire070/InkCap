@@ -1028,7 +1028,9 @@ void BookFusionBrowserActivity::openSortPopup() {
       SortField::Title, SortField::Author, SortField::Date, SortField::LastRead};
   std::vector<std::string> labels;
   labels.reserve(BOOKFUSION_SORT_FIELD_COUNT);
+  // A plain loop reads more clearly than std::transform for this lookup-and-append.
   for (const SortField field : kDisplayOrder) {
+    // cppcheck-suppress useStlAlgorithm
     labels.emplace_back(I18N.get(kFieldLabelIds[static_cast<int>(field)]));
   }
 

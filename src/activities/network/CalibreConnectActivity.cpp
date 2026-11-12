@@ -242,10 +242,10 @@ void CalibreConnectActivity::loop() {
       // currentUploadName/lastCompleteName/lastProgressReceived/lastProgressTotal/
       // lastCompleteAt are all read by render() on the render task with no lock of
       // its own on that side either -- this is the only place they're mutated, so
-      // guard it here. Without this, render() reading currentUploadName mid-assignment
-      // (a std::string reallocation, trivial for any real upload filename) is UB --
-      // a torn pointer/length read or a dereference of already-freed heap memory.
-      RenderLock lock(*this);
+      // the outer `lock` above guards this whole block. Without it, render() reading
+      // currentUploadName mid-assignment (a std::string reallocation, trivial for any
+      // real upload filename) is UB -- a torn pointer/length read or a dereference of
+      // already-freed heap memory.
       if (status.inProgress) {
         if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
             status.filename != currentUploadName) {
@@ -396,7 +396,6 @@ void CalibreConnectActivity::render(RenderLock&&) {
                           Rect{safe.x + metrics.contentSidePadding, y + height + metrics.verticalSpacing,
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
                           lastProgressReceived, lastProgressTotal);
-      y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
     } else if (hasBatchResults) {
       char doneMsg[64];
       snprintf(doneMsg, sizeof(doneMsg), tr(STR_CALIBRE_DONE_FORMAT), static_cast<int>(batchSucceeded.size()));
@@ -413,7 +412,10 @@ void CalibreConnectActivity::render(RenderLock&&) {
       };
       std::vector<SummaryLine> lines;
       lines.reserve(batchLineCount());
+      // A plain loop reads more clearly than std::transform for constructing a
+      // struct per element here.
       for (const auto& name : batchSucceeded) {
+        // cppcheck-suppress useStlAlgorithm
         lines.push_back({"- " + name, false});
       }
       if (!batchFailed.empty()) {
@@ -421,6 +423,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
         snprintf(failedMsg, sizeof(failedMsg), tr(STR_CALIBRE_FAILED_FORMAT), static_cast<int>(batchFailed.size()));
         lines.push_back({failedMsg, true});
         for (const auto& name : batchFailed) {
+          // cppcheck-suppress useStlAlgorithm
           lines.push_back({"- " + name, false});
         }
       }
