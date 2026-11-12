@@ -433,10 +433,12 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
       APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       return true;
     }
-    // Re-added: this call was dropped when InkCap's archive two-way-sync refactor (3aed4b80)
-    // and a later upstream merge combined without carrying it into the Read-folder branch --
-    // without it, moving a finished book to Read/ left its cache, recents entry, bookmarks and
-    // clippings keyed to the old path.
+    // Re-added: this call existed upstream but was missing from InkCap's own Read-folder
+    // branch going into this merge (InkCap's Archive two-way-sync work in 3aed4b80 replaced
+    // the equivalent call on the Archive-folder path with BookMoveUtils::archiveBook(), which
+    // migrates state internally; the separately-maintained Read-folder branch did not get the
+    // same treatment and lost the call somewhere along the way). Without it, moving a finished
+    // book to Read/ left its cache, recents entry, bookmarks and clippings keyed to the old path.
     BookMoveUtils::migrateMovedEpubState(fullPath, dstPath, oldCachePath, title, author,
                                          !SETTINGS.removeReadBooksFromRecents);
   }
