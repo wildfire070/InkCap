@@ -735,7 +735,7 @@ class HtmlScraper : public Print {
     // </a>-only skip can never advance past it on a later buffer flush,
     // and ends up re-reading the same early tags into later slots.
     int alreadyFilled = 0;
-    while (alreadyFilled < 4 && meta.tags[alreadyFilled][0]) alreadyFilled++;
+    while (alreadyFilled < AO3_SEARCH_TAG_COUNT && meta.tags[alreadyFilled][0]) alreadyFilled++;
 
     for (int i = 0; i < alreadyFilled && scan < buffer + bufferSize; i++) {
       const char* skipComma = strchr(scan, ',');
@@ -768,7 +768,7 @@ class HtmlScraper : public Print {
     // check tagIdx and find the first empty slot
     int tagIdx = alreadyFilled;
 
-    while (tagIdx < 4 && scan < buffer + bufferSize) {
+    while (tagIdx < AO3_SEARCH_TAG_COUNT && scan < buffer + bufferSize) {
       const char* comma = strchr(scan, ',');
       const char* lt = strchr(scan, '<');
       const char* actualEnd = (comma && lt) ? std::min(comma, lt) : (comma ? comma : lt);
@@ -834,8 +834,9 @@ class HtmlScraper : public Print {
         processLen = decodeEntities(tempTag, sizeof(tempTag) - 1, scan, rawLen);
       }
 
-      bool truncated = processLen > 15;
-      size_t len = std::min(processLen, truncated ? (size_t)14 : (size_t)15);
+      bool truncated = processLen > static_cast<size_t>(AO3_SEARCH_TAG_MAX_LEN - 1);
+      size_t len = std::min(processLen, truncated ? static_cast<size_t>(AO3_SEARCH_TAG_MAX_LEN - 2)
+                                                  : static_cast<size_t>(AO3_SEARCH_TAG_MAX_LEN - 1));
       strncpy(meta.tags[tagIdx], tempTag, len);
       meta.tags[tagIdx][len] = 0;
 
@@ -852,8 +853,8 @@ class HtmlScraper : public Print {
       }
 
       if (truncated) {
-        // If cleanLen was reduced by trimming a space, we have room for 2 dots to reach 15 chars
-        if (cleanLen < 14) {
+        // If cleanLen was reduced by trimming a space, we have room for 2 dots within the slot
+        if (cleanLen < static_cast<size_t>(AO3_SEARCH_TAG_MAX_LEN - 2)) {
           meta.tags[tagIdx][cleanLen] = '.';
           meta.tags[tagIdx][cleanLen + 1] = '.';
           meta.tags[tagIdx][cleanLen + 2] = '\0';
@@ -1076,6 +1077,8 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
     rec.rating = meta->rating;
     rec.isCompleted = meta->isCompleted;
     rec.cacheHash = ZipFile::fnvHash64(epub.getPath().c_str(), epub.getPath().size());
+    // Same shape as meta->tags (see Ao3LibraryMetadata) -- copied wholesale for Library search.
+    memcpy(rec.tags, meta->tags, sizeof(rec.tags));
 
     if (!writeIndexRecord(rec)) {
       return false;
@@ -1381,7 +1384,7 @@ uint16_t Ao3Librarian::liveRecordCount() {
   uint8_t version;
   uint16_t recordCount;
   if (f.read(magic, 4) != 4 || f.read(&version, 1) != 1 || f.read((uint8_t*)&recordCount, 2) != 2 ||
-      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
+      memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return 0;
   }
@@ -1412,7 +1415,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
       bool readOk =
           check.read(magic, 4) == 4 && check.read(&version, 1) == 1 && check.read((uint8_t*)&recordCountCheck, 2) == 2;
       check.close();
-      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCountCheck > MAX_INDEX_RECORDS) {
+      if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCountCheck > MAX_INDEX_RECORDS) {
         Storage.remove(indexPath);
         dropIndexCache();
         needsCreate = true;
@@ -1427,7 +1430,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
     dropIndexCache();
     HalFile f;
     if (!Storage.openFileForWrite("AO3L", indexPath, f)) return false;
-    uint8_t v = 3, r = 0;
+    uint8_t v = 4, r = 0;
     uint16_t c = 0;
     uint32_t s = 0;
     f.write((uint8_t*)"AO3X", 4);
@@ -1578,7 +1581,7 @@ bool Ao3Librarian::tombstoneRecord(const std::string& epubPath) {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4) {
     f.close();
     return false;
   }
@@ -1615,7 +1618,7 @@ bool Ao3Librarian::hasLiveIndexRecord(const std::string& epubPath) {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4) {
     f.close();
     return false;
   }
@@ -1652,7 +1655,7 @@ bool Ao3Librarian::findLivePathByWorkId(const std::string& workId, const std::st
   uint8_t version;
   uint16_t recordCount;
   if (f.read(magic, 4) != 4 || f.read(&version, 1) != 1 || f.read((uint8_t*)&recordCount, 2) != 2 ||
-      memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
+      memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return false;
   }
@@ -1708,7 +1711,7 @@ bool Ao3Librarian::setRecordFinished(const std::string& epubPath, bool finished)
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4) {
     f.close();
     return false;
   }
@@ -1787,7 +1790,7 @@ int Ao3Librarian::sanitizeIndex() {
   uint16_t recordCount;
   bool readOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
 
-  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 3 || recordCount > MAX_INDEX_RECORDS) {
+  if (!readOk || memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
     f.close();
     return -1;
   }

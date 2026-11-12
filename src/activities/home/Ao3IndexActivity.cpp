@@ -101,8 +101,8 @@ void Ao3IndexActivity::buildIndexedHashes() {
   uint8_t version;
   uint16_t recordCount;
   if (f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
-      memcmp(magic, "AO3X", 4) == 0 && version == 3 && recordCount <= MAX_INDEX_RECORDS) {
-    // Reject the pre-fnvHash64 index format (version < 3): its records are a
+      memcmp(magic, "AO3X", 4) == 0 && version == 4 && recordCount <= MAX_INDEX_RECORDS) {
+    // Reject any pre-tag-search index format (version < 4): its records are a
     // different size, so reading them here would misalign. Leaving the hash set
     // empty makes every fic look new, so re-indexing rebuilds the library.
     f.seek(12);  // Seek past header
