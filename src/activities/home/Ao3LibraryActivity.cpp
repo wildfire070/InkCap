@@ -987,24 +987,28 @@ void Ao3LibraryActivity::renderFilterOverlay() {
 
   // Search bar: opens the keyboard, matching title/author/series/tags across the whole library (see
   // recordMatchesSearch). Drawn above the "Sort & Filter" heading, matching an approved mockup --
-  // its own geometry, not drawOverlayRow's label+pill shape. Selection is conveyed the same way every
-  // other row conveys it here: a LightGray fill behind an otherwise normally-colored foreground.
+  // its own geometry, not drawOverlayRow's label+pill shape. A text field doesn't read well with the
+  // other rows' LightGray-fill selection treatment (it washes out the icon/placeholder) -- selection
+  // is a bolder border instead, so the bar always stays plain white like the mockup.
   {
     const int barY = startY + 16;
     const int barH = 40;
     const int barW = screenWidth - 2 * margin;
     const bool searchSelected = (overlayRowIndex == OVERLAY_ROW_SEARCH);
-    if (searchSelected) {
-      renderer.fillRoundedRect(margin, barY, barW, barH, 10, true, true, true, true, LightGray);
-    }
-    renderer.drawRoundedRect(margin, barY, barW, barH, 1, 10, true);
+    renderer.drawRoundedRect(margin, barY, barW, barH, searchSelected ? 2 : 1, 10, true);
     constexpr int iconSize = 24;
     const int iconX = margin + 12;
     const int iconY = barY + (barH - iconSize) / 2;
     renderer.drawIcon(icon_search_24_bits, iconX, iconY, iconSize);
     const bool hasQuery = !pendingSearchQuery.empty();
     const std::string displayText = hasQuery ? pendingSearchQuery : std::string(tr(STR_SEARCH));
-    renderer.drawText(UI_10_FONT_ID, iconX + iconSize + 10, barY + barH / 2 - 7, displayText.c_str(), hasQuery);
+    // Always drawn black: `false` means white-on-dark (for a filled pill/background), which this
+    // plain white bar never has -- that was making the placeholder draw invisibly faint before.
+    // getTextHeight() is the font's tallest glyph overall (ascender), which overshoots what "Search"
+    // itself needs (no diacritics, no descenders) -- measured via a pixel-row scan of a real
+    // screenshot: the plain formula centers 2-3px low relative to the icon. Nudged up to match.
+    const int textY = barY + std::max(1, (barH - renderer.getTextHeight(UI_10_FONT_ID)) / 2) - 3;
+    renderer.drawText(UI_10_FONT_ID, iconX + iconSize + 10, textY, displayText.c_str(), true);
     TouchRegistry::getInstance().add(Rect{margin, barY, barW, barH}, OVERLAY_ROW_SEARCH, TouchRegistry::Item);
   }
 
