@@ -1,5 +1,6 @@
 #include "AO3SyncActivity.h"
 
+#include <DownloadFileSwap.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -421,12 +422,11 @@ void AO3SyncActivity::performDownload() {
 
     LOG_INF("AO3", "Integrity verified, performing atomic swap");
 
-    // Atomic Swap
-    if (Storage.exists(bookPath.c_str())) {
-      Storage.remove(bookPath.c_str());
-    }
-
-    if (Storage.rename(tempPath.c_str(), bookPath.c_str())) {
+    // DownloadFileSwap renames the existing fic aside (to bookPath + ".old")
+    // before renaming tempPath in, and restores it if that second rename
+    // fails -- unlike a bare remove()-then-rename(), a failure here (an SD
+    // I/O hiccup, say) can never leave the user with neither file.
+    if (DownloadFileSwap::publishFrom(bookPath, tempPath)) {
       LOG_INF("AO3", "Atomic swap complete");
 
       // Success result
@@ -438,6 +438,7 @@ void AO3SyncActivity::performDownload() {
       setResult(ActivityResult(res));
       finish();
     } else {
+      if (Storage.exists(tempPath.c_str())) Storage.remove(tempPath.c_str());
       RenderLock lock(*this);
       errorMessage = "File Swap Failed";
       state = AO3SyncState::ERROR;
