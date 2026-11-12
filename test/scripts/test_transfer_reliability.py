@@ -45,7 +45,7 @@ struct FontSystem { int changes=0; void markRegistryDirty() { ++changes; } } sdF
 class CrossPointWebServer {
  public:
   struct UploadState { bool success=false; String fileName="book.epub", error; };
-  struct FontUpload { bool valid=false; std::string filePath; } fontUpload;
+  struct FontUpload { bool valid=false; std::string filePath, finalPath; } fontUpload;
   CrossPointHttpServer* server;
   void handleUploadPost(UploadState&) const;
   void handleFontUpload();
@@ -63,8 +63,9 @@ int main() {
   CrossPointWebServer::UploadState upload;
   upload.success=true; web.handleUploadPost(upload); assert(http.status==200 && !upload.success);
   web.handleUploadPost(upload); assert(http.status==400);
-  web.fontUpload.valid=true; web.fontUpload.filePath="/fonts/f.cpfont";
-  web.handleFontUpload(); assert(http.status==200 && !web.fontUpload.valid && web.fontUpload.filePath.empty());
+  web.fontUpload.valid=true; web.fontUpload.filePath="/fonts/f.cpfont.part"; web.fontUpload.finalPath="/fonts/f.cpfont";
+  web.handleFontUpload(); assert(http.status==200 && !web.fontUpload.valid && web.fontUpload.filePath.empty() &&
+                                  web.fontUpload.finalPath.empty());
   web.handleFontUpload(); assert(http.status==400 && sdFontSystem.changes==1);
 }
 ''', {"Logging.h": "#define LOG_ERR(...) ((void)0)\n#define LOG_DBG(...) ((void)0)\n",

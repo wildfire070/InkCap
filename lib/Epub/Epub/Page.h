@@ -1,5 +1,7 @@
 #pragma once
+#include <Arduino.h>
 #include <HalStorage.h>
+#include <Logging.h>
 
 #include <algorithm>
 #include <cstring>
@@ -294,6 +296,16 @@ class Page {
       return;
     }
     if (footnotes.size() >= MAX_FOOTNOTES_PER_PAGE) return;  // Cap per-page footnotes
+    // Bounded (at most 16 * ~130 bytes), but still a real vector growth under
+    // -fno-exceptions: a refused allocation abort()s, not throws. A page
+    // simply does without this footnote (its link renders but is not
+    // tappable) rather than restart the device over it.
+    constexpr uint32_t MIN_FREE_HEAP = 24576;
+    constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
+    if (ESP.getFreeHeap() < MIN_FREE_HEAP || ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP) {
+      LOG_ERR("PGE", "Skipping footnote: %u free, %u max alloc", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      return;
+    }
     if (footnotes.empty()) {
       footnotes.reserve(INITIAL_FOOTNOTE_RESERVE);
     }
@@ -308,6 +320,15 @@ class Page {
 
   void addPublisherPageMarker(const char* label, const int yPos) {
     if (!label || label[0] == '\0' || publisherPageMarkers.size() >= MAX_PUBLISHER_PAGE_MARKERS_PER_PAGE) return;
+    // Same heap-guard rationale as addFootnote() above: a printed page
+    // number is left off the page rather than risk an abort() over it.
+    constexpr uint32_t MIN_FREE_HEAP = 24576;
+    constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
+    if (ESP.getFreeHeap() < MIN_FREE_HEAP || ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP) {
+      LOG_ERR("PGE", "Skipping publisher page marker: %u free, %u max alloc", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+      return;
+    }
     if (publisherPageMarkers.empty()) {
       publisherPageMarkers.reserve(INITIAL_PUBLISHER_PAGE_MARKER_RESERVE);
     }

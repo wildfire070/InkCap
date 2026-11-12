@@ -25,7 +25,6 @@ inline int failWrite = -1;
 inline int failRename = -1;
 inline std::string failRenameToPath;
 inline int failAlloc = -1;
-inline bool failDirectorySeek = false;
 inline std::string failDirectoryIterationPath;
 inline std::string failOpenPath;
 inline std::string failClosePath;
@@ -58,7 +57,6 @@ inline void reset() {
   failRename = -1;
   failRenameToPath.clear();
   failAlloc = -1;
-  failDirectorySeek = false;
   failDirectoryIterationPath.clear();
   failOpenPath.clear();
   failClosePath.clear();
@@ -174,7 +172,7 @@ class HalFile {
   size_t position() const { return pos; }
   bool seekSet(const size_t offset) {
     fake::seeks++;
-    if (!node || (node->directory && fake::failDirectorySeek) || (!node->directory && offset > node->bytes.size())) {
+    if (!node || (!node->directory && offset > node->bytes.size())) {
       return false;
     }
     pos = offset;

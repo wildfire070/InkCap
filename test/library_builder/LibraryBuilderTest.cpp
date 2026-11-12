@@ -319,16 +319,6 @@ TEST_F(LibraryBuilderTest, FileTypesKeepMarkdownSeparateAndIncludeXtch) {
   EXPECT_TRUE(recordAtPath(index, "/graphic.xtch", record));
 }
 
-TEST_F(LibraryBuilderTest, DirectoryResumeFailureRetainsPreviousIndex) {
-  initial();
-  const auto old = fake::files[INDEX]->bytes;
-  fake::add("/aa-folder/c.txt");
-  fake::failDirectorySeek = true;
-
-  EXPECT_FALSE(buildLibraryIndex("/", stats, false));
-  EXPECT_EQ(fake::files[INDEX]->bytes, old);
-}
-
 TEST_F(LibraryBuilderTest, DirectoryIterationFailureRetainsPreviousIndex) {
   // openNextFile() returning falsy is ambiguous between "reached the end of
   // the directory" and an SdFat allocation/iteration error partway through.
@@ -337,6 +327,23 @@ TEST_F(LibraryBuilderTest, DirectoryIterationFailureRetainsPreviousIndex) {
   initial();
   const auto old = fake::files[INDEX]->bytes;
   fake::failDirectoryIterationPath = "/";
+
+  EXPECT_FALSE(buildLibraryIndex("/", stats, false));
+  EXPECT_TRUE(fake::failureTriggered);
+  EXPECT_EQ(fake::files[INDEX]->bytes, old);
+}
+
+TEST_F(LibraryBuilderTest, NestedDirectoryIterationFailurePropagatesAndRetainsPreviousIndex) {
+  // walk() keeps a parent directory's own handle open across its recursive
+  // descent into a child instead of closing and reopening it by path
+  // afterward (see LibraryBuilder.cpp) -- this exercises exactly the
+  // propagation path that change added: a failure discovered one level down
+  // must still unwind cleanly through the parent's still-open handle, abort
+  // the whole build, and leave the previous index untouched.
+  fake::add("/aa-folder/c.epub");
+  initial();
+  const auto old = fake::files[INDEX]->bytes;
+  fake::failDirectoryIterationPath = "/aa-folder";
 
   EXPECT_FALSE(buildLibraryIndex("/", stats, false));
   EXPECT_TRUE(fake::failureTriggered);
