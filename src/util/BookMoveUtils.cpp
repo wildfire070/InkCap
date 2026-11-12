@@ -162,9 +162,19 @@ std::string archiveBook(const std::string& srcPath) {
   const std::string oldCachePath = Epub::cachePathForFilePath(srcPath, "/.crosspoint");
   const std::string dstPath = buildArchiveDestination(srcPath);
 
+  // This EPUB may never have been opened by the reader, so getTitle()/getAuthor()
+  // would be empty (they only read an already-loaded metadata cache). Load the
+  // metadata directly before migrating bookmarks/clippings, which stamp it.
   Epub epub(srcPath, "/.crosspoint");
-  const std::string title = epub.getTitle();
-  const std::string author = epub.getAuthor();
+  std::string title;
+  std::string author;
+  if (!epub.loadMetadata(title, author)) {
+    LOG_ERR("BookMove", "Could not load metadata for archived book: %s", srcPath.c_str());
+  }
+  if (title.empty()) {
+    const size_t lastSlash = srcPath.rfind('/');
+    title = (lastSlash != std::string::npos) ? srcPath.substr(lastSlash + 1) : srcPath;
+  }
 
   // Written before the move so it rides along with the cache dir rename below.
   Storage.writeFile((oldCachePath + "/" + ARCHIVED_FROM_MARKER).c_str(), srcPath.c_str());
@@ -201,9 +211,18 @@ std::string restoreBook(const std::string& archivedPath) {
   }
 
   const std::string restoredPath = dedupedDestination(originalPath);
+  // Same reasoning as archiveBook(): this book may never have been opened by
+  // the reader, so getTitle()/getAuthor() would be empty. Load it directly.
   Epub archivedEpub(archivedPath, "/.crosspoint");
-  const std::string title = archivedEpub.getTitle();
-  const std::string author = archivedEpub.getAuthor();
+  std::string title;
+  std::string author;
+  if (!archivedEpub.loadMetadata(title, author)) {
+    LOG_ERR("BookMove", "Could not load metadata for restored book: %s", archivedPath.c_str());
+  }
+  if (title.empty()) {
+    const size_t lastSlash = originalPath.rfind('/');
+    title = (lastSlash != std::string::npos) ? originalPath.substr(lastSlash + 1) : originalPath;
+  }
 
   if (!Storage.rename(archivedPath.c_str(), restoredPath.c_str())) {
     LOG_ERR("BookMove", "Failed to restore %s -> %s", archivedPath.c_str(), restoredPath.c_str());
