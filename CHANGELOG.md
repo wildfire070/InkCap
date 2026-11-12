@@ -50,6 +50,9 @@
 
 ### Fixed
 
+- Restore Back swipes in Browse Files (#946).
+- Center the centered reading-stats row's icon and label using the label's actual ink height, keeping both visible together across rotations and status bar fonts.
+- Add Estonian translations for Tilt Sensitivity and its Low/Normal/High options.
 - Prevent extra spacing in runtime TrueType/OpenType fonts by rounding glyph advances only at pixel placement; existing EPUB layouts rebuild automatically (adapted from gkaindl, CrossPoint #4431).
 - Preserve previously synced reading history when replacing an SD card or resetting local stats. New reading adds to cloud history without counting retries twice. Requires an updated CrossPoint Sync server; older servers leave stats pending.
 - Keep publisher CSS styles active when free heap falls below 48 KiB; existing EPUB page caches rebuild automatically (CrossPoint #4032).
