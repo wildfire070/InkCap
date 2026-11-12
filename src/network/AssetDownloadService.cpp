@@ -487,6 +487,10 @@ Result download(const AssetCatalog::Catalog& catalog, const AssetCatalog::Entry&
         if (callbacks.progress) callbacks.progress(callbacks.context, done, total);
       },
       nullptr, "", "", options);
+  // cppcheck can't see through the validateWithContext callback (validate(), above) that
+  // downloadToFile() invokes internally and that actually mutates work->validationResult --
+  // from its view this is always still the Result::Ok set a few lines up.
+  // cppcheck-suppress knownConditionTrueFalse
   if (work->validationResult != Result::Ok) return work->validationResult;
   if (downloaded == HttpDownloader::OK) return Result::Ok;
   return failure(downloaded == HttpDownloader::ABORTED      ? Result::Cancelled

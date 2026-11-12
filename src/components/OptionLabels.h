@@ -27,6 +27,7 @@ struct OptionLabels {
   // Plain vector, no per-option disabling (e.g. SortPopup's field-name list).
   // Deliberately implicit: call sites pass a bare vector<string> straight into
   // an OptionLabels-by-value parameter (see SortPopup::render()).
+  // cppcheck-suppress noExplicitConstructor
   OptionLabels(const std::vector<std::string>& labels)
       : context(&labels), count(labels.size()), read([](const void* owner, size_t i) {
           return (*static_cast<const std::vector<std::string>*>(owner))[i].c_str();

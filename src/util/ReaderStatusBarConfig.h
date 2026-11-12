@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <numeric>
 
 enum class ReaderStatusBarPosition : uint8_t { Top, Bottom };
 
@@ -266,25 +267,24 @@ inline CenteredReaderStatusBarGeometry layoutCenteredReaderStatusBarItems(
   const int minX = leftEdge + std::max(0, bookmarkReserve);
   const int available = std::max(0, rightEdge - minX);
   const int budget = std::max(0, available - (count - 1) * joinCost);
-  int sum = 0;
-  for (const int w : result.widths) sum += w;
+  const int sum = std::accumulate(result.widths.begin(), result.widths.end(), 0);
   if (sum > budget) {
     int low = 0;
     int high = budget;
     while (low < high) {
       const int cap = low + (high - low + 1) / 2;
-      int used = 0;
-      for (const int w : result.widths) used += std::min(w, cap);
+      const int used = std::accumulate(result.widths.begin(), result.widths.end(), 0,
+                                       [cap](int acc, int w) { return acc + std::min(w, cap); });
       if (used <= budget)
         low = cap;
       else
         high = cap - 1;
     }
-    for (auto& w : result.widths) w = std::min(w, low);
+    std::transform(result.widths.begin(), result.widths.end(), result.widths.begin(),
+                   [low](int w) { return std::min(w, low); });
   }
 
-  int total = (count - 1) * joinCost;
-  for (const int w : result.widths) total += w;
+  const int total = (count - 1) * joinCost + std::accumulate(result.widths.begin(), result.widths.end(), 0);
   result.totalWidth = total;
   int cursor = std::max(minX, std::min(centerX - total / 2, rightEdge - total));
   bool placedAny = false;
