@@ -19,8 +19,7 @@ bool connect(bool& broughtUpWifi) {
   }
   const auto cred = WIFI_STORE.findCredential(lastSsid);
   if (!cred) {
-    LOG_INF("AutoSync", "Skipping silent connect: no saved credential for last-connected network %s",
-            lastSsid.c_str());
+    LOG_INF("AutoSync", "Skipping silent connect: no saved credential for last-connected network %s", lastSsid.c_str());
     return false;
   }
 

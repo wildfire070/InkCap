@@ -1,9 +1,9 @@
 #pragma once
 
+#include <Epub/BookIds.h>
+
 #include <string>
 #include <vector>
-
-#include <Epub/BookIds.h>
 
 // Duplicate handling for books downloaded from BookFusion. A download never replaces or resumes
 // over an existing file: it lands under a free name (" (2)", ...) and is recorded in a pending list
@@ -13,8 +13,8 @@
 namespace DownloadReview {
 
 struct Entry {
-  std::string path;              // the newly downloaded file
-  std::string collisionOrigin;   // the existing file the download's plain name collided with, if any
+  std::string path;             // the newly downloaded file
+  std::string collisionOrigin;  // the existing file the download's plain name collided with, if any
 };
 
 // folder + "/" + fileName, or "<name> (2).<ext>", "<name> (3).<ext>", ... if taken. Empty if none free.

@@ -281,8 +281,8 @@ void BookDetailsActivity::render(RenderLock&&) {
   // coverWidthPx (set in loadMetadata(), from pickCoverThumbWidth) is the actual
   // ratio the generated bitmap was picked for; falls back to 3:4 for a book with
   // no cover to peek (loadMetadata() never reached the point of setting it).
-  const int coverWidth = coverWidthPx > 0 ? coverWidthPx
-                                          : static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4);
+  const int coverWidth =
+      coverWidthPx > 0 ? coverWidthPx : static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4);
   const Rect coverRect{metrics.contentSidePadding, contentTop, coverWidth, coverHeight};
   drawCover(renderer, coverRect, coverPath);
   if (Storage.exists(bookPath.c_str())) {

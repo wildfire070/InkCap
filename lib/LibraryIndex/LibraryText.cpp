@@ -144,8 +144,9 @@ bool isUnicodeLetter(const uint32_t cp) {
 // English "a" is an article (the File Browser sort drops it too), but "i" and "o" are kept out:
 // a leading "I" or "O" is usually a real word ("I, Robot", "O Pioneers!") and a book named for
 // one would otherwise file under its second word.
-constexpr const char* ARTICLES[] = {"the ", "a ",   "an ",  "le ", "la ",  "les ", "l'",   "un ",  "une ", "de ", "du ",
-                                    "des ", "der ", "die ", "das ", "el ", "los ", "las ", "il ", "lo ",  "gli ", "os "};
+constexpr const char* ARTICLES[] = {"the ", "a ",   "an ", "le ",  "la ",  "les ", "l'",   "un ",
+                                    "une ", "de ",  "du ", "des ", "der ", "die ", "das ", "el ",
+                                    "los ", "las ", "il ", "lo ",  "gli ", "os "};
 
 // Views into `folded`, not copies: the caller keeps that string alive for as
 // long as the tokens, and a std::string per token costs an allocation each plus

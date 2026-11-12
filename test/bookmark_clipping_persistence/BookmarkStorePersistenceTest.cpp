@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include <Serialization.h>
+#include <gtest/gtest.h>
 #include <uzlib.h>
 
 #include <string>

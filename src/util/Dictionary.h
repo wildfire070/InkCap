@@ -143,8 +143,8 @@ class Dictionary {
   // Like locateWithStemVariants(), but returns every matching entry via
   // locateAll()'s semantics.
   static std::vector<DictLocation> locateAllWithStemVariants(const std::string& word, bool* matchedStem,
-                                                              const DictLookupCallbacks& cbs = {},
-                                                              const char* cachePath = nullptr);
+                                                             const DictLookupCallbacks& cbs = {},
+                                                             const char* cachePath = nullptr);
 
   // Look up word in .idx (via .idx.oft if present). Returns definition or empty string.
   static std::string lookup(const std::string& word, const DictLookupCallbacks& cbs = {},
@@ -213,7 +213,7 @@ class Dictionary {
   static std::vector<DictLocation> locateAllInSession(LookupSession& session, const std::string& word,
                                                       const DictLookupCallbacks& cbs);
   static std::vector<DictLocation> locateAllExactInSession(LookupSession& session, const std::string& word,
-                                                            const DictLookupCallbacks& cbs);
+                                                           const DictLookupCallbacks& cbs);
 
   // Read a null-terminated word from an open file into buf (max bufSize-1 chars).
   // Returns the number of characters read (excluding null), or -1 on error.

@@ -27,7 +27,15 @@ class FileBrowserActivity final : public Activity {
   // Metadata-based sort fields for Mode::Books, offered via SortPopup. Only applies to
   // the fully-materialized `files` list (see usingIndex below) -- oversized folders keep
   // the existing fixed alphabetical order regardless of SETTINGS.fileBrowserSortField.
-  enum class SortField : uint8_t { Title = 0, Author = 1, Status = 2, Rating = 3, Chapters = 4, DateUpdated = 5, LastOpened = 6 };
+  enum class SortField : uint8_t {
+    Title = 0,
+    Author = 1,
+    Status = 2,
+    Rating = 3,
+    Chapters = 4,
+    DateUpdated = 5,
+    LastOpened = 6
+  };
   static constexpr int SORT_FIELD_COUNT = 7;
 
  private:

@@ -41,23 +41,6 @@
 #include <string>
 #include <vector>
 
-#include "lexenddeca_10_bold.h"
-#include "lexenddeca_10_bolditalic.h"
-#include "lexenddeca_10_italic.h"
-#include "lexenddeca_10_regular.h"
-#include "lexenddeca_12_bold.h"
-#include "lexenddeca_12_bolditalic.h"
-#include "lexenddeca_12_italic.h"
-#include "lexenddeca_12_regular.h"
-#include "lexenddeca_14_bold.h"
-#include "lexenddeca_14_bolditalic.h"
-#include "lexenddeca_14_italic.h"
-#include "lexenddeca_14_regular.h"
-#include "lexenddeca_16_bold.h"
-#include "lexenddeca_16_bolditalic.h"
-#include "lexenddeca_16_italic.h"
-#include "lexenddeca_16_regular.h"
-
 #include "bitter_10_bold.h"
 #include "bitter_10_bolditalic.h"
 #include "bitter_10_italic.h"
@@ -74,6 +57,22 @@
 #include "bitter_16_bolditalic.h"
 #include "bitter_16_italic.h"
 #include "bitter_16_regular.h"
+#include "lexenddeca_10_bold.h"
+#include "lexenddeca_10_bolditalic.h"
+#include "lexenddeca_10_italic.h"
+#include "lexenddeca_10_regular.h"
+#include "lexenddeca_12_bold.h"
+#include "lexenddeca_12_bolditalic.h"
+#include "lexenddeca_12_italic.h"
+#include "lexenddeca_12_regular.h"
+#include "lexenddeca_14_bold.h"
+#include "lexenddeca_14_bolditalic.h"
+#include "lexenddeca_14_italic.h"
+#include "lexenddeca_14_regular.h"
+#include "lexenddeca_16_bold.h"
+#include "lexenddeca_16_bolditalic.h"
+#include "lexenddeca_16_italic.h"
+#include "lexenddeca_16_regular.h"
 
 namespace {
 

@@ -417,10 +417,10 @@ void BmpViewerActivity::showContextMenu() {
                            const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);
                            if (actionResult == nullptr) return;
 
-                           // Every FileBrowserAction is listed below with no default:, so a value added to
-                           // the enum without a matching case here becomes a hard error, not a silent no-op --
-                           // this switch shipped for a long time silently missing BookInfo with no compiler
-                           // signal at all.
+    // Every FileBrowserAction is listed below with no default:, so a value added to
+    // the enum without a matching case here becomes a hard error, not a silent no-op --
+    // this switch shipped for a long time silently missing BookInfo with no compiler
+    // signal at all.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic error "-Wswitch"
                            switch (static_cast<FileBrowserAction>(actionResult->action)) {

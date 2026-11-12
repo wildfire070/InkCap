@@ -10,12 +10,12 @@
 // appendBounded()/boundedGet()/boundedSendRequest(), the test suite catches
 // it -- see KOReaderHttpBounds.h's header comment for the full story.
 
-#include "KOReaderResponseCap.h"
-
 #include <gtest/gtest.h>
 
 #include <string>
 #include <vector>
+
+#include "KOReaderResponseCap.h"
 
 namespace {
 std::vector<uint8_t> makeBytes(size_t count, uint8_t fill = 'x') { return std::vector<uint8_t>(count, fill); }

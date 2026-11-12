@@ -316,10 +316,11 @@ TEST(EpubTextRaster, CharacterSpacingWidensGlyphGapsButNeverSpaces) {
     EXPECT_EQ(advance("abc", 2), advance("abc", 0) + gapPixels(2, 2));
     EXPECT_EQ(advance("abc", -1), advance("abc", 0) + gapPixels(2, -1));
     EXPECT_EQ(advance("a b", 3), advance("a b", 0));
-    EXPECT_EQ(advance("ab cd", 2), advance("ab cd", 0) + gapPixels(2, 2));  // one gap inside each word, none at the space
+    EXPECT_EQ(advance("ab cd", 2),
+              advance("ab cd", 0) + gapPixels(2, 2));  // one gap inside each word, none at the space
     // Tracking also applies to the boundary with a following codepoint (attached tokens), but not a space.
     EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, 'b', 3),
-             renderer.getTextAdvanceX(1, "a", style, 'b', 0) + gapPixels(1, 3));
+              renderer.getTextAdvanceX(1, "a", style, 'b', 0) + gapPixels(1, 3));
     EXPECT_EQ(renderer.getTextAdvanceX(1, "a", style, ' ', 3), renderer.getTextAdvanceX(1, "a", style, ' ', 0));
     EXPECT_EQ(renderer.getKerning(1, 'a', 'b', style, 3), renderer.getKerning(1, 'a', 'b', style, 0) + gapPixels(1, 3));
     EXPECT_EQ(renderer.getKerning(1, 'a', ' ', style, 3), renderer.getKerning(1, 'a', ' ', style, 0));

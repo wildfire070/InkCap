@@ -13,8 +13,8 @@
 
 #include "BookFusionBookIdStore.h"
 #include "CrossPointSettings.h"
-#include "RecentBooksStore.h"
 #include "MappedInputManager.h"
+#include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -422,8 +422,9 @@ void BookFusionBrowserActivity::loop() {
     if (mappedInput.hasTouchHardware() && sortButtonRect.width > 0) {
       int tx = 0;
       int ty = 0;
-      if (mappedInput.wasScreenTapped(tx, ty) && tx >= sortButtonRect.x && tx < sortButtonRect.x + sortButtonRect.width &&
-          ty >= sortButtonRect.y && ty < sortButtonRect.y + sortButtonRect.height) {
+      if (mappedInput.wasScreenTapped(tx, ty) && tx >= sortButtonRect.x &&
+          tx < sortButtonRect.x + sortButtonRect.width && ty >= sortButtonRect.y &&
+          ty < sortButtonRect.y + sortButtonRect.height) {
         openSortPopup();
         return;
       }
@@ -767,8 +768,8 @@ void BookFusionBrowserActivity::buildBrowsingScreen(UiApp::ScreenType& screen) {
         const StrId directionId = page.currentPage > 1 ? StrId::STR_BF_PREV_PAGE_SHORT : StrId::STR_NEXT_PAGE;
         const int16_t buttonCenterX = page.currentPage > 1 ? upCenter : downCenter;
         const char* directionText = I18n::getInstance().get(directionId);
-        const int16_t directionWidth = static_cast<int16_t>(
-            screen.target().measureText(indicatorStyle.font, directionText, indicatorStyle).width);
+        const int16_t directionWidth =
+            static_cast<int16_t>(screen.target().measureText(indicatorStyle.font, directionText, indicatorStyle).width);
         const int16_t directionX = static_cast<int16_t>(buttonCenterX - directionWidth / 2);
         const int16_t prefixX = static_cast<int16_t>(directionX - kHoldPrefixGap - prefixWidth);
         drawLeftAt(prefixX, prefixText);
@@ -812,8 +813,7 @@ void BookFusionBrowserActivity::buildDownloadScreen(UiApp::ScreenType& screen) {
     // Matches InsiderPhD's fork's estimate constant -- a measured throughput
     // figure for this hardware/network class, not a live transfer rate.
     constexpr size_t kEstimatedBytesPerSec = 30 * 1024;
-    const unsigned estSec =
-        static_cast<unsigned>((downloadTotal + kEstimatedBytesPerSec - 1) / kEstimatedBytesPerSec);
+    const unsigned estSec = static_cast<unsigned>((downloadTotal + kEstimatedBytesPerSec - 1) / kEstimatedBytesPerSec);
     char sizeStr[16];
     snprintf(sizeStr, sizeof(sizeStr), "%.1f MB", downloadTotal / (1024.0f * 1024.0f));
     if (estSec > 90) {
@@ -1017,15 +1017,15 @@ void BookFusionBrowserActivity::openSortPopup() {
   pendingSortFromPageForwardMs = 0;
   // tr(x) is a macro expanding to I18N.get(StrId::x) via token-pasting -- it can't take
   // a runtime variable, so this array/loop calls I18N.get() directly instead.
-  static const StrId kFieldLabelIds[BOOKFUSION_SORT_FIELD_COUNT] = {
-      StrId::STR_SORT_DATE, StrId::STR_SORT_LAST_READ, StrId::STR_SORT_AUTHOR, StrId::STR_TITLE};
+  static const StrId kFieldLabelIds[BOOKFUSION_SORT_FIELD_COUNT] = {StrId::STR_SORT_DATE, StrId::STR_SORT_LAST_READ,
+                                                                    StrId::STR_SORT_AUTHOR, StrId::STR_TITLE};
   // Popup display order (Title, Author, Date, Last Read) -- deliberately
   // separate from the storage/API index above (SortField enum order, also
   // kFieldApiNames in loadPage()), so a value already saved to
   // SETTINGS.bookFusionSortField keeps meaning the same field after this
   // reorder rather than silently pointing at a different one.
-  static constexpr SortField kDisplayOrder[BOOKFUSION_SORT_FIELD_COUNT] = {
-      SortField::Title, SortField::Author, SortField::Date, SortField::LastRead};
+  static constexpr SortField kDisplayOrder[BOOKFUSION_SORT_FIELD_COUNT] = {SortField::Title, SortField::Author,
+                                                                           SortField::Date, SortField::LastRead};
   std::vector<std::string> labels;
   labels.reserve(BOOKFUSION_SORT_FIELD_COUNT);
   // A plain loop reads more clearly than std::transform for this lookup-and-append.
@@ -1201,9 +1201,7 @@ void BookFusionBrowserActivity::loadPage(int pageIndex) {
   // A global search (see performSearch()) has no category/shelf of its own --
   // currentCategory is -1 in that case, so CATEGORIES[] must not be indexed.
   const bool globalSearch = !activeSearchQuery.empty() && searchIsGlobal;
-  const char* listParam = globalSearch                     ? nullptr
-                          : currentBookshelfId != 0 ? nullptr
-                                                     : CATEGORIES[currentCategory].list;
+  const char* listParam = globalSearch ? nullptr : currentBookshelfId != 0 ? nullptr : CATEGORIES[currentCategory].list;
   const uint32_t bookshelfIdParam = globalSearch ? 0 : currentBookshelfId;
   // A user-chosen sort applies regardless of category vs. shelf browsing -- unlike the
   // fixed per-category defaults below, which only ever applied to the fixed categories
@@ -1492,8 +1490,8 @@ void BookFusionBrowserActivity::downloadBook(const BookFusionBook& book) {
     if (maxAllocHeap >= requiredHeap) {
       Epub epub(filename, "/.crosspoint");
       const bool loaded = epub.load(true, true);
-      LOG_INF("BFBrowser", "Eager metadata load: heap guard passed (%u >= %u), epub.load() %s",
-              (unsigned)maxAllocHeap, (unsigned)requiredHeap, loaded ? "succeeded" : "FAILED");
+      LOG_INF("BFBrowser", "Eager metadata load: heap guard passed (%u >= %u), epub.load() %s", (unsigned)maxAllocHeap,
+              (unsigned)requiredHeap, loaded ? "succeeded" : "FAILED");
       if (loaded) {
         RECENT_BOOKS.addOrUpdateBook(filename, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath());
       }

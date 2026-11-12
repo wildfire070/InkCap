@@ -3468,9 +3468,7 @@ class SimulatorSmokeTest {
 
   // Standalone alternate mode (see tickCalibreBatchTest()), selected via its own
   // env var rather than being a step in the normal sequence below.
-  static bool calibreBatchTestRequested() {
-    return std::getenv("CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH") != nullptr;
-  }
+  static bool calibreBatchTestRequested() { return std::getenv("CROSSINK_SIMULATOR_SMOKE_CALIBRE_BATCH") != nullptr; }
 
   static int pageTurnCount() {
     const char* raw = std::getenv("CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS");
@@ -3724,8 +3722,7 @@ class SimulatorSmokeTest {
       legacy.remove("displayStatusBar");
       legacy["showClockOutsideReader"] = clock;
       SETTINGS.fromJson(legacy.as<JsonVariantConst>());
-      const auto expectedSlot1 =
-          (clock && clockAvailable) ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty;
+      const auto expectedSlot1 = (clock && clockAvailable) ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty;
       if (SETTINGS.displayStatusBar.slots[1] != expectedSlot1 ||
           SETTINGS.displayStatusBar.slots[2] != ReaderStatusBarItem::Battery)
         fail("Display clock migration failed");
@@ -3764,8 +3761,10 @@ class SimulatorSmokeTest {
     if (!saved["showClockOutsideReader"].isNull()) fail("Obsolete clock setting was saved");
     SETTINGS.displayStatusBar = DisplayStatusBarConfig{};
     SETTINGS.fromJson(saved.as<JsonVariantConst>());
-    if (SETTINGS.displayStatusBar.slots[0] != (clockAvailable ? ReaderStatusBarItem::Date : ReaderStatusBarItem::Empty) ||
-        SETTINGS.displayStatusBar.slots[1] != (clockAvailable ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty) ||
+    if (SETTINGS.displayStatusBar.slots[0] !=
+            (clockAvailable ? ReaderStatusBarItem::Date : ReaderStatusBarItem::Empty) ||
+        SETTINGS.displayStatusBar.slots[1] !=
+            (clockAvailable ? ReaderStatusBarItem::Clock : ReaderStatusBarItem::Empty) ||
         SETTINGS.displayStatusBar.slots[2] != ReaderStatusBarItem::Empty)
       fail("Display slots did not survive reload");
     if (SETTINGS.topReaderStatusBar.slots[ReaderStatusBarConfig::CENTER] != ReaderStatusBarItem::Clock ||
@@ -5620,8 +5619,8 @@ class SimulatorSmokeTest {
           "missing (this is exactly the bug the two-way sync fix closed)");
     }
     if (restoredAfterFinish != originalPath) {
-      fail("Archive-move contract: finish-triggered restore landed at %s, expected %s",
-           restoredAfterFinish.c_str(), originalPath.c_str());
+      fail("Archive-move contract: finish-triggered restore landed at %s, expected %s", restoredAfterFinish.c_str(),
+           originalPath.c_str());
     }
     if (!BookActions::setBookCompletedOnDisk(restoredAfterFinish, false)) {
       fail("Archive-move contract: could not reset Finished status after the finish-triggered round trip");
@@ -5662,8 +5661,7 @@ class SimulatorSmokeTest {
     const std::string secondArchived = BookMoveUtils::archiveBook(dupPath);
     if (secondArchived.empty()) fail("Archive-move contract: archiveBook() failed for the duplicate-named file");
     if (secondArchived == firstArchived) {
-      fail("Archive-move contract: two same-named archives collided instead of deduping: %s",
-           secondArchived.c_str());
+      fail("Archive-move contract: two same-named archives collided instead of deduping: %s", secondArchived.c_str());
     }
     if (secondArchived.find(" (2)") == std::string::npos) {
       fail("Archive-move contract: deduped archive path missing the expected \" (2)\" suffix: %s",

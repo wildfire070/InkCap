@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
                          ("crossink-filename-font-" +
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".ttf");
   static_assert(HalScalableFont::MaxFilenameFileBytes > HalScalableFont::MaxFileBytes,
-               "test relies on Filename mode's budget exceeding the normal per-file cap");
+                "test relies on Filename mode's budget exceeding the normal per-file cap");
   const size_t largeSize = HalScalableFont::MaxFileBytes + 1024 * 1024;
   {
     std::ofstream large(largePath, std::ios::binary);

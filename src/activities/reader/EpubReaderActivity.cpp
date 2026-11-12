@@ -1273,7 +1273,7 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath,
   }
 
   return ReaderSettingsIO::parseBookReaderSettingsFile(file, defaults, SETTINGS.dictionarySdFontFamilyName,
-                                                        SETTINGS.dictionaryFontPointSize, status);
+                                                       SETTINGS.dictionaryFontPointSize, status);
 }
 
 bool saveBookReaderSettingsFile(const std::string& cachePath, const BookReaderSettingsData& data) {
@@ -3301,15 +3301,15 @@ void EpubReaderActivity::loop() {
     restorePromptQueued = false;
     restorePromptShown = true;
     pauseReadingPaceTimer("archive_restore_prompt");
-    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
-                                                                  tr(STR_RESTORE_BODY)),
-                           [this](const ActivityResult& result) {
-                             resumeReadingPaceTimer("archive_restore_prompt_return");
-                             if (!result.isCancelled) {
-                               pendingManualArchiveAction = PendingManualArchiveAction::Restore;
-                             }
-                             requestUpdate();
-                           });
+    startActivityForResult(
+        std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE), tr(STR_RESTORE_BODY)),
+        [this](const ActivityResult& result) {
+          resumeReadingPaceTimer("archive_restore_prompt_return");
+          if (!result.isCancelled) {
+            pendingManualArchiveAction = PendingManualArchiveAction::Restore;
+          }
+          requestUpdate();
+        });
     return;
   }
 
@@ -4432,18 +4432,17 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuAction action, const 
       if (!epub) break;
       const bool archived = BookMoveUtils::isInArchiveFolder(epub->getPath());
       pauseReadingPaceTimer("toggle_archived");
-      startActivityForResult(
-          std::make_unique<ConfirmationActivity>(renderer, mappedInput,
-                                                 archived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_PROMPT_TITLE),
-                                                 archived ? tr(STR_RESTORE_BODY) : tr(STR_ARCHIVE_PROMPT_BODY)),
-          [this, archived](const ActivityResult& result) {
-            resumeReadingPaceTimer("toggle_archived_return");
-            if (!result.isCancelled) {
-              pendingManualArchiveAction =
-                  archived ? PendingManualArchiveAction::Restore : PendingManualArchiveAction::Archive;
-            }
-            requestUpdate();
-          });
+      startActivityForResult(std::make_unique<ConfirmationActivity>(
+                                 renderer, mappedInput, archived ? tr(STR_RESTORE_TITLE) : tr(STR_ARCHIVE_PROMPT_TITLE),
+                                 archived ? tr(STR_RESTORE_BODY) : tr(STR_ARCHIVE_PROMPT_BODY)),
+                             [this, archived](const ActivityResult& result) {
+                               resumeReadingPaceTimer("toggle_archived_return");
+                               if (!result.isCancelled) {
+                                 pendingManualArchiveAction = archived ? PendingManualArchiveAction::Restore
+                                                                       : PendingManualArchiveAction::Archive;
+                               }
+                               requestUpdate();
+                             });
       break;
     }
     case EpubReaderMenuAction::SYNC: {
@@ -8392,7 +8391,8 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       const auto nextTextStyle =
           static_cast<EpdFontFamily::Style>(block.wordStyle(nextIndex) & ~EpdFontFamily::UNDERLINE);
       const int nextSkipX =
-          nextHasEmSpace ? renderer.getTextAdvanceX(lineFontId, "\xe2\x80\x83", nextTextStyle, 0, tracking) + tracking : 0;
+          nextHasEmSpace ? renderer.getTextAdvanceX(lineFontId, "\xe2\x80\x83", nextTextStyle, 0, tracking) + tracking
+                         : 0;
       const PageWordGeometry nextGeometry = pageWordGeometry(renderer, fontId, line, block, nextIndex);
       const int nextWordX = orientedMarginLeft + line.xPos + nextGeometry.xOffset + nextSkipX;
       if (isHighlightedWord(pageWordIndex + 1, line, nextIndex) && nextWordX > wordX + wordW) {

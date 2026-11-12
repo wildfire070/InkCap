@@ -57,9 +57,8 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
         break;
       }
 
-      const int fullLineWidth =
-          renderer.getTextWidth(fontId, line.c_str(), EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO,
-                                characterSpacing);
+      const int fullLineWidth = renderer.getTextWidth(fontId, line.c_str(), EpdFontFamily::REGULAR,
+                                                      BidiUtils::BidiBaseDir::AUTO, characterSpacing);
       if (fullLineWidth <= vw) {
         outLines.push_back(line);
         lineBytePos = displayLen;

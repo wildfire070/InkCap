@@ -201,23 +201,19 @@ EpdFont lexenddeca10RegularFont(&lexenddeca_10_regular);
 EpdFont lexenddeca10BoldFont(&lexenddeca_10_bold);
 EpdFont lexenddeca10ItalicFont(&lexenddeca_10_italic);
 // No bolditalic variant on non-scalable-font hardware (flash budget); getFont() falls back to bold.
-EpdFontFamily lexenddeca10FontFamily(&lexenddeca10RegularFont, &lexenddeca10BoldFont, &lexenddeca10ItalicFont,
-                                     nullptr);
+EpdFontFamily lexenddeca10FontFamily(&lexenddeca10RegularFont, &lexenddeca10BoldFont, &lexenddeca10ItalicFont, nullptr);
 EpdFont lexenddeca12RegularFont(&lexenddeca_12_regular);
 EpdFont lexenddeca12BoldFont(&lexenddeca_12_bold);
 EpdFont lexenddeca12ItalicFont(&lexenddeca_12_italic);
-EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont, &lexenddeca12ItalicFont,
-                                     nullptr);
+EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont, &lexenddeca12ItalicFont, nullptr);
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
 EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
 EpdFont lexenddeca14ItalicFont(&lexenddeca_14_italic);
-EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont, &lexenddeca14ItalicFont,
-                                     nullptr);
+EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont, &lexenddeca14ItalicFont, nullptr);
 EpdFont lexenddeca16RegularFont(&lexenddeca_16_regular);
 EpdFont lexenddeca16BoldFont(&lexenddeca_16_bold);
 EpdFont lexenddeca16ItalicFont(&lexenddeca_16_italic);
-EpdFontFamily lexenddeca16FontFamily(&lexenddeca16RegularFont, &lexenddeca16BoldFont, &lexenddeca16ItalicFont,
-                                     nullptr);
+EpdFontFamily lexenddeca16FontFamily(&lexenddeca16RegularFont, &lexenddeca16BoldFont, &lexenddeca16ItalicFont, nullptr);
 EpdFont bitter10RegularFont(&bitter_10_regular);
 EpdFont bitter10BoldFont(&bitter_10_bold);
 EpdFont bitter10ItalicFont(&bitter_10_italic);

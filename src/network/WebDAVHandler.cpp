@@ -746,8 +746,8 @@ void WebDAVHandler::handleMove(WebServer& s) {
 
   if (success) {
     if (srcIsEpub) {
-      if (!BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle,
-                                                epubAuthor, /*keepInRecents=*/true)) {
+      if (!BookMoveUtils::migrateMovedEpubState(srcPath.c_str(), dstPath.c_str(), oldCachePath, epubTitle, epubAuthor,
+                                                /*keepInRecents=*/true)) {
         LOG_ERR("DAV", "File moved but cache refresh failed: %s", dstPath.c_str());
         s.send(500, "text/plain", "File moved, but could not refresh cached reading/sync data");
         return;

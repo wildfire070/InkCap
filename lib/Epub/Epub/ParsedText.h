@@ -134,8 +134,8 @@ class ParsedText {
   bool computeLineBreaks(Arena& scratchArena, const GfxRenderer& renderer, int fontId, int pageWidth,
                          ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
                          std::vector<bool>& noSpaceBeforeVec, ArenaVector<int16_t>& naturalGaps,
-                         ArenaVector<uint8_t>& gapSlots, ArenaVector<size_t>& lineBreakIndices,
-                         int16_t blockStartY = 0, int lineHeight = 0);
+                         ArenaVector<uint8_t>& gapSlots, ArenaVector<size_t>& lineBreakIndices, int16_t blockStartY = 0,
+                         int lineHeight = 0);
   bool computeHyphenatedLineBreaks(const GfxRenderer& renderer, int fontId, int pageWidth,
                                    ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
                                    std::vector<bool>& noSpaceBeforeVec, ArenaVector<size_t>& lineBreakIndices,

@@ -25,9 +25,9 @@ struct BookFusionBook {
   uint32_t bookId = 0;
   std::string title;
   std::string author;
-  std::string coverUrl;      // Empty if the book has no cover.
+  std::string coverUrl;       // Empty if the book has no cover.
   uint32_t downloadSize = 0;  // EPUB file size in bytes (API "download_size"); 0 if absent.
-  std::string format;        // "EPUB", "PDF", etc. Empty means EPUB (the API's own default).
+  std::string format;         // "EPUB", "PDF", etc. Empty means EPUB (the API's own default).
 };
 
 /** One page of library search results. */
@@ -80,7 +80,7 @@ struct BookFusionProgress {
  */
 struct BookFusionHighlight {
   uint32_t bookId = 0;
-  int chapterIndex = 0;  // spine index, 0-based (same as BookFusionProgress).
+  int chapterIndex = 0;   // spine index, 0-based (same as BookFusionProgress).
   std::string quoteText;  // required
   std::string chapterTitle;
   std::string addedAt;  // UTC ISO-8601 (e.g. "2026-01-01T12:00:00Z"); omitted from the request when empty.

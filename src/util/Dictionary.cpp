@@ -895,8 +895,7 @@ void Dictionary::resolveSessionBounds(LookupSession& session, const std::string&
         const std::string oftPath = DictPaths(session.folderPath).idxOft();
         if (Storage.openFileForRead("DICT", oftPath.c_str(), session.accelerator)) {
           session.acceleratorKind = LookupAccelerator::Oft;
-          findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), startByte, endByte,
-                         true);
+          findPageBounds(session.accelerator, session.idx, session.idxFileSize, word.c_str(), startByte, endByte, true);
         } else {
           session.acceleratorKind = LookupAccelerator::None;
         }
@@ -1045,7 +1044,7 @@ DictLocation Dictionary::locateWithStemVariants(const std::string& word, bool* m
 // so vowel-mark-insensitive lookup (Hebrew/Arabic) also reaches this,
 // the multi-match path real on-device lookups actually use.
 std::vector<DictLocation> Dictionary::locateAllInSession(LookupSession& session, const std::string& word,
-                                                          const DictLookupCallbacks& cbs) {
+                                                         const DictLookupCallbacks& cbs) {
   std::vector<DictLocation> results = locateAllExactInSession(session, word, cbs);
   const bool anyFound = std::any_of(results.begin(), results.end(), [](const DictLocation& r) { return r.found; });
   if (anyFound) return results;
@@ -1060,7 +1059,7 @@ std::vector<DictLocation> Dictionary::locateAllInSession(LookupSession& session,
 // Bounded by MAX_COMBINED_ENTRIES so a pathological dictionary cannot grow
 // this unbounded.
 std::vector<DictLocation> Dictionary::locateAllExactInSession(LookupSession& session, const std::string& word,
-                                                               const DictLookupCallbacks& cbs) {
+                                                              const DictLookupCallbacks& cbs) {
   std::vector<DictLocation> results;
   uint32_t startByte = 0;
   uint32_t endByte = session.idxFileSize;
@@ -1141,8 +1140,7 @@ std::vector<DictLocation> Dictionary::locateAll(const std::string& word, const D
 }
 
 std::vector<DictLocation> Dictionary::locateAllWithStemVariants(const std::string& word, bool* matchedStem,
-                                                                 const DictLookupCallbacks& cbs,
-                                                                 const char* cachePath) {
+                                                                const DictLookupCallbacks& cbs, const char* cachePath) {
   if (matchedStem) *matchedStem = false;
   LookupSession session;
   if (!openLookupSession(session, cachePath)) {

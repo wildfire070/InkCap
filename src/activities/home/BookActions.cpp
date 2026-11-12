@@ -410,7 +410,7 @@ bool toggleBookCompleted(const std::string& fullPath, const std::string& display
       }
     }
   } else if (allowMove && isEpub && completed && SETTINGS.moveFinishedToReadFolder &&
-            !BookMoveUtils::isInArchiveFolder(fullPath) && fullPath.rfind("/Read/", 0) != 0) {
+             !BookMoveUtils::isInArchiveFolder(fullPath) && fullPath.rfind("/Read/", 0) != 0) {
     // This EPUB has not been opened by the reader, so getTitle()/getAuthor()
     // would be empty. Load only metadata before migrating the saved items.
     Epub epub(fullPath, "/.crosspoint");

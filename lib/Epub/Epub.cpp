@@ -2037,11 +2037,10 @@ bool Epub::generateThumbBmpFromSidecar(const int width, const int height, const 
     }
 
     releaseReaderSdFontCachesBeforeCoverDecode(renderer, readerFontId, "thumbnail sidecar decode");
-    const bool success = FsHelpers::hasPngExtension(sourcePath)
-                             ? PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height,
-                                                                                adaptiveContain)
-                             : JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height,
-                                                                                  adaptiveContain);
+    const bool success =
+        FsHelpers::hasPngExtension(sourcePath)
+            ? PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height, adaptiveContain)
+            : JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(source, thumbBmp, width, height, adaptiveContain);
 
     source.close();
     thumbBmp.close();

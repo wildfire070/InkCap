@@ -126,9 +126,8 @@ bool DictionaryRegistry::discover() {
     if (!ambiguous && foundStem[0] != '\0' && foundDict) {
       if (ESP.getFreeHeap() < DICTIONARY_DISCOVER_MIN_FREE_HEAP ||
           ESP.getMaxAllocHeap() < DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP) {
-        LOG_ERR("DREG", "Stopping dictionary scan early: %u free (need %u), %u max alloc (need %u)",
-                ESP.getFreeHeap(), DICTIONARY_DISCOVER_MIN_FREE_HEAP, ESP.getMaxAllocHeap(),
-                DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP);
+        LOG_ERR("DREG", "Stopping dictionary scan early: %u free (need %u), %u max alloc (need %u)", ESP.getFreeHeap(),
+                DICTIONARY_DISCOVER_MIN_FREE_HEAP, ESP.getMaxAllocHeap(), DICTIONARY_DISCOVER_MIN_MAX_ALLOC_HEAP);
         break;
       }
       DictionaryEntry e;

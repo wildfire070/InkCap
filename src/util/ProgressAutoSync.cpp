@@ -50,9 +50,8 @@ void pushReadingTimeDelta(uint32_t bookId, const std::string& epubPath, const st
   }
 }
 
-void performPush(GfxRenderer& renderer, uint32_t bookId, const std::string& epubPath,
-                 const std::string& epubCachePath, float bookPercent, int spineIndex, int pageNumber, int pageCount,
-                 int spineCount) {
+void performPush(GfxRenderer& renderer, uint32_t bookId, const std::string& epubPath, const std::string& epubCachePath,
+                 float bookPercent, int spineIndex, int pageNumber, int pageCount, int spineCount) {
   bool broughtUpWifi = false;
   if (!SilentAutoSyncWifi::connect(broughtUpWifi)) return;
 
@@ -165,7 +164,7 @@ void runIfArmed(GfxRenderer& renderer, uint32_t bookId, const std::string& epubP
 }
 
 void runOnExit(GfxRenderer& renderer, uint32_t bookId, const std::string& epubPath, const std::string& epubCachePath,
-              float bookPercent, int spineIndex, int pageNumber, int pageCount, int spineCount) {
+               float bookPercent, int spineIndex, int pageNumber, int pageCount, int spineCount) {
   armed = false;
   if (bookId == 0 || SETTINGS.autosyncMode != CrossPointSettings::AUTOSYNC_ON_EXIT) return;
 

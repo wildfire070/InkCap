@@ -79,8 +79,7 @@ void CalibreConnectActivity::onEnter() {
       snprintf(name, sizeof(name), "Test Fic Chapter %02d.epub", i);
       batchSucceeded.push_back(name);
     }
-    batchFailed = {"Already On Device.epub: File already exists",
-                   "Corrupted Upload.epub: Write failed - disk full?"};
+    batchFailed = {"Already On Device.epub: File already exists", "Corrupted Upload.epub: Write failed - disk full?"};
     batchConfirmed = true;
     requestUpdate();
     return;
@@ -300,8 +299,8 @@ void CalibreConnectActivity::loop() {
       // cleared its own live batch post-confirmation doesn't blank out the
       // summary just shown (the frozen snapshot stays as-is until step 1 above
       // detects genuinely new activity).
-      if (!batchConfirmed && (status.batchSucceeded.size() != batchSucceeded.size() ||
-                              status.batchFailed.size() != batchFailed.size())) {
+      if (!batchConfirmed &&
+          (status.batchSucceeded.size() != batchSucceeded.size() || status.batchFailed.size() != batchFailed.size())) {
         batchSucceeded = status.batchSucceeded;
         batchFailed = status.batchFailed;
         lastCompleteAt = 0;
@@ -448,8 +447,8 @@ void CalibreConnectActivity::render(RenderLock&&) {
 
       const int lastVisible = std::min(totalLines, batchListTopIndex + batchListVisibleRows);
       for (int i = batchListTopIndex; i < lastVisible; i++) {
-        std::string lineText = renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(), textMaxWidth,
-                                                       EpdFontFamily::REGULAR);
+        std::string lineText =
+            renderer.truncatedText(SMALL_FONT_ID, lines[i].text.c_str(), textMaxWidth, EpdFontFamily::REGULAR);
         renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, lineText.c_str(), true,
                           lines[i].bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
         y += height;
@@ -474,9 +473,9 @@ void CalibreConnectActivity::render(RenderLock&&) {
     }
 
     const bool canScrollBatchList = hasBatchResults && !showUploadProgress && batchLineCount() > batchListVisibleRows;
-    const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "",
-                                              canScrollBatchList ? tr(STR_DIR_UP) : "",
-                                              canScrollBatchList ? tr(STR_DIR_DOWN) : "");
+    const auto labels =
+        mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_EXIT)), "", canScrollBatchList ? tr(STR_DIR_UP) : "",
+                              canScrollBatchList ? tr(STR_DIR_DOWN) : "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
   renderer.displayBuffer(screenTransitionRefresh.modeFor(static_cast<uint8_t>(state)));

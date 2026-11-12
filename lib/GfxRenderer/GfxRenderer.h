@@ -343,8 +343,7 @@ class GfxRenderer {
   // a block-level custom font-size does not occur in practice (FanFicFare
   // title-page headings and `pre` blocks are plain text).
   void drawTextScaled(int fontId, int x, int y, const char* text, bool black, EpdFontFamily::Style style, float scale,
-                      BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO,
-                      int8_t characterSpacing = 0) const;
+                      BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t characterSpacing = 0) const;
   // Guard text/background pixels while a table cell is rendered. The guard is
   // intentionally single-level and scoped by the caller; nested use is a
   // programming error caught in debug builds.

@@ -6,11 +6,11 @@
 #include <Serialization.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
+#include <strings.h>
 
 #include <cctype>
 #include <cstdint>
 #include <cstring>
-#include <strings.h>
 #include <string_view>
 
 #include "Epub/BookIds.h"

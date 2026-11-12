@@ -106,7 +106,7 @@ void FontSelectionActivity::onEnter() {
   }
 
   fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT +
-                (hasHeapForFontList && registry_ ? registry_->getFamilyCount() : 0));
+                 (hasHeapForFontList && registry_ ? registry_->getFamilyCount() : 0));
 
   constexpr auto builtinRange = BUILTIN_FONT_POINT_SIZE_RANGE;
   fonts_.push_back({fontFamilyLabel(I18N.get(StrId::STR_LEXEND_DECA), builtinRange), true, 0});

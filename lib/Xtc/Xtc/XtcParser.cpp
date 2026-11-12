@@ -251,8 +251,8 @@ XtcError XtcParser::readFirstPageInfo() {
         (pageMagic == XTG_MAGIC || pageMagic == XTH_MAGIC)) {
       const uint8_t pageBitDepth = (pageMagic == XTH_MAGIC) ? 2 : 1;
       if (pageBitDepth != m_bitDepth) {
-        LOG_INF("XTC", "Container declares %u-bit but the first page is %u-bit; using the page's own magic",
-                m_bitDepth, pageBitDepth);
+        LOG_INF("XTC", "Container declares %u-bit but the first page is %u-bit; using the page's own magic", m_bitDepth,
+                pageBitDepth);
         m_bitDepth = pageBitDepth;
       }
     }

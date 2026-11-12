@@ -1,5 +1,7 @@
 #include "RoundedRaffTheme.h"
 
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -10,9 +12,6 @@
 #include <cctype>
 #include <string>
 #include <vector>
-
-#include <Epub.h>
-#include <FsHelpers.h>
 
 #include "BookFusionBookIdStore.h"
 #include "RecentBooksStore.h"

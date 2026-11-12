@@ -1,8 +1,8 @@
 #include "BookFusionSyncClient.h"
 
-#include "BookFusionHttpBounds.h"
-
 #include <ArduinoJson.h>
+
+#include "BookFusionHttpBounds.h"
 #ifdef SIMULATOR
 #include <ArduinoJsonStringCompat.h>
 #endif
@@ -239,7 +239,8 @@ void BookFusionSearchJsonStream::sOnString(void* ctx, const char* value, size_t 
         safeCopy(self->currentAuthorName, sizeof(self->currentAuthorName), value, len);
       break;
     case LastKey::COVER_URL:
-      if (self->position == Position::IN_COVER_OBJECT && self->coverDepth == 1) self->current.coverUrl.assign(value, len);
+      if (self->position == Position::IN_COVER_OBJECT && self->coverDepth == 1)
+        self->current.coverUrl.assign(value, len);
       break;
     case LastKey::FORMAT:
       if (self->position == Position::IN_BOOK && self->bookDepth == 1) self->current.format.assign(value, len);
@@ -761,12 +762,11 @@ BookFusionSyncClient::Error BookFusionSyncClient::searchBooks(int page, const ch
   // exceptions on this firmware) or round-tripping it through an SD temp
   // file. BookFusionSearchJsonStream populates out.books directly.
   BookFusionSearchJsonStream stream(out);
-  const int httpCode =
-      http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
-                       [&stream](const uint8_t* data, size_t len) -> bool {
-                         stream.feed(reinterpret_cast<const char*>(data), len);
-                         return true;
-                       });
+  const int httpCode = http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+                                        [&stream](const uint8_t* data, size_t len) -> bool {
+                                          stream.feed(reinterpret_cast<const char*>(data), len);
+                                          return true;
+                                        });
   lastHttpCode = httpCode;
   lastTransportError = (httpCode < 0) ? httpCode : 0;
   const std::string totalCountHeader = http.getHeader("Total-Count");
@@ -861,12 +861,11 @@ BookFusionSyncClient::Error searchBookshelvesPage(int page, BookFusionBookshelfL
   http.addHeader("Content-Type", "application/json");
 
   BookFusionBookshelfJsonStream stream(out);
-  const int httpCode =
-      http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
-                       [&stream](const uint8_t* data, size_t len) -> bool {
-                         stream.feed(reinterpret_cast<const char*>(data), len);
-                         return true;
-                       });
+  const int httpCode = http.sendRequest("POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+                                        [&stream](const uint8_t* data, size_t len) -> bool {
+                                          stream.feed(reinterpret_cast<const char*>(data), len);
+                                          return true;
+                                        });
   BookFusionSyncClient::lastHttpCode = httpCode;
   BookFusionSyncClient::lastTransportError = (httpCode < 0) ? httpCode : 0;
   const std::string totalCountHeader = http.getHeader("Total-Count");

@@ -35,11 +35,11 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
-#include "util/BookMoveUtils.h"
 #include "components/icons/libraryIcons.h"
 #include "components/icons/listIcons.h"
 #include "sync/BookSyncFile.h"
 #include "sync/SyncPending.h"
+#include "util/BookMoveUtils.h"
 
 namespace fui = freeink::ui;
 
@@ -1627,223 +1627,220 @@ void LibraryActivity::showBookActionMenu(const size_t bookIndex, const bool igno
     items.push_back({FileBrowserAction::SendNearby, StrId::STR_SEND_NEARBY_BOOK});
   }
 
-  openDialog(makeUniqueNoThrow<FileBrowserActionActivity>(renderer, mappedInput, book.title, std::move(items),
-                                                          ignoreInitialConfirmRelease),
-             [this, book](const ActivityResult& result) {
-               confirmLongPressCaptured = false;
-               if (result.isCancelled) {
-                 return;
-               }
+  openDialog(
+      makeUniqueNoThrow<FileBrowserActionActivity>(renderer, mappedInput, book.title, std::move(items),
+                                                   ignoreInitialConfirmRelease),
+      [this, book](const ActivityResult& result) {
+        confirmLongPressCaptured = false;
+        if (result.isCancelled) {
+          return;
+        }
 
-               const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);
-               if (!actionResult) {
-                 LOG_ERR("LIB", "Book action result missing");
-                 return;
-               }
+        const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);
+        if (!actionResult) {
+          LOG_ERR("LIB", "Book action result missing");
+          return;
+        }
 
-               // Every FileBrowserAction is listed below with no default:, so a value added to the enum
-               // without a matching case here becomes a hard error, not a silent no-op -- this switch
-               // shipped for a long time silently ignoring 7 valid actions with no compiler signal at all.
+    // Every FileBrowserAction is listed below with no default:, so a value added to the enum
+    // without a matching case here becomes a hard error, not a silent no-op -- this switch
+    // shipped for a long time silently ignoring 7 valid actions with no compiler signal at all.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic error "-Wswitch"
-               switch (static_cast<FileBrowserAction>(actionResult->action)) {
-                 case FileBrowserAction::ToggleBookStatsTracking: {
-                   bool enabled = false;
-                   if (!BookActions::toggleBookStatsTracking(book.path, enabled)) {
-                     const std::string error = std::string(tr(STR_TRACK_READING_STATS)) + " " + tr(STR_FAILED_LOWER);
-                     BookActions::drawToast(renderer, error.c_str());
-                   }
-                   reloadAfterBookAction();
-                   return;
-                 }
-                 case FileBrowserAction::SyncProgress: {
-                   PendingOverlayResume resume;
-                   resume.origin = PendingOverlayOrigin::Library;
-                   resume.tab = static_cast<uint8_t>(sort);
-                   resume.pane = descending;
-                   resume.selectedIndex = selection;
-                   resume.scrollPosition = topIndex;
-                   resume.libraryQuery = query;
-                   BookActions::syncProgress(renderer, mappedInput, book.path, std::move(resume));
-                   requestUpdate();
-                   return;
-                 }
-                 case FileBrowserAction::ReadingStats:
-                   openDialog(BookActions::createReadingStatsActivity(renderer, mappedInput, book.path, book.title),
-                              [this](const ActivityResult&) { requestUpdate(); });
-                   return;
-                 case FileBrowserAction::Delete:
-                   promptDeleteBook(book);
-                   return;
-                 case FileBrowserAction::DeleteCache:
-                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(
-                                  renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_CACHE),
-                                  book.title),
-                              [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled) {
-                                  if (!BookActions::clearBookCache(book.path)) {
-                                    LOG_ERR("LIB", "Failed to clear book cache for: %s", book.path.c_str());
-                                  } else {
-                                    pendingCacheDeletedFeedback = true;
-                                    cacheDeletedFeedbackShowTime = millis();
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 case FileBrowserAction::DeleteStats:
-                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(
-                                  renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_BOOK_STATS),
-                                  book.title),
-                              [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled) {
-                                  if (!BookActions::deleteBookStats(book.path)) {
-                                    LOG_ERR("LIB", "Failed to delete book stats for: %s", book.path.c_str());
-                                  } else {
-                                    BookActions::drawToast(renderer, tr(STR_BOOK_STATS_DELETED));
-                                    delay(1000);
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 case FileBrowserAction::ResetReaderSettings:
-                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(
-                                  renderer, mappedInput,
-                                  BookActions::confirmationHeading(StrId::STR_RESET_BOOK_READER_SETTINGS), book.title),
-                              [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled) {
-                                  if (!BookActions::resetBookReaderSettings(book.path)) {
-                                    LOG_ERR("LIB", "Failed to reset reader settings for: %s", book.path.c_str());
-                                  } else {
-                                    BookActions::drawToast(renderer, tr(STR_BOOK_READER_SETTINGS_RESET));
-                                    delay(1000);
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 case FileBrowserAction::ToggleCompleted: {
-                   auto applyToggle = [this, book](const bool allowMove) {
-                     bool completed = false;
-                     if (BookActions::toggleBookCompleted(book.path, book.title, completed, allowMove)) {
-                       BookActions::drawToast(renderer,
-                                              completed ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
-                       delay(1000);
-                     }
-                     reloadAfterBookAction();
-                   };
-                   // Finishing a book with "Move Finished Books to Archive Folder" on asks first; declining still marks
-                   // it finished and leaves the file where it is.
-                   if (BookActions::completingWouldArchive(book.path)) {
-                     openDialog(
-                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+        switch (static_cast<FileBrowserAction>(actionResult->action)) {
+          case FileBrowserAction::ToggleBookStatsTracking: {
+            bool enabled = false;
+            if (!BookActions::toggleBookStatsTracking(book.path, enabled)) {
+              const std::string error = std::string(tr(STR_TRACK_READING_STATS)) + " " + tr(STR_FAILED_LOWER);
+              BookActions::drawToast(renderer, error.c_str());
+            }
+            reloadAfterBookAction();
+            return;
+          }
+          case FileBrowserAction::SyncProgress: {
+            PendingOverlayResume resume;
+            resume.origin = PendingOverlayOrigin::Library;
+            resume.tab = static_cast<uint8_t>(sort);
+            resume.pane = descending;
+            resume.selectedIndex = selection;
+            resume.scrollPosition = topIndex;
+            resume.libraryQuery = query;
+            BookActions::syncProgress(renderer, mappedInput, book.path, std::move(resume));
+            requestUpdate();
+            return;
+          }
+          case FileBrowserAction::ReadingStats:
+            openDialog(BookActions::createReadingStatsActivity(renderer, mappedInput, book.path, book.title),
+                       [this](const ActivityResult&) { requestUpdate(); });
+            return;
+          case FileBrowserAction::Delete:
+            promptDeleteBook(book);
+            return;
+          case FileBrowserAction::DeleteCache:
+            openDialog(
+                makeUniqueNoThrow<ConfirmationActivity>(
+                    renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_CACHE), book.title),
+                [this, book](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled) {
+                    if (!BookActions::clearBookCache(book.path)) {
+                      LOG_ERR("LIB", "Failed to clear book cache for: %s", book.path.c_str());
+                    } else {
+                      pendingCacheDeletedFeedback = true;
+                      cacheDeletedFeedbackShowTime = millis();
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          case FileBrowserAction::DeleteStats:
+            openDialog(
+                makeUniqueNoThrow<ConfirmationActivity>(
+                    renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_BOOK_STATS), book.title),
+                [this, book](const ActivityResult& confirmation) {
+                  if (!confirmation.isCancelled) {
+                    if (!BookActions::deleteBookStats(book.path)) {
+                      LOG_ERR("LIB", "Failed to delete book stats for: %s", book.path.c_str());
+                    } else {
+                      BookActions::drawToast(renderer, tr(STR_BOOK_STATS_DELETED));
+                      delay(1000);
+                    }
+                  }
+                  reloadAfterBookAction();
+                });
+            return;
+          case FileBrowserAction::ResetReaderSettings:
+            openDialog(makeUniqueNoThrow<ConfirmationActivity>(
+                           renderer, mappedInput,
+                           BookActions::confirmationHeading(StrId::STR_RESET_BOOK_READER_SETTINGS), book.title),
+                       [this, book](const ActivityResult& confirmation) {
+                         if (!confirmation.isCancelled) {
+                           if (!BookActions::resetBookReaderSettings(book.path)) {
+                             LOG_ERR("LIB", "Failed to reset reader settings for: %s", book.path.c_str());
+                           } else {
+                             BookActions::drawToast(renderer, tr(STR_BOOK_READER_SETTINGS_RESET));
+                             delay(1000);
+                           }
+                         }
+                         reloadAfterBookAction();
+                       });
+            return;
+          case FileBrowserAction::ToggleCompleted: {
+            auto applyToggle = [this, book](const bool allowMove) {
+              bool completed = false;
+              if (BookActions::toggleBookCompleted(book.path, book.title, completed, allowMove)) {
+                BookActions::drawToast(renderer, completed ? tr(STR_MARKED_FINISHED) : tr(STR_MARKED_UNFINISHED));
+                delay(1000);
+              }
+              reloadAfterBookAction();
+            };
+            // Finishing a book with "Move Finished Books to Archive Folder" on asks first; declining still marks
+            // it finished and leaves the file where it is.
+            if (BookActions::completingWouldArchive(book.path)) {
+              openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
                                                                  tr(STR_ARCHIVE_PROMPT_BODY)),
                          [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
-                     return;
-                   }
-                   // Symmetric direction: un-finishing a book already in /Archive asks before moving it back out.
-                   if (BookActions::uncompletingWouldRestore(book.path)) {
-                     openDialog(
-                         makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+              return;
+            }
+            // Symmetric direction: un-finishing a book already in /Archive asks before moving it back out.
+            if (BookActions::uncompletingWouldRestore(book.path)) {
+              openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
                                                                  tr(STR_RESTORE_BODY)),
                          [applyToggle](const ActivityResult& confirmation) { applyToggle(!confirmation.isCancelled); });
-                     return;
-                   }
-                   applyToggle(true);
-                   return;
-                 }
-                 case FileBrowserAction::EpubRenderMode: {
-                   const uint8_t currentIndex =
-                       BookActions::epubRenderModeDisplayIndex(EpubReaderActivity::loadBookRenderMode(book.path));
-                   openDialog(makeUniqueNoThrow<OptionSelectionActivity>(
-                                  renderer, mappedInput, "LibraryEpubRenderModeSelect", StrId::STR_EPUB_RENDER_MODE,
-                                  BookActions::epubRenderModeOptions(), currentIndex),
-                              [this, book](const ActivityResult& selectionResult) {
-                                if (!selectionResult.isCancelled) {
-                                  const auto* selection = std::get_if<OptionSelectionResult>(&selectionResult.data);
-                                  if (selection != nullptr &&
-                                      !EpubReaderActivity::saveBookRenderMode(
-                                          book.path, BookActions::epubRenderModeForDisplayIndex(selection->index))) {
-                                    LOG_ERR("LIB", "Failed to save render mode for: %s", book.path.c_str());
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 }
-                 case FileBrowserAction::RemoveFromRecents:
-                   promptRemoveBook(book.path, book.title);
-                   return;
-                 case FileBrowserAction::SendNearby:
-                   activityManager.goToNearbyBookSend(book.path, false);
-                   return;
-                 case FileBrowserAction::BookInfo:
-                   openDialog(makeUniqueNoThrow<BookDetailsActivity>(renderer, mappedInput, book.path, "", "",
-                                                                     /*hasPrev=*/false, /*hasNext=*/false),
-                              [this](const ActivityResult&) { reloadAfterBookAction(); });
-                   return;
-                 case FileBrowserAction::PinToHome:
-                   if (!RECENT_BOOKS.setPinned(book.path, true)) {
-                     RenderLock lock(*this);
-                     BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
-                   }
-                   reloadAfterBookAction();
-                   return;
-                 case FileBrowserAction::UnpinFromHome:
-                   RECENT_BOOKS.setPinned(book.path, false);
-                   reloadAfterBookAction();
-                   return;
-                 case FileBrowserAction::ArchiveBook:
-                   // Standalone action, independent of Mark as Finished -- same confirmation the
-                   // finish-triggered move uses above, since moving the file out of its current
-                   // folder is equally not casually reversible.
-                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput,
-                                                                      tr(STR_ARCHIVE_PROMPT_TITLE),
-                                                                      tr(STR_ARCHIVE_PROMPT_BODY)),
-                              [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled) {
-                                  const std::string newPath = BookMoveUtils::archiveBook(book.path);
-                                  if (newPath.empty()) {
-                                    LOG_ERR("LIB", "Failed to archive: %s", book.path.c_str());
-                                  } else {
-                                    // Two-way sync: archiving also marks the book Finished, silently.
-                                    BookActions::setBookCompletedOnDisk(newPath, true);
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 case FileBrowserAction::RestoreBook:
-                   openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
-                                                                      tr(STR_RESTORE_BODY)),
-                              [this, book](const ActivityResult& confirmation) {
-                                if (!confirmation.isCancelled) {
-                                  const std::string newPath = BookMoveUtils::restoreBook(book.path);
-                                  if (newPath.empty()) {
-                                    LOG_ERR("LIB", "Failed to restore: %s", book.path.c_str());
-                                  } else {
-                                    // Two-way sync: restoring also marks the book Unfinished, silently.
-                                    BookActions::setBookCompletedOnDisk(newPath, false);
-                                  }
-                                }
-                                reloadAfterBookAction();
-                              });
-                   return;
-                 case FileBrowserAction::PinFavorite:
-                 case FileBrowserAction::UnpinFavorite:
-                 case FileBrowserAction::PinBootFavorite:
-                 case FileBrowserAction::UnpinBootFavorite:
-                 case FileBrowserAction::UploadFolderProgress:
-                 case FileBrowserAction::SetSleepFolder:
-                 case FileBrowserAction::ClearSleepFolder:
-                 case FileBrowserAction::ViewBookmarks:
-                 case FileBrowserAction::ViewClippings:
-                 case FileBrowserAction::DeleteBookmarks:
-                 case FileBrowserAction::DeleteClippings:
-                 case FileBrowserAction::Rename:
-                   return;
-               }
+              return;
+            }
+            applyToggle(true);
+            return;
+          }
+          case FileBrowserAction::EpubRenderMode: {
+            const uint8_t currentIndex =
+                BookActions::epubRenderModeDisplayIndex(EpubReaderActivity::loadBookRenderMode(book.path));
+            openDialog(makeUniqueNoThrow<OptionSelectionActivity>(renderer, mappedInput, "LibraryEpubRenderModeSelect",
+                                                                  StrId::STR_EPUB_RENDER_MODE,
+                                                                  BookActions::epubRenderModeOptions(), currentIndex),
+                       [this, book](const ActivityResult& selectionResult) {
+                         if (!selectionResult.isCancelled) {
+                           const auto* selection = std::get_if<OptionSelectionResult>(&selectionResult.data);
+                           if (selection != nullptr &&
+                               !EpubReaderActivity::saveBookRenderMode(
+                                   book.path, BookActions::epubRenderModeForDisplayIndex(selection->index))) {
+                             LOG_ERR("LIB", "Failed to save render mode for: %s", book.path.c_str());
+                           }
+                         }
+                         reloadAfterBookAction();
+                       });
+            return;
+          }
+          case FileBrowserAction::RemoveFromRecents:
+            promptRemoveBook(book.path, book.title);
+            return;
+          case FileBrowserAction::SendNearby:
+            activityManager.goToNearbyBookSend(book.path, false);
+            return;
+          case FileBrowserAction::BookInfo:
+            openDialog(makeUniqueNoThrow<BookDetailsActivity>(renderer, mappedInput, book.path, "", "",
+                                                              /*hasPrev=*/false, /*hasNext=*/false),
+                       [this](const ActivityResult&) { reloadAfterBookAction(); });
+            return;
+          case FileBrowserAction::PinToHome:
+            if (!RECENT_BOOKS.setPinned(book.path, true)) {
+              RenderLock lock(*this);
+              BookActions::drawToast(renderer, tr(STR_PIN_LIMIT_REACHED));
+            }
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::UnpinFromHome:
+            RECENT_BOOKS.setPinned(book.path, false);
+            reloadAfterBookAction();
+            return;
+          case FileBrowserAction::ArchiveBook:
+            // Standalone action, independent of Mark as Finished -- same confirmation the
+            // finish-triggered move uses above, since moving the file out of its current
+            // folder is equally not casually reversible.
+            openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_ARCHIVE_PROMPT_TITLE),
+                                                               tr(STR_ARCHIVE_PROMPT_BODY)),
+                       [this, book](const ActivityResult& confirmation) {
+                         if (!confirmation.isCancelled) {
+                           const std::string newPath = BookMoveUtils::archiveBook(book.path);
+                           if (newPath.empty()) {
+                             LOG_ERR("LIB", "Failed to archive: %s", book.path.c_str());
+                           } else {
+                             // Two-way sync: archiving also marks the book Finished, silently.
+                             BookActions::setBookCompletedOnDisk(newPath, true);
+                           }
+                         }
+                         reloadAfterBookAction();
+                       });
+            return;
+          case FileBrowserAction::RestoreBook:
+            openDialog(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                               tr(STR_RESTORE_BODY)),
+                       [this, book](const ActivityResult& confirmation) {
+                         if (!confirmation.isCancelled) {
+                           const std::string newPath = BookMoveUtils::restoreBook(book.path);
+                           if (newPath.empty()) {
+                             LOG_ERR("LIB", "Failed to restore: %s", book.path.c_str());
+                           } else {
+                             // Two-way sync: restoring also marks the book Unfinished, silently.
+                             BookActions::setBookCompletedOnDisk(newPath, false);
+                           }
+                         }
+                         reloadAfterBookAction();
+                       });
+            return;
+          case FileBrowserAction::PinFavorite:
+          case FileBrowserAction::UnpinFavorite:
+          case FileBrowserAction::PinBootFavorite:
+          case FileBrowserAction::UnpinBootFavorite:
+          case FileBrowserAction::UploadFolderProgress:
+          case FileBrowserAction::SetSleepFolder:
+          case FileBrowserAction::ClearSleepFolder:
+          case FileBrowserAction::ViewBookmarks:
+          case FileBrowserAction::ViewClippings:
+          case FileBrowserAction::DeleteBookmarks:
+          case FileBrowserAction::DeleteClippings:
+          case FileBrowserAction::Rename:
+            return;
+        }
 #pragma GCC diagnostic pop
-             });
+      });
 }

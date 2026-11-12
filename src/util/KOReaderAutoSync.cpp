@@ -41,8 +41,8 @@ void performPush(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int s
   // releases epub for the TLS handshake's heap).
   CrossPointPosition localPos{spineIndex, pageNumber, std::max(1, pageCount)};
   const PositionCoordinateSpace coordinateSpace = KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::FILENAME
-                                                       ? PositionCoordinateSpace::SourceDocument
-                                                       : PositionCoordinateSpace::CurrentDocument;
+                                                      ? PositionCoordinateSpace::SourceDocument
+                                                      : PositionCoordinateSpace::CurrentDocument;
   const KOReaderPosition localProgress = ProgressMapper::toKOReader(epub, localPos, coordinateSpace);
   if (!localProgress.valid) {
     LOG_ERR("KOAuto", "Skipping auto-sync: couldn't map current position to an xpath");
@@ -77,8 +77,9 @@ void performPush(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int s
 
       if (KOREADER_STORE.usesCrossPointSyncServer()) {
         KOReaderRichPosition pos;
-        const float pct =
-            localProgress.percentage < 0.0f ? 0.0f : localProgress.percentage > 1.0f ? 1.0f : localProgress.percentage;
+        const float pct = localProgress.percentage < 0.0f   ? 0.0f
+                          : localProgress.percentage > 1.0f ? 1.0f
+                                                            : localProgress.percentage;
         pos.pctQ = static_cast<uint32_t>(pct * 1000000.0f + 0.5f);
         pos.spineIndex = static_cast<uint16_t>(spineIndex);
         pos.pageNumber = static_cast<uint16_t>(pageNumber);
@@ -137,8 +138,8 @@ void armIfThresholdCrossed(int spineIndex, float bookPercent) {
 
 bool isArmed() { return armed; }
 
-void runIfArmed(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber,
-                int pageCount, float bookPercent) {
+void runIfArmed(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber, int pageCount,
+                float bookPercent) {
   if (!armed) return;
   armed = false;  // Consumed regardless of outcome -- a failure retries on the next threshold crossing, not a spin.
   lastSyncedSpine = spineIndex;
@@ -149,7 +150,7 @@ void runIfArmed(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int sp
 }
 
 void runOnExit(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber,
-              int pageCount) {
+               int pageCount) {
   armed = false;
   if (SETTINGS.koreaderAutosyncMode != CrossPointSettings::AUTOSYNC_ON_EXIT) return;
   if (!epub || !KOREADER_STORE.hasCredentials()) {

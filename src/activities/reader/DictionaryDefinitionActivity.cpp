@@ -737,8 +737,8 @@ void DictionaryDefinitionActivity::collectSpanForAdvances(void* ctx, const Style
   self->collectDefinitionAdvanceText(span.text, styleForSpan(span));
 }
 
-void DictionaryDefinitionActivity::collectEntryAdvances(const std::string& folderPath, uint32_t offset,
-                                                        uint32_t size, bool isHtml, bool isPrimary) {
+void DictionaryDefinitionActivity::collectEntryAdvances(const std::string& folderPath, uint32_t offset, uint32_t size,
+                                                        bool isHtml, bool isPrimary) {
   const std::string dictPath = folderPath + ".dict";
   if (isHtml) {
     const DictHtmlRenderer::SpanSink sink{this, &DictionaryDefinitionActivity::collectSpanForAdvances};
@@ -946,8 +946,8 @@ void DictionaryDefinitionActivity::wrapAllEntries() {
         wrapper.lineBreak();
       }
 
-      const EntryStreamResult result = streamEntryIntoWrapper(loc.folderPath, offset, size, isHtml, forcePlainText,
-                                                               wrapper);
+      const EntryStreamResult result =
+          streamEntryIntoWrapper(loc.folderPath, offset, size, isHtml, forcePlainText, wrapper);
       if (result == EntryStreamResult::NeedsPlainFallback) {
         wrapper.finish();
         return AttemptOutcome::NeedsPlainFallback;

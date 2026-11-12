@@ -614,16 +614,14 @@ HttpDownloader::DownloadError runGetDefault(const std::string& url, const std::s
 
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
                                      const std::string& bearerToken, const std::string_view authorizationOrigin,
-                                     Sink& sink, const size_t bufferSize,
-                                     const HttpDownloader::Transport transport) {
+                                     Sink& sink, const size_t bufferSize, const HttpDownloader::Transport transport) {
   HttpRedirectPolicy::Url credentialOrigin;
   const std::string_view credentialUrl = authorizationOrigin.empty() ? std::string_view(url) : authorizationOrigin;
   // Parsed unconditionally: callers with no username/password/bearerToken (e.g. plugin-supplied
   // sink.headers) still need a real credentialOrigin so their own origin check isn't comparing
   // against a default-constructed Url that can never match.
   const bool originParsed = HttpRedirectPolicy::parseUrl(credentialUrl, credentialOrigin);
-  const bool hasCredentials =
-      ((!username.empty() && !password.empty()) || !bearerToken.empty()) && originParsed;
+  const bool hasCredentials = ((!username.empty() && !password.empty()) || !bearerToken.empty()) && originParsed;
 #if defined(FREEINK_NET_WOLFSSL) || defined(FREEINK_NET_EXTERNAL_TLS)
   if (transport == HttpDownloader::Transport::WOLFSSL) {
     return runGetWolfSsl(url, username, password, bearerToken, credentialOrigin, hasCredentials, sink, bufferSize);
@@ -684,7 +682,7 @@ HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, 
   sink.shouldCancel = std::move(options.shouldCancel);
   const size_t bufferSize = options.bufferSize > 0 ? options.bufferSize : DEFAULT_DOWNLOAD_BUFFER_SIZE;
   return runGet(url, username, password, options.bearerToken, options.authorizationOrigin, sink, bufferSize,
-               options.transport);
+                options.transport);
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,

@@ -13,7 +13,7 @@
  * compare against percentage/pagePositionInBook in that case.
  */
 struct BookFusionSyncBaseline {
-  bool hasBaseline = false;   // false if no sidecar, or the sidecar predates this field.
+  bool hasBaseline = false;    // false if no sidecar, or the sidecar predates this field.
   std::string syncedAtUtcIso;  // Server-reported updated_at from the last successful sync, if any.
   float percentage = 0.0f;
   float pagePositionInBook = 0.0f;

@@ -63,8 +63,8 @@ class CacheAllBooksActivity final : public Activity {
   // no guard against a pathologically deep folder tree recursing until the
   // stack itself overflows.
   int countEpubsRecursive(const std::string& dirPath, int depth = 0);
-  void buildCachesRecursive(const std::string& dirPath, int total, int& processed, bool& showingPopup,
-                            Rect& popupRect, int depth = 0);
+  void buildCachesRecursive(const std::string& dirPath, int total, int& processed, bool& showingPopup, Rect& popupRect,
+                            int depth = 0);
   void cacheAllBooks();
   void startCaching();
 };

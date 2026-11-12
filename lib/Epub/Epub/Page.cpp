@@ -239,8 +239,8 @@ void PageCssBorderBox::render(GfxRenderer& renderer, const int fontId, const int
 }
 
 bool PageCssBorderBox::serialize(Print& file) {
-  const auto sides = static_cast<uint8_t>((borderTop ? 1 : 0) | (borderRight ? 2 : 0) | (borderBottom ? 4 : 0) |
-                                          (borderLeft ? 8 : 0));
+  const auto sides =
+      static_cast<uint8_t>((borderTop ? 1 : 0) | (borderRight ? 2 : 0) | (borderBottom ? 4 : 0) | (borderLeft ? 8 : 0));
   return serialization::tryWritePod(file, xPos) && serialization::tryWritePod(file, yPos) &&
          serialization::tryWritePod(file, width) && serialization::tryWritePod(file, height) &&
          serialization::tryWritePod(file, sides);
@@ -264,8 +264,8 @@ std::unique_ptr<PageCssBorderBox> PageCssBorderBox::deserialize(FsFile& file) {
     return nullptr;
   }
 
-  auto* box = new (std::nothrow) PageCssBorderBox(width, height, (sides & 1) != 0, (sides & 2) != 0,
-                                                   (sides & 4) != 0, (sides & 8) != 0, xPos, yPos);
+  auto* box = new (std::nothrow) PageCssBorderBox(width, height, (sides & 1) != 0, (sides & 2) != 0, (sides & 4) != 0,
+                                                  (sides & 8) != 0, xPos, yPos);
   if (!box) {
     LOG_ERR("PGE", "Deserialization failed: could not allocate PageCssBorderBox");
     return nullptr;

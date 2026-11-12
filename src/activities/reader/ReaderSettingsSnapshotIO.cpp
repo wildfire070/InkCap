@@ -136,22 +136,21 @@ bool readReaderSettingsSnapshot(FsFile& file, ReaderSettingsSnapshot& out, const
 
 bool writeReaderSettingsSnapshot(FsFile& file, const ReaderSettingsSnapshot& in) {
   return writeU8(file, in.fontFamily) && writeU8(file, in.readerFontPointSize) && writeU8(file, in.lineHeightPercent) &&
-         writeU8(file, std::min<uint8_t>(in.wordSpacing, MAX_WORD_SPACING)) &&
-         writeU8(file, in.orientation) && writeU8(file, in.screenMarginVertical) &&
-         writeU8(file, in.screenMarginHorizontal) && writeU8(file, in.publisherPageNumbers) &&
-         writeU8(file, in.paragraphAlignment) && writeU8(file, in.embeddedStyle) &&
-         writeU8(file, in.hyphenationEnabled) && writeU8(file, in.textAntiAliasing) &&
-         writeU8(file, in.imageRendering) && writeU8(file, in.extraParagraphSpacing) &&
-         writeU8(file, in.forceParagraphIndents) && writeU8(file, in.focusReadingEnabled) &&
-         writeU8(file, in.guideReadingEnabled) && writeU8(file, normalizeRenderModeRaw(in.epubRenderMode)) &&
+         writeU8(file, std::min<uint8_t>(in.wordSpacing, MAX_WORD_SPACING)) && writeU8(file, in.orientation) &&
+         writeU8(file, in.screenMarginVertical) && writeU8(file, in.screenMarginHorizontal) &&
+         writeU8(file, in.publisherPageNumbers) && writeU8(file, in.paragraphAlignment) &&
+         writeU8(file, in.embeddedStyle) && writeU8(file, in.hyphenationEnabled) &&
+         writeU8(file, in.textAntiAliasing) && writeU8(file, in.imageRendering) &&
+         writeU8(file, in.extraParagraphSpacing) && writeU8(file, in.forceParagraphIndents) &&
+         writeU8(file, in.focusReadingEnabled) && writeU8(file, in.guideReadingEnabled) &&
+         writeU8(file, normalizeRenderModeRaw(in.epubRenderMode)) &&
          writeU8(file, in.indexingMethod < INDEXING_METHOD_COUNT ? in.indexingMethod : INDEXING_FULL_SECTION) &&
          writeExact(file, in.sdFontFamilyName, sizeof(in.sdFontFamilyName));
 }
 
 BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSettingsSnapshot& defaults,
-                                                    const char* defaultDictionarySdFontFamilyName,
-                                                    const uint8_t defaultDictionaryFontPointSize,
-                                                    ReadStatus* status) {
+                                                   const char* defaultDictionarySdFontFamilyName,
+                                                   const uint8_t defaultDictionaryFontPointSize, ReadStatus* status) {
   BookReaderSettingsData data;
   data.readerSettings = defaults;
   std::strncpy(data.dictionarySdFontFamilyName, defaultDictionarySdFontFamilyName,

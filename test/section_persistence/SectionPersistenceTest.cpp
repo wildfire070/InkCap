@@ -51,15 +51,15 @@ constexpr uint8_t kFullVersion = 108;
 constexpr uint8_t kPartialVersion = 0xDD;
 constexpr uint8_t kHeadingGroupFullVersion = 107;  // former-current, superseded by v108 (deferred advance rounding)
 constexpr uint8_t kHeadingGroupPartialVersion = 0xDC;
-constexpr uint8_t kPreHeadingGroupFullVersion = 106;  // this branch's own former-current (per-word source
+constexpr uint8_t kPreHeadingGroupFullVersion = 106;      // this branch's own former-current (per-word source
 constexpr uint8_t kPreHeadingGroupPartialVersion = 0xDB;  // ranges), superseded by upstream's v107 (heading groups)
-constexpr uint8_t kLowHeapCssFullVersion = 105;  // upstream v105 (keep CSS active below 48 KiB free heap)
+constexpr uint8_t kLowHeapCssFullVersion = 105;           // upstream v105 (keep CSS active below 48 KiB free heap)
 constexpr uint8_t kLowHeapCssPartialVersion = 0xDA;
 constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
 constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
 constexpr uint8_t kPreChapterSpacingPartialVersion = 0xD8;
-constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;  // InkCap's own former-current, now superseded by v103
+constexpr uint8_t kPreUnicodeSpaceFullVersion = 102;      // InkCap's own former-current, now superseded by v103
 constexpr uint8_t kPreUnicodeSpacePartialVersion = 0xD7;  // (upstream's Unicode space-advance change)
 constexpr uint8_t kGlyphRoundingFullVersion = 101;  // upstream v101 (round SD-font glyph advances), now superseded
 constexpr uint8_t kGlyphRoundingPartialVersion = 0xD6;
@@ -69,7 +69,8 @@ constexpr uint8_t kStablePageFullVersion = 99;  // upstream v99 (stable-page rea
 constexpr uint8_t kStablePagePartialVersion = 0xD4;
 constexpr uint8_t kPreDropCapFullVersion = 98;  // upstream v98 (flush buffered words)
 constexpr uint8_t kPreDropCapPartialVersion = 0xD3;
-constexpr uint8_t kHyphenJustifyFullVersion = 97;  // upstream v97 (hyphenated word boundaries/justification), now superseded
+constexpr uint8_t kHyphenJustifyFullVersion =
+    97;  // upstream v97 (hyphenated word boundaries/justification), now superseded
 constexpr uint8_t kHyphenJustifyPartialVersion = 0xD2;
 constexpr uint8_t kPreHyphenJustifyFullVersion = 96;  // upstream v97's immediate predecessor (v96 only)
 constexpr uint8_t kPreHyphenJustifyPartialVersion = 0xD1;
@@ -89,8 +90,8 @@ constexpr uint8_t kParagraphSpacingFullVersion = 85;  // upstream v85/86: hyphen
 constexpr uint8_t kParagraphSpacingPartialVersion = 0xC6;
 constexpr uint8_t kBorderSuppressionFullVersion = 84;  // upstream v84 (border suppression); also InkCap's own former
                                                        // v84 bundle (images/indents/headings/bold-italic) -- same byte
-constexpr uint8_t kBorderSuppressionPartialVersion = 0xC5;        // upstream's partial marker for its v84
-constexpr uint8_t kInkCapPreviousPartialVersion = 0xFE;           // InkCap's own former-current partial marker (v84)
+constexpr uint8_t kBorderSuppressionPartialVersion = 0xC5;  // upstream's partial marker for its v84
+constexpr uint8_t kInkCapPreviousPartialVersion = 0xFE;     // InkCap's own former-current partial marker (v84)
 // Upstream's 2.0.0 release prep renamed its own former "kOlderFullVersion"/"kLastReleaseFullVersion"
 // to point at 79/0xF4 and 83/0xC4 respectively -- both values are already tracked below under this
 // branch's own names (kEarlierFullVersion, kUpstreamHangulPartialVersion's paired kOlderFullVersion),
@@ -100,8 +101,8 @@ constexpr uint8_t kListLayoutPartialVersion = 0xC1;
 constexpr uint8_t kOlderFullVersion = 83;  // InkCap's own v83 (previous); also upstream's v83 (Hangul) -- same byte
 constexpr uint8_t kOlderPartialVersion = 0xFC;
 constexpr uint8_t kUpstreamHangulPartialVersion = 0xC4;  // upstream's partial marker for its v83 (Hangul)
-constexpr uint8_t kEvenOlderFullVersion = 82;  // InkCap's own v82 (character spacing port, now retired); also
-                                                // upstream's v82 (inline CSS padding) -- same byte
+constexpr uint8_t kEvenOlderFullVersion = 82;            // InkCap's own v82 (character spacing port, now retired); also
+                                                         // upstream's v82 (inline CSS padding) -- same byte
 constexpr uint8_t kEvenOlderPartialVersion = 0xFB;
 constexpr uint8_t kUpstreamPaddingPartialVersion = 0xC3;  // upstream's partial marker for its v82
 constexpr uint8_t kEarlierFullVersion = 79;  // shared by both chains (InkCap's hrSectDivider / upstream's Hangul-older)
@@ -250,25 +251,34 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 }
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
-  for (const uint8_t staleVersion :
-       {kHeadingGroupFullVersion, kHeadingGroupPartialVersion, kPreHeadingGroupFullVersion,
-        kPreHeadingGroupPartialVersion, kLowHeapCssFullVersion, kLowHeapCssPartialVersion,
-        kPreSourceRangeFullVersion, kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
-        kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
-        kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,
-        kGlyphRoundingPartialVersion, kPreRoundingFullVersion, kPreRoundingPartialVersion,
-        kStablePageFullVersion, kStablePagePartialVersion, kPreDropCapFullVersion, kPreDropCapPartialVersion,
-        kHyphenJustifyFullVersion, kHyphenJustifyPartialVersion, kPreHyphenJustifyFullVersion,
-        kPreHyphenJustifyPartialVersion, kPreHyphenBreakFullVersion, kPreHyphenBreakPartialVersion,
-        kPreImageAlignmentFullVersion, kPreImageAlignmentPartialVersion, kPreFieldsetFullVersion,
-        kPreFieldsetPartialVersion, kS3BitmapFullVersion, kS3BitmapPartialVersion, kC3BitmapFullVersion,
-        kC3BitmapPartialVersion, kPreviousFullVersion, kPreviousPartialVersion, kParagraphSpacingFullVersion,
-        kParagraphSpacingPartialVersion, kBorderSuppressionFullVersion, kBorderSuppressionPartialVersion,
-        kInkCapPreviousPartialVersion, kListLayoutFullVersion, kListLayoutPartialVersion, kOlderFullVersion,
-        kOlderPartialVersion, kUpstreamHangulPartialVersion,
-        kEvenOlderFullVersion, kEvenOlderPartialVersion, kUpstreamPaddingPartialVersion, kEarlierFullVersion,
-        kEarlierPartialVersion, kEvenEarlierFullVersion, kEvenEarlierPartialVersion, kLastReleaseFullVersion,
-        kLastReleasePartialVersion, kPreviousReleasePrepPartialVersion}) {
+  for (const uint8_t staleVersion : {kHeadingGroupFullVersion,       kHeadingGroupPartialVersion,
+                                     kPreHeadingGroupFullVersion,    kPreHeadingGroupPartialVersion,
+                                     kLowHeapCssFullVersion,         kLowHeapCssPartialVersion,
+                                     kPreSourceRangeFullVersion,     kPreSourceRangePartialVersion,
+                                     kPreChapterSpacingFullVersion,  kPreChapterSpacingPartialVersion,
+                                     kPreUnicodeSpaceFullVersion,    kPreUnicodeSpacePartialVersion,
+                                     kGlyphRoundingFullVersion,      kGlyphRoundingPartialVersion,
+                                     kPreRoundingFullVersion,        kPreRoundingPartialVersion,
+                                     kStablePageFullVersion,         kStablePagePartialVersion,
+                                     kPreDropCapFullVersion,         kPreDropCapPartialVersion,
+                                     kHyphenJustifyFullVersion,      kHyphenJustifyPartialVersion,
+                                     kPreHyphenJustifyFullVersion,   kPreHyphenJustifyPartialVersion,
+                                     kPreHyphenBreakFullVersion,     kPreHyphenBreakPartialVersion,
+                                     kPreImageAlignmentFullVersion,  kPreImageAlignmentPartialVersion,
+                                     kPreFieldsetFullVersion,        kPreFieldsetPartialVersion,
+                                     kS3BitmapFullVersion,           kS3BitmapPartialVersion,
+                                     kC3BitmapFullVersion,           kC3BitmapPartialVersion,
+                                     kPreviousFullVersion,           kPreviousPartialVersion,
+                                     kParagraphSpacingFullVersion,   kParagraphSpacingPartialVersion,
+                                     kBorderSuppressionFullVersion,  kBorderSuppressionPartialVersion,
+                                     kInkCapPreviousPartialVersion,  kListLayoutFullVersion,
+                                     kListLayoutPartialVersion,      kOlderFullVersion,
+                                     kOlderPartialVersion,           kUpstreamHangulPartialVersion,
+                                     kEvenOlderFullVersion,          kEvenOlderPartialVersion,
+                                     kUpstreamPaddingPartialVersion, kEarlierFullVersion,
+                                     kEarlierPartialVersion,         kEvenEarlierFullVersion,
+                                     kEvenEarlierPartialVersion,     kLastReleaseFullVersion,
+                                     kLastReleasePartialVersion,     kPreviousReleasePrepPartialVersion}) {
     SectionHarness harness;
     harness.begin();
     harness.appendPages(1);

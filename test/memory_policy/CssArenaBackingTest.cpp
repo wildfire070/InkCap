@@ -132,8 +132,7 @@ TEST_F(CssDescendantDepthTest, ThreePartSelectorDoesNotApplyWithOnlyOneContextPa
 TEST_F(CssDescendantDepthTest, FourPartSelectorAppliesWhenAllContextPartsPresent) {
   CssParser css("book");
   buildAndRoundTripThroughCache(css);
-  const auto style =
-      css.resolveStyle("dd", "", {{0, "body", "fff_titlepage"}, {1, "dl", ""}, {2, "div", "inline"}});
+  const auto style = css.resolveStyle("dd", "", {{0, "body", "fff_titlepage"}, {1, "dl", ""}, {2, "div", "inline"}});
   EXPECT_TRUE(style.hasTextDecoration());
   EXPECT_EQ(style.textDecoration, CssTextDecoration::Underline);
 }

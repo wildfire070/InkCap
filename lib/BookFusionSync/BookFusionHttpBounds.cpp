@@ -23,9 +23,8 @@ int boundedGet(freeink::SecureHttpClient& http, std::string& outBody) {
 int boundedSendRequest(freeink::SecureHttpClient& http, const char* method, const std::string& payload,
                        std::string& outBody) {
   outBody.clear();
-  return http.sendRequest(
-      method, reinterpret_cast<const uint8_t*>(payload.data()), payload.size(),
-      [&outBody](const uint8_t* data, size_t len) { return appendBounded(outBody, data, len); });
+  return http.sendRequest(method, reinterpret_cast<const uint8_t*>(payload.data()), payload.size(),
+                          [&outBody](const uint8_t* data, size_t len) { return appendBounded(outBody, data, len); });
 }
 
 }  // namespace bookfusion_sync

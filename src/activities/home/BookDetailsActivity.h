@@ -38,9 +38,9 @@ class BookDetailsActivity final : public Activity {
   bool hasNextBook = false;
 
   std::string coverPath;
-  int coverWidthPx = 0;           // 0 = use the 3:4 fallback (no cover to size against yet)
-  int descScrollOffset = 0;      // first visible description line
-  int descVisibleLines = 1;      // updated each render; used for page-step scrolling
+  int coverWidthPx = 0;      // 0 = use the 3:4 fallback (no cover to size against yet)
+  int descScrollOffset = 0;  // first visible description line
+  int descVisibleLines = 1;  // updated each render; used for page-step scrolling
   bool loading = false;
   bool waitForConfirmRelease = false;
   bool waitForBackRelease = false;

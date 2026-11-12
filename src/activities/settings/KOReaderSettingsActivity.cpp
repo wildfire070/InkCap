@@ -52,10 +52,9 @@ enum Row : uint8_t {
 // server-type selector) -- combined here since the enum itself already has all 15 (auto-merged
 // clean), but this array hadn't been updated to match on either side.
 constexpr StrId ROW_LABELS[ROW_COUNT] = {
-    StrId::STR_USERNAME,          StrId::STR_PASSWORD,          StrId::STR_SYNC_SERVER_URL,
-    StrId::STR_SERVER_TYPE,       StrId::STR_CUSTOM_HEADER_1,   StrId::STR_CUSTOM_HEADER_2,
-    StrId::STR_SIGN_UP,           StrId::STR_AUTHENTICATE,      StrId::STR_SYNC_ALL_BOOKS,
-    StrId::STR_READING_STATS,     StrId::STR_CLIPPINGS,         StrId::STR_SYNC_BEHAVIOR,
+    StrId::STR_USERNAME,          StrId::STR_PASSWORD,          StrId::STR_SYNC_SERVER_URL, StrId::STR_SERVER_TYPE,
+    StrId::STR_CUSTOM_HEADER_1,   StrId::STR_CUSTOM_HEADER_2,   StrId::STR_SIGN_UP,         StrId::STR_AUTHENTICATE,
+    StrId::STR_SYNC_ALL_BOOKS,    StrId::STR_READING_STATS,     StrId::STR_CLIPPINGS,       StrId::STR_SYNC_BEHAVIOR,
     StrId::STR_KOREADER_AUTOSYNC, StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA};
 constexpr StrId SERVER_TYPES[] = {StrId::STR_CROSSPOINT, StrId::STR_KOSYNC_SERVER, StrId::STR_OTHER};
 // Reuses the same generic value labels BookFusionSettingsActivity's Auto-Sync row uses --

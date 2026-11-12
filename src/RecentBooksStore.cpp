@@ -102,8 +102,8 @@ void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::strin
     // Evict the oldest *unpinned* entry rather than a flat tail resize, so a
     // pinned longfic survives new books pushing the list past capacity.
     while (recentBooks.size() > MAX_RECENT_BOOKS) {
-      auto evictIt = std::find_if(recentBooks.rbegin(), recentBooks.rend(),
-                                  [](const RecentBook& book) { return !book.pinned; });
+      auto evictIt =
+          std::find_if(recentBooks.rbegin(), recentBooks.rend(), [](const RecentBook& book) { return !book.pinned; });
       if (evictIt == recentBooks.rend()) break;  // everything left is pinned; stop evicting
       recentBooks.erase(std::next(evictIt).base());
     }
@@ -182,8 +182,8 @@ bool RecentBooksStore::setPinned(const std::string& path, const bool pinned) {
     return true;
   }
   if (pinned) {
-    const int pinnedCount =
-        static_cast<int>(std::count_if(recentBooks.begin(), recentBooks.end(), [](const RecentBook& b) { return b.pinned; }));
+    const int pinnedCount = static_cast<int>(
+        std::count_if(recentBooks.begin(), recentBooks.end(), [](const RecentBook& b) { return b.pinned; }));
     if (pinnedCount >= MAX_PINNED_BOOKS) {
       return false;
     }

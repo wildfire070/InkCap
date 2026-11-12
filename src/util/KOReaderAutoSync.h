@@ -56,15 +56,14 @@ bool isArmed();
 // Caller is responsible for choosing a safe moment (see maybeRunAutoSync()'s
 // precedent in EpubReaderActivity.cpp): no render in flight, no page-turn
 // input this tick, framebuffer available.
-void runIfArmed(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber,
-                int pageCount, float bookPercent);
+void runIfArmed(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber, int pageCount,
+                float bookPercent);
 
 // AUTOSYNC_ON_EXIT's trigger: pushes unconditionally (if credentials are set
 // and the mode is ON_EXIT), ignoring the threshold-crossing state. No
 // bookPercent parameter needed here -- on-exit ignores the threshold/dedup
 // bookkeeping entirely, and the push itself always computes its own
 // percentage (see runIfArmed()'s comment).
-void runOnExit(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber,
-              int pageCount);
+void runOnExit(GfxRenderer& renderer, const std::shared_ptr<Epub>& epub, int spineIndex, int pageNumber, int pageCount);
 
 }  // namespace KOReaderAutoSync

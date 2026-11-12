@@ -289,9 +289,8 @@ class SortPopup {
     // No footer reserved here, matching drawOptionPopup's own math when
     // showConfirmationFooter=false (see render()).
     const int optionCount = static_cast<int>(labels.size());
-    const int maxDialogH =
-        std::max(rowHeight + titleLineHeight + metrics.optionPopupTitleGap + innerPadding * 2,
-                 pageHeight - metrics.buttonHintsHeight - metrics.optionPopupDialogSideMargin * 2);
+    const int maxDialogH = std::max(rowHeight + titleLineHeight + metrics.optionPopupTitleGap + innerPadding * 2,
+                                    pageHeight - metrics.buttonHintsHeight - metrics.optionPopupDialogSideMargin * 2);
     const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2 + metrics.scrollBarWidth +
                                   metrics.scrollBarRightOffset + selectionHPadding) *
                                      12 / 10,

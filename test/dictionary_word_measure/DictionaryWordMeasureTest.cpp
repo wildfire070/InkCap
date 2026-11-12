@@ -30,14 +30,16 @@ TEST(DictionaryWordMeasureTest, StripsSoftHyphenBeforeMeasuring) {
   GfxRenderer renderer;
   char scratch[16];
   // String-literal-concatenated so the hex escape doesn't greedily consume 'b'/'c' as hex digits.
-  const char withHyphen[] = "a\xC2\xAD" "bc";  // 'a', soft hyphen (2 bytes), 'b', 'c' -- 5 bytes total.
+  const char withHyphen[] =
+      "a\xC2\xAD"
+      "bc";  // 'a', soft hyphen (2 bytes), 'b', 'c' -- 5 bytes total.
 
-  const int16_t stripped = measureWordAdvanceX(renderer, 0, withHyphen, sizeof(withHyphen) - 1, REGULAR, 0, scratch,
-                                                sizeof(scratch));
+  const int16_t stripped =
+      measureWordAdvanceX(renderer, 0, withHyphen, sizeof(withHyphen) - 1, REGULAR, 0, scratch, sizeof(scratch));
   const int unstrippedRaw = renderer.getTextAdvanceX(0, withHyphen, REGULAR);
 
-  EXPECT_EQ(stripped, 3);          // "abc": 3 glyphs, 0 tracking.
-  EXPECT_EQ(unstrippedRaw, 4);     // 'a' + one 2-byte codepoint + 'b' + 'c' = 4 "glyphs" unstripped.
+  EXPECT_EQ(stripped, 3);       // "abc": 3 glyphs, 0 tracking.
+  EXPECT_EQ(unstrippedRaw, 4);  // 'a' + one 2-byte codepoint + 'b' + 'c' = 4 "glyphs" unstripped.
   EXPECT_NE(stripped, unstrippedRaw);
 }
 
@@ -49,14 +51,12 @@ TEST(DictionaryWordMeasureTest, FocusBoundaryOverloadMeasuresOnlyTheSuffixWithTr
   char scratch[16];
   const char word[] = "abcdef";  // focusBoundary=3 splits into "abc" | "def".
 
-  const int16_t noTracking =
-      measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 0, /*focusBoundary=*/3, /*focusSuffixX=*/100, scratch,
-                          sizeof(scratch));
+  const int16_t noTracking = measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 0, /*focusBoundary=*/3,
+                                                 /*focusSuffixX=*/100, scratch, sizeof(scratch));
   EXPECT_EQ(noTracking, 100 + 3);  // prefix width (100, given) + "def" (3 glyphs, 0 tracking).
 
-  const int16_t withTracking =
-      measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 2, /*focusBoundary=*/3, /*focusSuffixX=*/100, scratch,
-                          sizeof(scratch));
+  const int16_t withTracking = measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 2, /*focusBoundary=*/3,
+                                                   /*focusSuffixX=*/100, scratch, sizeof(scratch));
   EXPECT_EQ(withTracking, 100 + 3 + 2 * 2);  // + tracking between "def"'s 3 glyphs.
 }
 
@@ -67,9 +67,8 @@ TEST(DictionaryWordMeasureTest, FocusBoundaryOverloadFallsBackToPlainWhenNoSplit
   char scratch[16];
   const char word[] = "abcdef";
 
-  const int16_t viaFallback =
-      measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 2, /*focusBoundary=*/0, /*focusSuffixX=*/100, scratch,
-                          sizeof(scratch));
+  const int16_t viaFallback = measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 2, /*focusBoundary=*/0,
+                                                  /*focusSuffixX=*/100, scratch, sizeof(scratch));
   const int16_t viaPlain = measureWordAdvanceX(renderer, 0, word, 6, REGULAR, 2, scratch, sizeof(scratch));
   EXPECT_EQ(viaFallback, viaPlain);
 }
@@ -94,12 +93,11 @@ TEST(DictionaryWordMeasureTest, RtlOverloadFallsBackToLtrSuffixWhenNotRtl) {
   char scratch[16];
   const char word[] = "abcdefgh";
 
-  const int16_t viaFallback = measureWordAdvanceX(renderer, 0, word, 8, REGULAR, 1, /*focusBoundary=*/3,
-                                                   /*focusRunOffset=*/200, /*wordIsRtl=*/false, scratch,
-                                                   sizeof(scratch));
-  const int16_t viaLtrSuffix =
-      measureWordAdvanceX(renderer, 0, word, 8, REGULAR, 1, /*focusBoundary=*/3, /*focusSuffixX=*/200, scratch,
-                          sizeof(scratch));
+  const int16_t viaFallback =
+      measureWordAdvanceX(renderer, 0, word, 8, REGULAR, 1, /*focusBoundary=*/3,
+                          /*focusRunOffset=*/200, /*wordIsRtl=*/false, scratch, sizeof(scratch));
+  const int16_t viaLtrSuffix = measureWordAdvanceX(renderer, 0, word, 8, REGULAR, 1, /*focusBoundary=*/3,
+                                                   /*focusSuffixX=*/200, scratch, sizeof(scratch));
   EXPECT_EQ(viaFallback, viaLtrSuffix);
 }
 

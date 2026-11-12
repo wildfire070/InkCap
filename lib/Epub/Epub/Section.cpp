@@ -70,7 +70,8 @@ constexpr uint8_t SECTION_FILE_VERSION = 108;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xDD;  // this branch's own v106 marker (0xDB) is retired; now tracks upstream's v108 bump
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION =
+    0xDD;  // this branch's own v106 marker (0xDB) is retired; now tracks upstream's v108 bump
 constexpr uint32_t HEADER_SIZE =
     4 * sizeof(uint32_t) + sizeof(PublisherFonts) + sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) +
     sizeof(float) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +

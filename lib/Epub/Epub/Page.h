@@ -325,8 +325,7 @@ class Page {
     constexpr uint32_t MIN_FREE_HEAP = 24576;
     constexpr uint32_t MIN_MAX_ALLOC_HEAP = 16384;
     if (ESP.getFreeHeap() < MIN_FREE_HEAP || ESP.getMaxAllocHeap() < MIN_MAX_ALLOC_HEAP) {
-      LOG_ERR("PGE", "Skipping publisher page marker: %u free, %u max alloc", ESP.getFreeHeap(),
-              ESP.getMaxAllocHeap());
+      LOG_ERR("PGE", "Skipping publisher page marker: %u free, %u max alloc", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       return;
     }
     if (publisherPageMarkers.empty()) {

@@ -792,10 +792,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         // getHomeCoverRect(), its real displayed-size layout -- not a fixed metric constant,
         // which could mismatch under some calibrations) via the shared exactHomeCoverPath().
         const bool useAdaptiveDefaultThumb = !useExactHomeThumb && FsHelpers::hasEpubExtension(book.path);
-        const bool isLyra = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA;
-        const int defaultThumbWidth = isLyra
-                                          ? static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4)
-                                          : static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
+        const bool isLyra =
+            static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA;
+        const int defaultThumbWidth = isLyra ? static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 4)
+                                             : static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
         std::string coverPath =
             useExactHomeThumb
                 ? exactHomeCoverPath(book, homeCover)
@@ -860,11 +860,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 useDashboardThumb
                     ? epub.generateAdaptiveThumbBmp(dashboardThumbWidth, homeCover.height, &renderer,
                                                     SETTINGS.getReaderFontId())
-                    : (useExactHomeThumb
-                           ? epub.generateAdaptiveThumbBmp(minimalThumbWidth, homeCover.height, &renderer,
-                                                           SETTINGS.getReaderFontId())
-                           : epub.generateAdaptiveThumbBmp(lyraThumbWidth, coverHeight, &renderer,
-                                                           SETTINGS.getReaderFontId()));
+                    : (useExactHomeThumb ? epub.generateAdaptiveThumbBmp(minimalThumbWidth, homeCover.height, &renderer,
+                                                                         SETTINGS.getReaderFontId())
+                                         : epub.generateAdaptiveThumbBmp(lyraThumbWidth, coverHeight, &renderer,
+                                                                         SETTINGS.getReaderFontId()));
             if (!success) {
               if (!epub.hasCoverImage()) markCoverMissing(book);
             } else if (bookIdx < bookUpdated.size()) {
@@ -1678,7 +1677,8 @@ void HomeActivity::loop() {
       // menu's own swipe handler elsewhere in this function: a swipe is the only
       // way a touch-only device can reach a second page here.
       const auto minimalMenuSwipe = mappedInput.wasSwipe();
-      if (minimalMenuSwipe == MappedInputManager::SwipeDir::Up || minimalMenuSwipe == MappedInputManager::SwipeDir::Down) {
+      if (minimalMenuSwipe == MappedInputManager::SwipeDir::Up ||
+          minimalMenuSwipe == MappedInputManager::SwipeDir::Down) {
         const int delta = minimalMenuSwipe == MappedInputManager::SwipeDir::Up ? homeMenuPageItems : -homeMenuPageItems;
         const int nextIndex = std::clamp(minimalMenuIndex + delta, 0, menuCount - 1);
         if (nextIndex != minimalMenuIndex) {
@@ -1854,10 +1854,9 @@ void HomeActivity::loop() {
   const int previousHighlightedBookIdx = getHighlightedBookIndex();
   const int visibleBookCount = getVisibleRecentBookCount();
   const int carouselMenuItemCount =
-      isCarousel ? static_cast<int>(
-                       buildHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats, hasBookmarks,
-                                         hasClippings)
-                           .size())
+      isCarousel ? static_cast<int>(buildHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats,
+                                                       hasBookmarks, hasClippings)
+                                        .size())
                  : 0;
 
   MappedInputManager::SwipeDir carouselSwipe = MappedInputManager::SwipeDir::None;
@@ -1936,9 +1935,9 @@ void HomeActivity::loop() {
       return;
     }
 
-    auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats,
-                                                  hasBookmarks, hasClippings,
-                                                  metrics.homeContinueReadingInMenu && !recentBooks.empty());
+    auto menuItems =
+        buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats, hasBookmarks,
+                                     hasClippings, metrics.homeContinueReadingInMenu && !recentBooks.empty());
     const int menuSelectedIndex = selectorIndex - getHomeMenuSelectionOffset(recentBooks);
     if (menuSelectedIndex < 0 || menuSelectedIndex >= static_cast<int>(menuItems.size())) {
       return;
@@ -2120,9 +2119,9 @@ void HomeActivity::loop() {
     }
   } else {
     const auto& metrics = UITheme::getInstance().getMetrics();
-    const auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats,
-                                                        hasBookmarks, hasClippings,
-                                                        metrics.homeContinueReadingInMenu && !recentBooks.empty());
+    const auto menuItems =
+        buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats, hasBookmarks,
+                                     hasClippings, metrics.homeContinueReadingInMenu && !recentBooks.empty());
     auto handleTouch = [&](const bool activate) {
       int touchedBookIndex = -1;
       if (activate ? mappedInput.wasCoverTapped(touchedBookIndex) : mappedInput.wasCoverTouchedDown(touchedBookIndex)) {
@@ -2417,9 +2416,9 @@ void HomeActivity::render(RenderLock&&) {
   renderer.clearScreen();
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
 
-  auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats,
-                                                hasBookmarks, hasClippings,
-                                                metrics.homeContinueReadingInMenu && !recentBooks.empty());
+  auto menuItems =
+      buildSelectableHomeMenuItems(hasOpdsServers, hasBookFusion, hasPlugins, hasReadingStats, hasBookmarks,
+                                   hasClippings, metrics.homeContinueReadingInMenu && !recentBooks.empty());
   int homeCoverTileHeight = metrics.homeCoverTileHeight;
   if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CLASSIC) {
     // Keep the four always-present actions clear of the button-hint strip on

@@ -141,8 +141,8 @@ void DownloadReviewActivity::render(RenderLock&&) {
   CompactHeader::drawTitle(renderer, tr(STR_DUPLICATE_REVIEW_TITLE));
 
   if (state == State::MEMORY_ERROR) {
-    const auto lines = renderer.wrappedText(UI_10_FONT_ID, tr(STR_DUPLICATE_NO_MEMORY),
-                                            pageWidth - metrics.contentSidePadding * 2, 5);
+    const auto lines =
+        renderer.wrappedText(UI_10_FONT_ID, tr(STR_DUPLICATE_NO_MEMORY), pageWidth - metrics.contentSidePadding * 2, 5);
     int y = pageHeight / 2 - static_cast<int>(lines.size()) * renderer.getLineHeight(UI_10_FONT_ID) / 2;
     for (const auto& line : lines) {
       renderer.drawCenteredText(UI_10_FONT_ID, y, line.c_str());

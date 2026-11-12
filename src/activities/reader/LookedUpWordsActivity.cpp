@@ -160,10 +160,9 @@ void LookedUpWordsActivity::loop() {
       case DictionaryLookupController::LookupEvent::FoundDefinition: {
         auto definition = makeUniqueNoThrow<DictionaryDefinitionActivity>(
             renderer, mappedInput, controller.getFoundWord(), controller.getFoundLocation(),
-            controller.getFoundExtraLocations(), true, cachePath,
-            controller.getRecordHistory(), controller.getLookupWord(),
-            DictionaryLookupController::toHistStatus(controller.getFoundStatus()), nullptr, nullptr,
-            dictionaryFontFamilyName, dictionaryFontPointSize);
+            controller.getFoundExtraLocations(), true, cachePath, controller.getRecordHistory(),
+            controller.getLookupWord(), DictionaryLookupController::toHistStatus(controller.getFoundStatus()), nullptr,
+            nullptr, dictionaryFontFamilyName, dictionaryFontPointSize);
         if (!definition) {
           LOG_ERR("LOOKUP", "OOM allocating DictionaryDefinitionActivity (%u bytes)",
                   static_cast<unsigned>(sizeof(DictionaryDefinitionActivity)));

@@ -243,8 +243,8 @@ class DictionaryDefinitionActivity final : public Activity {
   // Streams one entry's content (HTML or plain) into wrapper. forcePlainText
   // selects the plain-fallback render path for an HTML entry whose strict
   // parse already failed this page.
-  EntryStreamResult streamEntryIntoWrapper(const std::string& folderPath, uint32_t offset, uint32_t size,
-                                           bool isHtml, bool forcePlainText, DictLayout::Wrapper& wrapper);
+  EntryStreamResult streamEntryIntoWrapper(const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml,
+                                           bool forcePlainText, DictLayout::Wrapper& wrapper);
   // Word-wraps a non-HTML (StarDict 'm'/'t'/etc.) entry's raw bytes into
   // wrapper. Returns false only on a genuine read failure.
   bool streamPlainEntryIntoWrapper(const std::string& dictPath, uint32_t offset, uint32_t size,
@@ -254,8 +254,7 @@ class DictionaryDefinitionActivity final : public Activity {
   // entry and each extraEntries_ entry. isPrimary gates the
   // definitionHtmlNeedsPlainFallback_ anticipation side effect, which only
   // applies to the entry wrapAllEntries() checks first.
-  void collectEntryAdvances(const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml,
-                            bool isPrimary);
+  void collectEntryAdvances(const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml, bool isPrimary);
   void collectDefinitionAdvanceText(const char* text, EpdFontFamily::Style style);
   static void collectSpanForAdvances(void* ctx, const StyledSpan& span);
   void extractWordsFromLayout();

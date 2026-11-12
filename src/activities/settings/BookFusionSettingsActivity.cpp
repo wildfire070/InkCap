@@ -133,8 +133,8 @@ void BookFusionSettingsActivity::handleSelection() {
     const std::string startPath =
         Storage.exists(SETTINGS.bookFusionDownloadFolder) ? SETTINGS.bookFusionDownloadFolder : "/";
     startActivityForResult(
-        std::make_unique<FolderPickerActivity>(renderer, mappedInput, tr(STR_BF_DOWNLOAD_FOLDER),
-                                               PickerMode::SINGLE, std::vector<std::string>{}, startPath),
+        std::make_unique<FolderPickerActivity>(renderer, mappedInput, tr(STR_BF_DOWNLOAD_FOLDER), PickerMode::SINGLE,
+                                               std::vector<std::string>{}, startPath),
         [this](const ActivityResult& result) {
           if (const auto* pickerRes = std::get_if<FolderPickerResult>(&result.data)) {
             strncpy(SETTINGS.bookFusionDownloadFolder, pickerRes->singlePath.c_str(),

@@ -179,10 +179,10 @@ struct BookDetailsNavResult {
 
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 OptionSelectionResult, PageResult, NetworkModeResult, FootnoteResult,
-                 BookmarkResult, FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult,
-                 ProgressSyncResult, ClippingResult, TtfRenderOptionsResult, DictionaryClippingRequest,
-                 ClippingJumpResult, FolderPickerResult, FrontlightPanelResult, BookDetailsNavResult>;
+                 OptionSelectionResult, PageResult, NetworkModeResult, FootnoteResult, BookmarkResult,
+                 FileBrowserActionResult, FilePathResult, WordResult, ReadingStatsResult, ProgressSyncResult,
+                 ClippingResult, TtfRenderOptionsResult, DictionaryClippingRequest, ClippingJumpResult,
+                 FolderPickerResult, FrontlightPanelResult, BookDetailsNavResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

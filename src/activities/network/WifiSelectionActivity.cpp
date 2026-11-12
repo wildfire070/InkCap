@@ -465,8 +465,8 @@ void WifiSelectionActivity::processWifiScanResults() {
         continue;
       }
 
-      auto it = std::find_if(networks.begin(), networks.end(),
-                             [&ssid](const WifiNetworkInfo& n) { return n.ssid == ssid; });
+      auto it =
+          std::find_if(networks.begin(), networks.end(), [&ssid](const WifiNetworkInfo& n) { return n.ssid == ssid; });
       if (it != networks.end()) {
         duplicateNetworks++;
       }

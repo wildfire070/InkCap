@@ -17,6 +17,7 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "HalClock.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "activities/home/RecentBookProgress.h"
@@ -26,7 +27,6 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
-#include "HalClock.h"
 #include "fontIds.h"
 #include "network/WifiUtils.h"
 
@@ -218,7 +218,7 @@ constexpr int MAX_HIGHLIGHT_PUSH_PER_SYNC = 8;
 bool formatLastSyncedDate(const std::string& iso, char* buf, size_t bufSize) {
   unsigned year = 0, month = 0, day = 0;
   if (iso.size() < 10 || sscanf(iso.c_str(), "%4u-%2u-%2u", &year, &month, &day) != 3) return false;
-  const char separator = SETTINGS.dateSeparator == CrossPointSettings::DATE_SEPARATOR_PERIOD  ? '.'
+  const char separator = SETTINGS.dateSeparator == CrossPointSettings::DATE_SEPARATOR_PERIOD   ? '.'
                          : SETTINGS.dateSeparator == CrossPointSettings::DATE_SEPARATOR_HYPHEN ? '-'
                                                                                                : '/';
   return formatDateParts(buf, bufSize, static_cast<uint16_t>(year), static_cast<uint8_t>(month),
@@ -283,9 +283,9 @@ void BookFusionSyncActivity::performSync() {
   pushHighlights();
 
   localHighlightCount = static_cast<int>(CLIPPINGS.getClippings().size());
-  syncedHighlightCount = static_cast<int>(std::count_if(
-      CLIPPINGS.getClippings().begin(), CLIPPINGS.getClippings().end(),
-      [](const Clipping& clipping) { return clipping.bookFusionId != 0; }));
+  syncedHighlightCount =
+      static_cast<int>(std::count_if(CLIPPINGS.getClippings().begin(), CLIPPINGS.getClippings().end(),
+                                     [](const Clipping& clipping) { return clipping.bookFusionId != 0; }));
 
   localSyncProgress = BookFusionProgress{};
   localSyncProgress.bookId = bookId;
@@ -333,8 +333,9 @@ void BookFusionSyncActivity::performSync() {
   // chapter-boundary drift) but both still match what was last synced.
   const auto baseline = BookFusionBookIdStore::loadSyncBaseline(epubPath);
   lastSyncedAtUtcIso = baseline.hasBaseline ? baseline.syncedAtUtcIso : std::string();
-  const bool alreadySynced = std::fabs(localPercent - remotePercent) < SAME_PROGRESS_EPSILON ||
-                             (matchesBaseline(baseline, localSyncProgress) && matchesBaseline(baseline, remoteSyncProgress));
+  const bool alreadySynced =
+      std::fabs(localPercent - remotePercent) < SAME_PROGRESS_EPSILON ||
+      (matchesBaseline(baseline, localSyncProgress) && matchesBaseline(baseline, remoteSyncProgress));
   if (alreadySynced) {
     RenderLock lock(*this);
     state = SYNC_COMPLETE;
@@ -371,9 +372,9 @@ void BookFusionSyncActivity::applyRemoteProgress() {
       remoteSyncProgress.chapterIndex < spineCount) {
     spineIndex = remoteSyncProgress.chapterIndex;
     if (spineCount > 0) {
-      intraSpineProgress = std::max(
-          0.0f, std::min(1.0f, remoteSyncProgress.pagePositionInBook * static_cast<float>(spineCount) -
-                                    static_cast<float>(spineIndex)));
+      intraSpineProgress =
+          std::max(0.0f, std::min(1.0f, remoteSyncProgress.pagePositionInBook * static_cast<float>(spineCount) -
+                                            static_cast<float>(spineIndex)));
     }
   } else {
     const int percentInt = std::max(0, std::min(100, static_cast<int>(remotePercent * 100.0f + 0.5f)));
@@ -473,7 +474,8 @@ void BookFusionSyncActivity::loop() {
 
   if (state == SHOWING_RESULT) {
     const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || TouchHeaderBackButton::wasTapped(mappedInput, header)) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
+        TouchHeaderBackButton::wasTapped(mappedInput, header)) {
       returnToReader();
       return;
     }

@@ -264,8 +264,7 @@ std::string coverPathForImageRect(const RecentBook& book, const Rect& imageRect)
     // image -- fittedBitmapRect() below still letterboxes it into the frame
     // either way, so an exact width match isn't required for this to look right.
     const int altWidth = static_cast<int>((static_cast<int64_t>(imageRect.height) * 2 + 1) / 3);
-    const std::string altPath =
-        Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altWidth, imageRect.height);
+    const std::string altPath = Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altWidth, imageRect.height);
     if (Storage.exists(altPath.c_str())) {
       return altPath;
     }

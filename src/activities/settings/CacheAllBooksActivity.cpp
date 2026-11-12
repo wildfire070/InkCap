@@ -305,8 +305,8 @@ void CacheAllBooksActivity::cacheAllBooks() {
     sdFontSystem.releaseForNetwork(renderer);
   }
   if (ESP.getFreeHeap() < kMinFreeHeapForBuild) {
-    LOG_ERR("CACHE_ALL", "Insufficient memory to run caching (need %uKB free, have %uKB)",
-            kMinFreeHeapForBuild / 1024, ESP.getFreeHeap() / 1024);
+    LOG_ERR("CACHE_ALL", "Insufficient memory to run caching (need %uKB free, have %uKB)", kMinFreeHeapForBuild / 1024,
+            ESP.getFreeHeap() / 1024);
     state = FAILED;
     requestUpdate();
     return;

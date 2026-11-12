@@ -53,7 +53,7 @@ class BookFusionBrowserActivity final : public Activity {
   int currentCategory = 0;   // Fixed category currently being browsed (meaningless if currentBookshelfId != 0).
 
   BookFusionBookshelfList bookshelves;
-  bool bookshelvesLoaded = false;  // Fetch is best-effort; false just means the menu shows categories only.
+  bool bookshelvesLoaded = false;   // Fetch is best-effort; false just means the menu shows categories only.
   uint32_t currentBookshelfId = 0;  // 0 = browsing a fixed category, not a shelf.
   std::string currentBookshelfName;
 

@@ -628,10 +628,10 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
 
                            const auto action =
                                static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
-                           // Every FileBrowserAction is listed below with no default:, so a value added to the
-                           // enum without a matching case here becomes a hard error, not a silent no-op --
-                           // this sibling switch's own missing cases (see LibraryActivity.cpp/BmpViewerActivity.cpp
-                           // git history) went unnoticed for a long time with no compiler signal at all.
+    // Every FileBrowserAction is listed below with no default:, so a value added to the
+    // enum without a matching case here becomes a hard error, not a silent no-op --
+    // this sibling switch's own missing cases (see LibraryActivity.cpp/BmpViewerActivity.cpp
+    // git history) went unnoticed for a long time with no compiler signal at all.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic error "-Wswitch"
                            switch (action) {
@@ -1027,24 +1027,24 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                 });
             return;
           case FileBrowserAction::RestoreBook:
-            startActivityForResult(
-                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
-                                                       tr(STR_RESTORE_BODY)),
-                [this, fullPath](const ActivityResult& confirmation) {
-                  if (confirmation.isCancelled) return;
-                  const std::string newPath = BookMoveUtils::restoreBook(fullPath);
-                  if (newPath.empty()) {
-                    RenderLock lock(*this);
-                    BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-                  } else {
-                    // Two-way sync: restoring also marks the book Unfinished, silently.
-                    BookActions::setBookCompletedOnDisk(newPath, false);
-                    RenderLock lock(*this);
-                    loadFilesLocked();
-                    selectorIndex = entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
-                  }
-                  requestUpdate(true);
-                });
+            startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESTORE_TITLE),
+                                                                          tr(STR_RESTORE_BODY)),
+                                   [this, fullPath](const ActivityResult& confirmation) {
+                                     if (confirmation.isCancelled) return;
+                                     const std::string newPath = BookMoveUtils::restoreBook(fullPath);
+                                     if (newPath.empty()) {
+                                       RenderLock lock(*this);
+                                       BookActions::drawToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+                                     } else {
+                                       // Two-way sync: restoring also marks the book Unfinished, silently.
+                                       BookActions::setBookCompletedOnDisk(newPath, false);
+                                       RenderLock lock(*this);
+                                       loadFilesLocked();
+                                       selectorIndex =
+                                           entryCount() == 0 ? 0 : std::min(selectorIndex, entryCount() - 1);
+                                     }
+                                     requestUpdate(true);
+                                   });
             return;
           case FileBrowserAction::UploadFolderProgress:
           case FileBrowserAction::SetSleepFolder:
@@ -2010,8 +2010,9 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
     // BookFusion-linked books display the BF mark in the row's icon slot instead
     // of the usual file-type icon (matching InsiderPhD's original file-browser badge);
     // otherwise fall back to the finished-book check mark, then the plain file-type icon.
-    const UIIcon icon =
-        isBookFusion ? UIIcon::BookFusion : (isFinishedBook(entry, fullPath) ? UIIcon::BookCheck : UITheme::getFileIcon(entry));
+    const UIIcon icon = isBookFusion
+                            ? UIIcon::BookFusion
+                            : (isFinishedBook(entry, fullPath) ? UIIcon::BookCheck : UITheme::getFileIcon(entry));
     item.icon = listIconFor(icon, twoLineRows ? 32 : 24);
     item.actionValue = static_cast<int16_t>(usesVirtualList ? entryIndex : i);
     items.push_back(item);

@@ -1373,8 +1373,8 @@ namespace {
 // never one of the flash *_FONT_ID constants), so no separate SD-font check
 // is needed here.
 FontSizeLadder buildReaderFontSizeLadder(const CrossPointSettings& settings, const int bodyFontId) {
-  static constexpr CrossPointSettings::FONT_SIZE kSizes[] = {
-      CrossPointSettings::TINY, CrossPointSettings::SMALL, CrossPointSettings::MEDIUM, CrossPointSettings::LARGE};
+  static constexpr CrossPointSettings::FONT_SIZE kSizes[] = {CrossPointSettings::TINY, CrossPointSettings::SMALL,
+                                                             CrossPointSettings::MEDIUM, CrossPointSettings::LARGE};
   static constexpr uint8_t kPointSizes[] = {10, 12, 14, 16};
   static_assert(std::size(kSizes) == std::size(kPointSizes));
 

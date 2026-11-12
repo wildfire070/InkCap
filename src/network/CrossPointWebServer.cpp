@@ -1638,8 +1638,8 @@ void CrossPointWebServer::handleMove() const {
   if (success) {
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
     if (isEpub) {
-      if (!BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle,
-                                                epubAuthor, /*keepInRecents=*/true)) {
+      if (!BookMoveUtils::migrateMovedEpubState(itemPath.c_str(), newPath.c_str(), oldCachePath, epubTitle, epubAuthor,
+                                                /*keepInRecents=*/true)) {
         LOG_ERR("WEB", "File moved but cache refresh failed: %s", newPath.c_str());
         server->send(500, "text/plain", "File moved, but could not refresh cached reading/sync data");
         return;

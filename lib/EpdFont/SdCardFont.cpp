@@ -1977,8 +1977,7 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
     const uint32_t pixelCount = static_cast<uint32_t>(tempGlyph.width) * tempGlyph.height;
     const uint32_t requiredBytes = s.header.is2Bit ? (pixelCount + 3) / 4 : (pixelCount + 7) / 8;
     if (tempGlyph.dataLength < requiredBytes) {
-      LOG_ERR("SDCF",
-              "Overflow: glyph %dx%d for U+%04X needs %u bytes but dataLength is %u -- rendering as %s",
+      LOG_ERR("SDCF", "Overflow: glyph %dx%d for U+%04X needs %u bytes but dataLength is %u -- rendering as %s",
               tempGlyph.width, tempGlyph.height, codepoint, requiredBytes, tempGlyph.dataLength, "\xEF\xBF\xBD");
       return nullptr;
     }
@@ -2003,7 +2002,8 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
       // glyph. If this fires, that's the "weird characters" symptom -- the
       // heap context here is what confirms it's a low-heap substitution
       // rather than a genuinely unsupported codepoint.
-      LOG_ERR("SDCF", "Overflow: failed to allocate %u bytes for U+%04X bitmap (free=%u maxAlloc=%u) -- rendering as %s",
+      LOG_ERR("SDCF",
+              "Overflow: failed to allocate %u bytes for U+%04X bitmap (free=%u maxAlloc=%u) -- rendering as %s",
               tempGlyph.dataLength, codepoint, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), "\xEF\xBF\xBD");
       return nullptr;
     }

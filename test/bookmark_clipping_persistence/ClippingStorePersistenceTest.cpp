@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
 #include <HalStorage.h>
 #include <Serialization.h>
+#include <gtest/gtest.h>
 #include <uzlib.h>
 
 #include <string>
@@ -81,17 +81,17 @@ TEST_F(ClippingStorePersistenceTest, PreBookFusionIdFileMigratesIdToZeroNotGarba
   // startWordIndex, endWordIndex, wordCount, paragraphIndex, timestamp, layoutSignature,
   // tableSelection, chapterTitle[48], textLength, text -- stops there; no bookFusionId field
   // exists at this version (readFromFile only reads it when version >= VERSION(5)).
-  serialization::writePod<uint16_t>(f, 4);      // spineIndex
-  serialization::writePod<uint16_t>(f, 10);     // startPage
-  serialization::writePod<uint16_t>(f, 10);     // endPage
-  serialization::writePod<uint16_t>(f, 20);     // pageCount
-  serialization::writePod<uint16_t>(f, 1);      // startWordIndex
-  serialization::writePod<uint16_t>(f, 2);      // endWordIndex
-  serialization::writePod<uint16_t>(f, 2);      // wordCount
-  serialization::writePod<uint16_t>(f, 6);      // paragraphIndex
-  serialization::writePod<uint32_t>(f, 0);      // timestamp
-  serialization::writePod<uint32_t>(f, 12345);  // layoutSignature
-  serialization::writePod<uint16_t>(f, 0xFFFF); // tableSelection (UINT16_MAX = none)
+  serialization::writePod<uint16_t>(f, 4);       // spineIndex
+  serialization::writePod<uint16_t>(f, 10);      // startPage
+  serialization::writePod<uint16_t>(f, 10);      // endPage
+  serialization::writePod<uint16_t>(f, 20);      // pageCount
+  serialization::writePod<uint16_t>(f, 1);       // startWordIndex
+  serialization::writePod<uint16_t>(f, 2);       // endWordIndex
+  serialization::writePod<uint16_t>(f, 2);       // wordCount
+  serialization::writePod<uint16_t>(f, 6);       // paragraphIndex
+  serialization::writePod<uint32_t>(f, 0);       // timestamp
+  serialization::writePod<uint32_t>(f, 12345);   // layoutSignature
+  serialization::writePod<uint16_t>(f, 0xFFFF);  // tableSelection (UINT16_MAX = none)
   char chapterTitle[CLIPPING_CHAPTER_TITLE_MAX] = "Legacy Chapter";
   f.write(reinterpret_cast<const uint8_t*>(chapterTitle), sizeof(chapterTitle));
   const std::string legacyText = "legacy clip";

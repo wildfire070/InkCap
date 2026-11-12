@@ -198,7 +198,8 @@ TEST(ContentOpfParserMetadata, MetadataOnlyStillCapturesFieldsThatDoNotNeedTheMa
 
 TEST(ContentOpfParserMetadata, CapturesBothBookIdsFromACalibreExportedFanFicFareOpf) {
   // Real shape of a FanFicFare epub exported through Calibre with the BookFusion plugin.
-  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><metadata>
+  const std::string xml =
+      R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><metadata>
     <dc:title>Hard Lines</dc:title>
     <dc:identifier id="fanficfare-uid">fanficfare-uid:archiveofourown.org-ufyrelight-s59081659</dc:identifier>
     <dc:source>https://archiveofourown.org/works/59081659</dc:source>
@@ -215,7 +216,8 @@ TEST(ContentOpfParserMetadata, CapturesBothBookIdsFromACalibreExportedFanFicFare
 }
 
 TEST(ContentOpfParserMetadata, BookFusionIdIsCaseInsensitiveAndKeepsOtherIdentifiersOut) {
-  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><metadata>
+  const std::string xml =
+      R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><metadata>
     <dc:identifier opf:scheme="bookfusion">bookfusion:777</dc:identifier>
     <dc:identifier opf:scheme="ISBN">9781234567897</dc:identifier>
   </metadata></package>)";

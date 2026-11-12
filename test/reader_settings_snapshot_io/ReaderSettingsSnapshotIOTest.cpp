@@ -46,35 +46,35 @@ struct RawWriter {
 // margins included, no legacy dark-mode byte. Field values are arbitrary but distinctive, so a
 // mismatched byte offset shows up as a wrong-field assertion rather than an accidental pass.
 void appendV10PlusSnapshotBody(RawWriter& w) {
-  w.u8(3);    // fontFamily
-  w.u8(16);   // readerFontPointSize
-  w.u8(120);  // lineHeightPercent
-  w.u8(2);    // wordSpacing
-  w.u8(0);    // orientation
-  w.u8(10);   // screenMarginVertical
-  w.u8(12);   // screenMarginHorizontal
-  w.u8(1);    // publisherPageNumbers
-  w.u8(1);    // paragraphAlignment
-  w.u8(0);    // embeddedStyle
-  w.u8(1);    // hyphenationEnabled
-  w.u8(1);    // textAntiAliasing
-  w.u8(0);    // imageRendering
-  w.u8(0);    // extraParagraphSpacing
-  w.u8(1);    // forceParagraphIndents
-  w.u8(0);    // focusReadingEnabled
-  w.u8(0);    // guideReadingEnabled
-  w.u8(0);    // epubRenderMode (CrossInkDefault)
-  w.u8(1);    // indexingMethod
+  w.u8(3);          // fontFamily
+  w.u8(16);         // readerFontPointSize
+  w.u8(120);        // lineHeightPercent
+  w.u8(2);          // wordSpacing
+  w.u8(0);          // orientation
+  w.u8(10);         // screenMarginVertical
+  w.u8(12);         // screenMarginHorizontal
+  w.u8(1);          // publisherPageNumbers
+  w.u8(1);          // paragraphAlignment
+  w.u8(0);          // embeddedStyle
+  w.u8(1);          // hyphenationEnabled
+  w.u8(1);          // textAntiAliasing
+  w.u8(0);          // imageRendering
+  w.u8(0);          // extraParagraphSpacing
+  w.u8(1);          // forceParagraphIndents
+  w.u8(0);          // focusReadingEnabled
+  w.u8(0);          // guideReadingEnabled
+  w.u8(0);          // epubRenderMode (CrossInkDefault)
+  w.u8(1);          // indexingMethod
   w.fixed("", 64);  // sdFontFamilyName
 }
 
 ReaderSettingsSnapshot testDefaults() {
   ReaderSettingsSnapshot defaults;
   defaults.characterSpacing = 3;  // Distinctive: != the struct's own default-member value (5) and
-                                   // != anything a fixture below writes, so a test that observes 3
-                                   // in the result can only have gotten it via inheritance.
-  defaults.imageGrayscale = 0;  // Distinctive: != the struct's own default-member value (1).
-  defaults.publisherFonts = 2;  // Distinctive: != the struct's own default-member value (0).
+                                  // != anything a fixture below writes, so a test that observes 3
+                                  // in the result can only have gotten it via inheritance.
+  defaults.imageGrayscale = 0;    // Distinctive: != the struct's own default-member value (1).
+  defaults.publisherFonts = 2;    // Distinctive: != the struct's own default-member value (0).
   return defaults;
 }
 
@@ -98,7 +98,8 @@ TEST(ReaderSettingsSnapshotIOTest, CurrentVersionRoundTripPreservesEveryField) {
   written.readerSettings.publisherFonts = 1;
   written.readerSettings.screenMarginVertical = 20;
   written.readerSettings.screenMarginHorizontal = 25;
-  std::strncpy(written.readerSettings.sdFontFamilyName, "ReaderFont", sizeof(written.readerSettings.sdFontFamilyName) - 1);
+  std::strncpy(written.readerSettings.sdFontFamilyName, "ReaderFont",
+               sizeof(written.readerSettings.sdFontFamilyName) - 1);
 
   Storage.reset();
   const std::string path = "/book/reader_settings.bin";
@@ -142,9 +143,9 @@ TEST(ReaderSettingsSnapshotIOTest, CurrentVersionRoundTripPreservesEveryField) {
 TEST(ReaderSettingsSnapshotIOTest, PreV11FileInheritsGlobalCharacterSpacingEvenWithOverrideBitSet) {
   RawWriter w;
   w.u8(ReaderSettingsIO::PRE_CHARACTER_SPACING_READER_SETTINGS_FILE_VERSION);  // version = 10
-  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                        // flags
-  w.u16(0);                                                                   // autoPageTurnSeconds (unused)
-  w.u8(0);                                                                    // renderMode (unused)
+  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                         // flags
+  w.u16(0);                                                                    // autoPageTurnSeconds (unused)
+  w.u8(0);                                                                     // renderMode (unused)
   appendV10PlusSnapshotBody(w);
   w.fixed("", 64);  // dictionarySdFontFamilyName (present since v10 >= PRE_POINT_SIZE(5))
   w.u8(0);          // dictionaryFontPointSize (present since v10 >= PRE_SPLIT_SCREEN_MARGIN(7))
@@ -178,9 +179,9 @@ TEST(ReaderSettingsSnapshotIOTest, PreV11FileInheritsGlobalCharacterSpacingEvenW
 TEST(ReaderSettingsSnapshotIOTest, PreV12FileRemapsSdFontAndCharacterSpacingOverrideBits) {
   RawWriter w;
   w.u8(ReaderSettingsIO::PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION);  // version = 11
-  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                      // flags
-  w.u16(0);                                                                 // autoPageTurnSeconds (unused)
-  w.u8(0);                                                                  // renderMode (unused)
+  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                       // flags
+  w.u16(0);                                                                  // autoPageTurnSeconds (unused)
+  w.u8(0);                                                                   // renderMode (unused)
   appendV10PlusSnapshotBody(w);
   w.fixed("LegacySdFont", 64);  // dictionarySdFontFamilyName
   w.u8(0);                      // dictionaryFontPointSize
@@ -219,16 +220,16 @@ TEST(ReaderSettingsSnapshotIOTest, PreV12FileRemapsSdFontAndCharacterSpacingOver
 TEST(ReaderSettingsSnapshotIOTest, PreV13FileInheritsGlobalPublisherFontsEvenWithOverrideBitSet) {
   RawWriter w;
   w.u8(ReaderSettingsIO::PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION);  // version = 12
-  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                      // flags
-  w.u16(0);                                                                 // autoPageTurnSeconds (unused)
-  w.u8(0);                                                                  // renderMode (unused)
+  w.u8(ReaderSettingsIO::READER_SETTINGS_FLAG_CUSTOM);                       // flags
+  w.u16(0);                                                                  // autoPageTurnSeconds (unused)
+  w.u8(0);                                                                   // renderMode (unused)
   appendV10PlusSnapshotBody(w);
   w.fixed("", 64);  // dictionarySdFontFamilyName
   w.u8(0);          // dictionaryFontPointSize
   // Override mask: every field bit set, INCLUDING PUBLISHER_FONTS_OVERRIDE -- the adversarial part.
   w.u32(ALL_READER_SETTING_OVERRIDES);
-  w.u8(9);   // trailing characterSpacing byte (present from v11 on)
-  w.u8(1);   // trailing imageGrayscale byte (present from v12 on)
+  w.u8(9);  // trailing characterSpacing byte (present from v11 on)
+  w.u8(1);  // trailing imageGrayscale byte (present from v12 on)
   // No trailing publisherFonts byte: that's what makes this a v12 file, not v13.
 
   Storage.reset();

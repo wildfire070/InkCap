@@ -56,6 +56,6 @@ void runIfArmed(GfxRenderer& renderer, uint32_t bookId, const std::string& epubP
 // book and the mode is ON_EXIT), ignoring the threshold-crossing state.
 // Same signature/behavior as runIfArmed() otherwise.
 void runOnExit(GfxRenderer& renderer, uint32_t bookId, const std::string& epubPath, const std::string& epubCachePath,
-              float bookPercent, int spineIndex, int pageNumber, int pageCount, int spineCount);
+               float bookPercent, int spineIndex, int pageNumber, int pageCount, int spineCount);
 
 }  // namespace ProgressAutoSync

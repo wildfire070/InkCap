@@ -899,9 +899,8 @@ static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::Render
 // adequate at the modest factors (~0.6x-2x) block-level CSS font-size uses.
 // No cross-family glyph fallback, matching renderCharSmallCaps's own scope.
 static void renderCharAtScale(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
-                              const EpdFontFamily& fontFamily, const uint32_t cp, const int cursorX,
-                              const int cursorY, const bool pixelState, const EpdFontFamily::Style style,
-                              const float scale) {
+                              const EpdFontFamily& fontFamily, const uint32_t cp, const int cursorX, const int cursorY,
+                              const bool pixelState, const EpdFontFamily::Style style, const float scale) {
   if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
   if (!glyph) return;
@@ -1276,7 +1275,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
   const int resolvedFontId = fontId;
   const int yPos = y + (scale == 1.0f ? getFontAscenderSize(resolvedFontId)
-                                       : static_cast<int>(std::lround(getFontAscenderSize(resolvedFontId) * scale)));
+                                      : static_cast<int>(std::lround(getFontAscenderSize(resolvedFontId) * scale)));
   int lastBaseX = x;
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;

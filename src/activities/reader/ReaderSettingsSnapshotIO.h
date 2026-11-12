@@ -149,9 +149,9 @@ enum class ReadStatus : uint8_t { Missing, Loaded, Invalid };
 // set to Loaded on a fully successful parse and left at Invalid (never Missing -- the file is
 // already open) on any version-mismatch or truncated-read failure.
 BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSettingsSnapshot& defaults,
-                                                    const char* defaultDictionarySdFontFamilyName,
-                                                    uint8_t defaultDictionaryFontPointSize,
-                                                    ReadStatus* status = nullptr);
+                                                   const char* defaultDictionarySdFontFamilyName,
+                                                   uint8_t defaultDictionaryFontPointSize,
+                                                   ReadStatus* status = nullptr);
 
 // Writes the current version only -- this is never used to write a legacy version, only to read
 // one back for migration. Always closes `file`.

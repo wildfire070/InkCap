@@ -13,9 +13,9 @@
 // NOT serialised (BlockStyle's fields are written individually in TextBlock.cpp -- this is never
 // one of them): computed at parse time and discarded after layout, like textIndentYields above.
 struct FloatZone {
-  int16_t top = 0;     // y of image top relative to page top
-  int16_t bottom = 0;  // top + imageHeight
-  int16_t width = 0;   // imageWidth + a small gap
+  int16_t top = 0;       // y of image top relative to page top
+  int16_t bottom = 0;    // top + imageHeight
+  int16_t width = 0;     // imageWidth + a small gap
   bool isRight = false;  // true = image floated right (narrows from the right, no left xOffset shift)
 };
 
@@ -65,9 +65,9 @@ struct BlockStyle {
   // The indent came from margin-left on an inline span (one poem line drawn indented), and gives
   // way before the line does: see ParsedText::resolveFirstLineIndent.
   bool textIndentYields = false;
-  bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
-  bool isRtl = false;              // true if resolved direction is RTL
-  bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
+  bool textAlignDefined = false;  // true if text-align was explicitly set in CSS
+  bool isRtl = false;             // true if resolved direction is RTL
+  bool directionDefined = false;  // true if direction was explicitly set in CSS/HTML
   // Extra pixels between adjacent non-space glyphs (reader setting, not CSS): set by ParsedText when the
   // paragraph is laid out and read back by TextBlock::render(). Persisted with each cached line.
   int8_t characterSpacing = 0;

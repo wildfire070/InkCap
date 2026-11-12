@@ -1647,7 +1647,7 @@ void SettingsActivity::toggleCurrentSetting() {
         };
         startActivityForResult(
             std::make_unique<FolderPickerActivity>(renderer, mappedInput, tr(STR_SELECT_EXCLUDED_FOLDERS),
-                                                    PickerMode::MULTI, CacheAllBooksActivity::loadExclusions()),
+                                                   PickerMode::MULTI, CacheAllBooksActivity::loadExclusions()),
             exclusionsHandler);
         break;
       }

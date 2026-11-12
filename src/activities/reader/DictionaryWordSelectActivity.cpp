@@ -592,9 +592,9 @@ bool DictionaryWordSelectActivity::extractWords() {
         if (lastSelectableWordIndex == static_cast<int>(wordIndex) - 1 && workingSet_.wordCount > 0) {
           const uint16_t previousIndex = wordIndex - 1;
           const auto previousStyle = block->wordStyle(previousIndex);
-          const int16_t previousMeasuredWidth = static_cast<int16_t>(renderer.getTextAdvanceX(
-              block->wordFontId(renderer, lineFontId, previousIndex), block->visibleWordText(previousIndex),
-              previousStyle, 0, tracking));
+          const int16_t previousMeasuredWidth = static_cast<int16_t>(
+              renderer.getTextAdvanceX(block->wordFontId(renderer, lineFontId, previousIndex),
+                                       block->visibleWordText(previousIndex), previousStyle, 0, tracking));
           const int16_t currentMeasuredWidth = measureWordAdvanceX(
               renderer, wordFontId, block->visibleWordText(wordIndex), block->visibleWordTextLen(wordIndex), wordStyle,
               tracking, focusBoundary, focusSuffixX, wordIsRtl, sanitizeScratch, scratchHalf);
@@ -670,9 +670,9 @@ bool DictionaryWordSelectActivity::extractWords() {
         const size_t partPrefix =
             part.sourceOffset < prefixBytes ? std::min(part.length, prefixBytes - part.sourceOffset) : 0;
         const char* storedPart = textPool + offset + partPrefix;
-        const int16_t measuredPartWidth = measureWordAdvanceX(renderer, wordFontId, storedPart,
-                                                              part.length - partPrefix, wordStyle, tracking,
-                                                              sanitizeScratch, scratchHalf);
+        const int16_t measuredPartWidth =
+            measureWordAdvanceX(renderer, wordFontId, storedPart, part.length - partPrefix, wordStyle, tracking,
+                                sanitizeScratch, scratchHalf);
         const int partOffsetX = dictionaryWordPartVisualOffset(fullWordWidth, offsetX, measuredPartWidth, wordIsRtl);
         const PageWordGeometry partGeometry =
             clipPageTextRange(line, block->wordXpos(wordIndex) + partOffsetX, measuredPartWidth);
@@ -1192,9 +1192,8 @@ void DictionaryWordSelectActivity::loop() {
         }
         auto definition = makeUniqueNoThrow<DictionaryDefinitionActivity>(
             renderer, mappedInput, controller.getFoundWord(), controller.getFoundLocation(),
-            controller.getFoundExtraLocations(), true, cachePath,
-            controller.getRecordHistory(), controller.getLookupWord(),
-            DictionaryLookupController::toHistStatus(controller.getFoundStatus()), this,
+            controller.getFoundExtraLocations(), true, cachePath, controller.getRecordHistory(),
+            controller.getLookupWord(), DictionaryLookupController::toHistStatus(controller.getFoundStatus()), this,
             &DictionaryWordSelectActivity::renderDefinitionBackgroundCallback, dictionaryFontFamilyName_,
             dictionaryFontPointSize_, true, hasPendingClippingRequest_ ? &pendingClippingRequest_ : nullptr,
             &highlightSnapshotStorage_);

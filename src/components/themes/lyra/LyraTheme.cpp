@@ -1,5 +1,7 @@
 #include "LyraTheme.h"
 
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -12,9 +14,6 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-
-#include <Epub.h>
-#include <FsHelpers.h>
 
 #include "BookFusionBookIdStore.h"
 #include "DeviceCapabilities.h"
@@ -559,7 +558,8 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
           const int altThumbWidth =
               static_cast<int>((static_cast<int64_t>(LyraMetrics::values.homeCoverHeight) * 2 + 1) / 3);
           const std::string altCoverBmpPath =
-              Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(altThumbWidth, LyraMetrics::values.homeCoverHeight);
+              Epub(book.path, "/.crosspoint")
+                  .getAdaptiveThumbBmpPath(altThumbWidth, LyraMetrics::values.homeCoverHeight);
           if (Storage.exists(altCoverBmpPath.c_str())) {
             coverBmpPath = altCoverBmpPath;
           }

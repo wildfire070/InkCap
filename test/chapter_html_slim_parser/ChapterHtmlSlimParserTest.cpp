@@ -44,10 +44,10 @@ TEST(BlockStyleFromCssStyleTest, VerticalPercentMarginsUseShortAxisInLandscape) 
   // Landscape-shaped viewport: width (960) is the long axis, height (540) is the short axis.
   const BlockStyle style =
       BlockStyle::fromCssStyle(cssStyle, /*emSize=*/16.0f, CssTextAlign::Left, /*viewportWidth=*/960,
-                                /*viewportHeight=*/540);
-  EXPECT_EQ(style.marginTop, 54);     // 10% of the short axis (540) -- the old behavior would give 96
+                               /*viewportHeight=*/540);
+  EXPECT_EQ(style.marginTop, 54);  // 10% of the short axis (540) -- the old behavior would give 96
   EXPECT_EQ(style.marginBottom, 54);
-  EXPECT_EQ(style.marginLeft, 19);    // 2% of width (960) -- horizontal margins are untouched by this fix
+  EXPECT_EQ(style.marginLeft, 19);  // 2% of width (960) -- horizontal margins are untouched by this fix
   EXPECT_EQ(style.marginRight, 19);
 }
 
@@ -59,7 +59,7 @@ TEST(BlockStyleFromCssStyleTest, VerticalPercentMarginsUnchangedInPortrait) {
   // Portrait-shaped viewport: width (540) is already the short axis, same as pre-fix behavior.
   const BlockStyle style =
       BlockStyle::fromCssStyle(cssStyle, /*emSize=*/16.0f, CssTextAlign::Left, /*viewportWidth=*/540,
-                                /*viewportHeight=*/960);
+                               /*viewportHeight=*/960);
   EXPECT_EQ(style.marginTop, 54);  // 10% of 540 either way -- no behavior change in portrait
   EXPECT_EQ(style.marginBottom, 54);
 }

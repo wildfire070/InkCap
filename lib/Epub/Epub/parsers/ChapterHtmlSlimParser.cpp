@@ -98,9 +98,8 @@ static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5"
 // for those. ul/ol are block-level so list containers get proper insets.
 // figure/fieldset (upstream) round out the common block-level containers.
 // hgroup (upstream) groups a heading with its subheading(s) for shared spacing/alignment.
-static constexpr const char* const BLOCK_TAGS[] = {"p",      "li",       "div",    "br",     "blockquote", "ul",
-                                                     "ol",     "dt",       "dd",     "details", "summary",
-                                                     "figure", "fieldset", "hgroup"};
+static constexpr const char* const BLOCK_TAGS[] = {
+    "p", "li", "div", "br", "blockquote", "ul", "ol", "dt", "dd", "details", "summary", "figure", "fieldset", "hgroup"};
 static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
 // dfn/cite carry the same browser-default italic styling as i/em -- confirmed
 // on real books that use <dfn> for foreign-language dialogue and <cite> for
@@ -572,8 +571,8 @@ class BodySizeProbe {
   // The multiplier the most body-text characters were measured at, or 1.0 if nothing was
   // measured (no body text found in the scanned prefix, or it's evenly split).
   float dominantMultiplier() const {
-    const auto best =
-        std::max_element(buckets.begin(), buckets.end(), [](const Bucket& a, const Bucket& b) { return a.bytes < b.bytes; });
+    const auto best = std::max_element(buckets.begin(), buckets.end(),
+                                       [](const Bucket& a, const Bucket& b) { return a.bytes < b.bytes; });
     return best->bytes ? best->multiplier : 1.0f;
   }
 };
@@ -1830,9 +1829,9 @@ void ChapterHtmlSlimParser::resolveBlockFont(BlockStyle& blockStyle) {
 #if CROSSINK_SCALABLE_FONTS
   const uint8_t basePoints = renderer.getFontPointSize(fontId);
   if (basePoints) {
-    const uint8_t desiredPoints = static_cast<uint8_t>(
-        std::clamp(std::lround(basePoints * effectiveMultiplier),
-                   long(ScalableContentMinPointSize), long(ScalableContentMaxPointSize)));
+    const uint8_t desiredPoints =
+        static_cast<uint8_t>(std::clamp(std::lround(basePoints * effectiveMultiplier),
+                                        long(ScalableContentMinPointSize), long(ScalableContentMaxPointSize)));
     const int exact = renderer.getFontIdForSize(fontId, desiredPoints);
     if (exact != fontId) {
       blockStyle.headingFontId = exact;
@@ -1873,9 +1872,9 @@ void ChapterHtmlSlimParser::materializeOpenBorderBoxesIfNeeded() {
     BorderBoxScope& scope = borderBoxStack_[i];
     if (scope.elem) continue;
 
-    auto box = makeUniqueNoThrow<PageCssBorderBox>(scope.width, static_cast<int16_t>(1), scope.borderTop,
-                                                   scope.borderRight, scope.borderBottom, scope.borderLeft, scope.x,
-                                                   currentPageNextY);
+    auto box =
+        makeUniqueNoThrow<PageCssBorderBox>(scope.width, static_cast<int16_t>(1), scope.borderTop, scope.borderRight,
+                                            scope.borderBottom, scope.borderLeft, scope.x, currentPageNextY);
     if (!box) {
       LOG_ERR("EHP", "Failed to create PageCssBorderBox");
       continue;
@@ -2689,8 +2688,7 @@ void ChapterHtmlSlimParser::attachPendingFloatImage(BlockStyle& bs) {
   // A floated image is never split across a page boundary. isFloatCandidate already capped its
   // height at one viewport, so if it doesn't fit what's left of this page, breaking to a fresh
   // one always leaves enough room -- the image (and the text beside it) start there together.
-  if (currentPage && !currentPage->elements.empty() &&
-      imgH > static_cast<int16_t>(viewportHeight - currentPageNextY)) {
+  if (currentPage && !currentPage->elements.empty() && imgH > static_cast<int16_t>(viewportHeight - currentPageNextY)) {
     completeCurrentPage();
     completedPageCount++;
     stopPreviewIfPageLimitReached();
@@ -2713,7 +2711,7 @@ void ChapterHtmlSlimParser::attachPendingFloatImage(BlockStyle& bs) {
   const int16_t top = static_cast<int16_t>(currentPageNextY);
 
   auto imageBlock = makeUniqueNoThrow<ImageBlock>(std::move(pendingFloatImage_.cachedImagePath),
-                                                   std::move(pendingFloatImage_.sourcePath), imgW, imgH);
+                                                  std::move(pendingFloatImage_.sourcePath), imgW, imgH);
   if (!imageBlock) {
     LOG_ERR("EHP", "Float image dropped: ImageBlock allocation failed");
     pendingFloatImage_ = PendingFloatImage{};
@@ -3044,7 +3042,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->flushPartWordBuffer();
     }
     const float emSize = self->renderer.getLineHeight(self->fontId) * self->lineCompression;
-    auto tableBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
+    auto tableBlockStyle =
+        BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
 
     const auto heap = MemoryBudget::snapshot();
     const bool useCompact = !MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_RICH_TABLE, MIN_MAX_ALLOC_FOR_RICH_TABLE);
@@ -3830,7 +3829,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(blockFontId));
 
   const CssTextAlign requestedAlign = static_cast<CssTextAlign>(self->paragraphAlignment);
-  auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, requestedAlign, self->viewportWidth, self->viewportHeight);
+  auto userAlignmentBlockStyle =
+      BlockStyle::fromCssStyle(cssStyle, emSize, requestedAlign, self->viewportWidth, self->viewportHeight);
   userAlignmentBlockStyle.fontSize = fontStyle.fontSize;
   userAlignmentBlockStyle.fontScale = fontStyle.fontScale;
   if ((strcmp(name, "html") == 0 || strcmp(name, "body") == 0) && fontStyle.fontSize) {
@@ -3906,7 +3906,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->skipCurrentElement();
       return;
     }
-    auto hrBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
+    auto hrBlockStyle =
+        BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth, self->viewportHeight);
     if (!self->embeddedStyle || self->isLightMode()) {
       stripPublisherSpacing(hrBlockStyle);
     }
@@ -3956,7 +3957,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->headingDepth = self->depth;
     self->headingOpenerActive = true;
     self->currentCssStyle = cssStyle;
-    auto headerBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Center, self->viewportWidth, self->viewportHeight);
+    auto headerBlockStyle =
+        BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Center, self->viewportWidth, self->viewportHeight);
     headerBlockStyle.fontSize = fontStyle.fontSize;
     headerBlockStyle.fontScale = fontStyle.fontScale;
     headerBlockStyle.textAlignDefined = true;
@@ -5844,8 +5846,7 @@ void ChapterHtmlSlimParser::makePages(const bool completeBlock) {
       pendingFloatImageElem_ = nullptr;
     }
     activeFloatTop_ = realTop;
-    activeFloatBottom_ =
-        static_cast<int16_t>(realTop + (mbs.floatZones[0].bottom - mbs.floatZones[0].top));
+    activeFloatBottom_ = static_cast<int16_t>(realTop + (mbs.floatZones[0].bottom - mbs.floatZones[0].top));
   }
 
   // An entire image-only block is artwork, not prose. Keep its source alignment
