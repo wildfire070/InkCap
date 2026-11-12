@@ -871,17 +871,21 @@ void walk(WalkState& st, const std::string& path, const int depth, HalFile* preO
         entry.close();  // archived books stay out of the Library until restored
         continue;
       }
-      const size_t resumePosition = dir.position();
-      dir.close();
+      // dir stays open across the recursive descent instead of being closed
+      // and reopened by path afterward: it is this stack frame's own local
+      // variable, untouched by the callee, so its read position is already
+      // exactly where openNextFile() left it when the call returns -- no
+      // resume-position bookkeeping or path reopen needed. Bounded by
+      // LIBRARY_MAX_DEPTH (5): at most that many ancestor directory handles
+      // are ever open at once, each a thin HalFile wrapper over one FsFile.
       entry.rewindDirectory();
       walk(st, childPath, depth + 1, &entry);
-      if (st.failed) return;
-
-      dir = Storage.open(path.c_str());
-      if (!dir || !dir.isDirectory() || !dir.seekSet(resumePosition)) {
-        if (dir) dir.close();
-        LOG_ERR("LIBIDX", "cannot resume directory %s at %u", path.c_str(), static_cast<unsigned>(resumePosition));
-        st.failed = true;
+      if (st.failed) {
+        // dir is still open here (unlike before this change, the recursive
+        // call no longer closes and reopens it) -- close it explicitly on
+        // this early-abort path; the normal-completion path still does so at
+        // the end of the function.
+        dir.close();
         return;
       }
       continue;
