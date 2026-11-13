@@ -41,9 +41,19 @@ namespace {
 // historical entries (e.g. "kOlderFullVersion"/"kLastReleaseFullVersion" now
 // point at values this branch already tracks under other names below) --
 // those renames carry no new byte values, so they're not duplicated here.
-constexpr uint8_t kFullVersion = 107;
+//
+// This sync (upstream's v108, deferred outline-advance rounding) retired v107
+// to kHeadingGroupFullVersion/PartialVersion below, and also caught byte 105/
+// 0xDA (upstream's own v105, CSS-under-low-heap) which upstream's merge commit
+// still tests but had no named entry here -- added as kLowHeapCssFullVersion/
+// PartialVersion rather than silently dropping it.
+constexpr uint8_t kFullVersion = 108;
+constexpr uint8_t kHeadingGroupFullVersion = 107;  // former-current, superseded by v108 (deferred advance rounding)
+constexpr uint8_t kHeadingGroupPartialVersion = 0xDC;
 constexpr uint8_t kPreHeadingGroupFullVersion = 106;  // this branch's own former-current (per-word source
 constexpr uint8_t kPreHeadingGroupPartialVersion = 0xDB;  // ranges), superseded by upstream's v107 (heading groups)
+constexpr uint8_t kLowHeapCssFullVersion = 105;  // upstream v105 (keep CSS active below 48 KiB free heap)
+constexpr uint8_t kLowHeapCssPartialVersion = 0xDA;
 constexpr uint8_t kPreSourceRangeFullVersion = 104;  // former-current, superseded by v106 (per-word source ranges)
 constexpr uint8_t kPreSourceRangePartialVersion = 0xD9;
 constexpr uint8_t kPreChapterSpacingFullVersion = 103;  // former-current, superseded by v104 (chapter spacing fix)
@@ -69,7 +79,7 @@ constexpr uint8_t kPreImageAlignmentPartialVersion = 0xCF;
 constexpr uint8_t kPreFieldsetFullVersion = 93;
 constexpr uint8_t kPreFieldsetPartialVersion = 0xCE;
 constexpr uint8_t kS3BitmapFullVersion = 90;
-constexpr uint8_t kPartialVersion = 0xDC;
+constexpr uint8_t kPartialVersion = 0xDD;
 constexpr uint8_t kS3BitmapPartialVersion = 0xCB;
 constexpr uint8_t kC3BitmapFullVersion = 89;
 constexpr uint8_t kC3BitmapPartialVersion = 0xCA;
@@ -250,7 +260,8 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreHeadingGroupFullVersion, kPreHeadingGroupPartialVersion, kPreSourceRangeFullVersion,
+       {kHeadingGroupFullVersion, kHeadingGroupPartialVersion, kLowHeapCssFullVersion, kLowHeapCssPartialVersion,
+        kPreHeadingGroupFullVersion, kPreHeadingGroupPartialVersion, kPreSourceRangeFullVersion,
         kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
         kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,
         kPreUnicodeSpacePartialVersion, kGlyphRoundingFullVersion,

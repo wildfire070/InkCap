@@ -7,8 +7,8 @@
 // The legacy global settings are outside this store's test; migration uses only
 // their existing OPDS fields and save method.
 void CrossPointSettings::toJson(JsonDocument&) const {}
+uint8_t CrossPointSettings::defaultIndexingMethod() { return INDEXING_FULL_SECTION; }
 uint8_t CrossPointSettings::defaultUiScale() { return 1; }
-uint8_t CrossPointSettings::defaultIndexingMethod() { return CrossPointSettings::INDEXING_FULL_SECTION; }
 bool CrossPointSettings::saveToFile() const { return true; }
 
 TEST(OpdsServerStoreTest, ExistingValuesAndUnknownDefaultsRemainCompatible) {

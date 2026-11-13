@@ -661,6 +661,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t uiScale = defaultUiScale();
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
+  static bool fadingFixSupported();
   // Quick-return from footnotes when a footnote shortcut is active.
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
@@ -727,7 +728,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t tiltPageTurn = TILT_OFF;
   uint8_t tiltPageTurnDirection = TILT_LEFT_RIGHT;
   uint8_t tiltNextPageOnly = 0;
-  uint8_t tiltSensitivity = TiltSensitivity::TILT_NORMAL;
+  uint8_t tiltSensitivity = TiltSensitivity::NORMAL;
   // Frontlight quick-panel state (boards with FREEINK_CAP_FRONTLIGHT, e.g. X4
   // Pro). Applied at boot, edited only from the frontlight panel; persisted as
   // category-less entries so they stay out of the Settings screen. Writes are
