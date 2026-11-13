@@ -231,8 +231,7 @@ EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitte
 EpdFont bitter14RegularFont(&bitter_14_regular);
 EpdFont bitter14BoldFont(&bitter_14_bold);
 EpdFont bitter14ItalicFont(&bitter_14_italic);
-EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
-EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
+EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, nullptr);
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
