@@ -175,19 +175,20 @@ void drawCenteredStatsRow(const GfxRenderer& renderer, const uint8_t* icon, cons
     return;
   }
 
-  const int labelLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const int rowHeight = std::max(labelLineHeight, iconSize);
-  if (regionHeight < rowHeight) return;
-  const int topY = regionTop + (regionHeight - rowHeight) / 2;
   const int availableWidth = std::max(1, safe.width - kStatsFooterSideInset * 2);
   const int iconTextGap = 10;
   const std::string text = renderer.truncatedText(UI_10_FONT_ID, label, availableWidth - iconSize - iconTextGap);
+  const auto ink = renderer.getTextVerticalBounds(UI_10_FONT_ID, text.c_str());
+  const int textHeight = ink.bottom - ink.top;
+  const int rowHeight = std::max(textHeight, iconSize);
+  if (regionHeight < rowHeight) return;
+  const int topY = regionTop + (regionHeight - rowHeight) / 2;
   const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, text.c_str());
   const int blockWidth = iconSize + iconTextGap + textWidth;
   const int iconX = safe.x + (safe.width - blockWidth) / 2;
   const int iconY = topY + (rowHeight - iconSize) / 2;
   const int textX = iconX + iconSize + iconTextGap;
-  const int textY = topY + (rowHeight - labelLineHeight) / 2;
+  const int textY = topY + (rowHeight - textHeight) / 2 - ink.top;
 
   if (inverted) {
     renderer.drawIcon(icon, iconX, iconY, iconSize, iconSize);
@@ -469,7 +470,7 @@ void MinimalTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char
   (void)subtitle;
   (void)readerContext;
 
-  renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+  renderer.fillRect(0, rect.y, renderer.getScreenWidth(), rect.height, false);
 
   if (title) {
     const int titleFontId = filenameTitle ? renderer.filenameFontId(UI_12_FONT_ID) : UI_12_FONT_ID;
@@ -480,7 +481,7 @@ void MinimalTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char
     renderer.drawText(titleFontId, rect.x + titleInsetX,
                       rect.y + UITheme::getInstance().getMetrics().batteryBarHeight + 3, truncatedTitle.c_str(), true,
                       EpdFontFamily::BOLD);
-    renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
+    renderer.drawLine(0, rect.y + rect.height - 3, renderer.getScreenWidth() - 1, rect.y + rect.height - 3, 3, true);
   }
 
   if (showStatus) {

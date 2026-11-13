@@ -37,10 +37,11 @@ class SecureHttpClient {
     }
     return testHttp.status;
   }
-  int sendRequest(const char*, const uint8_t* payload, size_t payloadLen, const Callback& callback) {
-    testHttp.uploaded.assign(reinterpret_cast<const char*>(payload), payloadLen);
+  int sendRequest(const char*, const uint8_t* payload, size_t length, const Callback& callback) {
+    testHttp.uploaded.assign(reinterpret_cast<const char*>(payload), length);
     return GET(callback);
   }
+#ifndef CROSSINK_TEST_UPSTREAM_SDK
   int sendRequestStream(const char*, size_t length, size_t (*reader)(void*, size_t, uint8_t*, size_t), void* context,
                         const Callback& callback) {
     uint8_t chunk[256];
@@ -53,6 +54,7 @@ class SecureHttpClient {
     }
     return GET(callback);
   }
+#endif
   bool responseComplete() const { return complete; }
 
  private:
