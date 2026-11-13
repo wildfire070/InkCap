@@ -40,18 +40,16 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // branch's prior ported implementation -- superseded by upstream's own native character
 // spacing, see v88.
 // v83 (upstream): Hangul word boundaries and line-end splits change cached page positions.
-// v84 (upstream): Small EPUB images can share text lines, changing cached page positions.
-// v85 (upstream): HTML and body text indents now inherit into descendant blocks.
-// v86 (upstream): Scalable headings and blocks serialize point size and line height
-// (BlockStyle::fontSize/fontScale/lineHeight, additive alongside the existing
-// fontSizeMultiplier/headingFontId ladder -- the new path only activates on
-// scalable-font builds where getFontPointSize() is nonzero; bitmap builds are
-// unaffected and keep using the ladder exclusively).
-// v87 (upstream): Nested blocks inherit bold and italic styles, changing glyphs and wrapping.
-// v88 (upstream): Suppressed CSS borders no longer draw horizontal rules; an external
-// hyphenation-pack identity joins the header (cache validation); publisher decorations,
-// preserved whitespace, contextual CSS selectors and per-word font sizes land; and
-// character spacing gets upstream's own native implementation, replacing the v82 port above.
+// v84 (upstream): Small EPUB images can share text lines; HTML/body text indents inherit into
+// descendant blocks; scalable headings and blocks serialize point size and line height; nested
+// blocks inherit bold and italic styles; suppressed CSS borders no longer draw horizontal rules
+// -- all these change cached page positions or glyphs (this branch's and upstream's v84 bundles
+// landed on the same number independently; both are superseded here regardless).
+// v85 (upstream): Branches independently changed hyphenation identity and paragraph layout.
+// v86 (upstream): Combine external hyphenation identity with incremental paragraph layout fixes.
+// v87 (upstream): Publisher decorations, whitespace, contextual CSS, and per-word font sizes.
+// v88 (upstream): Character spacing in the layout identity and cached text blocks -- this
+// branch's native adoption of upstream's character spacing feature, replacing the v82 port above.
 // v89 (upstream): C3 bitmap heading/CSS sizes change layout and cached font identities.
 // v90 (upstream): S3 bitmap heading/CSS sizes now participate in layout.
 // v91 (upstream): Figure containers apply publisher alignment and spacing to chapter ornaments.
@@ -68,11 +66,12 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v105 (upstream): Keep CSS active below 48 KiB free heap; rebuild previously unstyled pages.
 // v106 (upstream): Persist per-word source ranges for stable clipping anchors.
 // v107 (upstream): Lay out chapter heading groups with their publisher spacing and alignment.
-constexpr uint8_t SECTION_FILE_VERSION = 107;
+// v108 (upstream): Runtime outline advances defer rounding until pixel placement.
+constexpr uint8_t SECTION_FILE_VERSION = 108;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xDC;  // this branch's own v106 marker (0xDB) is now stale
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xDD;
 constexpr uint32_t HEADER_SIZE =
     4 * sizeof(uint32_t) + sizeof(PublisherFonts) + sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) +
     sizeof(float) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +
