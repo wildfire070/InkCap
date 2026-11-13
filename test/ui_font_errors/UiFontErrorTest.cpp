@@ -18,7 +18,6 @@
 // Scale policy and settings persistence are outside this font-loader test.
 uint8_t CrossPointSettings::defaultIndexingMethod() { return INDEXING_FULL_SECTION; }
 uint8_t CrossPointSettings::defaultUiScale() { return UI_SCALE_SMALL; }
-uint8_t CrossPointSettings::defaultIndexingMethod() { return CrossPointSettings::INDEXING_FULL_SECTION; }
 
 // Registry/cache persistence is outside this test; use its file-list lookup contract.
 const SdCardFontFileInfo* SdCardFontFamilyInfo::findFile(uint8_t size, uint8_t style) const {
