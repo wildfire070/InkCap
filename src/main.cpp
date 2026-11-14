@@ -1249,7 +1249,9 @@ void enterDeepSleep(bool fromTimeout) {
   // All sleep-time file writes are complete. Stop SDMMC before the power path
   // cuts peripheral rails and isolates the bus pads; SPI boards are a no-op.
   libraryScanSleepToken.save(!library::libraryIndexNeedsRefresh());
-  Storage.shutdown();
+  if (!Storage.shutdown()) {
+    LOG_ERR("MAIN", "SD flush failed before deep sleep; proceeding anyway");
+  }
 
 #if FREEINK_DEVICE_PICCO
   // The I2C light retains its state through sleep. Keep the saved preference.
