@@ -1081,6 +1081,24 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
     }
   }
 
+  // Same cascade as word count/ship pairing above: Calibre's native series fields
+  // (calibre:series / calibre:series_index) are a fallback when the title page's HTML had
+  // no parseable "Part N of ..."/"[N]" series info at all -- the condensed FanFicFare
+  // template (confirmed dominant in a real device-library survey) has neither. parseTitlePage()
+  // only ever sets meta->seriesPart and meta->seriesName together (both HTML patterns return
+  // immediately after setting both), so seriesPart == 0 alone is a reliable "found nothing" signal.
+  if (meta->seriesPart == 0) {
+    const std::string opfSeriesIndex = epub.getSeriesIndex();
+    if (!opfSeriesIndex.empty()) {
+      const int part = atoi(opfSeriesIndex.c_str());
+      if (part > 0) {
+        meta->seriesPart = static_cast<uint16_t>(part);
+        strncpy(meta->seriesName, epub.getSeriesName().c_str(), sizeof(meta->seriesName) - 1);
+        meta->seriesName[sizeof(meta->seriesName) - 1] = '\0';
+      }
+    }
+  }
+
   // If nothing we scraped exposed a real word count (e.g. an FFF title page
   // with no separate log page), estimate one by counting words across the
   // actual chapter content. This walks every chapter via the zip reader, so
@@ -1505,6 +1523,11 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   int32_t updateSlot = -1;
   uint32_t preservedSeq = 0;
+  // Preserved across an update the same way addedSequence is: bit 0 (tombstone) and bit 1
+  // ("finished", set by setRecordFinished() via its own direct read-modify-write, entirely
+  // outside this function) have no source in a fresh scrape/rebuild -- a caller blindly
+  // passing flags=0 must never clear a flag something else deliberately set.
+  uint8_t preservedFlags = 0;
   int32_t freeSlot = -1;
   uint16_t liveCount = 0;
   CompactIndexRecord existing;
@@ -1522,6 +1545,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
         f.seek(offsetOf(static_cast<uint16_t>(updateSlot)));
         if (f.read((uint8_t*)&existing, sizeof(existing)) == sizeof(existing)) {
           preservedSeq = existing.addedSequence;
+          preservedFlags = existing.flags;
         } else {
           dropIndexCache();  // can't trust it; fall back to the scan below
           updateSlot = -1;
@@ -1538,6 +1562,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   if (!planned) {
     updateSlot = -1;
     preservedSeq = 0;
+    preservedFlags = 0;
     freeSlot = -1;
     liveCount = 0;
     f.seek(offsetOf(0));
@@ -1552,6 +1577,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
         if (existing.cacheHash == rec.cacheHash) {
           updateSlot = i;
           preservedSeq = existing.addedSequence;
+          preservedFlags = existing.flags;
         }
       }
     }
@@ -1561,6 +1587,7 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   if (updateSlot >= 0) {
     recToWrite.addedSequence = preservedSeq;
+    recToWrite.flags = preservedFlags;
     f.seek(offsetOf(updateSlot));
     if (f.write((uint8_t*)&recToWrite, sizeof(recToWrite)) != sizeof(recToWrite)) dropIndexCache();
     f.close();

@@ -6,11 +6,12 @@
 
 // Minimal stub: Ao3Librarian.cpp only calls getPath()/getCachePath()/getTitle()/getAuthor()/
 // getSpineItemsCount()/getSpineItem()/hasAo3Info()/saveAo3Info()/readItemContentsToStream()/
-// getWordCount()/getMainShip()/getOtherShips() (confirmed by grepping every `epub.` call site
-// in that file). spineItemsCount defaults to 0, which makes Ao3Librarian::parseTitlePage()
-// return false immediately without ever reaching readItemContentsToStream() -- deliberate, so
-// this test exercises the real scrape()/parseTitlePage() control flow without needing to fake
-// real EPUB zip/HTML content. The three OPF-sourced accessors default to empty, matching a file
+// getWordCount()/getMainShip()/getOtherShips()/getSeriesIndex()/getSeriesName() (confirmed by
+// grepping every `epub.` call site in that file). spineItemsCount defaults to 0, which makes
+// Ao3Librarian::parseTitlePage() return false immediately without ever reaching
+// readItemContentsToStream() -- deliberate, so this test exercises the real
+// scrape()/parseTitlePage() control flow without needing to fake real EPUB zip/HTML content.
+// The five OPF-sourced accessors default to empty, matching a file
 // with no calibre:user_metadata block at all -- the baseline case the existing guard tests need
 // unchanged; tests exercising the OPF-enrichment cascade set them explicitly.
 class Epub {
@@ -44,6 +45,8 @@ class Epub {
   const std::string& getWordCount() const { return wordCountValue; }
   const std::string& getMainShip() const { return mainShipValue; }
   const std::string& getOtherShips() const { return otherShipsValue; }
+  const std::string& getSeriesIndex() const { return seriesIndexValue; }
+  const std::string& getSeriesName() const { return seriesNameValue; }
 
   int spineItemsCount = 0;
   bool hasAo3InfoValue = false;
@@ -51,6 +54,8 @@ class Epub {
   std::string wordCountValue;
   std::string mainShipValue;
   std::string otherShipsValue;
+  std::string seriesIndexValue;
+  std::string seriesNameValue;
   std::string fakeTitlePageHtml;
 
  private:
