@@ -214,6 +214,14 @@ class HalStorage {
   }
 
   bool exists(const char* path) const { return fake::files.count(path) != 0; }
+  // Added for LibraryBuilder.cpp's readAo3FolderSetting(); matches the real signature
+  // closely enough for that one caller (moduleName/cap are accepted and ignored here).
+  bool readFileToString(const char*, const std::string& path, size_t, std::string& out) {
+    const auto found = fake::files.find(path);
+    if (found == fake::files.end() || found->second->directory) return false;
+    out.assign(found->second->bytes.begin(), found->second->bytes.end());
+    return true;
+  }
   bool mkdir(const char* path) {
     if (!exists(path)) fake::add(path, "");
     fake::files[path]->directory = true;

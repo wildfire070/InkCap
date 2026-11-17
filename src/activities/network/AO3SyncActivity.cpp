@@ -1,6 +1,7 @@
 #include "AO3SyncActivity.h"
 
 #include <DownloadFileSwap.h>
+#include <Epub.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -9,6 +10,7 @@
 #include <WiFi.h>
 #include <ZipFile.h>
 
+#include "../../Ao3Librarian.h"
 #include "HalStorage.h"
 #include "SdCardFontSystem.h"
 #include "activities/ActivityResult.h"
@@ -18,6 +20,8 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/StringUtils.h"
+
+#include "../../Ao3Librarian.h"
 
 namespace {
 // The update check runs a TLS session + streamed HTTP download alongside the 48 KB
@@ -428,6 +432,23 @@ void AO3SyncActivity::performDownload() {
     // I/O hiccup, say) can never leave the user with neither file.
     if (DownloadFileSwap::publishFrom(bookPath, tempPath)) {
       LOG_INF("AO3", "Atomic swap complete");
+
+      // Re-index the swapped-in file so its index record reflects the update (word count,
+      // chapter count, completion) instead of staying stale indefinitely -- confirmed this
+      // activity never did this at all before. A fresh Epub is required, not the pre-swap
+      // object: it's still pointing at content that no longer exists at this path (matches
+      // Ao3ArchiveUtils::restoreFic()'s identical pattern for the same reason). The swapped-in
+      // file is a native AO3 download with no calibre:user_metadata block, so scrape() falls
+      // through to the existing HTML-scrape path here -- expected, not a regression.
+      Epub freshEpub(bookPath, "/.crosspoint");
+      if (freshEpub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true, Epub::XLocationLoadMode::Skip,
+                         /*cacheCumulativeSpineSizes=*/false, /*skipScraping=*/true)) {
+        if (!Ao3Librarian::scrape(freshEpub, /*force=*/true)) {
+          LOG_ERR("AO3", "Re-scrape after update failed: %s", bookPath.c_str());
+        }
+      } else {
+        LOG_ERR("AO3", "Could not load swapped-in epub for re-scrape: %s", bookPath.c_str());
+      }
 
       // Success result
       AO3Result res;
