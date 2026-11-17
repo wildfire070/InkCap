@@ -19,6 +19,8 @@
 #include <limits>
 #include <optional>
 
+#include "../../src/Ao3CompactIndexRecord.h"
+#include "../../src/Ao3Librarian.h"
 #include "../../src/util/BookCacheUtils.h"
 #include "LibraryFileTypes.h"
 #include "LibraryIndexFile.h"
@@ -546,6 +548,9 @@ struct WalkState {
   bool failed = false;
   bool creationTimesUnchanged = true;
   bool readMetadata = false;
+  // Read once per walk (see readAo3FolderSetting()), not per file. Empty when no AO3
+  // folder is configured, in which case the piggyback AO3 record write below never fires.
+  std::string ao3Folder;
   LibraryIndexFile* previous = nullptr;
   // Parses kept across cancelled or failed builds; null when metadata is off.
   LibraryMetadataCache* metadataCache = nullptr;
@@ -564,6 +569,103 @@ struct WalkState {
 // in that ternary would copy the title on every book that DID tell us something,
 // because the two branches have different value categories.
 const std::string kNoTitle;
+
+// FNV-1a 64-bit hash, matching ZipFile::fnvHash64/BookMetadataCache's own private copy of the
+// same algorithm exactly (cacheHash must agree with what Ao3Librarian's own scrape() computes
+// for the same path) -- duplicated locally rather than pulling in ZipFile.h's own dependency
+// chain (InflateStream/ZipDirectoryCache) for one small, stable, already-duplicated-elsewhere
+// function.
+uint64_t ao3PathHash(const char* s, size_t len) {
+  uint64_t hash = 14695981039346656037ull;
+  for (size_t i = 0; i < len; i++) {
+    hash ^= static_cast<uint8_t>(s[i]);
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+// Reads just the "ao3Folder" string value out of ao3_settings.json, without a full JSON
+// parser -- same lightweight style as Ao3Librarian.cpp's extractCalibreCustomValue(), since
+// this is one simple field, not a general-purpose parse. Read once per walk (see
+// rebuildLibraryIndex()), not per file. Returns empty if unset, missing, or malformed.
+std::string readAo3FolderSetting() {
+  std::string json;
+  if (!Storage.readFileToString("LIBIDX", "/.crosspoint/ao3_settings.json", 4096, json)) return {};
+  const auto key = json.find("\"ao3Folder\"");
+  if (key == std::string::npos) return {};
+  auto quoteStart = json.find('"', key + 11);
+  if (quoteStart == std::string::npos) return {};
+  quoteStart++;
+  const auto quoteEnd = json.find('"', quoteStart);
+  if (quoteEnd == std::string::npos) return {};
+  return json.substr(quoteStart, quoteEnd - quoteStart);
+}
+
+// True when fullPath sits inside configured AO3 folder -- a prefix match at a real path
+// boundary, not just a string prefix ("/Fanfic" must not match "/FanficExtra/...").
+bool isUnderAo3Folder(const std::string& ao3Folder, const std::string& fullPath) {
+  if (ao3Folder.empty() || fullPath.size() <= ao3Folder.size()) return false;
+  if (fullPath.compare(0, ao3Folder.size(), ao3Folder) != 0) return false;
+  return fullPath[ao3Folder.size()] == '/';
+}
+
+// Splits a ", "-joined tag string (the format extractCalibreCustomValue() in
+// ContentOpfParser.cpp already produces) into CompactIndexRecord's fixed tags[][] shape.
+void splitJoinedTagsInto(const std::string& joined, char dest[AO3_SEARCH_TAG_COUNT][AO3_SEARCH_TAG_MAX_LEN]) {
+  size_t start = 0;
+  int slot = 0;
+  while (slot < AO3_SEARCH_TAG_COUNT && start <= joined.size()) {
+    const size_t comma = joined.find(", ", start);
+    const std::string tag = joined.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+    if (!tag.empty()) {
+      strncpy(dest[slot], tag.c_str(), AO3_SEARCH_TAG_MAX_LEN - 1);
+      dest[slot][AO3_SEARCH_TAG_MAX_LEN - 1] = '\0';
+      slot++;
+    }
+    if (comma == std::string::npos) break;
+    start = comma + 2;
+  }
+}
+
+// Builds and writes a CompactIndexRecord directly from the metadata this walk's own
+// loadMetadata() call already extracted -- no second parse, no HTML scrape. Mirrors
+// Ao3Librarian::scrape()'s own Tier-1 field mapping (see that function's OPF-enrichment
+// comment for why rating/wordCount/fictags presence is the trust signal, not value).
+// Only called for files under the configured AO3 folder whose OPF data looks AO3-shaped;
+// everything else (no calibre:user_metadata block, or ambiguous pairing data) is left for
+// the existing, separate Ao3IndexActivity pass to resolve via its own HTML-scrape fallback.
+void writeAo3RecordFromWalkMetadata(const BookMetadataCache::BookMetadata& fullMeta, const std::string& title,
+                                     const std::string& author, const std::string& fullPath) {
+  CompactIndexRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  strncpy(rec.title, title.c_str(), sizeof(rec.title) - 1);
+  strncpy(rec.author, author.c_str(), sizeof(rec.author) - 1);
+  strncpy(rec.seriesName, fullMeta.seriesName.c_str(), sizeof(rec.seriesName) - 1);
+  rec.wordCount = static_cast<uint32_t>(strtoul(fullMeta.wordCount.c_str(), nullptr, 10));
+  rec.rating = Ao3Librarian::mapRating(fullMeta.contentRating.c_str());
+  rec.isCompleted = fullMeta.completionStatus == "Completed" ? 1 : 0;
+  rec.cacheHash = ao3PathHash(fullPath.c_str(), fullPath.size());
+  splitJoinedTagsInto(fullMeta.fictags, rec.tags);
+
+  // Pairing: same mainShip -> otherShips -> blank cascade as Ao3Librarian::scrape(), since
+  // the same real-world data shapes apply here (confirmed via the device-library survey).
+  if (!fullMeta.mainShip.empty()) {
+    strncpy(rec.relationship1, fullMeta.mainShip.c_str(), sizeof(rec.relationship1) - 1);
+    if (!fullMeta.otherShips.empty()) {
+      strncpy(rec.relationship2, fullMeta.otherShips.c_str(), sizeof(rec.relationship2) - 1);
+    }
+  } else if (!fullMeta.otherShips.empty()) {
+    const size_t comma = fullMeta.otherShips.find(", ");
+    if (comma == std::string::npos) {
+      strncpy(rec.relationship1, fullMeta.otherShips.c_str(), sizeof(rec.relationship1) - 1);
+    } else {
+      strncpy(rec.relationship1, fullMeta.otherShips.substr(0, comma).c_str(), sizeof(rec.relationship1) - 1);
+      strncpy(rec.relationship2, fullMeta.otherShips.substr(comma + 2).c_str(), sizeof(rec.relationship2) - 1);
+    }
+  }
+
+  Ao3Librarian::writeIndexRecord(rec);
+}
 
 // Returns false for "no previous entry" and on failure; failure also sets st.failed.
 bool findPrior(WalkState& st, const uint64_t pathHash, uint32_t& position, uint16_t& ordinal) {
@@ -692,7 +794,8 @@ bool findPrior(WalkState& st, const uint64_t pathHash, uint32_t& position, uint1
       st.failed = true;
       return false;
     }
-    if (epub.loadMetadata(bookTitle, author, !sourceChanged, &series, &genre, &seriesIndex)) {
+    BookMetadataCache::BookMetadata fullMeta;
+    if (epub.loadMetadata(bookTitle, author, !sourceChanged, &series, &genre, &seriesIndex, &fullMeta)) {
       entry.record.metadataStatus = CLIX_METADATA_EXTRACTED;
       entry.seriesPosition = parseSeriesPosition(seriesIndex);
       // Failures are not cached: they may come from low memory or a card
@@ -710,6 +813,16 @@ bool findPrior(WalkState& st, const uint64_t pathHash, uint32_t& position, uint1
         titleFromBook = true;
       }
       authorFromBook = !author.empty();
+
+      // AO3 piggyback write (see readAo3FolderSetting()/writeAo3RecordFromWalkMetadata()):
+      // this walk is already open on the file and already ran this exact parse for its own
+      // purposes above -- for files under the configured AO3 folder whose OPF data looks
+      // AO3-shaped (the same presence check Ao3Librarian::scrape() uses), write the AO3
+      // index record directly as a side effect, no second walk, no extra zip entries.
+      if (isUnderAo3Folder(st.ao3Folder, fullPath) &&
+          (!fullMeta.contentRating.empty() || !fullMeta.fictags.empty())) {
+        writeAo3RecordFromWalkMetadata(fullMeta, titleFromBook ? title : stemOf(name), author, fullPath);
+      }
     } else {
       entry.record.metadataStatus = CLIX_METADATA_FAILED;
     }
@@ -1704,6 +1817,7 @@ bool writeTitleOrder(const uint16_t n) {
   return order.open(ORDER_PATH) && sorter.finish(&StreamWriter::writeSource, &order) && order.close();
 }
 
+
 }  // namespace
 
 const char* libraryIndexPath() { return INDEX_PATH; }
@@ -1770,6 +1884,7 @@ static bool rebuildLibraryIndex(const char* rootPath, BuildStats& stats, const b
   st.nextFirstSeen = nextFirstSeen;
   st.prior = previous.isOpen() ? &priorByPath : nullptr;
   st.readMetadata = readMetadata;
+  st.ao3Folder = readAo3FolderSetting();
   st.previous = previous.isOpen() ? &previous : nullptr;
   st.stats = &stats;
   LibraryMetadataCache metadataCache;

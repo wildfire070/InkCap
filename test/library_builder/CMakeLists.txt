@@ -1,5 +1,6 @@
 add_executable(LibraryBuilderTest
   LibraryBuilderTest.cpp
+  stubs/Ao3LibrarianDefs.cpp
   ${REPO_ROOT}/lib/LibraryIndex/LibraryBuilder.cpp
   ${REPO_ROOT}/lib/LibraryIndex/LibraryIndexFile.cpp
   ${REPO_ROOT}/lib/LibraryIndex/LibraryMetadataCache.cpp
@@ -13,6 +14,7 @@ target_include_directories(LibraryBuilderTest PRIVATE
   ${REPO_ROOT}/lib/LibraryIndex
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/src
 )
 target_link_libraries(LibraryBuilderTest PRIVATE crosspoint_test_common GTest::gtest_main)
 gtest_discover_tests(LibraryBuilderTest)

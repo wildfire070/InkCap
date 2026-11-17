@@ -1039,6 +1039,48 @@ bool Ao3Librarian::scrape(const Epub& epub, bool force) {
   strncpy(meta->updatedDate, scrapedDate.c_str(), sizeof(meta->updatedDate) - 1);
   meta->updatedDate[sizeof(meta->updatedDate) - 1] = '\0';
 
+  // OPF enrichment: FanFicFare's condensed title-page template (confirmed via a real
+  // device-library survey -- not assumed -- to be the dominant case, not a rare one)
+  // has no separate Words:/Relationship: label at all, so the HTML scrape above never
+  // gets a word count or pairing for these files. Calibre's custom columns often have
+  // both. Tag presence is the trust signal, not value: Calibre writes the tag even for
+  // a null/empty value, so checking non-empty here already treats a present-but-empty
+  // tag the same as an absent one -- both correctly fall through to the next source (or
+  // leave the field blank), which is the behavior this cascade wants either way.
+  if (!epub.getWordCount().empty()) {
+    const uint32_t opfWordCount = strtoul(epub.getWordCount().c_str(), nullptr, 10);
+    if (opfWordCount > 0) {
+      meta->wordCount = opfWordCount;
+      meta->wordCountIsEstimate = 0;  // author-reported, not counted on-device
+    }
+  }
+
+  if (scrapedRel1[0] == '\0' && scrapedRel2[0] == '\0') {
+    if (!epub.getMainShip().empty()) {
+      strncpy(scrapedRel1, epub.getMainShip().c_str(), 31);
+      scrapedRel1[31] = '\0';
+      if (!epub.getOtherShips().empty()) {
+        strncpy(scrapedRel2, epub.getOtherShips().c_str(), 31);
+        scrapedRel2[31] = '\0';
+      }
+    } else if (!epub.getOtherShips().empty()) {
+      // Files exported before #mainship existed combined the full ship list under
+      // this column instead of splitting it -- split the first two ", "-joined
+      // entries across rel1/rel2 the same way the rest of this list is consumed.
+      const std::string combined = epub.getOtherShips();
+      const size_t comma = combined.find(", ");
+      if (comma == std::string::npos) {
+        strncpy(scrapedRel1, combined.c_str(), 31);
+        scrapedRel1[31] = '\0';
+      } else {
+        strncpy(scrapedRel1, combined.substr(0, comma).c_str(), 31);
+        scrapedRel1[31] = '\0';
+        strncpy(scrapedRel2, combined.substr(comma + 2).c_str(), 31);
+        scrapedRel2[31] = '\0';
+      }
+    }
+  }
+
   // If nothing we scraped exposed a real word count (e.g. an FFF title page
   // with no separate log page), estimate one by counting words across the
   // actual chapter content. This walks every chapter via the zip reader, so

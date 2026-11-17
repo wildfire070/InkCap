@@ -41,6 +41,14 @@ class BookMetadataCache {
     std::string updatedDate;
     bool liked = false;       // calibre:user_metadata:#like
     bool readStatus = false;  // calibre:user_metadata:#readstatus
+
+    // AO3 word count (calibre:user_metadata:#wordcount), author-reported -- distinct
+    // from Ao3Librarian's own on-device chapter-text estimate.
+    std::string wordCount;
+    std::string fictags;    // calibre:user_metadata:#fictags, ", "-joined
+    std::string mainShip;   // calibre:user_metadata:#mainship -- absent on older files
+    std::string otherShips;  // calibre:user_metadata:#otherships, or #relationships on older files
+    std::string characters;  // calibre:user_metadata:#characters -- filtered, excludes paired names
   };
 
   struct SpineEntry {

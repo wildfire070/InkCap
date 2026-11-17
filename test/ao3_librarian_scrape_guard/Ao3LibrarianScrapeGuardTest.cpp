@@ -26,6 +26,7 @@
 // ran; false means it legitimately attempted real work and failed for lack of real content.
 #include <gtest/gtest.h>
 
+#include "Ao3CompactIndexRecord.h"
 #include "Ao3Librarian.h"
 #include "Ao3LibraryMetadata.h"
 #include "Epub.h"
@@ -93,6 +94,63 @@ TEST_F(Ao3LibrarianScrapeGuardTest, NonArchiveFolderPathIsNotSkipped) {
   // false (not true) proves scrape() reached real parseTitlePage()-based logic rather than
   // early-returning true from the guard.
   EXPECT_FALSE(result);
+}
+
+// Coverage for the OPF-enrichment cascade added to scrape() (word count + pairing), separate
+// from the archive-guard tests above. The fake title page below deliberately has only a work-ID
+// link and no Words:/Relationship: label at all -- simulating FanFicFare's condensed template
+// (confirmed via a real device-library survey to be the dominant case, not a rare one), where
+// the HTML scrape alone would leave both fields empty. getWordCount()/getMainShip() simulate
+// what the OPF custom columns would supply for such a file.
+TEST_F(Ao3LibrarianScrapeGuardTest, OpfSuppliesWordCountAndMainShipTheCondensedTemplateCannot) {
+  Epub epub("/Books/Hard Lines.epub", "/.crosspoint");
+  epub.spineItemsCount = 1;
+  epub.fakeTitlePageHtml = R"(<h1><a href="https://archiveofourown.org/works/59081659">Hard Lines</a></h1>)";
+  epub.wordCountValue = "65450";
+  epub.mainShipValue = "Hermione Granger/Draco Malfoy";
+
+  ASSERT_TRUE(Ao3Librarian::scrape(epub, /*force=*/true));
+
+  const auto sidecarIt = fake::files.find(epub.getCachePath() + "/ao3_library_info");
+  ASSERT_NE(sidecarIt, fake::files.end());
+  Ao3LibraryMetadata meta;
+  ASSERT_EQ(sidecarIt->second->bytes.size(), sizeof(meta));
+  std::memcpy(&meta, sidecarIt->second->bytes.data(), sizeof(meta));
+  EXPECT_EQ(meta.wordCount, 65450u);
+  EXPECT_EQ(meta.wordCountIsEstimate, 0);  // author-reported (from OPF), not counted on-device
+
+  const auto indexIt = fake::files.find(kIndexPath);
+  ASSERT_NE(indexIt, fake::files.end());
+  CompactIndexRecord rec;
+  const uint32_t off = offsetOf(0);
+  ASSERT_GE(indexIt->second->bytes.size(), off + sizeof(rec));
+  std::memcpy(&rec, indexIt->second->bytes.data() + off, sizeof(rec));
+  EXPECT_STREQ(rec.relationship1, "Hermione Granger/Draco Malfoy");
+  EXPECT_EQ(rec.wordCount, 65450u);
+}
+
+// The companion "both absent" case: confirmed via the same device-library survey to be the
+// majority outcome (68% of real files), and the user's explicit decision was to leave this
+// blank rather than add a targeted HTML fallback -- so this pins "stays blank, doesn't crash
+// or fabricate a value" as the expected behavior, not an oversight to fix later.
+TEST_F(Ao3LibrarianScrapeGuardTest, NoOpfShipDataLeavesRelationshipBlank) {
+  Epub epub("/Books/Little Hearth Fires.epub", "/.crosspoint");
+  epub.spineItemsCount = 1;
+  epub.fakeTitlePageHtml = R"(<h1><a href="https://archiveofourown.org/works/23725228">Little Hearth Fires</a></h1>)";
+  epub.wordCountValue = "4994";
+  // mainShipValue/otherShipsValue left empty -- the confirmed-common case.
+
+  ASSERT_TRUE(Ao3Librarian::scrape(epub, /*force=*/true));
+
+  const auto indexIt = fake::files.find(kIndexPath);
+  ASSERT_NE(indexIt, fake::files.end());
+  CompactIndexRecord rec;
+  const uint32_t off = offsetOf(0);
+  ASSERT_GE(indexIt->second->bytes.size(), off + sizeof(rec));
+  std::memcpy(&rec, indexIt->second->bytes.data() + off, sizeof(rec));
+  EXPECT_STREQ(rec.relationship1, "");
+  EXPECT_STREQ(rec.relationship2, "");
+  EXPECT_EQ(rec.wordCount, 4994u);  // word count still enriched independently of pairing
 }
 
 }  // namespace

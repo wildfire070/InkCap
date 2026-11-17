@@ -184,8 +184,15 @@ class Epub {
   // at </metadata>, before the manifest. Used by the
   // Library index builder, which reads every EPUB on the card and cannot
   // afford a full load() per book.
+  // fullMetadata, when non-null, receives a copy of the complete internal metadata struct
+  // (rating/chapters/completion/updated/wordCount/fictags/ships/characters, everything this
+  // function otherwise computes and discards) -- for callers that need more than just
+  // title/author/series/genre without paying for a second parse. Forces the fresh-parse path
+  // (bypasses the cached book.bin fast path below), since book.bin doesn't persist `subject`/
+  // plain `series`, so a cached read would silently hand back an incomplete struct.
   bool loadMetadata(std::string& title, std::string& author, bool allowCachedMetadata = true,
-                    std::string* series = nullptr, std::string* genre = nullptr, std::string* seriesIndex = nullptr);
+                    std::string* series = nullptr, std::string* genre = nullptr, std::string* seriesIndex = nullptr,
+                    BookMetadataCache::BookMetadata* fullMetadata = nullptr);
   // Loads optional stable-page and source-spine metadata after a Skip-mode open.
   // Failure leaves normal size-based progress available.
   bool loadXLocations();
@@ -328,6 +335,16 @@ class Epub {
   const std::string& getUpdatedDate() const;
   bool isLiked() const;        // calibre:user_metadata:#like
   bool getReadStatus() const;  // calibre:user_metadata:#readstatus
+
+  // AO3 word count (calibre:user_metadata:#wordcount), author-reported -- distinct from
+  // Ao3Librarian's own on-device chapter-text estimate (see Ao3LibraryMetadata::wordCountIsEstimate).
+  const std::string& getWordCount() const;
+  const std::string& getFicTags() const;    // calibre:user_metadata:#fictags, ", "-joined
+  // Primary pairing (calibre:user_metadata:#mainship) -- empty on files exported before this
+  // column existed; those older files put the combined ship list in getOtherShips() instead.
+  const std::string& getMainShip() const;
+  const std::string& getOtherShips() const;  // calibre:user_metadata:#otherships or #relationships
+  const std::string& getCharacters() const;  // calibre:user_metadata:#characters -- filtered list
 
  private:
   std::string getCachedCoverImagePath(const std::string& coverImageHref) const;
