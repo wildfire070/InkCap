@@ -165,8 +165,8 @@ int main() {
 # stub directory pull Arduino.h in via a *quoted* #include, which resolves relative to their
 # own directory before any -I path is ever consulted -- patching a lone Arduino.h elsewhere
 # and putting it first on -I does not intercept that. So the whole stub directory is copied
-# (cheap; it's a handful of small headers) and only its Arduino.h is patched, leaving the
-# vendored SDK copy on disk untouched.
+# (cheap; it's a handful of small headers) and only its Arduino.h/SdFat.h are patched,
+# leaving the vendored SDK copy on disk untouched.
 def patched_stub_dir(directory):
     stubs = Path(directory) / "patched_stubs"
     shutil.copytree(SDK / "test/host/stubs", stubs)
@@ -175,6 +175,15 @@ def patched_stub_dir(directory):
     needle = "  virtual size_t write(const uint8_t*, size_t) = 0;\n"
     assert needle in original, "SDK's Print stub shape changed; update this patch"
     arduino_h.write_text(original.replace(needle, needle + "  virtual size_t write(uint8_t c) { return write(&c, 1); }\n"))
+    # The real SdFat FsFile::getName() returns the written name's length (0 =
+    # name too long for the buffer); SDCardManager.cpp now checks that return
+    # value, but this stub's getName() is still void. We don't have push
+    # access to freeink-sdk to fix it there, so patch the copy, same as above.
+    sdfat_h = stubs / "SdFat.h"
+    sdfat_original = sdfat_h.read_text()
+    sdfat_needle = "  void getName(char*, size_t) const {}\n"
+    assert sdfat_needle in sdfat_original, "SDK's SdFat stub shape changed; update this patch"
+    sdfat_h.write_text(sdfat_original.replace(sdfat_needle, "  size_t getName(char*, size_t) const { return 0; }\n"))
     return stubs
 
 
