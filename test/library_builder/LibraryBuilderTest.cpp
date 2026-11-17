@@ -34,6 +34,34 @@ namespace {
 
 constexpr char INDEX[] = "/.crosspoint/library.idx";
 
+// Duplicates LibraryBuilder.cpp's own ao3PathHash() so a test can construct a fake AO3 index
+// record under the exact hash the real piggyback-write code will look up.
+uint64_t ao3PathHashForTest(const std::string& path) {
+  uint64_t hash = 14695981039346656037ull;
+  for (const char c : path) {
+    hash ^= static_cast<uint8_t>(c);
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+// Builds a minimal, valid ao3_library_index.bin blob (AO3X v4 header + one record) for
+// seeding fake::add() -- lets a test simulate "this fic was already indexed."
+std::string buildAo3IndexFileWithRecord(const CompactIndexRecord& rec) {
+  std::string blob;
+  blob.append("AO3X", 4);
+  const uint8_t version = 4;
+  blob.append(reinterpret_cast<const char*>(&version), 1);
+  const uint16_t recordCount = 1;
+  blob.append(reinterpret_cast<const char*>(&recordCount), sizeof(recordCount));
+  const uint32_t nextSequence = 7;
+  blob.append(reinterpret_cast<const char*>(&nextSequence), sizeof(nextSequence));
+  const uint8_t reserved = 0;
+  blob.append(reinterpret_cast<const char*>(&reserved), 1);
+  blob.append(reinterpret_cast<const char*>(&rec), sizeof(rec));
+  return blob;
+}
+
 std::string numbered(const char* prefix, const unsigned value) {
   char text[32];
   std::snprintf(text, sizeof(text), "%s%04u", prefix, value);
@@ -538,6 +566,49 @@ TEST_F(LibraryBuilderTest, Ao3PiggybackWriteIsInertWithNoAo3FolderConfigured) {
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
 
   EXPECT_TRUE(Ao3LibrarianDefs::writtenRecords.empty());
+}
+
+TEST_F(LibraryBuilderTest, Ao3PiggybackWritePopulatesSeriesPartFromCalibreSeriesIndex) {
+  fake::add("/Fanfic/story.epub");
+  fake::add("/.crosspoint/ao3_settings.json", R"({"ao3Folder": "/Fanfic"})");
+  fakeFullMetadata["/Fanfic/story.epub"].contentRating = "Explicit";
+  fakeFullMetadata["/Fanfic/story.epub"].seriesName = "Possibilities";
+  fakeFullMetadata["/Fanfic/story.epub"].seriesIndex = "4.0";
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  ASSERT_EQ(Ao3LibrarianDefs::writtenRecords.size(), 1u);
+  EXPECT_EQ(Ao3LibrarianDefs::writtenRecords[0].seriesPart, 4);
+  EXPECT_STREQ(Ao3LibrarianDefs::writtenRecords[0].seriesName, "Possibilities");
+}
+
+// Coverage for the merge-not-overwrite fix: a brand-new piggyback write has no source for
+// fandom or the "finished" flag, but a prior real HTML scrape (Ao3IndexActivity/
+// Ao3Librarian::scrape()) might already have found both. The walk's own cheap OPF check can
+// legitimately re-fire for an already-indexed fic (e.g. after the Library's own metadata
+// cache is rebuilt) -- it must merge fresh OPF data onto the existing record, not blindly
+// replace it with a blanker one.
+TEST_F(LibraryBuilderTest, Ao3PiggybackWritePreservesFandomAndFinishedFlagFromAnExistingRecord) {
+  fake::add("/Fanfic/story.epub");
+  fake::add("/.crosspoint/ao3_settings.json", R"({"ao3Folder": "/Fanfic"})");
+  fakeFullMetadata["/Fanfic/story.epub"].contentRating = "Explicit";
+  fakeFullMetadata["/Fanfic/story.epub"].wordCount = "65450";
+
+  CompactIndexRecord scraped{};
+  strncpy(scraped.title, "Hard Lines", sizeof(scraped.title) - 1);
+  strncpy(scraped.fandom, "Harry Potter - J. K. Rowling", sizeof(scraped.fandom) - 1);
+  scraped.cacheHash = ao3PathHashForTest("/Fanfic/story.epub");
+  scraped.flags = 0x02;  // user-marked finished
+  fake::add("/.crosspoint/ao3_library_index.bin", buildAo3IndexFileWithRecord(scraped));
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  ASSERT_EQ(Ao3LibrarianDefs::writtenRecords.size(), 1u);
+  const CompactIndexRecord& rec = Ao3LibrarianDefs::writtenRecords[0];
+  EXPECT_STREQ(rec.fandom, "Harry Potter - J. K. Rowling");
+  EXPECT_EQ(rec.flags & 0x02, 0x02);
+  EXPECT_EQ(rec.wordCount, 65450u);  // fresh OPF data still applied on top
+  EXPECT_EQ(rec.rating, 'E');
 }
 
 TEST_F(LibraryBuilderTest, SeriesSortUsesNumericOrderThenTitleAndPutsMissingNumbersLast) {
