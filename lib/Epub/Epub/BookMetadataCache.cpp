@@ -13,10 +13,11 @@
 
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
-constexpr uint8_t BOOK_CACHE_VERSION = 13;  // v13 (upstream): namespace-aware OPF parsing; v12: added
-                                            // tags (dc:subject); v11: added seriesName, seriesIndex,
-                                            // contentRating, chapters, completionStatus, updatedDate,
-                                            // liked, readStatus metadata
+constexpr uint8_t BOOK_CACHE_VERSION =
+    14;  // v14: added wordCount, fictags, mainShip, otherShips, characters; v13 (upstream):
+         // namespace-aware OPF parsing; v12: added tags (dc:subject); v11: added seriesName,
+         // seriesIndex, contentRating, chapters, completionStatus, updatedDate, liked,
+         // readStatus metadata
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
@@ -228,7 +229,9 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
                                 metadata.ao3UpdateDate.size() + metadata.seriesName.size() +
                                 metadata.seriesIndex.size() + metadata.contentRating.size() + metadata.chapters.size() +
                                 metadata.completionStatus.size() + metadata.updatedDate.size() +
-                                sizeof(uint32_t) * 14 + sizeof(metadata.ao3IsCompleted) + sizeof(metadata.liked) +
+                                metadata.wordCount.size() + metadata.fictags.size() + metadata.mainShip.size() +
+                                metadata.otherShips.size() + metadata.characters.size() +
+                                sizeof(uint32_t) * 19 + sizeof(metadata.ao3IsCompleted) + sizeof(metadata.liked) +
                                 sizeof(metadata.readStatus);
   const uint32_t lutSize = sizeof(uint32_t) * spineCount + sizeof(uint32_t) * tocCount;
   const uint32_t lutOffset = headerASize + metadataSize;
@@ -257,6 +260,11 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::writeString(bookOut, metadata.updatedDate);
   serialization::writePod(bookOut, metadata.liked);
   serialization::writePod(bookOut, metadata.readStatus);
+  serialization::writeString(bookOut, metadata.wordCount);
+  serialization::writeString(bookOut, metadata.fictags);
+  serialization::writeString(bookOut, metadata.mainShip);
+  serialization::writeString(bookOut, metadata.otherShips);
+  serialization::writeString(bookOut, metadata.characters);
 
   // Loop through spine entries, writing LUT positions
   spineIn.seek(0);
@@ -586,7 +594,12 @@ bool BookMetadataCache::load() {
       !serialization::tryReadString(bookFile, coreMetadata.completionStatus) ||
       !serialization::tryReadString(bookFile, coreMetadata.updatedDate) ||
       !serialization::tryReadPod(bookFile, coreMetadata.liked) ||
-      !serialization::tryReadPod(bookFile, coreMetadata.readStatus)) {
+      !serialization::tryReadPod(bookFile, coreMetadata.readStatus) ||
+      !serialization::tryReadString(bookFile, coreMetadata.wordCount) ||
+      !serialization::tryReadString(bookFile, coreMetadata.fictags) ||
+      !serialization::tryReadString(bookFile, coreMetadata.mainShip) ||
+      !serialization::tryReadString(bookFile, coreMetadata.otherShips) ||
+      !serialization::tryReadString(bookFile, coreMetadata.characters)) {
     LOG_DBG("BMC", "Cache metadata is truncated");
     bookFile.close();
     Storage.remove(bookBinPath.c_str());

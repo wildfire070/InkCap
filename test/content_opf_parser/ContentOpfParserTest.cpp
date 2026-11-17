@@ -197,6 +197,75 @@ TEST(ContentOpfParserMetadata, MetadataOnlyStillCapturesFieldsThatDoNotNeedTheMa
   EXPECT_TRUE(parser.liked);
 }
 
+TEST(ContentOpfParserMetadata, ReadsWordCountFicTagsAndNewSchemeShips) {
+  // Mirrors a real device-sample file using the current column names (#mainship present).
+  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>
+    <dc:title>Hard Lines</dc:title>
+    <dc:creator>fyrelight</dc:creator>
+    <meta name="calibre:user_metadata:#wordcount" content="{&quot;#value#&quot;: 65450}"/>
+    <meta name="calibre:user_metadata:#fictags" content="{&quot;#value#&quot;: [&quot;Co-workers&quot;, &quot;Enemies to Lovers&quot;]}"/>
+    <meta name="calibre:user_metadata:#mainship" content="{&quot;#value#&quot;: [&quot;Hermione Granger/Draco Malfoy&quot;]}"/>
+    <meta name="calibre:user_metadata:#otherships" content="{&quot;#value#&quot;: []}"/>
+    <meta name="calibre:user_metadata:#characters" content="{&quot;#value#&quot;: [&quot;Harry Potter&quot;, &quot;Ron Weasley&quot;]}"/>
+  </metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  </package>)";
+  Storage = {};
+  ContentOpfParser parser("/missing-cache", "OPS/", xml.size(), nullptr, /*collectCssFiles=*/true,
+                          /*metadataOnly=*/true);
+
+  ASSERT_TRUE(parser.setup());
+  EXPECT_LT(parser.write(reinterpret_cast<const uint8_t*>(xml.data()), xml.size()), xml.size());
+  EXPECT_EQ(parser.wordCount, "65450");
+  EXPECT_EQ(parser.fictags, "Co-workers, Enemies to Lovers");
+  EXPECT_EQ(parser.mainShip, "Hermione Granger/Draco Malfoy");
+  EXPECT_EQ(parser.otherShips, "");
+  EXPECT_EQ(parser.characters, "Harry Potter, Ron Weasley");
+}
+
+TEST(ContentOpfParserMetadata, OldSchemeRelationshipsColumnPopulatesOtherShips) {
+  // Older files use the column's pre-rename name (#relationships) and have no separate
+  // #mainship slot at all -- the combined ship list lands in otherShips either way, which
+  // the fallback logic (not this parser) treats as the full list when mainShip is empty.
+  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>
+    <dc:title>Letters</dc:title>
+    <dc:creator>mysterymoon</dc:creator>
+    <meta name="calibre:user_metadata:#relationships" content="{&quot;#value#&quot;: [&quot;Michael Corner/Hermione Granger&quot;]}"/>
+  </metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  </package>)";
+  Storage = {};
+  ContentOpfParser parser("/missing-cache", "OPS/", xml.size(), nullptr, /*collectCssFiles=*/true,
+                          /*metadataOnly=*/true);
+
+  ASSERT_TRUE(parser.setup());
+  EXPECT_LT(parser.write(reinterpret_cast<const uint8_t*>(xml.data()), xml.size()), xml.size());
+  EXPECT_EQ(parser.mainShip, "");
+  EXPECT_EQ(parser.otherShips, "Michael Corner/Hermione Granger");
+}
+
+TEST(ContentOpfParserMetadata, AbsentShipColumnsStayEmptyWithoutFailing) {
+  // The condensed FanFicFare title-page template's real-world OPF shape: #rating/#wordcount/
+  // #fictags present and populated, but no ship or character columns at all -- confirmed as
+  // the dominant case (68%) on the real device library, not a rare edge case.
+  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>
+    <dc:title>Little Hearth Fires</dc:title>
+    <dc:creator>senlinyu</dc:creator>
+    <meta name="calibre:user_metadata:#wordcount" content="{&quot;#value#&quot;: 4994}"/>
+    <meta name="calibre:user_metadata:#fictags" content="{&quot;#value#&quot;: [&quot;Fluff and Smut&quot;]}"/>
+  </metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  </package>)";
+  Storage = {};
+  ContentOpfParser parser("/missing-cache", "OPS/", xml.size(), nullptr, /*collectCssFiles=*/true,
+                          /*metadataOnly=*/true);
+
+  ASSERT_TRUE(parser.setup());
+  EXPECT_LT(parser.write(reinterpret_cast<const uint8_t*>(xml.data()), xml.size()), xml.size());
+  EXPECT_EQ(parser.wordCount, "4994");
+  EXPECT_EQ(parser.fictags, "Fluff and Smut");
+  EXPECT_EQ(parser.mainShip, "");
+  EXPECT_EQ(parser.otherShips, "");
+  EXPECT_EQ(parser.characters, "");
+}
+
 TEST(ContentOpfParserMetadata, CapturesBothBookIdsFromACalibreExportedFanFicFareOpf) {
   // Real shape of a FanFicFare epub exported through Calibre with the BookFusion plugin.
   const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><metadata>

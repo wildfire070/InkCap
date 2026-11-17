@@ -1349,18 +1349,21 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
 }
 
 bool Epub::loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata, std::string* series,
-                        std::string* genre, std::string* seriesIndex) {
+                        std::string* genre, std::string* seriesIndex, BookMetadataCache::BookMetadata* fullMetadata) {
   title.clear();
   author.clear();
   if (series) series->clear();
   if (genre) genre->clear();
   if (seriesIndex) seriesIndex->clear();
+  if (fullMetadata) *fullMetadata = BookMetadataCache::BookMetadata{};
 
   // The reader cache holds title and author but not the Library's series and
   // genre fields. Reuse it for callers that need only title/author; the Library
   // parses OPF metadata once and then keeps the extra fields in its own index.
   // This LOCAL reader does not alter the full load()/spine cache lifecycle.
-  if (allowCachedMetadata && !series && !genre && !seriesIndex) {
+  // fullMetadata forces the fresh-parse path below instead: book.bin doesn't persist
+  // `subject`/plain `series`, so a cached read here would hand back an incomplete struct.
+  if (allowCachedMetadata && !series && !genre && !seriesIndex && !fullMetadata) {
     auto metadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
     if (metadataCache && metadataCache->load()) {
       title = metadataCache->coreMetadata.title;
@@ -1376,6 +1379,11 @@ bool Epub::loadMetadata(std::string& title, std::string& author, const bool allo
   const bool loaded = parseContentOpf(metadata, /*writeSpineEntries=*/false, /*collectCssFiles=*/false,
                                       /*metadataOnly=*/true, seriesIndex);
   if (!loaded) return false;
+
+  // Copy (not move) while `metadata` is still fully intact -- the extraction below
+  // moves several of its fields out, which would leave fullMetadata incomplete if
+  // this ran after.
+  if (fullMetadata) *fullMetadata = metadata;
 
   title = std::move(metadata.title);
   author = std::move(metadata.author);
@@ -3020,6 +3028,46 @@ void Epub::backfillBookIds() {
   // A native AO3 download's ID (ao3-info.bin) and a downloaded BookFusion book's ID (bookfusion.json)
   // aren't in the OPF; pick up what earlier indexing/downloading already stored.
   BookIds::importLegacySidecars(filepath);
+}
+
+const std::string& Epub::getWordCount() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.wordCount;
+}
+
+const std::string& Epub::getFicTags() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.fictags;
+}
+
+const std::string& Epub::getMainShip() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.mainShip;
+}
+
+const std::string& Epub::getOtherShips() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.otherShips;
+}
+
+const std::string& Epub::getCharacters() const {
+  static const std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    return blank;
+  }
+  return bookMetadataCache->coreMetadata.characters;
 }
 
 namespace {

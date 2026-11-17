@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "Ao3LibrarianDefs.h"
 #include "Epub.h"
 #include "LibraryBuilder.h"
 #include "LibraryFileTypes.h"
@@ -111,9 +112,11 @@ class LibraryBuilderTest : public ::testing::Test {
     invalidateLibraryIndex();
     bookMetadata.clear();
     cachedBookMetadata.clear();
+    fakeFullMetadata.clear();
     metadataCacheUse.clear();
     preservedCacheClears.clear();
     preserveCacheState = true;
+    Ao3LibrarianDefs::writtenRecords.clear();
     fake::add("/a.epub");
     fake::add("/b.epub");
   }
@@ -470,6 +473,71 @@ TEST_F(LibraryBuilderTest, SeriesAndGenreSurviveRebuildWithoutReparsing) {
   uint32_t position = 0;
   ASSERT_TRUE(index.readSeriesPosition(record, position));
   EXPECT_NE(position, CLIX_UNKNOWN_SERIES_POSITION);
+}
+
+// Coverage for the AO3 piggyback-write logic added to stageRecord(): for a file under the
+// configured AO3 folder whose already-extracted metadata looks AO3-shaped (the same tag-
+// presence signal Ao3Librarian::scrape() uses), the walk writes a CompactIndexRecord directly
+// -- no second walk, no HTML scrape, no Ao3IndexActivity involvement.
+TEST_F(LibraryBuilderTest, Ao3PiggybackWriteFiresForFileUnderConfiguredFolderWithAo3ShapedMetadata) {
+  fake::add("/Fanfic/story.epub");
+  fake::add("/.crosspoint/ao3_settings.json", R"({"ao3Folder": "/Fanfic"})");
+  bookMetadata["/Fanfic/story.epub"].title = "Hard Lines";
+  bookMetadata["/Fanfic/story.epub"].author = "fyrelight";
+  fakeFullMetadata["/Fanfic/story.epub"].contentRating = "Explicit";
+  fakeFullMetadata["/Fanfic/story.epub"].wordCount = "65450";
+  fakeFullMetadata["/Fanfic/story.epub"].fictags = "Co-workers, Enemies to Lovers";
+  fakeFullMetadata["/Fanfic/story.epub"].mainShip = "Hermione Granger/Draco Malfoy";
+  fakeFullMetadata["/Fanfic/story.epub"].completionStatus = "Completed";
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  ASSERT_EQ(Ao3LibrarianDefs::writtenRecords.size(), 1u);
+  const CompactIndexRecord& rec = Ao3LibrarianDefs::writtenRecords[0];
+  EXPECT_STREQ(rec.title, "Hard Lines");
+  EXPECT_STREQ(rec.author, "fyrelight");
+  EXPECT_EQ(rec.wordCount, 65450u);
+  EXPECT_EQ(rec.rating, 'E');
+  EXPECT_EQ(rec.isCompleted, 1);
+  EXPECT_STREQ(rec.relationship1, "Hermione Granger/Draco Malfoy");
+  EXPECT_STREQ(rec.tags[0], "Co-workers");
+  EXPECT_STREQ(rec.tags[1], "Enemies to Lovers");
+}
+
+TEST_F(LibraryBuilderTest, Ao3PiggybackWriteDoesNotFireOutsideConfiguredFolder) {
+  fake::add("/Books/story.epub");  // NOT under the configured AO3 folder
+  fake::add("/.crosspoint/ao3_settings.json", R"({"ao3Folder": "/Fanfic"})");
+  fakeFullMetadata["/Books/story.epub"].contentRating = "Explicit";
+  fakeFullMetadata["/Books/story.epub"].wordCount = "65450";
+  fakeFullMetadata["/Books/story.epub"].fictags = "Some Tag";
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_TRUE(Ao3LibrarianDefs::writtenRecords.empty());
+}
+
+TEST_F(LibraryBuilderTest, Ao3PiggybackWriteDoesNotFireWithoutAo3ShapedMetadata) {
+  // Under the AO3 folder, but no calibre:user_metadata-shaped data at all -- a regular
+  // non-AO3 book that happens to live there, or one that genuinely has none of it.
+  fake::add("/Fanfic/notes.epub");
+  fake::add("/.crosspoint/ao3_settings.json", R"({"ao3Folder": "/Fanfic"})");
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_TRUE(Ao3LibrarianDefs::writtenRecords.empty());
+}
+
+TEST_F(LibraryBuilderTest, Ao3PiggybackWriteIsInertWithNoAo3FolderConfigured) {
+  // No ao3_settings.json at all -- readAo3FolderSetting() must return empty, not crash or
+  // treat every file as a match.
+  fake::add("/Fanfic/story.epub");
+  fakeFullMetadata["/Fanfic/story.epub"].contentRating = "Explicit";
+  fakeFullMetadata["/Fanfic/story.epub"].wordCount = "65450";
+  fakeFullMetadata["/Fanfic/story.epub"].fictags = "Some Tag";
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+
+  EXPECT_TRUE(Ao3LibrarianDefs::writtenRecords.empty());
 }
 
 TEST_F(LibraryBuilderTest, SeriesSortUsesNumericOrderThenTitleAndPutsMissingNumbersLast) {

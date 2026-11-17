@@ -78,8 +78,10 @@ std::string extractAo3WorkId(const std::string& text) {
 
 // Calibre embeds custom-column data as a JSON blob in a <meta> content attribute.
 // Pull out just the "#value#" field without a full JSON parser: handles a quoted
-// string ("#value#": "Shelf"), a list ("#value#": ["A","B"] -> "A, B"), or a
-// datetime-type column's wrapped object ("#value#": {"__class__": "datetime.datetime",
+// string ("#value#": "Shelf"), a list ("#value#": ["A","B"] -> "A, B"), a bare number
+// ("#value#": 65450, an int-datatype column like #wordcount -- never quoted, unlike
+// every other column this function handles), or a datetime-type column's wrapped
+// object ("#value#": {"__class__": "datetime.datetime",
 // "__value__": "2026-07-06T04:00:00+00:00"} -> the ISO string, __class__ ignored).
 // Returns empty for null/absent. Bounded -- only the extracted value is copied out,
 // not the blob.
@@ -138,6 +140,14 @@ std::string extractCalibreCustomValue(const char* json) {
         readQuoted(j, value);
       }
     }
+  } else if (isdigit(static_cast<unsigned char>(sv[i])) || sv[i] == '-') {
+    // int-datatype custom column (e.g. #wordcount): the value is a bare, unquoted
+    // JSON number -- copy digits (and a leading '-', though word counts are never
+    // negative in practice) until the first non-digit terminator (',' or '}').
+    size_t j = i;
+    if (sv[j] == '-') j++;
+    while (j < sv.size() && isdigit(static_cast<unsigned char>(sv[j]))) j++;
+    value.assign(sv.substr(i, j - i));
   }
   return value;
 }
@@ -622,6 +632,20 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
         self->liked = extractCalibreBoolValue(contentAttr);
       } else if (strcmp(nameAttr, "calibre:user_metadata:#readstatus") == 0) {
         self->readStatus = extractCalibreBoolValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#wordcount") == 0) {
+        self->wordCount = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#fictags") == 0) {
+        self->fictags = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#mainship") == 0) {
+        self->mainShip = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#otherships") == 0 ||
+                 strcmp(nameAttr, "calibre:user_metadata:#relationships") == 0) {
+        // Both names recognized: #otherships is the current name, #relationships is the
+        // same underlying Calibre column (custom_column_15) under its pre-rename name on
+        // older files. Never both present on the same file, so last-write-wins is moot.
+        self->otherShips = extractCalibreCustomValue(contentAttr);
+      } else if (strcmp(nameAttr, "calibre:user_metadata:#characters") == 0) {
+        self->characters = extractCalibreCustomValue(contentAttr);
       }
     }
     // EPUB3 series/collections: <meta property="belongs-to-collection" id="x">Name</meta>

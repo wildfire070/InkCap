@@ -190,6 +190,23 @@ class ContentOpfParser final : public Print {
   bool liked = false;            // calibre:user_metadata:#like
   bool readStatus = false;       // calibre:user_metadata:#readstatus
 
+  // AO3 word count (calibre:user_metadata:#wordcount) -- author-reported, distinct from
+  // Ao3Librarian's own on-device chapter-text estimate (see wordCountIsEstimate elsewhere).
+  std::string wordCount;
+  // AO3 "Additional Tags" (calibre:user_metadata:#fictags), ", "-joined same as `tags` above.
+  std::string fictags;
+  // Primary pairing (calibre:user_metadata:#mainship) -- a newer column; absent on files
+  // exported before it existed. Those older files put the main ship in otherShips instead
+  // (see otherShips below), since there was no separate slot for it yet.
+  std::string mainShip;
+  // Secondary pairings today (calibre:user_metadata:#otherships), or -- on older files
+  // predating #mainship -- the combined full ship list under that column's old name,
+  // calibre:user_metadata:#relationships (same underlying Calibre column, renamed).
+  std::string otherShips;
+  // calibre:user_metadata:#characters -- deliberately excludes characters already named
+  // in a ship field, so this is a filtered, not full, character list.
+  std::string characters;
+
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache, const bool collectCssFiles = true,
                             const bool metadataOnly = false)

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "BookMetadataCache.h"
 #include "HalStorage.h"
 
 struct FakeMetadata {
@@ -17,6 +18,11 @@ struct FakeMetadata {
 
 inline std::map<std::string, FakeMetadata> bookMetadata;
 inline std::map<std::string, FakeMetadata> cachedBookMetadata;
+// AO3-shaped OPF fields, keyed by path, consumed only via the new fullMetadata out-param --
+// separate from FakeMetadata above since the real loadMetadata() computes these into a
+// different struct (BookMetadataCache::BookMetadata) than it returns via title/author/series/
+// genre/seriesIndex.
+inline std::map<std::string, BookMetadataCache::BookMetadata> fakeFullMetadata;
 inline std::vector<bool> metadataCacheUse;
 
 class Epub {
@@ -35,12 +41,13 @@ class Epub {
   }
 
   bool loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata = true,
-                    std::string* series = nullptr, std::string* genre = nullptr, std::string* seriesIndex = nullptr) {
+                    std::string* series = nullptr, std::string* genre = nullptr, std::string* seriesIndex = nullptr,
+                    BookMetadataCache::BookMetadata* fullMetadata = nullptr) {
     ++fake::parses;
     metadataCacheUse.push_back(allowCachedMetadata);
     const auto cached = cachedBookMetadata.find(path);
     const auto& metadata =
-        allowCachedMetadata && !series && !genre && !seriesIndex && cached != cachedBookMetadata.end()
+        allowCachedMetadata && !series && !genre && !seriesIndex && !fullMetadata && cached != cachedBookMetadata.end()
             ? cached->second
             : bookMetadata[path];
     if (!metadata.success) return false;
@@ -49,6 +56,10 @@ class Epub {
     if (series) *series = metadata.series;
     if (genre) *genre = metadata.genre;
     if (seriesIndex) *seriesIndex = metadata.seriesIndex;
+    if (fullMetadata) {
+      const auto fullIt = fakeFullMetadata.find(path);
+      *fullMetadata = fullIt != fakeFullMetadata.end() ? fullIt->second : BookMetadataCache::BookMetadata{};
+    }
     return true;
   }
 };
