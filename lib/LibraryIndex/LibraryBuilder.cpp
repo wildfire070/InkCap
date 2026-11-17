@@ -627,6 +627,39 @@ void splitJoinedTagsInto(const std::string& joined, char dest[AO3_SEARCH_TAG_COU
   }
 }
 
+// Reads an existing live (non-tombstoned) AO3 index record by path hash, without creating
+// or modifying the index -- a read-only duplicate of the scan Ao3Librarian::writeIndexRecord()
+// already does internally (MAX_INDEX_RECORDS/INDEX_HEADER_SIZE/offsetOf() come from
+// Ao3CompactIndexRecord.h, already included above for CompactIndexRecord itself). Lets
+// writeAo3RecordFromWalkMetadata() merge fresh OPF data onto whatever a real HTML scrape
+// already found instead of blindly overwriting it.
+bool findLiveAo3IndexRecord(const uint64_t cacheHash, CompactIndexRecord& out) {
+  HalFile f;
+  if (!Storage.openFileForRead("LIBIDX", "/.crosspoint/ao3_library_index.bin", f)) return false;
+
+  char magic[4];
+  uint8_t version;
+  uint16_t recordCount;
+  const bool headerOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
+  if (!headerOk || memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
+    f.close();
+    return false;
+  }
+
+  f.seek(INDEX_HEADER_SIZE);
+  CompactIndexRecord rec;
+  for (uint16_t i = 0; i < recordCount; i++) {
+    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+    if (!(rec.flags & 1) && rec.cacheHash == cacheHash) {
+      out = rec;
+      f.close();
+      return true;
+    }
+  }
+  f.close();
+  return false;
+}
+
 // Builds and writes a CompactIndexRecord directly from the metadata this walk's own
 // loadMetadata() call already extracted -- no second parse, no HTML scrape. Mirrors
 // Ao3Librarian::scrape()'s own Tier-1 field mapping (see that function's OPF-enrichment
@@ -634,35 +667,82 @@ void splitJoinedTagsInto(const std::string& joined, char dest[AO3_SEARCH_TAG_COU
 // Only called for files under the configured AO3 folder whose OPF data looks AO3-shaped;
 // everything else (no calibre:user_metadata block, or ambiguous pairing data) is left for
 // the existing, separate Ao3IndexActivity pass to resolve via its own HTML-scrape fallback.
+//
+// Starts from any existing live record for this fic instead of a blank slate: the OPF alone
+// can never recover fandom, and this walk's own cheap check (rating or fictags present) can
+// legitimately pass on a later run with less data than a prior real HTML scrape found (e.g.
+// only one of rating/fictags populated this time) -- a blind overwrite would silently erase
+// fandom/seriesPart/the "finished" flag the next time this fic's piggyback write fires (e.g.
+// after the Library's own metadata cache is rebuilt), even though nothing about the fic
+// actually changed. Only replace a field when the fresh OPF data actually has something for it.
 void writeAo3RecordFromWalkMetadata(const BookMetadataCache::BookMetadata& fullMeta, const std::string& title,
                                      const std::string& author, const std::string& fullPath) {
+  const uint64_t cacheHash = ao3PathHash(fullPath.c_str(), fullPath.size());
+
   CompactIndexRecord rec;
-  memset(&rec, 0, sizeof(rec));
+  const bool hasExisting = findLiveAo3IndexRecord(cacheHash, rec);
+  if (!hasExisting) {
+    memset(&rec, 0, sizeof(rec));
+  }
+  rec.cacheHash = cacheHash;
+
   strncpy(rec.title, title.c_str(), sizeof(rec.title) - 1);
+  rec.title[sizeof(rec.title) - 1] = '\0';
   strncpy(rec.author, author.c_str(), sizeof(rec.author) - 1);
-  strncpy(rec.seriesName, fullMeta.seriesName.c_str(), sizeof(rec.seriesName) - 1);
-  rec.wordCount = static_cast<uint32_t>(strtoul(fullMeta.wordCount.c_str(), nullptr, 10));
-  rec.rating = Ao3Librarian::mapRating(fullMeta.contentRating.c_str());
-  rec.isCompleted = fullMeta.completionStatus == "Completed" ? 1 : 0;
-  rec.cacheHash = ao3PathHash(fullPath.c_str(), fullPath.size());
-  splitJoinedTagsInto(fullMeta.fictags, rec.tags);
+  rec.author[sizeof(rec.author) - 1] = '\0';
+
+  if (!fullMeta.seriesName.empty()) {
+    strncpy(rec.seriesName, fullMeta.seriesName.c_str(), sizeof(rec.seriesName) - 1);
+    rec.seriesName[sizeof(rec.seriesName) - 1] = '\0';
+  }
+  // Calibre's series_index ("4.0", occasionally "4.5" for a sub-numbered volume) parses the
+  // same way AO3's own "Part N of ..." text does on the HTML-scrape path (Ao3Librarian.cpp's
+  // atoi-based parse): truncates to the leading integer part.
+  if (!fullMeta.seriesIndex.empty()) {
+    const int part = atoi(fullMeta.seriesIndex.c_str());
+    if (part > 0) rec.seriesPart = static_cast<uint16_t>(part);
+  }
+  if (!fullMeta.wordCount.empty()) {
+    const uint32_t wc = static_cast<uint32_t>(strtoul(fullMeta.wordCount.c_str(), nullptr, 10));
+    if (wc > 0) rec.wordCount = wc;
+  }
+  // mapRating("") already returns '-' (unknown), matching a brand-new record's zeroed-then-
+  // corrected default -- only skip recomputing it when an existing record already has a real
+  // rating and this pass has nothing fresh to offer.
+  if (!fullMeta.contentRating.empty() || !hasExisting) {
+    rec.rating = Ao3Librarian::mapRating(fullMeta.contentRating.c_str());
+  }
+  if (!fullMeta.completionStatus.empty()) {
+    rec.isCompleted = fullMeta.completionStatus == "Completed" ? 1 : 0;
+  }
+  if (!fullMeta.fictags.empty()) {
+    splitJoinedTagsInto(fullMeta.fictags, rec.tags);
+  }
 
   // Pairing: same mainShip -> otherShips -> blank cascade as Ao3Librarian::scrape(), since
   // the same real-world data shapes apply here (confirmed via the device-library survey).
-  if (!fullMeta.mainShip.empty()) {
-    strncpy(rec.relationship1, fullMeta.mainShip.c_str(), sizeof(rec.relationship1) - 1);
-    if (!fullMeta.otherShips.empty()) {
-      strncpy(rec.relationship2, fullMeta.otherShips.c_str(), sizeof(rec.relationship2) - 1);
-    }
-  } else if (!fullMeta.otherShips.empty()) {
-    const size_t comma = fullMeta.otherShips.find(", ");
-    if (comma == std::string::npos) {
-      strncpy(rec.relationship1, fullMeta.otherShips.c_str(), sizeof(rec.relationship1) - 1);
+  // Only replace what's there if the OPF actually has ship data this time.
+  if (!fullMeta.mainShip.empty() || !fullMeta.otherShips.empty()) {
+    memset(rec.relationship1, 0, sizeof(rec.relationship1));
+    memset(rec.relationship2, 0, sizeof(rec.relationship2));
+    if (!fullMeta.mainShip.empty()) {
+      strncpy(rec.relationship1, fullMeta.mainShip.c_str(), sizeof(rec.relationship1) - 1);
+      if (!fullMeta.otherShips.empty()) {
+        strncpy(rec.relationship2, fullMeta.otherShips.c_str(), sizeof(rec.relationship2) - 1);
+      }
     } else {
-      strncpy(rec.relationship1, fullMeta.otherShips.substr(0, comma).c_str(), sizeof(rec.relationship1) - 1);
-      strncpy(rec.relationship2, fullMeta.otherShips.substr(comma + 2).c_str(), sizeof(rec.relationship2) - 1);
+      const size_t comma = fullMeta.otherShips.find(", ");
+      if (comma == std::string::npos) {
+        strncpy(rec.relationship1, fullMeta.otherShips.c_str(), sizeof(rec.relationship1) - 1);
+      } else {
+        strncpy(rec.relationship1, fullMeta.otherShips.substr(0, comma).c_str(), sizeof(rec.relationship1) - 1);
+        strncpy(rec.relationship2, fullMeta.otherShips.substr(comma + 2).c_str(), sizeof(rec.relationship2) - 1);
+      }
     }
   }
+  // fandom and the tombstone/finished flag bits are never touched here -- this walk's OPF-only
+  // data has no source for either; whatever the lookup above found (or the zeroed default for
+  // a brand-new record) carries through untouched.
 
   Ao3Librarian::writeIndexRecord(rec);
 }

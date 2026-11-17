@@ -8,6 +8,7 @@ class BookMetadataCache {
  public:
   struct BookMetadata {
     std::string seriesName;
+    std::string seriesIndex;
     std::string contentRating;
     std::string completionStatus;
     std::string wordCount;
