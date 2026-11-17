@@ -31,6 +31,7 @@
 #include "Ao3LibraryMetadata.h"
 #include "Epub.h"
 #include "HalStorage.h"
+#include "ZipFile.h"
 
 namespace {
 
@@ -151,6 +152,69 @@ TEST_F(Ao3LibrarianScrapeGuardTest, NoOpfShipDataLeavesRelationshipBlank) {
   EXPECT_STREQ(rec.relationship1, "");
   EXPECT_STREQ(rec.relationship2, "");
   EXPECT_EQ(rec.wordCount, 4994u);  // word count still enriched independently of pairing
+}
+
+// Same cascade, for series info: the condensed template has no "Part N of ..." text either,
+// so parseTitlePage() leaves meta->seriesPart at 0 -- the same trust signal the fallback
+// above checks for wordCount/ships. getSeriesIndex()/getSeriesName() simulate what Calibre's
+// native series fields would supply for such a file.
+TEST_F(Ao3LibrarianScrapeGuardTest, OpfSuppliesSeriesPartTheCondensedTemplateCannot) {
+  Epub epub("/Books/Possibilities Part 4.epub", "/.crosspoint");
+  epub.spineItemsCount = 1;
+  epub.fakeTitlePageHtml = R"(<h1><a href="https://archiveofourown.org/works/11111111">Part Four</a></h1>)";
+  epub.seriesIndexValue = "4.0";
+  epub.seriesNameValue = "Possibilities";
+
+  ASSERT_TRUE(Ao3Librarian::scrape(epub, /*force=*/true));
+
+  const auto indexIt = fake::files.find(kIndexPath);
+  ASSERT_NE(indexIt, fake::files.end());
+  CompactIndexRecord rec;
+  const uint32_t off = offsetOf(0);
+  ASSERT_GE(indexIt->second->bytes.size(), off + sizeof(rec));
+  std::memcpy(&rec, indexIt->second->bytes.data() + off, sizeof(rec));
+  EXPECT_EQ(rec.seriesPart, 4);
+  EXPECT_STREQ(rec.seriesName, "Possibilities");
+}
+
+// Coverage for writeIndexRecord()'s own flags-preservation fix: bit 0 (tombstone) and bit 1
+// ("finished", set by setRecordFinished() via its own direct read-modify-write, entirely
+// separate from scrape()) have no source in a fresh scrape -- it always passes flags=0 -- so
+// an update must not clobber what already lived in the matched slot.
+TEST_F(Ao3LibrarianScrapeGuardTest, RescrapePreservesTheFinishedFlagAnExistingRecordHad) {
+  Epub epub("/Books/Hard Lines.epub", "/.crosspoint");
+  epub.spineItemsCount = 1;
+  epub.fakeTitlePageHtml = R"(<h1><a href="https://archiveofourown.org/works/59081659">Hard Lines</a></h1>)";
+  epub.wordCountValue = "65450";
+
+  // Seed an existing AO3X v4 index with one live record for this exact fic, already marked
+  // "finished" by the user.
+  CompactIndexRecord existing{};
+  existing.cacheHash = ZipFile::fnvHash64(epub.getPath().c_str(), epub.getPath().size());
+  existing.flags = 0x02;
+  std::string blob;
+  blob.append("AO3X", 4);
+  const uint8_t version = 4;
+  blob.append(reinterpret_cast<const char*>(&version), 1);
+  const uint16_t recordCount = 1;
+  blob.append(reinterpret_cast<const char*>(&recordCount), sizeof(recordCount));
+  const uint32_t nextSequence = 7;
+  blob.append(reinterpret_cast<const char*>(&nextSequence), sizeof(nextSequence));
+  const uint8_t reserved = 0;
+  blob.append(reinterpret_cast<const char*>(&reserved), 1);
+  blob.append(reinterpret_cast<const char*>(&existing), sizeof(existing));
+  fake::add(kIndexPath, blob);
+
+  ASSERT_TRUE(Ao3Librarian::scrape(epub, /*force=*/true));
+
+  const auto indexIt = fake::files.find(kIndexPath);
+  ASSERT_NE(indexIt, fake::files.end());
+  CompactIndexRecord rec;
+  const uint32_t off = offsetOf(0);
+  ASSERT_GE(indexIt->second->bytes.size(), off + sizeof(rec));
+  std::memcpy(&rec, indexIt->second->bytes.data() + off, sizeof(rec));
+  EXPECT_EQ(rec.flags & 0x02, 0x02);
+  EXPECT_EQ(rec.wordCount, 65450u);  // fresh scrape data still applied on top
 }
 
 }  // namespace
