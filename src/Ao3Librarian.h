@@ -63,10 +63,21 @@ class Ao3Librarian {
   static bool writeIndexRecord(const CompactIndexRecord& rec);
 
   /**
-   * @brief While one of these is alive (a bulk index or cache pass), writeIndexRecord() and
-   * liveRecordCount() keep an in-RAM map of the index -- hash -> slot, free slots, live count --
-   * instead of re-reading the whole file for every book, which made indexing N books read O(N^2)
-   * records. Costs ~10 bytes per live book (20 KB at 2000) and is freed when the last batch ends;
+   * @brief Looks up a live (non-tombstoned) index record by its path hash, without creating
+   * or modifying the index. Uses the same IndexWriteBatch in-RAM map writeIndexRecord() itself
+   * uses when one is active, so a caller merging fresh data onto an existing record (rather
+   * than overwriting it blindly) gets the same O(1)-amortized lookup inside a batch that
+   * writeIndexRecord() already does -- not a fresh O(index-size) scan per call.
+   * @return true and fills `out` if a live record with this hash exists.
+   */
+  static bool findLiveIndexRecord(uint64_t cacheHash, CompactIndexRecord& out);
+
+  /**
+   * @brief While one of these is alive (a bulk index or cache pass), writeIndexRecord(),
+   * findLiveIndexRecord(), and liveRecordCount() keep an in-RAM map of the index -- hash ->
+   * slot, free slots, live count -- instead of re-reading the whole file for every book, which
+   * made indexing N books read O(N^2) records. Costs ~10 bytes per live book (20 KB at 2000) and
+   * is freed when the last batch ends;
    * without a batch, or if that memory isn't available, the plain scan is used. Any other change
    * to the index (tombstone, cleanup) drops the map, so it is never trusted past a change it
    * didn't make.
