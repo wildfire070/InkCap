@@ -158,9 +158,11 @@ bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches
 
 // Calibre embeds custom-column data as a JSON blob in a <meta> content attribute.
 // Pull out just the "#value#" field without a full JSON parser: handles a quoted
-// string ("#value#": "Shelf"), a list ("#value#": ["A","B"] -> "A, B"), or a
-// datetime-type column's wrapped object ("#value#": {"__class__": "datetime.datetime",
-// "__value__": "2026-07-06T04:00:00+00:00"} -> the ISO string, __class__ ignored).
+// string ("#value#": "Shelf"), a list ("#value#": ["A","B"] -> "A, B"), a bare number
+// ("#value#": 65450, an int-datatype column -- never quoted, unlike every other column
+// this function handles), or a datetime-type column's wrapped object ("#value#":
+// {"__class__": "datetime.datetime", "__value__": "2026-07-06T04:00:00+00:00"} ->
+// the ISO string, __class__ ignored).
 // Returns empty for null/absent. Bounded -- only the extracted value is copied out,
 // not the blob.
 std::string extractCalibreCustomValue(const char* json) {
@@ -218,6 +220,14 @@ std::string extractCalibreCustomValue(const char* json) {
         readQuoted(j, value);
       }
     }
+  } else if (isdigit(static_cast<unsigned char>(sv[i])) || sv[i] == '-') {
+    // int-datatype custom column: the value is a bare, unquoted JSON number -- copy
+    // digits (and a leading '-', though a real-world column value is never negative
+    // in practice) until the first non-digit terminator (',' or '}').
+    size_t j = i;
+    if (sv[j] == '-') j++;
+    while (j < sv.size() && isdigit(static_cast<unsigned char>(sv[j]))) j++;
+    value.assign(sv.substr(i, j - i));
   }
   return value;
 }

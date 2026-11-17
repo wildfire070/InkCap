@@ -196,6 +196,23 @@ TEST(ContentOpfParserMetadata, MetadataOnlyStillCapturesFieldsThatDoNotNeedTheMa
   EXPECT_TRUE(parser.liked);
 }
 
+TEST(ContentOpfParserMetadata, BareJsonNumberCustomColumnValueIsExtracted) {
+  // extractCalibreCustomValue() must handle a bare, unquoted JSON number -- Calibre writes an
+  // int-datatype custom column's "#value#" this way, unlike every other column this function
+  // handles (string/list/datetime), which are all quoted. No int-datatype column is dispatched
+  // on this branch today, so #completionstatus is used purely as a vehicle to exercise the
+  // extraction function itself through its real dispatch path.
+  const std::string xml = R"(<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>
+    <meta name="calibre:user_metadata:#completionstatus" content="{&quot;#value#&quot;: 65450}"/>
+  </metadata></package>)";
+  ContentOpfParser parser(kEmptyPath, kEmptyPath, xml.size(), nullptr, /*collectCssFiles=*/true,
+                          /*metadataOnly=*/true);
+
+  ASSERT_TRUE(parser.setup());
+  EXPECT_LT(parser.write(reinterpret_cast<const uint8_t*>(xml.data()), xml.size()), xml.size());
+  EXPECT_EQ(parser.completionStatus, "65450");
+}
+
 TEST(ContentOpfParserMetadata, CapturesBothBookIdsFromACalibreExportedFanFicFareOpf) {
   // Real shape of a FanFicFare epub exported through Calibre with the BookFusion plugin.
   const std::string xml =
