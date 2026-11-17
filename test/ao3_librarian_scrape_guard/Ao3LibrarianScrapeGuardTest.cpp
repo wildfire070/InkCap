@@ -26,6 +26,8 @@
 // ran; false means it legitimately attempted real work and failed for lack of real content.
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "Ao3CompactIndexRecord.h"
 #include "Ao3Librarian.h"
 #include "Ao3LibraryMetadata.h"
@@ -36,6 +38,24 @@
 namespace {
 
 constexpr const char* kIndexPath = "/.crosspoint/ao3_library_index.bin";
+
+// Builds a minimal, valid ao3_library_index.bin blob (AO3X v4 header + the given records) for
+// seeding fake::add() -- lets a test simulate "this index already has these entries."
+std::string buildAo3IndexFile(const std::vector<CompactIndexRecord>& records, const uint32_t nextSequence = 7) {
+  std::string blob;
+  blob.append("AO3X", 4);
+  const uint8_t version = 4;
+  blob.append(reinterpret_cast<const char*>(&version), 1);
+  const uint16_t recordCount = static_cast<uint16_t>(records.size());
+  blob.append(reinterpret_cast<const char*>(&recordCount), sizeof(recordCount));
+  blob.append(reinterpret_cast<const char*>(&nextSequence), sizeof(nextSequence));
+  const uint8_t reserved = 0;
+  blob.append(reinterpret_cast<const char*>(&reserved), 1);
+  for (const auto& rec : records) {
+    blob.append(reinterpret_cast<const char*>(&rec), sizeof(rec));
+  }
+  return blob;
+}
 
 class Ao3LibrarianScrapeGuardTest : public ::testing::Test {
  protected:
@@ -192,18 +212,7 @@ TEST_F(Ao3LibrarianScrapeGuardTest, RescrapePreservesTheFinishedFlagAnExistingRe
   CompactIndexRecord existing{};
   existing.cacheHash = ZipFile::fnvHash64(epub.getPath().c_str(), epub.getPath().size());
   existing.flags = 0x02;
-  std::string blob;
-  blob.append("AO3X", 4);
-  const uint8_t version = 4;
-  blob.append(reinterpret_cast<const char*>(&version), 1);
-  const uint16_t recordCount = 1;
-  blob.append(reinterpret_cast<const char*>(&recordCount), sizeof(recordCount));
-  const uint32_t nextSequence = 7;
-  blob.append(reinterpret_cast<const char*>(&nextSequence), sizeof(nextSequence));
-  const uint8_t reserved = 0;
-  blob.append(reinterpret_cast<const char*>(&reserved), 1);
-  blob.append(reinterpret_cast<const char*>(&existing), sizeof(existing));
-  fake::add(kIndexPath, blob);
+  fake::add(kIndexPath, buildAo3IndexFile({existing}));
 
   ASSERT_TRUE(Ao3Librarian::scrape(epub, /*force=*/true));
 
@@ -215,6 +224,50 @@ TEST_F(Ao3LibrarianScrapeGuardTest, RescrapePreservesTheFinishedFlagAnExistingRe
   std::memcpy(&rec, indexIt->second->bytes.data() + off, sizeof(rec));
   EXPECT_EQ(rec.flags & 0x02, 0x02);
   EXPECT_EQ(rec.wordCount, 65450u);  // fresh scrape data still applied on top
+}
+
+// Coverage for the shared lookup findLiveIndexRecord() and writeIndexRecord() now both use
+// (see locateRecord() in Ao3Librarian.cpp) -- a correctness check on the public entry point
+// itself. The batched case below only confirms findLiveIndexRecord() still returns the right
+// answer with an IndexWriteBatch active (i.e. nothing breaks or misreads when nested inside
+// one) -- both the cached and plain-scan paths converge on the same correct result by design,
+// so this can't distinguish which one actually ran; that's a performance property, not a
+// black-box-observable one, and isn't what this test is for.
+TEST_F(Ao3LibrarianScrapeGuardTest, FindLiveIndexRecordLocatesAnExistingRecordUnbatched) {
+  CompactIndexRecord target{};
+  target.cacheHash = 0x1234;
+  strncpy(target.title, "Hard Lines", sizeof(target.title) - 1);
+  fake::add(kIndexPath, buildAo3IndexFile({target}));
+
+  CompactIndexRecord out{};
+  EXPECT_TRUE(Ao3Librarian::findLiveIndexRecord(0x1234, out));
+  EXPECT_STREQ(out.title, "Hard Lines");
+}
+
+TEST_F(Ao3LibrarianScrapeGuardTest, FindLiveIndexRecordSkipsATombstonedMatch) {
+  CompactIndexRecord target{};
+  target.cacheHash = 0x1234;
+  target.flags = 0x01;  // tombstoned
+  fake::add(kIndexPath, buildAo3IndexFile({target}));
+
+  CompactIndexRecord out{};
+  EXPECT_FALSE(Ao3Librarian::findLiveIndexRecord(0x1234, out));
+}
+
+TEST_F(Ao3LibrarianScrapeGuardTest, FindLiveIndexRecordStillWorksCorrectlyInsideAnActiveBatch) {
+  CompactIndexRecord a{};
+  a.cacheHash = 0x1111;
+  strncpy(a.title, "First Fic", sizeof(a.title) - 1);
+  CompactIndexRecord b{};
+  b.cacheHash = 0x2222;
+  strncpy(b.title, "Second Fic", sizeof(b.title) - 1);
+  fake::add(kIndexPath, buildAo3IndexFile({a, b}));
+
+  Ao3Librarian::IndexWriteBatch batch;
+  CompactIndexRecord out{};
+  EXPECT_TRUE(Ao3Librarian::findLiveIndexRecord(0x2222, out));
+  EXPECT_STREQ(out.title, "Second Fic");
+  EXPECT_FALSE(Ao3Librarian::findLiveIndexRecord(0x3333, out));
 }
 
 }  // namespace

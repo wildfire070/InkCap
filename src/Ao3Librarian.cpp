@@ -1421,6 +1421,66 @@ int32_t cachedSlotFor(const uint64_t hash) {
   return prev->hash == hash ? prev->slot : -1;
 }
 
+// Shared by writeIndexRecord() (which also needs freeSlot/liveCount to decide where to append
+// a non-matching record) and Ao3Librarian::findLiveIndexRecord() (a pure lookup, which doesn't).
+// Uses the IndexWriteBatch's in-RAM map when one is active, the same way writeIndexRecord()'s
+// own update-vs-append decision already does -- so a caller that wraps a bulk pass (e.g. the
+// Library walk's AO3 piggyback write) in a batch gets O(1)-amortized lookups here too, not just
+// on the write side. `f`'s header must already be read (recordCount/nextSequence valid); this
+// repositions `f` as needed. Returns true and fills `existing` on a live match.
+bool locateRecord(HalFile& f, const uint16_t recordCount, const uint32_t nextSequence, const uint64_t targetHash,
+                   int32_t& updateSlot, int32_t& freeSlot, uint16_t& liveCount, bool& planned,
+                   CompactIndexRecord& existing) {
+  updateSlot = -1;
+  freeSlot = -1;
+  liveCount = 0;
+  planned = false;
+
+  if (gIndexBatchDepth > 0) {
+    const uint32_t fileSize = static_cast<uint32_t>(f.size());
+    if (!indexCacheMatches(recordCount, nextSequence, fileSize)) {
+      buildIndexCache(f, recordCount, nextSequence, fileSize);
+    }
+    if (gIndexCache.valid) {
+      updateSlot = cachedSlotFor(targetHash);
+      if (updateSlot >= 0) {
+        f.seek(offsetOf(static_cast<uint16_t>(updateSlot)));
+        if (f.read((uint8_t*)&existing, sizeof(existing)) != sizeof(existing)) {
+          dropIndexCache();  // can't trust it; fall back to the scan below
+          updateSlot = -1;
+        }
+      }
+      if (gIndexCache.valid) {
+        freeSlot = gIndexCache.freeSlots.empty() ? -1 : gIndexCache.freeSlots.front();
+        liveCount = static_cast<uint16_t>(gIndexCache.live.size());
+        planned = true;
+      }
+    }
+  }
+
+  if (!planned) {
+    updateSlot = -1;
+    freeSlot = -1;
+    liveCount = 0;
+    f.seek(offsetOf(0));
+    CompactIndexRecord scan;
+    for (uint16_t i = 0; i < recordCount; i++) {
+      if (f.read((uint8_t*)&scan, sizeof(scan)) != sizeof(scan)) break;
+      if (scan.flags & 1) {
+        if (freeSlot < 0) freeSlot = i;
+      } else {
+        liveCount++;
+        if (scan.cacheHash == targetHash) {
+          updateSlot = i;
+          existing = scan;
+        }
+      }
+    }
+  }
+
+  return updateSlot >= 0;
+}
+
 }  // namespace
 
 Ao3Librarian::IndexWriteBatch::IndexWriteBatch() { gIndexBatchDepth++; }
@@ -1522,72 +1582,20 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
   }
 
   int32_t updateSlot = -1;
-  uint32_t preservedSeq = 0;
-  // Preserved across an update the same way addedSequence is: bit 0 (tombstone) and bit 1
-  // ("finished", set by setRecordFinished() via its own direct read-modify-write, entirely
-  // outside this function) have no source in a fresh scrape/rebuild -- a caller blindly
-  // passing flags=0 must never clear a flag something else deliberately set.
-  uint8_t preservedFlags = 0;
   int32_t freeSlot = -1;
   uint16_t liveCount = 0;
-  CompactIndexRecord existing;
-
-  // Inside an IndexWriteBatch, plan from the in-RAM map instead of reading every record.
   bool planned = false;
-  if (gIndexBatchDepth > 0) {
-    const uint32_t fileSize = static_cast<uint32_t>(f.size());
-    if (!indexCacheMatches(recordCount, nextSequence, fileSize)) {
-      buildIndexCache(f, recordCount, nextSequence, fileSize);
-    }
-    if (gIndexCache.valid) {
-      updateSlot = cachedSlotFor(rec.cacheHash);
-      if (updateSlot >= 0) {
-        f.seek(offsetOf(static_cast<uint16_t>(updateSlot)));
-        if (f.read((uint8_t*)&existing, sizeof(existing)) == sizeof(existing)) {
-          preservedSeq = existing.addedSequence;
-          preservedFlags = existing.flags;
-        } else {
-          dropIndexCache();  // can't trust it; fall back to the scan below
-          updateSlot = -1;
-        }
-      }
-      if (gIndexCache.valid) {
-        freeSlot = gIndexCache.freeSlots.empty() ? -1 : gIndexCache.freeSlots.front();
-        liveCount = static_cast<uint16_t>(gIndexCache.live.size());
-        planned = true;
-      }
-    }
-  }
-
-  if (!planned) {
-    updateSlot = -1;
-    preservedSeq = 0;
-    preservedFlags = 0;
-    freeSlot = -1;
-    liveCount = 0;
-    f.seek(offsetOf(0));
-    for (uint16_t i = 0; i < recordCount; i++) {
-      if (f.read((uint8_t*)&existing, sizeof(existing)) != sizeof(existing)) {
-        break;
-      }
-      if (existing.flags & 1) {
-        if (freeSlot < 0) freeSlot = i;
-      } else {
-        liveCount++;
-        if (existing.cacheHash == rec.cacheHash) {
-          updateSlot = i;
-          preservedSeq = existing.addedSequence;
-          preservedFlags = existing.flags;
-        }
-      }
-    }
-  }
+  CompactIndexRecord existing;
+  locateRecord(f, recordCount, nextSequence, rec.cacheHash, updateSlot, freeSlot, liveCount, planned, existing);
 
   CompactIndexRecord recToWrite = rec;
 
   if (updateSlot >= 0) {
-    recToWrite.addedSequence = preservedSeq;
-    recToWrite.flags = preservedFlags;
+    // addedSequence and flags (bit 0 tombstone, bit 1 "finished") have no source in a fresh
+    // scrape/rebuild -- a caller blindly passing flags=0 must never clear a flag something
+    // else (setRecordFinished(), its own direct read-modify-write) deliberately set.
+    recToWrite.addedSequence = existing.addedSequence;
+    recToWrite.flags = existing.flags;
     f.seek(offsetOf(updateSlot));
     if (f.write((uint8_t*)&recToWrite, sizeof(recToWrite)) != sizeof(recToWrite)) dropIndexCache();
     f.close();
@@ -1635,6 +1643,31 @@ bool Ao3Librarian::writeIndexRecord(const CompactIndexRecord& rec) {
 
   f.close();
   return true;
+}
+
+bool Ao3Librarian::findLiveIndexRecord(const uint64_t cacheHash, CompactIndexRecord& out) {
+  const char* indexPath = "/.crosspoint/ao3_library_index.bin";
+  HalFile f;
+  if (!Storage.openFileForRead("AO3L", indexPath, f)) return false;
+
+  char magic[4];
+  uint8_t version;
+  uint16_t recordCount;
+  uint32_t nextSequence;
+  uint8_t reserved[1];
+  const bool headerOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2 &&
+                         f.read((uint8_t*)&nextSequence, 4) == 4 && f.read(reserved, 1) == 1;
+  if (!headerOk || memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
+    f.close();
+    return false;
+  }
+
+  int32_t updateSlot = -1, freeSlot = -1;
+  uint16_t liveCount = 0;
+  bool planned = false;
+  const bool found = locateRecord(f, recordCount, nextSequence, cacheHash, updateSlot, freeSlot, liveCount, planned, out);
+  f.close();
+  return found;
 }
 
 bool Ao3Librarian::tombstoneRecord(const std::string& epubPath) {

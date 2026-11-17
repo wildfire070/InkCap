@@ -627,39 +627,6 @@ void splitJoinedTagsInto(const std::string& joined, char dest[AO3_SEARCH_TAG_COU
   }
 }
 
-// Reads an existing live (non-tombstoned) AO3 index record by path hash, without creating
-// or modifying the index -- a read-only duplicate of the scan Ao3Librarian::writeIndexRecord()
-// already does internally (MAX_INDEX_RECORDS/INDEX_HEADER_SIZE/offsetOf() come from
-// Ao3CompactIndexRecord.h, already included above for CompactIndexRecord itself). Lets
-// writeAo3RecordFromWalkMetadata() merge fresh OPF data onto whatever a real HTML scrape
-// already found instead of blindly overwriting it.
-bool findLiveAo3IndexRecord(const uint64_t cacheHash, CompactIndexRecord& out) {
-  HalFile f;
-  if (!Storage.openFileForRead("LIBIDX", "/.crosspoint/ao3_library_index.bin", f)) return false;
-
-  char magic[4];
-  uint8_t version;
-  uint16_t recordCount;
-  const bool headerOk = f.read(magic, 4) == 4 && f.read(&version, 1) == 1 && f.read((uint8_t*)&recordCount, 2) == 2;
-  if (!headerOk || memcmp(magic, "AO3X", 4) != 0 || version != 4 || recordCount > MAX_INDEX_RECORDS) {
-    f.close();
-    return false;
-  }
-
-  f.seek(INDEX_HEADER_SIZE);
-  CompactIndexRecord rec;
-  for (uint16_t i = 0; i < recordCount; i++) {
-    if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-    if (!(rec.flags & 1) && rec.cacheHash == cacheHash) {
-      out = rec;
-      f.close();
-      return true;
-    }
-  }
-  f.close();
-  return false;
-}
-
 // Builds and writes a CompactIndexRecord directly from the metadata this walk's own
 // loadMetadata() call already extracted -- no second parse, no HTML scrape. Mirrors
 // Ao3Librarian::scrape()'s own Tier-1 field mapping (see that function's OPF-enrichment
@@ -680,7 +647,7 @@ void writeAo3RecordFromWalkMetadata(const BookMetadataCache::BookMetadata& fullM
   const uint64_t cacheHash = ao3PathHash(fullPath.c_str(), fullPath.size());
 
   CompactIndexRecord rec;
-  const bool hasExisting = findLiveAo3IndexRecord(cacheHash, rec);
+  const bool hasExisting = Ao3Librarian::findLiveIndexRecord(cacheHash, rec);
   if (!hasExisting) {
     memset(&rec, 0, sizeof(rec));
   }
@@ -1984,6 +1951,17 @@ static bool rebuildLibraryIndex(const char* rootPath, BuildStats& stats, const b
   LOG_DBG("LIBIDX", "phase prepare/prior: %ums", static_cast<unsigned>(millis() - startMs));
   [[maybe_unused]] const uint32_t walkStartMs = millis();
   bool stageFlushed = false;
+  // Batches every AO3 piggyback-write lookup/update across the whole walk into the shared
+  // in-RAM index map Ao3Librarian::writeIndexRecord()/findLiveIndexRecord() already maintain
+  // for exactly this purpose -- without it, each matching file pays its own fresh O(index-size)
+  // scan twice (once to look up any existing record to merge onto, once more inside
+  // writeIndexRecord() itself), turning a walk touching M AO3 fics into O(M*index-size)
+  // scanning. Skipped entirely when no AO3 folder is configured, since the piggyback write can
+  // never fire in that case.
+  std::optional<Ao3Librarian::IndexWriteBatch> ao3Batch;
+  if (!st.ao3Folder.empty()) {
+    ao3Batch.emplace();
+  }
   {
     serialization::BufferedFileWriter stageOut(st.stage, LIBRARY_IO_BUFFER_SIZE);
     st.stageOut = &stageOut;
@@ -1991,6 +1969,7 @@ static bool rebuildLibraryIndex(const char* rootPath, BuildStats& stats, const b
     st.stageOut = nullptr;
     stageFlushed = stageOut.flush();
   }
+  ao3Batch.reset();
   const bool stageClosed = st.stage.close();
   const bool foldersClosed = st.folders.close();
   st.metadataCache = nullptr;
