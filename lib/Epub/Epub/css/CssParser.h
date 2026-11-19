@@ -64,6 +64,7 @@ class CssParser {
     Invalid,
     Complete,
     Partial,
+    RuleLimited,
   };
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
@@ -77,7 +78,9 @@ class CssParser {
   // CSS parsing) landed alongside InkCap's 21 above; bumped past both again.
   // 24: added style.cssFloat (float: left/right driving image-wrap layout, distinct from the
   // existing floatLeft drop-cap heuristic).
-  static constexpr uint8_t CSS_CACHE_VERSION = 24;
+  // 25: upstream's style.backgroundImage (presence-only background-image support, feeding the
+  // border-suppression hr fallback) landed at upstream's still-current 23 -- bumped past both.
+  static constexpr uint8_t CSS_CACHE_VERSION = 25;
 
   // Source text is streamed, never loaded as one allocation. PSRAM readers
   // can admit larger publisher stylesheets; rule-count and internal-heap
@@ -166,6 +169,8 @@ class CssParser {
     cacheIndexLoaded_ = false;
     cachedRuleCount_ = 0;
     cachePartial_ = false;
+    clearDiskRuleMemo();
+    ruleLimitReached_ = false;
   }
 
   /**
@@ -188,7 +193,8 @@ class CssParser {
    * @param complete false when the cache contains only rules parsed before a safe low-memory stop
    * @return true if cache was written successfully
    */
-  bool saveToCache(bool complete = true) const;
+  bool saveToCache(bool complete = true, bool terminal = false) const;
+  bool ruleLimitReached() const { return ruleLimitReached_; }
 
   /**
    * Load CSS rules from a cache file.
@@ -211,6 +217,8 @@ class CssParser {
   std::vector<CssFontFace> fontFaces_;
   bool parseFontFace(std::string_view declarations, std::string_view baseDir);
   static constexpr uint8_t CSS_CACHE_FLAG_PARTIAL = 1 << 0;
+  static constexpr uint8_t CSS_CACHE_FLAG_RULE_LIMIT = 1 << 1;
+  static constexpr uint8_t CSS_CACHE_FLAGS = CSS_CACHE_FLAG_PARTIAL | CSS_CACHE_FLAG_RULE_LIMIT;
 
   struct DescendantRule {
     std::string ancestorSelector;  // e.g. "div", ".chapter", "section.body"
@@ -273,6 +281,7 @@ class CssParser {
 
   std::string cachePath;
   bool cachePartial_ = false;
+  bool ruleLimitReached_ = false;
 
   struct SelectorEntry {
     uint32_t hash;
@@ -292,6 +301,25 @@ class CssParser {
   mutable bool cacheIndexLoaded_ = false;
   mutable size_t cachedRuleCount_ = 0;
   mutable std::vector<SelectorEntry> cacheRuleOffsets_;
+
+  // Optional disk-fallback working set. Exact selectors avoid hash collisions;
+  // longer selectors remain correct through the ordinary disk path.
+  static constexpr size_t DISK_RULE_MEMO_COUNT = 4;
+  static constexpr size_t DISK_RULE_MEMO_SELECTOR_BYTES = 64;
+  struct DiskRuleMemoEntry {
+    char selector[DISK_RULE_MEMO_SELECTOR_BYTES]{};
+    uint16_t length = 0;
+    CssStyle style;
+  };
+  static_assert(sizeof(DiskRuleMemoEntry) * DISK_RULE_MEMO_COUNT <= 1024,
+                "Disk CSS working set must stay within 1 KiB");
+  mutable std::unique_ptr<DiskRuleMemoEntry[]> diskRuleMemo_;
+  mutable size_t diskRuleMemoNext_ = 0;
+#ifdef CROSSINK_CSS_PROFILE
+  mutable uint32_t diskRuleMemoHits_ = 0;
+  mutable uint32_t diskRuleReads_ = 0;
+#endif
+  void clearDiskRuleMemo() const;
 
   // Internal parsing helpers
   [[nodiscard]] bool processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style);

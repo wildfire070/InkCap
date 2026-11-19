@@ -2,6 +2,8 @@
 
 ### Added
 
+- Discover linked OpenSearch descriptions in OPDS catalogs and negotiate advertised Basic authentication without sending catalog credentials on the first request. Reuse a same-origin HTTPS connection during discovery when internal memory permits, then close it before browsing. OAuth and federated sign-in remain unsupported.
+- Include all-time and per-book reading stats, daily totals, reading sessions, and two-way clippings in Inky USB sync using your computer’s internet connection.
 - Support BOOX Picco readers, including frontlight controls, the slide switch, touchscreen locking, USB Drive, tilt page turns, and firmware downloads.
 - Support EEGO Reader A4 with touch, optional frontlight, scalable fonts, USB Drive, and dedicated debug, release, and release-candidate firmware assets.
 - Discover and upload static `.otf` fonts on ESP32-S3 readers, including OpenType CFF fonts and CFF files named `.ttf`, from SD or the Fonts web upload. Variable fonts and font collections remain unsupported (CrossPoint #3646, #3717).
@@ -10,12 +12,12 @@
 - Preview OPDS book descriptions before downloading, with scrollable text on touch and button devices. Long descriptions show a bounded excerpt.
 - Sync a selected EPUB’s progress or an XTC book’s reading stats from its Library or File Browser context menu; Sync Folder and Sync Books include XTC stats too.
 - Choose Use Server Filename for each OPDS server to match reading progress across devices. When off (the default), or if the server name is missing or unsafe, downloads use the selected Filename format.
-- View device hardware, firmware/build identity, storage, and memory diagnostics in Settings → System → About without exposing network or device identifiers. Export allowlisted diagnostics and global preferences as local support JSON after confirming the scope; optional EPUB overrides are anonymous, and network/device identifiers, credentials, and reading history are excluded.
+- View device hardware, firmware/build identity, storage, and memory diagnostics in Settings > System > About. Export allowlisted diagnostics and global preferences as local support JSON after confirming the scope; optional EPUB overrides are anonymous, and network/device identifiers, credentials, and reading history are excluded.
 - Choose Display or Display (B&W) in Images globally or for individual EPUB books, independently of text anti-aliasing.
 - Use Home/Reader shortcuts on touch devices.
 - Customize reader and global status bars: choose Small, Medium, or Large text for each reader bar, set a separate global text size, choose battery display (Icon + %, Icon Only, or % Only) independently for the top, bottom, and global bars, and hide either reader bar without clearing its assigned slots.
 - Finished EPUB and XTC books show a checkmarked book icon in the File Browser and Library list.
-- Calibrate each screen edge in Settings → Display → Screen Calibration to keep text and status bars clear of the bezel. Calibration stays on the device when changing SD cards.
+- Calibrate each screen edge in Settings > Display > Screen Calibration to keep text and status bars clear of the bezel. Calibration stays on the device when changing SD cards.
 - Choose Directional or Legacy menu navigation in Controls to restore the previous button behavior in Settings and the reader menu.
 - Sync Books from the new Sync Server section in File Transfer to sync progress, reading stats, and clippings for every book on the SD card in one pass, without needing a Library refresh. Compatible servers batch folder requests. Sync Reading Stats and Sync Clippings, shown there when that data is turned on under What to Sync, upload only stats or only clippings without touching reading positions; reading stats use a one-time catch-up and then send only changed books, while clippings sync both ways across local EPUBs.
 - Render publisher drop caps, bordered and shaded blocks, fieldsets continuing across pages, preserved whitespace, and more CSS selectors in EPUBs; scalable fonts also support mixed sizes within a line (CrossPoint #3891).
@@ -47,12 +49,32 @@
 - Show the publisher’s body font as a disabled Font Family value in the in-book Reader Font menu when "Publisher Font" is set to "All Text"; keep the normal picker available when the body uses the reader font.
 - Choose Low, Normal, or High Tilt Sensitivity in Controls; Normal keeps the existing flick behavior.
 - Add the Estonian (Eesti) interface language pack, contributed by paavoph (discussion #928).
+- Use compressed StarDict `.dict.dz` dictionaries directly from SD, with automatic lookup indexing and streamed definition pages.
+- Unprepared dictionaries now index alternate spellings automatically and open the exact definition each spelling points to.
+- Choose Normal, Dark, or Darker text in Reader settings or the EPUB reader menu, retaining anti-aliasing for bitmap and TTF fonts.
 
 ### Fixed
 
 - Restore Back swipes in Browse Files (#946).
 - Center the centered reading-stats row's icon and label using the label's actual ink height, keeping both visible together across rotations and status bar fonts.
 - Add Estonian translations for Tilt Sensitivity and its Low/Normal/High options.
+- Stop Picco app-only uploads if an expected extra flash image cannot be removed from the upload arguments, protecting the vendor boot area (CrossPoint #4510).
+- Reuse recently read EPUB CSS rules when memory is too low to retain the full stylesheet, reducing repeated SD reads during chapter layout.
+- Keep frequently drawn built-in text in the four compressed-font page slots when a page mixes more font styles or sizes; retain on-demand rendering for the remaining groups.
+- Reuse unchanged EPUB stylesheets stopped at the fixed rule limit instead of reparsing them on every reopen; temporary memory or read failures still retry.
+- Keep scalable-font page lookahead running when an individual glyph cannot be admitted without evicting visible text.
+
+- Keep smaller EPUB body-font declarations at the reader-selected size while preserving smaller descendants, headings, and other publisher styling. Existing chapter layouts rebuild automatically.
+- Reuse cached glyphs in optional SD font sizes without discarding their pixels on a metrics hash collision, reducing repeated font reads during antialiasing within the same memory budget.
+
+- Report WebDAV copy read failures instead of success, preserve saved EPUB positions in the first spine item, and prefer exact chapter paths over same-named files when following links (CrossPoint #4472).
+
+- Reserve and reuse the TLS receive buffer for HTTPS font file downloads, reducing repeated buffer growth during large transfers.
+- Read saved settings and state in bounded SD transfers, and try reclaiming inactive reader caches once before pausing background pagination for low memory.
+- Display PNG images with complete grayscale passes and a dithered monochrome fallback; use combined image refreshes only when the display supports them.
+- Preserve text anti-aliasing on mixed text-and-image EPUB pages using complete grayscale planes.
+- Improve downscaled inline PNG detail with bounded area resampling before dithering, retaining the low-memory fallback.
+- Retry interrupted or corrupt asset companion files within bounded limits, verify replacements, and preserve the previously complete source bundle on failure.
 - Prevent extra spacing in runtime TrueType/OpenType fonts by rounding glyph advances only at pixel placement; existing EPUB layouts rebuild automatically (adapted from gkaindl, CrossPoint #4431).
 - Preserve previously synced reading history when replacing an SD card or resetting local stats. New reading adds to cloud history without counting retries twice. Requires an updated CrossPoint Sync server; older servers leave stats pending.
 - Keep publisher CSS styles active when free heap falls below 48 KiB; existing EPUB page caches rebuild automatically (CrossPoint #4032).
@@ -171,8 +193,20 @@
 - Restore publisher spacing around grouped EPUB chapter headings and align subtitles with the chapter number (#940).
 - Prevent an X4 Pro startup crash after KOReader sync by giving the ESP32-S3 core-to-core tasks enough stack for input interrupt setup (#938).
 - Preserve clipping and bookmark titles and authors when marking EPUBs finished and moving them to Read; recover existing blank saved-book labels from EPUB metadata (#945).
+- Keep more EPUB heading and text sizes available with SD bitmap fonts by sizing glyph buffers to the font's actual needs, while preserving the existing memory reserves (#952).
+- Avoid repeated SD font reads while indexing EPUBs whose book styles use a different text size from the selected size (#954).
+- Preserve unreadable reading statistics and offer backup recovery instead of silently replacing history. Protect stats backups with checksums, prevent invalid positions from being uploaded, and finish reader and SD-card saves before sync restarts, sleep, or USB Drive handoff.
+- Fixed prepared dictionaries missing words and alternate spellings that share a long prefix.
+- Restore EPUB drop caps marked by an enlarged opening letter, including nested styled spans; existing page caches rebuild automatically.
+- Render fallback characters correctly in superscripts, subscripts, and small caps.
+- Reduce repeated SD reads when rendering CSS-sized custom fonts on X3/X4, including anti-aliased text, with a bounded glyph cache inside the existing font memory budget.
+- Free download catalog and payload scratch memory before fetching language and hyphenation licenses, and use smaller HTTP receive buffers to leave more room for certificate checks on X3/X4.
+- Show the Picco charging indicator and battery level on black-and-white sleep screens as well as supported grayscale covers; update it when charging stops or resumes, even if the percentage stays the same.
+- Preserve detail in pale EPUB artwork and use portrait dimensions consistently when optimizing images in the web uploader.
 
 ### Changed
+
+- Warm upcoming EPUB text in short, input-interruptible idle slices on S3 readers using TTF fonts, without evicting cached glyphs or changing C3 font behavior.
 
 - SD fonts containing both BMP and supplementary Unicode ranges use less resident lookup-table memory, and TTF fonts validate faster while preserving font integrity checks.
 - English is the only built-in interface language. Other languages are included in a separate release download and installed through Language settings.
@@ -210,6 +244,15 @@
 - Default to Incremental EPUB indexing on ESP32-S3 readers, while preserving saved global choices and per-book overrides.
 - Move dictionary definition pagination to the bottom right and add a tappable close icon at the top right on touch devices.
 - Release settings descriptors after use and allocate plugin job storage only when automation submits a job, leaving more heap available for reading and ordinary File Transfer. File Transfer now reserves two WebSocket connections (adapted from CrossPoint #4085 and #4288).
+- Use side-by-side number-pad layouts in landscape on touch and button devices.
+- Illustrated EPUBs write newly decoded images to the SD card in batches. Large books group chapter caches into smaller folders for quicker lookups.
+- Calibre uploads refresh the progress display every four seconds while transferring a book.
+- Lyra Carousel can generate both thumbnail sizes from a single JPEG cover decode.
+- Load only missing characters when extending a custom .cpfont cache, avoiding repeated SD reads for characters already prepared.
+- Reuse temporary decompression memory while preparing built-in fonts, reducing repeated allocations without keeping extra memory between pages.
+- Skip off-strip text during anti-aliasing to reduce repeated page-rendering work.
+- Turn pages on button-down when the button has no long-press action, and reduce reader page-button long presses from 700 to 600 ms.
+- Reduce memory used by publisher CSS and extra SD font sizes on X3/X4, keeping more heading sizes available within the existing safety limits.
 
 ## [v1.6.1] - 2026-10-03
 

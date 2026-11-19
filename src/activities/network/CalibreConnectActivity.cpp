@@ -59,6 +59,7 @@ void CalibreConnectActivity::onEnter() {
     batchListTopIndex = 0;
   }
   lastHandleClientTime = 0;
+  progress = {};
   lastProcessedCompleteAt = 0;
   lastProcessedJobCompleteAt = 0;
   exitRequested = false;
@@ -236,29 +237,11 @@ void CalibreConnectActivity::loop() {
 
     const auto status = webServer->getWsUploadStatus();
     RenderLock lock;  // Publish upload strings and their counters together with respect to render().
-    bool changed = false;
+    bool changed = progress.update(status.inProgress, status.filename, status.received, status.total, millis());
     {
-      // currentUploadName/lastCompleteName/lastProgressReceived/lastProgressTotal/
-      // lastCompleteAt are all read by render() on the render task with no lock of
-      // its own on that side either -- this is the only place they're mutated, so
-      // the outer `lock` above guards this whole block. Without it, render() reading
-      // currentUploadName mid-assignment (a std::string reallocation, trivial for any
-      // real upload filename) is UB -- a torn pointer/length read or a dereference of
-      // already-freed heap memory.
-      if (status.inProgress) {
-        if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
-            status.filename != currentUploadName) {
-          lastProgressReceived = status.received;
-          lastProgressTotal = status.total;
-          currentUploadName = status.filename;
-          changed = true;
-        }
-      } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
-        lastProgressReceived = 0;
-        lastProgressTotal = 0;
-        currentUploadName.clear();
-        changed = true;
-      }
+      // lastCompleteName/lastCompleteAt are read by render() on the render task
+      // with no lock of its own either -- this is the only place they're mutated,
+      // so the outer `lock` above guards this whole block.
       // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
       // This prevents restoring an old value after the 6s timeout clears it
       if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
@@ -382,11 +365,11 @@ void CalibreConnectActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
 
-    const bool showUploadProgress = lastProgressTotal > 0 && lastProgressReceived <= lastProgressTotal;
+    const bool showUploadProgress = progress.total > 0 && progress.received <= progress.total;
     if (showUploadProgress) {
       std::string label = tr(STR_CALIBRE_RECEIVING);
-      if (!currentUploadName.empty()) {
-        label += ": " + currentUploadName;
+      if (!progress.filename.empty()) {
+        label += ": " + progress.filename;
         label = renderer.truncatedText(SMALL_FONT_ID, label.c_str(), pageWidth - metrics.contentSidePadding * 2,
                                        EpdFontFamily::REGULAR);
       }
@@ -394,7 +377,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
       GUI.drawProgressBar(renderer,
                           Rect{safe.x + metrics.contentSidePadding, y + height + metrics.verticalSpacing,
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
-                          lastProgressReceived, lastProgressTotal);
+                          progress.received, progress.total);
     } else if (hasBatchResults) {
       char doneMsg[64];
       snprintf(doneMsg, sizeof(doneMsg), tr(STR_CALIBRE_DONE_FORMAT), static_cast<int>(batchSucceeded.size()));

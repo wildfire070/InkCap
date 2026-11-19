@@ -380,6 +380,7 @@ void DictionaryDefinitionActivity::onEnter() {
 
 void DictionaryDefinitionActivity::onExit() {
   controller.onExit();
+  definitionSource_.reset();
   Dictionary::clearLookupDictPathOverride();
   if (renderer.isSdCardFont(definitionFontId_)) {
     // The dictionary can reuse the reader's family and size, in which case
@@ -630,7 +631,10 @@ void DictionaryDefinitionActivity::wrapText() {
   // Resolve the immutable definition slice once. Page turns reuse it instead
   // of reopening the dictionary metadata files before every layout pass.
   const DictInfo info = Dictionary::readInfo(foundLocation.folderPath.c_str());
-  const DictDefinitionSlice slice = Dictionary::resolveDefinitionSlice(foundLocation, info);
+  DictDefinitionSlice slice;
+  if (definitionSource_.open(foundLocation)) {
+    slice = Dictionary::resolveDefinitionSlice(foundLocation, info, definitionSource_);
+  }
   definitionReadFailed_ = !slice.found;
   if (definitionReadFailed_) {
     LOG_ERR("DICT", "Failed to resolve definition slice for %s", foundLocation.folderPath.c_str());

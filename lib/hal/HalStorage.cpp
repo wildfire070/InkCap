@@ -234,6 +234,11 @@ bool HalStorage::shutdown() {
   return SDCard.shutdown();
 }
 
+bool HalStorage::syncFilesystem() {
+  StorageLock lock;
+  return SDCard.syncFilesystem();
+}
+
 uint64_t HalStorage::totalBytes() const { return SDCard.sdTotalBytes(); }
 
 uint64_t HalStorage::usedBytes() { HAL_STORAGE_WRAPPED_CALL(sdUsedBytes); }

@@ -79,9 +79,15 @@ int scaled75SourceEnd(const int dst, const int srcLimit) {
 }
 
 void draw2BitFontPixel(const GfxRenderer& renderer, const GfxRenderer::RenderMode renderMode, const int x, const int y,
-                       const uint8_t raw, const bool pixelState) {
+                       uint8_t raw, const bool pixelState) {
+  if (renderMode != GfxRenderer::BW) raw = textDarkness::coverage(raw, renderer.getTextDarkness());
   const uint8_t bmpVal = 3 - raw;
-  if (renderMode == GfxRenderer::BW && bmpVal < 3) {
+  if (renderer.grayPlanesAreAbsolute() && renderMode != GfxRenderer::BW) {
+    if (raw) {
+      const auto pixel = grayPlanePixel(pixelState ? bmpVal : raw, renderMode == GfxRenderer::GRAYSCALE_MSB, true);
+      renderer.drawPixel(x, y, pixel.black);
+    }
+  } else if (renderMode == GfxRenderer::BW && bmpVal < 3) {
     renderer.drawPixel(x, y, pixelState);
   } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
     renderer.drawPixel(x, y, false);
@@ -635,6 +641,7 @@ static void drawSyntheticReplacementGlyph(const GfxRenderer& renderer, const Syn
   const int w = metrics.width;
   const int h = metrics.height;
   if (w <= 0 || h <= 0) return;
+  renderer.recordTextBounds(x, y, x + w - 1, y + h - 1);
 
   const int limit = w < h ? w : h;
   for (int gy = 0; gy < h; gy++) {
@@ -703,6 +710,7 @@ static void drawSyntheticGreekGlyph(const GfxRenderer& renderer, const Synthetic
   const int h = metrics.height;
   const int s = syntheticStroke(metrics);
   if (w <= 0 || h <= 0) return;
+  renderer.recordTextBounds(x, y, x + w - 1, y + h - 1);
 
   if (cp == syntheticGlyph::GREEK_CAPITAL_GAMMA) {
     fillRectClipped(renderer, x, y, s, h, pixelState);
@@ -761,12 +769,10 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
                              const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                              const bool pixelState, const EpdFontFamily::Style style) {
   if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
-  if (!glyph) return;
-
-  const EpdFontData* fontData = fontFamily.getData(style);
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
-  if (!bitmap) return;
+  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  const EpdGlyph* glyph = glyphData.glyph;
+  const EpdFontData* fontData = glyphData.fontData;
+  if (!glyph || !fontData) return;
 
   const int srcW = glyph->width;
   const int srcH = glyph->height;
@@ -776,6 +782,10 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
   // pixel offset from the (already-shifted) cursor position.
   const int baseX = cursorX + glyph->left / 2;
   const int baseY = cursorY - glyph->top / 2;
+
+  if (!renderer.glyphIntersectsStrip(baseX, baseY, baseX + dstW - 1, baseY + dstH - 1)) return;
+  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  if (!bitmap) return;
 
   if (fontData->is2Bit) {
     // 2-bit packed format: 4 pixels per byte, MSB first, 2 bits per pixel.
@@ -828,13 +838,10 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
 static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                                 const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                                 const bool pixelState, const EpdFontFamily::Style style) {
-  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
-  if (!glyph) return;
-
-  const EpdFontData* fontData = fontFamily.getData(style);
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
-  if (!bitmap) return;
+  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  const EpdGlyph* glyph = glyphData.glyph;
+  const EpdFontData* fontData = glyphData.fontData;
+  if (!glyph || !fontData) return;
 
   const int srcW = glyph->width;
   const int srcH = glyph->height;
@@ -842,6 +849,10 @@ static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::Render
   const int dstH = smallCapsScaledExtent(srcH);
   const int baseX = cursorX + scaleSmallCapsMetric(glyph->left);
   const int baseY = cursorY - scaleSmallCapsMetric(glyph->top);
+
+  if (!renderer.glyphIntersectsStrip(baseX, baseY, baseX + dstW - 1, baseY + dstH - 1)) return;
+  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  if (!bitmap) return;
 
   if (fontData->is2Bit) {
     for (int dstY = 0; dstY < dstH; dstY++) {
@@ -962,7 +973,6 @@ template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                            const bool pixelState, const EpdFontFamily::Style style) {
-  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   const auto glyphData = fontFamily.getGlyphData(cp, style);
   const EpdGlyph* glyph = glyphData.glyph;
   const EpdFontData* fontData = glyphData.fontData;
@@ -1041,7 +1051,7 @@ void GfxRenderer::drawGlyphBitmap(const uint8_t* bitmap, const int width, const 
   const glyphBitmap::Plane plane = mode == BW              ? glyphBitmap::Plane::BW
                                    : mode == GRAYSCALE_MSB ? glyphBitmap::Plane::GrayMSB
                                                            : glyphBitmap::Plane::GrayLSB;
-  glyphBitmap::draw(bitmap, width, height, twoBit, plane, state, target, clip);
+  glyphBitmap::draw(bitmap, width, height, twoBit, plane, state, target, clip, absoluteGrayPlanes, textDarkness_);
 }
 
 // IMPORTANT: This function is in critical rendering path and is called for every pixel. Please keep it as simple and
@@ -1180,6 +1190,8 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   }
 
   const int resolvedFontId = fontId;
+  const auto sdIt = sdCardFonts_.find(resolvedFontId);
+  SdCardFont::MetricsScope metrics(sdIt == sdCardFonts_.end() ? nullptr : sdIt->second);
 
   if (characterSpacing != 0) {
     return getTextAdvanceX(resolvedFontId, text, style, 0, characterSpacing);
@@ -1191,7 +1203,6 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   }
 
   // SD-card fonts can measure from their persistent advance table during layout.
-  auto sdIt = sdCardFonts_.find(resolvedFontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
     int32_t widthFP = 0;
     const uint8_t styleIdx = resolveSdCardStyle(*sdIt->second, style);
@@ -1443,6 +1454,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 }
 
 void GfxRenderer::drawLine(int x1, int y1, int x2, int y2, const bool state) const {
+  recordTextBounds(x1, y1, x2, y2);
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
   const int sw = getScreenWidth();
   const int sh = getScreenHeight();
@@ -1674,6 +1686,8 @@ void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const 
   if constexpr (C == Color::Clear) return;
   if (width <= 0 || height <= 0) return;
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+
+  recordTextBounds(x, y, x + width - 1, y + height - 1);
 
   // Clip in logical space.
   const int screenW = getScreenWidth();
@@ -2418,7 +2432,50 @@ void GfxRenderer::endStripTarget() const {
   _stripRows = 0;
 }
 
+GfxRenderer::TextCullingScope::TextCullingScope(const GfxRenderer& renderer, const bool enabled) : renderer_(renderer) {
+  assert(renderer_.textCullGeneration_ == 0);
+  // Rendering is serialized by RenderLock. A process-wide generation also
+  // prevents stale bounds if a renderer is recreated at the same address.
+  static uint64_t nextGeneration = 0;
+  if (enabled) renderer_.textCullGeneration_ = ++nextGeneration;
+}
+
+GfxRenderer::TextCullingScope::~TextCullingScope() {
+  assert(renderer_.textBounds_ == nullptr);
+  renderer_.textCullGeneration_ = 0;
+}
+
+void GfxRenderer::beginTextBounds(int* bounds) const {
+  assert(textBounds_ == nullptr);
+  bounds[0] = panelHeight;
+  bounds[1] = -1;
+  textBounds_ = bounds;
+  textBoundsLookupFailures_ = EpdFont::glyphLookupFailureCount();
+}
+
+void GfxRenderer::endTextBounds() const {
+  assert(textBounds_ != nullptr);
+  if (textBoundsLookupFailures_ != EpdFont::glyphLookupFailureCount()) {
+    // A temporary SD/TTF miss may have drawn a smaller fallback (or no mark).
+    // Keep retrying this group in every strip instead of caching partial ink.
+    textBounds_[0] = 0;
+    textBounds_[1] = panelHeight - 1;
+  }
+  textBounds_ = nullptr;
+}
+
+void GfxRenderer::recordTextBounds(int x0, int y0, int x1, int y1) const {
+  if (!textBounds_) return;
+  int ax, ay, bx, by;
+  rotateCoordinates(orientation, x0, y0, &ax, &ay, panelWidth, panelHeight);
+  rotateCoordinates(orientation, x1, y1, &bx, &by, panelWidth, panelHeight);
+  // Conservative, inclusive physical rows, before strip or text clipping.
+  textBounds_[0] = std::min(textBounds_[0], std::min(ay, by));
+  textBounds_[1] = std::max(textBounds_[1], std::max(ay, by));
+}
+
 bool GfxRenderer::glyphIntersectsStrip(int x0, int y0, int x1, int y1) const {
+  recordTextBounds(x0, y0, x1, y1);
   if (!_stripActive) {
     return true;
   }
@@ -2877,6 +2934,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
   ScalableFontAccess access;
 #endif
   const int resolvedFontId = fontId;
+  const auto sdIt = sdCardFonts_.find(resolvedFontId);
+  SdCardFont::MetricsScope metrics(sdIt == sdCardFonts_.end() ? nullptr : sdIt->second);
+
   // Measure the exact codepoint stream drawText renders: bidi-reordered and
   // Arabic-shaped (contextual presentation forms, Lam-Alef collapse).
   // Measuring the raw logical text counts the Alef a ligature absorbs and
@@ -2889,7 +2949,6 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
   // Advance table fast-path for SD card fonts during layout.
   // No kerning/ligature lookup — consistent with previous metadataOnly behavior
   // where kern/lig data was not loaded.
-  auto sdIt = sdCardFonts_.find(resolvedFontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
     int widthPx = 0;
     int trackingGaps = 0;
@@ -3299,16 +3358,17 @@ size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 // unused
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }
 
-void GfxRenderer::setReaderRefresh(bool reading, bool textOnly) const {
+void GfxRenderer::setReaderRefresh(RefreshContent content) const {
 #ifndef SIMULATOR
-  display.setReaderRefresh(reading);
-  // The reader-only combined waveform merges AA into one gray level. Keep
-  // images/XTCH on their four-tone path; Picco's separate reader waveform stays on.
-  if (reading && !textOnly && combinesGrayscaleBase()) display.setReaderRefresh(false);
+  const bool image = content == RefreshContent::Image;
+  // Some drivers combine grayscale only in reader mode, collapsing one image shade.
+  // EEGO combines in both modes and uses the tone hint to keep both shades.
+  const bool checkReaderOnlyWaveform = image && !combinesGrayscaleBase();
+  display.setReaderRefresh(content != RefreshContent::Ui);
+  if (checkReaderOnlyWaveform && combinesGrayscaleBase()) display.setReaderRefresh(false);
+  display.setOverlayFullTone(image || content == RefreshContent::TwoToneText);
 #else
-  // The simulator has no physical panel waveforms.
-  (void)reading;
-  (void)textOnly;
+  (void)content;
 #endif
 }
 

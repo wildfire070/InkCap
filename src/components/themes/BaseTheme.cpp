@@ -1,5 +1,9 @@
 #include "BaseTheme.h"
 
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+#include "util/BatteryDiagnosticLog.h"
+#endif
+
 #include <FreeInkUIGfxRenderer.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -418,8 +422,12 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
-                           const bool readerContext, const bool showStatus, const bool filenameTitle) const {
+namespace {
+// Keep FreeInkUI's header props/theme scratch off the status-bar call chain.
+// On C3 this frame is ~4.5 KiB; nesting the status formatter under it can
+// overflow the 8 KiB network render task. A scope alone does not split frames.
+[[gnu::noinline]] void drawHeaderBand(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                                      const bool filenameTitle) {
   namespace fui = freeink::ui;
   const auto spec = uiScaleSpec();
   fui::GfxRendererFrame<1> ui(renderer, spec.smallFontId, spec.bodyFontId, spec.titleFontId);
@@ -453,7 +461,12 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     props.styles.normal.borderWidth = tokens.headerUnderline;
   }
   fui::header(ui.frame, band, props);
+}
+}  // namespace
 
+void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                           const bool readerContext, const bool showStatus, const bool filenameTitle) const {
+  drawHeaderBand(renderer, rect, title, subtitle, filenameTitle);
   if (showStatus) drawDisplayStatusBar(renderer, rect.y);
 }
 
@@ -991,6 +1004,10 @@ void BaseTheme::drawReaderStatusBar(const GfxRenderer& renderer, const ReaderSta
       snprintf(percent, sizeof(percent), "%u%%", static_cast<unsigned>(batteryPercentage));
       const bool showPercent = batteryPercent && allowedWidth >= metrics.batteryWidth + batteryPercentSpacing +
                                                                      renderer.getTextWidth(fontId, percent);
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+      if (showPercent && !content.previewClock)
+        BatteryDiagnosticLog::noteDisplayPercent(batteryPercentage, textY + renderer.getLineHeight(fontId));
+#endif
       if (top && alignRight) {
         drawBatteryRight(
             renderer, Rect{x + allowedWidth - metrics.batteryWidth, textY, metrics.batteryWidth, metrics.batteryHeight},
@@ -1012,6 +1029,10 @@ void BaseTheme::drawReaderStatusBar(const GfxRenderer& renderer, const ReaderSta
       width = renderer.getTextWidth(fontId, value);
     }
     renderer.drawText(fontId, x + (alignRight ? allowedWidth - width : 0), textY, value, foregroundBlack);
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+    if (item == ReaderStatusBarItem::Battery && clipped.empty() && !content.previewClock)
+      BatteryDiagnosticLog::noteDisplayPercent(batteryPercentage, textY + renderer.getLineHeight(fontId));
+#endif
   };
 
   constexpr int itemGap = 8;

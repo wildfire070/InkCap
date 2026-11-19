@@ -35,6 +35,22 @@ class ScalableFontAccess {
 // existing 2-bit and fractional-metric conventions. Call under RenderLock.
 class HalScalableFont {
  public:
+  // Optional rasterization may fill empty slots, never evict visible-page pixels.
+  // Hold the render lock for the lifetime of this scope.
+  class IdlePrewarmScope {
+   public:
+    IdlePrewarmScope();
+    ~IdlePrewarmScope();
+    IdlePrewarmScope(const IdlePrewarmScope&) = delete;
+    IdlePrewarmScope& operator=(const IdlePrewarmScope&) = delete;
+
+   private:
+    ScalableFontAccess access_;
+    bool previous_;
+  };
+  enum class BitmapPreparation { Ready, Skipped, Failed };
+  // Under IdlePrewarmScope: refusal is expected cache pressure, not a font error.
+  static BitmapPreparation prepareIdleBitmap(const EpdFontData* data, const EpdGlyph* glyph);
   // Discovery/open-time ceilings only — the loader already streams rather than
   // requiring a file resident (openSource's streamed path, derive() synthesizing
   // missing styles from one file), so these exist to bound worst-case SD I/O and

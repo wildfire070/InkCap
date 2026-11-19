@@ -625,7 +625,7 @@ void ChapterHtmlSlimParser::applyInlineFontSize(StyleStackEntry& entry, const Cs
   if (!base) return;
   const float parent =
       effectiveInlineFontSize ? effectiveInlineFontSize : renderer.getFontPointSize(currentTextFontId());
-  float size = css.fontSize.value;
+  float size = css.fontSize.value();
   switch (css.fontSize.unit) {
     case CssUnit::Em:
       size *= parent;
@@ -954,7 +954,7 @@ uint8_t ChapterHtmlSlimParser::dropCapLines(const CssStyle& style) {
   if (style.defined.initialLetter && style.initialLetter > 0) {
     return style.initialLetter >= 2 ? style.initialLetter : 0;
   }
-  float em = style.fontSize.value;
+  float em = style.fontSize.value();
   if (style.fontSize.unit == CssUnit::Pixels)
     em /= 16;
   else if (style.fontSize.unit == CssUnit::Points)
@@ -1443,9 +1443,9 @@ int ChapterHtmlSlimParser::currentTextFontId() const {
   return renderer.getFontIdForSize(fontId, currentTextBlock->getBlockStyle().fontSize);
 }
 
-void ChapterHtmlSlimParser::applyBlockFontSize(const CssStyle& cssStyle, const char* tag, BlockStyle& style) {
+bool ChapterHtmlSlimParser::applyBlockFontSize(const CssStyle& cssStyle, const char* tag, BlockStyle& style) {
   const uint8_t base = renderer.getFontPointSize(fontId);
-  if (!base || isLightMode() || tableDepth > 0) return;
+  if (!base || isLightMode() || tableDepth > 0) return false;
   const float parent = blockStyleBuf_[blockStyleCount_ - 1].fontScale / 256.0f;
   float scale = parent;
   if (tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6' && tag[2] == '\0') {
@@ -1456,30 +1456,46 @@ void ChapterHtmlSlimParser::applyBlockFontSize(const CssStyle& cssStyle, const c
     const auto& size = cssStyle.fontSize;
     switch (size.unit) {
       case CssUnit::Em:
-        scale = parent * size.value;
+        scale = parent * size.value();
         break;
       case CssUnit::Rem:
-        scale = rootFontScale / 256.0f * size.value;
+        scale = rootFontScale / 256.0f * size.value();
         break;
       case CssUnit::Percent:
-        scale = parent * size.value / 100.0f;
+        scale = parent * size.value() / 100.0f;
         break;
       // Reader zoom: CSS medium (16px/12pt) maps to the user's body size.
       case CssUnit::Points:
-        scale = size.value / 12.0f;
+        scale = size.value() / 12.0f;
         break;
       case CssUnit::Pixels:
-        scale = size.value / 16.0f;
+        scale = size.value() / 16.0f;
         break;
     }
   }
   if (!std::isfinite(scale)) scale = parent;
+  // Keep a publisher's smaller body declaration from reducing the reader's
+  // selected size. Resolve the cascade and units first; leave html/rem roots,
+  // descendants, and explicit body sizes >= 100%/1em/medium alone.
+  bool normalizedBody = false;
+  if (embeddedStyle && strcmp(tag, "body") == 0 && cssStyle.hasFontSize() && scale < 1.0f) {
+    const auto& size = cssStyle.fontSize;
+    const float medium = size.unit == CssUnit::Percent  ? 100.0f
+                         : size.unit == CssUnit::Points ? 12.0f
+                         : size.unit == CssUnit::Pixels ? 16.0f
+                                                        : 1.0f;
+    if (size.value() < medium) {
+      scale = 1.0f;
+      normalizedBody = true;
+    }
+  }
   scale = std::clamp(scale, float(ScalableContentMinPointSize) / base, float(ScalableContentMaxPointSize) / base);
   style.fontScale = static_cast<uint16_t>(scale * 256.0f + 0.5f);
   style.fontSize = static_cast<uint8_t>(base * scale + 0.5f);
   // If a recovery font lacks the requested size, layout and drawing must agree.
   style.fontSize = renderer.getFontPointSize(renderer.getFontIdForSize(fontId, style.fontSize));
   if (strcmp(tag, "html") == 0) rootFontScale = style.fontScale;
+  return normalizedBody;
 }
 
 // start a new text block if needed
@@ -3824,7 +3840,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   }
 
   BlockStyle fontStyle;
-  self->applyBlockFontSize(cssStyle, name, fontStyle);
+  const bool normalizedBodyFont = self->applyBlockFontSize(cssStyle, name, fontStyle);
   const int blockFontId = self->renderer.getFontIdForSize(self->fontId, fontStyle.fontSize);
   const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(blockFontId));
 
@@ -4294,6 +4310,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       applyDirectionToEntry(entry, cssStyle);
       entry.setsParagraphDirection = strcmp(name, "html") == 0 || strcmp(name, "body") == 0;
       self->applyInlineFontSize(entry, cssStyle, name);
+      // Body is transparent to the block stack. Direct text and inline children
+      // must use the resolved size too, not multiply the original shrink again.
+      if (normalizedBodyFont) entry.fontSize = fontStyle.fontSize;
       applySmallCapsToEntry(entry, cssStyle);
       applyVerticalAlignToEntry(entry, cssStyle);
       if (self->inlineStyleCount_ < MAX_INLINE_STYLE_DEPTH) {
@@ -4342,7 +4361,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 ? 0
                 : family;
       }
-    } else if (strcmp(name, "span") == 0 && (cssStyle.floatLeft || cssStyle.initialLetter >= 2)) {
+    } else if (strcmp(name, "span") == 0 && self->dropCap.spanDepth < 0 && !self->dropCap.firstLetterPending) {
+      // Publishers also mark opening initials with font-size alone. Keep the
+      // outer capture scope when the letter is wrapped in nested styled spans.
       const auto lines = dropCapLines(cssStyle);
       if (lines) {
         self->dropCap.lines = lines;
@@ -4459,6 +4480,10 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
         self->dropCap.visibleOffset = codepointOffset;
         self->dropCap.sourceOffset = codepointSourceOffset;
         self->dropCap.referenceOffset = codepointReferenceOffset;
+        if (self->dropCap.spanDepth >= 0) {
+          self->dropCap.bold = self->effectiveBold;
+          self->dropCap.fontFamily = self->effectiveFontFamily;
+        }
       }
       if (self->captureDropCapCodepoint(s + i, bytes)) {
         i += bytes - 1;

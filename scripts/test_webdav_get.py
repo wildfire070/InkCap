@@ -184,6 +184,25 @@ def patched_stub_dir(directory):
     sdfat_needle = "  void getName(char*, size_t) const {}\n"
     assert sdfat_needle in sdfat_original, "SDK's SdFat stub shape changed; update this patch"
     sdfat_h.write_text(sdfat_original.replace(sdfat_needle, "  size_t getName(char*, size_t) const { return 0; }\n"))
+    # SDCardManager.cpp's readFile() now calls FsFile::size() (the real SdFat/Arduino
+    # name) directly instead of fileSize(); this stub only had the latter. Same
+    # no-push-access reasoning as the two patches above.
+    fsize_needle = "  uint64_t fileSize() const { return fakeSd::advertisedSize; }\n"
+    assert fsize_needle in sdfat_original, "SDK's FsFile stub shape changed; update this patch"
+    sdfat_h.write_text(
+        sdfat_h.read_text().replace(fsize_needle, fsize_needle + "  uint64_t size() const { return fileSize(); }\n"))
+    # readFile() also appends into the String with concat(), which this stub's
+    # std::string-derived String never declared (only endsWith()). Same reasoning.
+    wstring_h = stubs / "WString.h"
+    wstring_original = wstring_h.read_text()
+    wstring_needle = "class String : public std::string {\n public:\n"
+    assert wstring_needle in wstring_original, "SDK's String stub shape changed; update this patch"
+    wstring_h.write_text(wstring_original.replace(
+        wstring_needle, wstring_needle + "  void concat(const char* data, unsigned int len) { append(data, len); }\n"
+        # Arduino's own String::reserve() returns bool (false on OOM); std::string's
+        # reserve() returns void, and SDCardManager.cpp's new readFile() negates the
+        # result expecting the Arduino signature.
+        "  bool reserve(unsigned int size) { std::string::reserve(size); return true; }\n"))
     return stubs
 
 

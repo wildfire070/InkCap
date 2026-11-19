@@ -47,8 +47,23 @@ namespace {
 // 0xDA (upstream's own v105, CSS-under-low-heap) which upstream's merge
 // commit still tests but had no named entry here -- added as
 // kLowHeapCssFullVersion/PartialVersion rather than silently dropping it.
-constexpr uint8_t kFullVersion = 108;
-constexpr uint8_t kPartialVersion = 0xDD;
+//
+// A later sync bundled upstream's v109 (drop caps)/v110 (image thematic break
+// fallback)/v111 (body-size normalization). Upstream's own RejectsCaches...
+// test still inlines raw literals for 109/0xDE and 110/0xDF (not named
+// constants in its own constant-definition list, but real rejected bytes),
+// confirming both intermediate partial versions did ship as "current" at
+// some point -- named here rather than silently dropped, matching v108/0xDD
+// (this branch's own former-current, caught the same way).
+constexpr uint8_t kFullVersion = 111;
+constexpr uint8_t kPartialVersion = 0xE0;
+constexpr uint8_t kPreOpeningSpanDropCapFullVersion =
+    108;  // this branch's own former-current, superseded by v109 (opening-span drop caps)
+constexpr uint8_t kPreOpeningSpanDropCapPartialVersion = 0xDD;
+constexpr uint8_t kPreThematicBreakFullVersion = 109;  // upstream v109, superseded by v110 (thematic break fallback)
+constexpr uint8_t kPreThematicBreakPartialVersion = 0xDE;
+constexpr uint8_t kPreBodyNormalizationFullVersion = 110;  // upstream v110, superseded by v111 (body normalization)
+constexpr uint8_t kPreBodyNormalizationPartialVersion = 0xDF;
 constexpr uint8_t kHeadingGroupFullVersion = 107;  // former-current, superseded by v108 (deferred advance rounding)
 constexpr uint8_t kHeadingGroupPartialVersion = 0xDC;
 constexpr uint8_t kPreHeadingGroupFullVersion = 106;      // this branch's own former-current (per-word source
@@ -178,6 +193,21 @@ class SectionPersistenceTest : public testing::Test {
   }
 };
 
+TEST_F(SectionPersistenceTest, IsolatesChapterBucketsAndIgnoresLegacyFlatCaches) {
+  SectionHarness harness;
+  Section first(harness.epub, 31, harness.renderer);
+  Section next(harness.epub, 32, harness.renderer);
+  EXPECT_EQ(first.filePath, "/cache/layout/0/31.bin");
+  EXPECT_EQ(next.filePath, "/cache/layout/1/32.bin");
+  Storage.put("/cache/html/32.html", {1});
+  Storage.put("/cache/sections/32.bin", {1});
+  EXPECT_FALSE(next.hasHtmlCache());
+  EXPECT_FALSE(next.loadSectionFile(harness.spec));
+  Storage.put("/cache/content/1/32.html", {2});
+  EXPECT_TRUE(next.hasHtmlCache());
+  EXPECT_FALSE(first.hasHtmlCache());
+}
+
 TEST_F(SectionPersistenceTest, FullCommitReopensAndResolvesMetadataAcrossAChunkBoundary) {
   SectionHarness harness;
   harness.begin({{"chapter", 0}, {"boundary", 64}});
@@ -251,7 +281,10 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 }
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
-  for (const uint8_t staleVersion : {kHeadingGroupFullVersion,       kHeadingGroupPartialVersion,
+  for (const uint8_t staleVersion : {kPreOpeningSpanDropCapFullVersion, kPreOpeningSpanDropCapPartialVersion,
+                                     kPreThematicBreakFullVersion,  kPreThematicBreakPartialVersion,
+                                     kPreBodyNormalizationFullVersion, kPreBodyNormalizationPartialVersion,
+                                     kHeadingGroupFullVersion,       kHeadingGroupPartialVersion,
                                      kPreHeadingGroupFullVersion,    kPreHeadingGroupPartialVersion,
                                      kLowHeapCssFullVersion,         kLowHeapCssPartialVersion,
                                      kPreSourceRangeFullVersion,     kPreSourceRangePartialVersion,

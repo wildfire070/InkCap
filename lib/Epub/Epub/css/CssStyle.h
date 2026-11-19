@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 
 // Matches order of PARAGRAPH_ALIGNMENT in CrossPointSettings
@@ -11,14 +12,24 @@ enum class CssTextDirection : uint8_t { Ltr = 0, Rtl = 1 };
 
 // Represents a CSS length value with its unit, allowing deferred resolution to pixels
 struct CssLength {
-  float value = 0.0f;
+ private:
+  // Preserve the full float without its three padding bytes. memcpy also keeps
+  // length records safe at byte-aligned addresses on C3 (no packed float access).
+  uint8_t valueBytes_[sizeof(float)]{};
+
+ public:
+  float value() const {
+    float result;
+    memcpy(&result, valueBytes_, sizeof(result));
+    return result;
+  }
   CssUnit unit = CssUnit::Pixels;
 
   CssLength() = default;
-  CssLength(const float v, const CssUnit u) : value(v), unit(u) {}
+  CssLength(const float v, const CssUnit u) : unit(u) { memcpy(valueBytes_, &v, sizeof(v)); }
 
   // Convenience constructor for pixel values (most common case)
-  explicit CssLength(const float pixels) : value(pixels) {}
+  explicit CssLength(const float pixels) : CssLength(pixels, CssUnit::Pixels) {}
 
   // Returns true if this length can be resolved to pixels with the given context.
   // Percentage units require a non-zero containerWidth to resolve.
@@ -32,13 +43,13 @@ struct CssLength {
     switch (unit) {
       case CssUnit::Em:
       case CssUnit::Rem:
-        return value * emSize;
+        return value() * emSize;
       case CssUnit::Points:
-        return value * 1.33f;  // Approximate pt to px conversion
+        return value() * 1.33f;  // Approximate pt to px conversion
       case CssUnit::Percent:
-        return value * containerWidth / 100.0f;
+        return value() * containerWidth / 100.0f;
       default:
-        return value;
+        return value();
     }
   }
 
@@ -47,6 +58,8 @@ struct CssLength {
     return static_cast<int16_t>(toPixels(emSize, containerWidth));
   }
 };
+
+static_assert(sizeof(CssLength) == 5, "CSS lengths must not retain float alignment padding");
 
 // Font style options matching CSS font-style property
 enum class CssFontStyle : uint8_t { Normal = 0, Italic = 1 };
@@ -137,6 +150,7 @@ struct CssPropertyFlags {
   uint64_t initialLetter : 1;
   uint64_t fontFamily : 1;
   uint64_t cssFloat : 1;
+  uint64_t backgroundImage : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -174,7 +188,8 @@ struct CssPropertyFlags {
         floatLeft(0),
         initialLetter(0),
         fontFamily(0),
-        cssFloat(0) {}
+        cssFloat(0),
+        backgroundImage(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
@@ -182,7 +197,7 @@ struct CssPropertyFlags {
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
            pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
            fontSizeMultiplier || listStyleType || fontSize || border || whiteSpace || shaded || floatLeft ||
-           initialLetter || fontFamily || cssFloat;
+           initialLetter || fontFamily || cssFloat || backgroundImage;
   }
 
   void clearAll() {
@@ -196,6 +211,7 @@ struct CssPropertyFlags {
     listStyleType = 0;
     fontSize = border = whiteSpace = shaded = floatLeft = initialLetter = fontFamily = 0;
     cssFloat = 0;
+    backgroundImage = 0;
   }
 };
 
@@ -237,7 +253,8 @@ struct CssStyle {
                        [](const CssBorderSide& side) { return side.visible(); });
   }
   bool preserveWhitespace = false;
-  bool backgroundBlack = false;                                 // Simple black inline/block background support
+  bool backgroundBlack = false;  // Simple black inline/block background support
+  bool backgroundImage = false;  // Presence only: unsupported background images need an hr fallback.
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
   bool pageBreakBefore = false;
   bool pageBreakAfter = false;
@@ -264,7 +281,7 @@ struct CssStyle {
   uint8_t borderWidthDefined = 0;
 
   [[nodiscard]] bool suppressesHorizontalRule() const {
-    return (borderStyleSuppressed | borderWidthSuppressed) == 0x0F;
+    return !backgroundImage && (borderStyleSuppressed | borderWidthSuppressed) == 0x0F;
   }
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
@@ -378,6 +395,10 @@ struct CssStyle {
     if (base.hasBackgroundBlack()) {
       backgroundBlack = base.backgroundBlack;
       defined.backgroundBlack = 1;
+    }
+    if (base.defined.backgroundImage) {
+      backgroundImage = base.backgroundImage;
+      defined.backgroundImage = 1;
     }
     if (base.hasDirection()) {
       direction = base.direction;

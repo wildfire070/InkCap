@@ -76,10 +76,6 @@ struct AssetDownloadActivity : Activity {
   struct Popup {
     void clear() { events.push_back("popup"); }
   } popup_;
-  struct Catalog {
-    ~Catalog() { events.push_back("catalog"); }
-  };
-  std::unique_ptr<Catalog> catalog_;
   bool catalogReady_ = false;
   void onExit();
 };
@@ -95,11 +91,12 @@ struct PluginCatalogActivity : CatalogActivity {
 bool failAllocation = false;
 unsigned allocations = 0, restarts = 0;
 NetworkBootTarget destination = NetworkBootTarget::OTA;
-void silentRestart() { events.push_back("home"); }
-void silentRestartToNetwork(NetworkBootTarget target, uint32_t payload) {
+bool silentRestart() { events.push_back("home"); return true; }
+bool silentRestartToNetwork(NetworkBootTarget target, uint32_t payload) {
   ++restarts;
   destination = target;
   assert(payload == 0);
+  return true;
 }
 template <class T, class... Args>
 std::unique_ptr<T> makeUniqueNoThrow(Args&&... args) {
@@ -159,16 +156,18 @@ int main() {
   assert(restarts == 0 && !activityManager.pending);
 
   // Asset downloads must restore normal boot even if Wi-Fi was cancelled or
-  // setup failed before the catalog was allocated/populated.
+  // setup failed before the catalog was allocated/populated. The real catalog
+  // itself is a stack-local in AssetDownloadActivity::fetch() (see
+  // makeUniqueNoThrow<AssetCatalog::Catalog>() there), not a persistent
+  // member -- it's already released by the time onExit() runs, so this
+  // checks only catalogReady_, the one member onExit() actually clears.
   for (bool loaded : {false, true}) {
     events.clear();
     AssetDownloadActivity assets;
-    if (loaded) assets.catalog_ = std::make_unique<AssetDownloadActivity::Catalog>();
     assets.catalogReady_ = loaded;
     assets.onExit();
-    assert(!assets.catalog_ && !assets.catalogReady_);
+    assert(!assets.catalogReady_);
     std::vector<std::string> expected{"popup"};
-    if (loaded) expected.push_back("catalog");
     expected.insert(expected.end(), {"disconnect", "off"});
 #ifdef SIMULATOR
     expected.push_back("fonts");
