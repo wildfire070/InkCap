@@ -40,17 +40,15 @@ void CalibreConnectActivity::onEnter() {
   requestUpdate();
   state = CalibreConnectState::WIFI_SELECTION;
   {
-    // connectedIP/connectedSSID/currentUploadName/lastCompleteName/
-    // lastProgressReceived/lastProgressTotal/lastCompleteAt are all read by
-    // render() on the render task with no lock of its own on that side
-    // either -- see the identical guard in loop()'s handleClient() path,
-    // which documents this exact hazard for these same fields.
+    // connectedIP/connectedSSID/progress/lastCompleteName/lastCompleteAt
+    // are all read by render() on the render task with no lock of its own
+    // on that side either -- see the identical guard in loop()'s
+    // handleClient() path, which documents this exact hazard for these
+    // same fields.
     RenderLock lock(*this);
     connectedIP.clear();
     connectedSSID.clear();
-    lastProgressReceived = 0;
-    lastProgressTotal = 0;
-    currentUploadName.clear();
+    progress = {};
     lastCompleteName.clear();
     lastCompleteAt = 0;
     batchSucceeded.clear();
@@ -59,7 +57,6 @@ void CalibreConnectActivity::onEnter() {
     batchListTopIndex = 0;
   }
   lastHandleClientTime = 0;
-  progress = {};
   lastProcessedCompleteAt = 0;
   lastProcessedJobCompleteAt = 0;
   exitRequested = false;

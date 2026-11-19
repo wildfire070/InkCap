@@ -651,8 +651,13 @@ void DictionaryDefinitionActivity::wrapText() {
   extraEntries_.clear();
   extraEntries_.reserve(extraLocations_.size());
   for (const auto& extraLocation : extraLocations_) {
-    const DictDefinitionSlice extraSlice = Dictionary::resolveDefinitionSlice(extraLocation, info);
-    if (extraSlice.found) extraEntries_.push_back({extraLocation, extraSlice});
+    // Each combined entry gets its own source: a dictzip-compressed entry's
+    // resolution extracts it to its own scratch file, which streamEntryIntoWrapper
+    // reads from on every later page turn, so it must outlive this loop.
+    auto extraSource = std::make_unique<DictionaryDefinitionSource>();
+    if (!extraSource->open(extraLocation)) continue;
+    const DictDefinitionSlice extraSlice = Dictionary::resolveDefinitionSlice(extraLocation, info, *extraSource);
+    if (extraSlice.found) extraEntries_.push_back({extraLocation, extraSlice, std::move(extraSource)});
   }
 
   prepareDefinitionFontAdvances();
@@ -741,9 +746,8 @@ void DictionaryDefinitionActivity::collectSpanForAdvances(void* ctx, const Style
   self->collectDefinitionAdvanceText(span.text, styleForSpan(span));
 }
 
-void DictionaryDefinitionActivity::collectEntryAdvances(const std::string& folderPath, uint32_t offset, uint32_t size,
+void DictionaryDefinitionActivity::collectEntryAdvances(const std::string& dictPath, uint32_t offset, uint32_t size,
                                                         bool isHtml, bool isPrimary) {
-  const std::string dictPath = folderPath + ".dict";
   if (isHtml) {
     const DictHtmlRenderer::SpanSink sink{this, &DictionaryDefinitionActivity::collectSpanForAdvances};
     if (!htmlRenderer_.renderFromFileStreaming(dictPath.c_str(), offset, size, sink)) {
@@ -813,10 +817,10 @@ void DictionaryDefinitionActivity::prepareDefinitionFontAdvances() {
   // label; register its codepoints too once there is more than one entry.
   const bool showLabels = !extraEntries_.empty();
   if (showLabels) collectDefinitionAdvanceText(foundLocation.headword.c_str(), EpdFontFamily::BOLD);
-  collectEntryAdvances(foundLocation.folderPath, definitionOffset_, definitionSize_, definitionIsHtml_, true);
+  collectEntryAdvances(definitionSource_.path(), definitionOffset_, definitionSize_, definitionIsHtml_, true);
   for (const auto& extra : extraEntries_) {
     if (showLabels) collectDefinitionAdvanceText(extra.location.headword.c_str(), EpdFontFamily::BOLD);
-    collectEntryAdvances(extra.location.folderPath, extra.slice.offset, extra.slice.size, extra.slice.isHtml, false);
+    collectEntryAdvances(extra.source->path(), extra.slice.offset, extra.slice.size, extra.slice.isHtml, false);
   }
 
   if (definitionAdvanceCodepointCount_ == 0) return;
@@ -943,6 +947,7 @@ void DictionaryDefinitionActivity::wrapAllEntries() {
       const uint32_t offset = isPrimary ? definitionOffset_ : extraEntries_[i - 1].slice.offset;
       const uint32_t size = isPrimary ? definitionSize_ : extraEntries_[i - 1].slice.size;
       const bool isHtml = isPrimary ? definitionIsHtml_ : extraEntries_[i - 1].slice.isHtml;
+      const std::string& dictPath = isPrimary ? definitionSource_.path() : extraEntries_[i - 1].source->path();
 
       if (showLabels) {
         const StyledSpan label{.text = loc.headword.c_str(), .bold = true, .newlineBefore = true};
@@ -951,7 +956,7 @@ void DictionaryDefinitionActivity::wrapAllEntries() {
       }
 
       const EntryStreamResult result =
-          streamEntryIntoWrapper(loc.folderPath, offset, size, isHtml, forcePlainText, wrapper);
+          streamEntryIntoWrapper(dictPath, offset, size, isHtml, forcePlainText, wrapper);
       if (result == EntryStreamResult::NeedsPlainFallback) {
         wrapper.finish();
         return AttemptOutcome::NeedsPlainFallback;
@@ -994,9 +999,8 @@ void DictionaryDefinitionActivity::wrapAllEntries() {
 }
 
 DictionaryDefinitionActivity::EntryStreamResult DictionaryDefinitionActivity::streamEntryIntoWrapper(
-    const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml, bool forcePlainText,
+    const std::string& dictPath, uint32_t offset, uint32_t size, bool isHtml, bool forcePlainText,
     DictLayout::Wrapper& wrapper) {
-  const std::string dictPath = folderPath + ".dict";
   if (!isHtml) {
     return streamPlainEntryIntoWrapper(dictPath, offset, size, wrapper) ? EntryStreamResult::Ok
                                                                         : EntryStreamResult::Failed;
