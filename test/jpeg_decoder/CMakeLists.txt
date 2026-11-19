@@ -33,7 +33,8 @@ gtest_discover_tests(JpegDecoderTest)
 
 add_executable(JpegThumbnailTest JpegThumbnailTest.cpp
   ${REPO_ROOT}/lib/JpegToBmpConverter/JpegToBmpConverter.cpp
-  ${REPO_ROOT}/lib/GfxRenderer/BitmapHelpers.cpp)
+  ${REPO_ROOT}/lib/GfxRenderer/BitmapHelpers.cpp
+  ${REPO_ROOT}/lib/GfxRenderer/CoverToneCurve.cpp)
 target_include_directories(JpegThumbnailTest PRIVATE ../pxc_v2/stubs ../gif_support/stubs
   ${REPO_ROOT}/lib/JpegToBmpConverter ${REPO_ROOT}/lib/GfxRenderer ${REPO_ROOT}/lib/Memory)
 target_compile_definitions(JpegThumbnailTest PRIVATE JPEG_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

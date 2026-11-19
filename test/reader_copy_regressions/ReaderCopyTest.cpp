@@ -53,6 +53,14 @@ struct HalFile {
 struct StorageMock {
   bool exists(const char* path) const { return io.files.contains(path); }
   bool remove(const char* path) { return io.files.erase(path) > 0; }
+  // Backs the .davbak backup-before-replace pattern in WebDAVHandler::handleCopy.
+  bool rename(const char* from, const char* to) {
+    auto it = io.files.find(from);
+    if (it == io.files.end()) return false;
+    io.files[to] = std::move(it->second);
+    io.files.erase(it);
+    return true;
+  }
   HalFile open(const char* path) {
     if (!exists(path)) return {};
     ++io.openHandles;
@@ -134,6 +142,10 @@ struct AppState {
   float pendingBookmarkProgress = -1;
   uint16_t pendingBookmarkParagraphIndex = UINT16_MAX;
   uint16_t pendingClippingIndex = UINT16_MAX;
+  // This branch's own BookFusion sync-jump fields: see CrossPointState.h.
+  uint16_t pendingBookFusionSyncSpine = UINT16_MAX;
+  float pendingBookFusionSyncProgress = -1.0f;
+  uint8_t pendingBookFusionSyncRetryCount = 0;
   void saveToFile() {}
 } APP_STATE;
 struct Reader {
@@ -144,6 +156,12 @@ struct Reader {
   bool pendingPercentJump = false, pendingRelayoutReposition = false;
   int cachedChapterPageNumber = -1, cachedChapterTotalPageCount = -1;
   unsigned cachedVisibleTextOffset = 0;
+  // This branch's own BookFusion sync-jump fields: not part of upstream's own
+  // onEnter(), but the extracted range includes this branch's BookFusion
+  // handling too, so this stub needs them to compile.
+  bool pendingPercentJumpApproximate = false;
+  bool pendingPercentJumpIsBookFusionSync = false;
+  uint8_t bookFusionSyncRetryCount = 0;
   void restore();
 };
 #include "Production.inc"
@@ -166,9 +184,14 @@ int main() {
         assert(io.cacheClears == 1);
       } else {
         assert(server.code == 500 && io.cacheClears == 0);
-        // COPY already removes an overwritten destination before copying.
-        // This scoped fix discards the failed partial, not an intact old file.
-        assert(!io.files.contains("/dst"));
+        if (overwrite) {
+          // The previous destination is backed up (.davbak) before the copy
+          // starts and renamed back on any failure, so it survives intact.
+          assert(io.files.at("/dst") == "previous destination");
+        } else {
+          // Nothing existed at /dst to back up, so a failure leaves it absent.
+          assert(!io.files.contains("/dst"));
+        }
       }
     }
   }
