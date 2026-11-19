@@ -42,13 +42,17 @@ namespace {
 // point at values this branch already tracks under other names below) --
 // those renames carry no new byte values, so they're not duplicated here.
 //
-// This sync (upstream's v108, deferred outline-advance rounding) retired v107
-// to kHeadingGroupFullVersion/PartialVersion below, and also caught byte 105/
-// 0xDA (upstream's own v105, CSS-under-low-heap) which upstream's merge commit
-// still tests but had no named entry here -- added as kLowHeapCssFullVersion/
-// PartialVersion rather than silently dropping it.
-constexpr uint8_t kFullVersion = 108;
-constexpr uint8_t kPartialVersion = 0xDD;
+// This sync (upstream's v109-111: opening-span drop caps, thematic-break
+// fallback rule, and smaller-body font-size retention) retires 108/0xDD,
+// 109/0xDE, and 110/0xDF below in turn.
+constexpr uint8_t kFullVersion = 111;
+constexpr uint8_t kPartialVersion = 0xE0;
+constexpr uint8_t kPreBodyNormalizationFullVersion = 110;  // former-current, superseded by v111 (body-size retention)
+constexpr uint8_t kPreBodyNormalizationPartialVersion = 0xDF;
+constexpr uint8_t kPreThematicBreakFullVersion = 109;  // former-current, superseded by v110 (thematic-break fallback)
+constexpr uint8_t kPreThematicBreakPartialVersion = 0xDE;
+constexpr uint8_t kPreOpeningSpanDropCapFullVersion = 108;  // former-current, superseded by v109 (opening-span drop caps)
+constexpr uint8_t kPreOpeningSpanDropCapPartialVersion = 0xDD;
 constexpr uint8_t kHeadingGroupFullVersion = 107;  // former-current, superseded by v108 (deferred advance rounding)
 constexpr uint8_t kHeadingGroupPartialVersion = 0xDC;
 constexpr uint8_t kPreHeadingGroupFullVersion = 106;  // this branch's own former-current (per-word source
@@ -181,6 +185,21 @@ class SectionPersistenceTest : public testing::Test {
   }
 };
 
+TEST_F(SectionPersistenceTest, IsolatesChapterBucketsAndIgnoresLegacyFlatCaches) {
+  SectionHarness harness;
+  Section first(harness.epub, 31, harness.renderer);
+  Section next(harness.epub, 32, harness.renderer);
+  EXPECT_EQ(first.filePath, "/cache/layout/0/31.bin");
+  EXPECT_EQ(next.filePath, "/cache/layout/1/32.bin");
+  Storage.put("/cache/html/32.html", {1});
+  Storage.put("/cache/sections/32.bin", {1});
+  EXPECT_FALSE(next.hasHtmlCache());
+  EXPECT_FALSE(next.loadSectionFile(harness.spec));
+  Storage.put("/cache/content/1/32.html", {2});
+  EXPECT_TRUE(next.hasHtmlCache());
+  EXPECT_FALSE(first.hasHtmlCache());
+}
+
 TEST_F(SectionPersistenceTest, FullCommitReopensAndResolvesMetadataAcrossAChunkBoundary) {
   SectionHarness harness;
   harness.begin({{"chapter", 0}, {"boundary", 64}});
@@ -255,7 +274,9 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kHeadingGroupFullVersion, kHeadingGroupPartialVersion, kLowHeapCssFullVersion, kLowHeapCssPartialVersion,
+       {kPreBodyNormalizationFullVersion, kPreBodyNormalizationPartialVersion, kPreThematicBreakFullVersion,
+        kPreThematicBreakPartialVersion, kPreOpeningSpanDropCapFullVersion, kPreOpeningSpanDropCapPartialVersion,
+        kHeadingGroupFullVersion, kHeadingGroupPartialVersion, kLowHeapCssFullVersion, kLowHeapCssPartialVersion,
         kPreHeadingGroupFullVersion, kPreHeadingGroupPartialVersion, kPreSourceRangeFullVersion,
         kPreSourceRangePartialVersion, kPreChapterSpacingFullVersion,
         kPreChapterSpacingPartialVersion, kPreUnicodeSpaceFullVersion,

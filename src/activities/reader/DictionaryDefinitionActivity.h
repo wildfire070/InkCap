@@ -149,9 +149,15 @@ class DictionaryDefinitionActivity final : public Activity {
   // One of extraLocations_, paired with its already-resolved
   // DictDefinitionSlice so page turns don't re-resolve dictionary metadata.
   // Entries whose slice failed to resolve are dropped when this is built.
+  // Each entry owns its own DictionaryDefinitionSource (mirroring
+  // definitionSource_ for the primary) since a dictzip-compressed entry's
+  // slice resolution extracts it to its own activity-owned scratch file,
+  // which later page turns stream from directly -- that file must stay
+  // alive (and distinct per entry) for as long as extraEntries_ does.
   struct CombinedEntry {
     DictLocation location;
     DictDefinitionSlice slice;
+    std::unique_ptr<DictionaryDefinitionSource> source;
   };
   std::vector<CombinedEntry> extraEntries_;
 
@@ -164,6 +170,7 @@ class DictionaryDefinitionActivity final : public Activity {
   int currentPage = 0;
   int linesPerPage = 0;
   int totalPages = 0;
+  DictionaryDefinitionSource definitionSource_;
   uint32_t definitionOffset_ = 0;
   uint32_t definitionSize_ = 0;
   bool definitionIsHtml_ = false;
@@ -240,10 +247,12 @@ class DictionaryDefinitionActivity final : public Activity {
   // label before each entry once there is more than one. Replaces the old
   // single-entry wrapHtml()/wrapPlain() split, which this generalizes.
   void wrapAllEntries();
-  // Streams one entry's content (HTML or plain) into wrapper. forcePlainText
-  // selects the plain-fallback render path for an HTML entry whose strict
-  // parse already failed this page.
-  EntryStreamResult streamEntryIntoWrapper(const std::string& folderPath, uint32_t offset, uint32_t size,
+  // Streams one entry's content (HTML or plain) into wrapper. dictPath is
+  // that entry's own resolved DictionaryDefinitionSource::path() (the real
+  // .dict file, or a dictzip-extracted scratch file), not a folder to guess
+  // a filename from. forcePlainText selects the plain-fallback render path
+  // for an HTML entry whose strict parse already failed this page.
+  EntryStreamResult streamEntryIntoWrapper(const std::string& dictPath, uint32_t offset, uint32_t size,
                                            bool isHtml, bool forcePlainText, DictLayout::Wrapper& wrapper);
   // Word-wraps a non-HTML (StarDict 'm'/'t'/etc.) entry's raw bytes into
   // wrapper. Returns false only on a genuine read failure.
@@ -254,7 +263,7 @@ class DictionaryDefinitionActivity final : public Activity {
   // entry and each extraEntries_ entry. isPrimary gates the
   // definitionHtmlNeedsPlainFallback_ anticipation side effect, which only
   // applies to the entry wrapAllEntries() checks first.
-  void collectEntryAdvances(const std::string& folderPath, uint32_t offset, uint32_t size, bool isHtml,
+  void collectEntryAdvances(const std::string& dictPath, uint32_t offset, uint32_t size, bool isHtml,
                             bool isPrimary);
   void collectDefinitionAdvanceText(const char* text, EpdFontFamily::Style style);
   static void collectSpanForAdvances(void* ctx, const StyledSpan& span);

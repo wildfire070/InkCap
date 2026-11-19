@@ -106,6 +106,8 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   DictionaryFont,
   Spacing,
   TextAa,
+  TwoToneTextAa,
+  TextDarkness,
   Focus,
   GuideDots,
   Margins,
@@ -296,6 +298,10 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   font.add(ReaderDrawerCatalogItem::Spacing);
   font.add(ReaderDrawerCatalogItem::CharacterSpacing);
   font.add(ReaderDrawerCatalogItem::TextAa);
+#if FREEINK_DEVICE_EEGO_A4
+  font.add(ReaderDrawerCatalogItem::TwoToneTextAa);
+#endif
+  font.add(ReaderDrawerCatalogItem::TextDarkness);
   font.add(ReaderDrawerCatalogItem::Focus);
   font.add(ReaderDrawerCatalogItem::GuideDots);
 
@@ -458,6 +464,8 @@ struct ReaderSettingsDraft {
   uint8_t orientation = 0;
   uint8_t paragraphAlignment = 0;
   uint8_t textAntiAliasing = 0;
+  uint8_t twoToneTextAA = 0;
+  uint8_t textDarkness = 0;
   uint8_t focusReadingEnabled = 0;
   uint8_t guideReadingEnabled = 0;
   uint8_t hyphenationEnabled = 0;

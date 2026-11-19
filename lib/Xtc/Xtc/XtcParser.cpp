@@ -239,25 +239,17 @@ XtcError XtcParser::readFirstPageInfo() {
   m_defaultWidth = entry.width;
   m_defaultHeight = entry.height;
 
-  // A known bug in some third-party EPUB-to-XTC converters writes the container's magic as
-  // 1-bit (XTC) around pages that are actually 2-bit (XTH): every page then fails its magic
-  // check against m_bitDepth, read from the container alone. The page's own magic is the
-  // ground truth here, so peek it and let it win when the two disagree. Bounds-checked so a
-  // corrupt dataOffset near UINT64_MAX cannot be seeked to.
-  if (entry.dataOffset < fileSize && fileSize - entry.dataOffset >= sizeof(uint32_t) &&
-      m_file.seek64(entry.dataOffset)) {
-    uint32_t pageMagic = 0;
-    if (m_file.read(reinterpret_cast<uint8_t*>(&pageMagic), sizeof(pageMagic)) == sizeof(pageMagic) &&
-        (pageMagic == XTG_MAGIC || pageMagic == XTH_MAGIC)) {
-      const uint8_t pageBitDepth = (pageMagic == XTH_MAGIC) ? 2 : 1;
-      if (pageBitDepth != m_bitDepth) {
-        LOG_INF("XTC", "Container declares %u-bit but the first page is %u-bit; using the page's own magic",
-                m_bitDepth, pageBitDepth);
-        m_bitDepth = pageBitDepth;
-      }
+  // The pages decide the bit depth: some converters write a 1-bit container
+  // header ("XTC") around 2-bit pages ("XTH"), or the other way round.
+  uint32_t pageMagic = 0;
+  if (entry.dataOffset <= fileSize - sizeof(pageMagic) && m_file.seek64(entry.dataOffset) &&
+      m_file.read(reinterpret_cast<uint8_t*>(&pageMagic), sizeof(pageMagic)) == sizeof(pageMagic)) {
+    const uint8_t pageDepth = pageMagic == XTH_MAGIC ? 2 : pageMagic == XTG_MAGIC ? 1 : 0;
+    if (pageDepth != 0 && pageDepth != m_bitDepth) {
+      LOG_INF("XTC", "Container says %u-bit, pages are %u-bit: following the pages", m_bitDepth, pageDepth);
+      m_bitDepth = pageDepth;
     }
   }
-
   return XtcError::OK;
 }
 

@@ -9,7 +9,10 @@
 namespace dictionary_test {
 inline std::map<std::string, std::string> files;
 inline std::map<std::string, int> readers;
+inline std::map<std::string, size_t> bytesRead;
 inline bool failRead = false;
+inline bool failWrite = false;
+inline bool failSync = false;
 inline unsigned duplicateOpens = 0;
 }  // namespace dictionary_test
 class HalFile {
@@ -25,6 +28,7 @@ class HalFile {
     opened = false;
     return true;
   }
+  bool sync() { return !dictionary_test::failSync; }
   bool isOpen() const { return opened; }
   size_t fileSize() const { return opened ? dictionary_test::files.at(path).size() : 0; }
   uint64_t fileSize64() const { return static_cast<uint64_t>(fileSize()); }
@@ -38,6 +42,7 @@ class HalFile {
   int read(void* out, size_t count) {
     if (!opened || dictionary_test::failRead) return -1;
     count = std::min(count, fileSize() - pos);
+    dictionary_test::bytesRead[path] += count;
     std::memcpy(out, dictionary_test::files.at(path).data() + pos, count);
     pos += count;
     return static_cast<int>(count);
@@ -47,7 +52,7 @@ class HalFile {
     return read(&c, 1) == 1 ? c : -1;
   }
   int write(const void* data, size_t count) {
-    if (!opened) return -1;
+    if (!opened || dictionary_test::failWrite) return -1;
     auto& bytes = dictionary_test::files[path];
     if (pos + count > bytes.size()) bytes.resize(pos + count);
     std::memcpy(bytes.data() + pos, data, count);
@@ -56,6 +61,7 @@ class HalFile {
   }
 };
 struct TestStorage {
+  bool ensureDirectoryExists(const char*) { return true; }
   bool exists(const char* path) { return dictionary_test::files.count(path); }
   bool openFileForRead(const char*, const char* path, HalFile& file) {
     file.close();

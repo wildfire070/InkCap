@@ -11,9 +11,16 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
+#if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
+#endif
 #include <I18n.h>
+#ifndef SIMULATOR
+#include <InputWake.h>
+#endif
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
@@ -109,6 +116,15 @@
 using namespace ReaderSettingsIO;
 
 namespace {
+// The caller owns RenderLock. The main-loop idle hook cannot acquire it while
+// a foreground reader build is running (CrossPoint #4524). Call only between
+// parser/build steps, after their storage locks have been released.
+void idleReaderDisplayDuringBuild() {
+#if FREEINK_DEVICE_EEGO_A4
+  display.controllerIdle();
+#endif
+}
+
 constexpr unsigned long TOUCH_DICTIONARY_LOOKUP_HOLD_MS = 1000;
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long longPressMenuMs = 600;
@@ -1194,6 +1210,8 @@ void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.publisherFonts = SETTINGS.publisherFonts;
   out.hyphenationEnabled = SETTINGS.hyphenationEnabled;
   out.textAntiAliasing = SETTINGS.textAntiAliasing;
+  out.twoToneTextAA = SETTINGS.twoToneTextAA;
+  out.textDarkness = SETTINGS.textDarkness;
   out.imageRendering = SETTINGS.imageRendering;
   out.imageGrayscale = SETTINGS.imageGrayscale;
   out.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
@@ -1236,6 +1254,8 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   SETTINGS.publisherFonts = in.publisherFonts <= static_cast<uint8_t>(PublisherFonts::All) ? in.publisherFonts : 0;
   SETTINGS.hyphenationEnabled = in.hyphenationEnabled ? 1 : 0;
   SETTINGS.textAntiAliasing = in.textAntiAliasing ? 1 : 0;
+  SETTINGS.twoToneTextAA = in.twoToneTextAA != 0;
+  SETTINGS.textDarkness = in.textDarkness <= 2 ? in.textDarkness : 0;
   SETTINGS.imageRendering =
       in.imageRendering < CrossPointSettings::IMAGE_RENDERING_COUNT ? in.imageRendering : SETTINGS.imageRendering;
   SETTINGS.imageGrayscale = in.imageGrayscale ? 1 : 0;
@@ -1472,9 +1492,12 @@ void EpubReaderActivity::finalizeReadingStatsOnExit() {
   const uint32_t previousEstimate = stats.estimatedTimeLeftSeconds;
   refreshCachedTimeLeftEstimate();
   if (statsTrackingActive || paceDirty || pendingStatsCommit || stats.estimatedTimeLeftSeconds != previousEstimate) {
-    if (stats.save(epub->getCachePath())) {
-      if (statsTrackingActive || pendingStatsCommit) globalStats.save();
+    const bool bookSaved = stats.save(epub->getCachePath());
+    const bool globalSaved = !(statsTrackingActive || pendingStatsCommit) || globalStats.save();
+    if (bookSaved && globalSaved) {
       pendingSync.mark(epub->getPath(), SyncPending::STATS_BIT);
+    } else {
+      LOG_ERR("ERS", "Could not finish saving reading history on exit");
     }
   }
 }
@@ -2319,6 +2342,7 @@ void EpubReaderActivity::onEnter() {
   const bool resumePageBuildAfterRestart = consumeSilentRestartReaderPageBuild(
       epub->getPath(), restartPageBuildSpine, restartPageBuildTarget, resumeAutoPageTurnAfterRestart);
 
+  bool progressLoaded = false;
   if (APP_STATE.pendingBookmarkSpine != UINT16_MAX && APP_STATE.pendingBookmarkProgress >= 0.0f) {
     // Resume from a bookmark selected on the Home screen
     currentSpineIndex = APP_STATE.pendingBookmarkSpine;
@@ -2358,6 +2382,7 @@ void EpubReaderActivity::onEnter() {
   } else {
     EpubReaderUtils::Progress progress;
     if (EpubReaderUtils::loadProgress(*epub, progress)) {
+      progressLoaded = true;
       currentSpineIndex = progress.spineIndex;
       nextPageNumber = progress.pageNumber;
       cachedSpineIndex = currentSpineIndex;
@@ -2373,9 +2398,8 @@ void EpubReaderActivity::onEnter() {
       }
     }
   }
-  // We may want a better condition to detect if we are opening for the first time.
-  // This will trigger if the book is re-opened at Chapter 0.
-  if (currentSpineIndex == 0 && !pendingPercentJump) {
+  // Only a first open follows the guide; a saved position in spine 0 is intentional.
+  if (!progressLoaded && currentSpineIndex == 0 && !pendingPercentJump) {
     int textSpineIndex = epub->getSpineIndexForTextReference();
     if (textSpineIndex != 0) {
       currentSpineIndex = textSpineIndex;
@@ -2890,9 +2914,22 @@ bool EpubReaderActivity::backgroundBuildCanUsePageBuffer() const {
 }
 
 bool EpubReaderActivity::backgroundSectionBuildHasHeap() {
-  const auto heap = MemoryBudget::snapshot();
-  if (MemoryBudget::hasHeap(heap, MemoryBudget::EPUB_TEXT_LAYOUT_MIN_FREE,
-                            MemoryBudget::EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC)) {
+  auto heap = MemoryBudget::snapshot();
+  if (backgroundBuildMemoryGuard.shouldReclaim(heap)) {
+    // Both callers hold RenderLock, between layout ticks. Drop only rebuildable
+    // pixel/decompression caches and inactive SD fonts, never the active font's
+    // advance tables, section/parser state, page buffer, or durable SD caches.
+    const auto before = heap;
+    ImageBlock::releaseSessionPixelCache();
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      fontCache->releaseInactiveSdFontCaches(activeSectionFontId != 0 ? activeSectionFontId
+                                                                      : SETTINGS.getReaderFontId());
+    }
+    heap = MemoryBudget::snapshot();
+    LOG_DBG("ERS", "Background pressure reclaim: free=%u->%u maxAlloc=%u->%u", before.freeHeap, heap.freeHeap,
+            before.maxAllocHeap, heap.maxAllocHeap);
+  }
+  if (BackgroundBuildMemoryGuard::hasHeap(heap)) {
     backgroundBuildPausedForLowMemory = false;
     return true;
   }
@@ -2908,6 +2945,14 @@ bool EpubReaderActivity::backgroundSectionBuildHasHeap() {
 void EpubReaderActivity::idlePrewarmNextPage() {
   RenderLock lock(*this, RenderLock::Mode::Try);
   if (!lock.ownsLock()) return;
+
+#if CROSSINK_SCALABLE_FONTS
+  const int ttfFontId = activeSectionFontId != 0 ? activeSectionFontId : SETTINGS.getReaderFontId();
+  if (auto* manager = renderer.getFontCacheManager(); manager && manager->isScalableFont(ttfFontId)) {
+    idlePrewarmTtf(ttfFontId, *manager);
+    return;
+  }
+#endif
 
   if (!section || section->isBuilding() || activeFootnotePreview || automaticPageTurnActive ||
       !renderer.hasFrameBuffer() || lastRenderCompleteMs == 0 ||
@@ -2989,6 +3034,75 @@ void EpubReaderActivity::maybeRunAutoSync() {
     KOReaderAutoSync::runIfArmed(renderer, epub, currentSpineIndex, pageNumber, pageCount, bookPercent);
   }
 }
+
+#if CROSSINK_SCALABLE_FONTS
+namespace {
+bool idleFontInputWakePending() {
+#ifndef SIMULATOR
+  return InputWake::hasPendingEdge() || InputWake::hasPendingButtons();
+#else
+  // The simulator injects input via MappedInputManager rather than hardware IRQs.
+  return false;
+#endif
+}
+}  // namespace
+void EpubReaderActivity::idlePrewarmTtf(const int fontId, FontCacheManager& manager) {
+  // Called with RenderLock held after foreground input handling. No font/page
+  // pointers in the job are borrowed across ticks; every render starts a new job.
+  if (!idleTtfReady.load(std::memory_order_relaxed) || !section || section.get() != idleTtfSection ||
+      currentSpineIndex != idleTtfSpine || section->currentPage != idleTtfVisiblePage || fontId != idleTtfFont ||
+      section->isBuilding() || activeFootnotePreview || automaticPageTurnActive || !renderer.hasFrameBuffer() ||
+      pageBufferStale.load(std::memory_order_relaxed) || idleTtfOffset > 5 ||
+      idleTtfVisiblePage + idleTtfOffset >= section->pageCount)
+    return;
+
+  struct Slice {
+    EpubReaderActivity* reader;
+    unsigned long started;
+  } slice{this, millis()};
+  const auto inputPending = [](void* context) {
+    const auto* reader = static_cast<Slice*>(context)->reader;
+    return idleFontInputWakePending() || reader->mappedInput.hasPendingActivity() ||
+           !reader->idleTtfReady.load(std::memory_order_relaxed);
+  };
+  const auto shouldYield = [](void* context) {
+    const auto& slice = *static_cast<Slice*>(context);
+    return millis() - slice.started >= 8 || idleFontInputWakePending() ||
+           slice.reader->mappedInput.hasPendingActivity() ||
+           !slice.reader->idleTtfReady.load(std::memory_order_relaxed);
+  };
+  if (shouldYield(&slice)) return;
+  const auto heap = MemoryBudget::snapshot();
+  if (!MemoryBudget::hasHeap(heap, IDLE_SD_FONT_PREWARM_MIN_FREE, IDLE_SD_FONT_PREWARM_MIN_MAX_ALLOC)) return;
+
+  if (idleTtfJob.count == 0) {
+    // Reuse the existing bounded page loader once per lookahead page, release
+    // its allocation before cold rasterization, and never retain its section.
+    auto page = section->loadPage(idleTtfVisiblePage + idleTtfOffset);
+    if (!page) {
+      LOG_DBG("ERS", "Idle TTF lookahead stopped: page load failed");
+      idleTtfReady.store(false, std::memory_order_relaxed);
+      return;
+    }
+    // Even a slow cold page load must make progress. Scan once, then the time
+    // budget prevents any raster work in this tick; input remains unconsumed.
+    HalScalableFont::IdlePrewarmScope admission;
+    auto scope = manager.createPrewarmScope(FontCacheManager::PreparationPolicy::IdleScalable);
+    if (!page->renderText(renderer, fontId, 0, 0, true, inputPending, &slice)) return;
+    scope.endScanForIdle(idleTtfJob);
+  }
+  const auto result = manager.prewarmIdleSlice(idleTtfJob, shouldYield, &slice, 16, inputPending);
+  if (result == FontCacheManager::IdleResult::Failed) {
+    LOG_DBG("ERS", "Idle TTF lookahead stopped: glyph preparation failed");
+    idleTtfReady.store(false, std::memory_order_relaxed);
+    idleTtfJob.reset();
+  } else if (result == FontCacheManager::IdleResult::Complete) {
+    LOG_DBG("ERS", "Idle TTF lookahead ready: spine=%d page=%d", idleTtfSpine, idleTtfVisiblePage + idleTtfOffset);
+    ++idleTtfOffset;
+    idleTtfJob.reset();
+  }
+}
+#endif
 
 // One dismissal rule for every transient reader confirmation: it clears when its
 // dwell time elapses or the reader presses a navigation button.
@@ -4638,7 +4752,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuAction action, const 
       } else {
         // Persist current position so the reader resumes at the right page on return.
         // goToReader() depends on this file, so abort the sync if the write fails.
-        const bool saved = saveReadingProgress();
+        const bool saved = saveProgressBeforeRestart();
         if (!saved) {
           LOG_ERR("KOSync", "Aborting sync because current progress could not be saved");
           pendingSyncSaveError = true;
@@ -6713,6 +6827,10 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn, const char* source) {
 
 // TODO: Failure handling
 void EpubReaderActivity::render(RenderLock&& lock) {
+#if CROSSINK_SCALABLE_FONTS
+  idleTtfReady.store(false, std::memory_order_relaxed);
+  idleTtfJob.reset();
+#endif
   // Also drain on error/end screens and early returns, while the render lock
   // still protects the session. Normal pages drain before starting their timer.
   struct FlushStatsOnReturn {
@@ -6820,8 +6938,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     armSilentRestartReaderPageBuild(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
                                     static_cast<uint16_t>(targetPage), automaticPageTurnActive);
     lowMemoryPartialRestartAttempted = true;
-    silentRestartToReader();
-    return true;
+    return silentRestartToReader();
   };
 
   // edge case handling for sub-zero spine index
@@ -6981,6 +7098,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         SectionBuildOptions buildOptions{
             buildingFootnotePreview ? pendingFootnotePreviewAnchor.c_str() : nullptr,
             static_cast<uint16_t>(buildingFootnotePreview ? FOOTNOTE_PREVIEW_MAX_PAGES : 0)};
+#if FREEINK_DEVICE_EEGO_A4
+        buildOptions.onBuildCheckpoint = idleReaderDisplayDuringBuild;
+#endif
         if (pendingReferenceUnitOffset) {
           buildOptions.referenceUnitOffset = *pendingReferenceUnitOffset;
           buildOptions.referenceUnitCount = pendingReferenceUnitCount;
@@ -7054,6 +7174,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                 if (buildPopupPending && millis() - buildStartMs >= BUILD_POPUP_DEADLINE_MS) {
                   showBuildPopup();
                 }
+                idleReaderDisplayDuringBuild();
                 if (!section->buildSomeMore(INTERACTIVE_BUILD_PAGES_PER_CHUNK)) {
                   LOG_ERR("ERS", "Failed during incremental section build");
                   buildFailed = true;
@@ -7434,6 +7555,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           catchUpCancelled = true;
           return;
         }
+        idleReaderDisplayDuringBuild();
         if (!section->buildSomeMore(INTERACTIVE_BUILD_PAGES_PER_CHUNK)) {
           LOG_ERR("ERS", "Failed during incremental section build");
           catchUpFailed = true;
@@ -7448,6 +7570,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           catchUpCancelled = true;
           return;
         }
+        idleReaderDisplayDuringBuild();
         if (!section->buildSomeMore(INTERACTIVE_BUILD_PAGES_PER_CHUNK)) {
           LOG_ERR("ERS", "Failed during incremental section build");
           catchUpFailed = true;
@@ -7587,6 +7710,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
     pageBufferStale.store(false, std::memory_order_relaxed);
     lastRenderCompleteMs = millis();
+#if CROSSINK_SCALABLE_FONTS
+    idleTtfSection = section.get();
+    idleTtfSpine = currentSpineIndex;
+    idleTtfVisiblePage = section->currentPage;
+    idleTtfFont = renderFontId;
+    idleTtfOffset = 1;
+    idleTtfReady.store(true, std::memory_order_relaxed);
+#endif
     const uint8_t heapShapeRedrawStages = pendingHeapShapeReaderRedrawStages.exchange(0, std::memory_order_relaxed);
     if (heapShapeRedrawStages & HEAP_SHAPE_REDRAW_CLIP) {
       MemoryBudget::logHeapShape("clip.reader_redrawn");
@@ -8153,6 +8284,23 @@ void EpubReaderActivity::prepareCurrentSectionForRelayout(const bool preserveSta
 bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fontId, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
                                         const int orientedMarginLeft, const bool updatePanel) {
+  const GfxRenderer::TextDarknessScope darkness(renderer, SETTINGS.textDarkness);
+#if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
+  // Log after presentation so serial output does not delay the first pixels.
+  // The final stage includes AA rendering, upload, panel waits and history.
+  struct RenderTiming {
+    unsigned long started = millis();
+    unsigned long previewDone = started;
+    unsigned long fontsDone = started;
+    unsigned long bwDone = started;
+    bool composed = false;
+    ~RenderTiming() {
+      if (composed)
+        LOG_DBG("ERS", "Page render ms: preview=%lu fonts=%lu draw=%lu display=%lu total=%lu", previewDone - started,
+                fontsDone - previewDone, bwDone - fontsDone, millis() - bwDone, millis() - started);
+    }
+  } timing;
+#endif
 #if CROSSINK_APP_CAP_TOUCH
   if (mappedInput.hasTouchHardware()) {
     if (!touchReaderPreviewAllocationAttempted) {
@@ -8168,6 +8316,9 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
       LOG_DBG("ERDM", "Skipping touch reader preview outside the 8 KiB/256-run snapshot budget");
     }
   }
+#endif
+#if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
+  timing.previewDone = millis();
 #endif
   // Font prewarm: scan pass accumulates text, then prewarm, then real render.
   // SD fonts depend on the prepared bitmap cache; drawing after a failed
@@ -8201,12 +8352,17 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     }
   }
 
+#if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
+  timing.fontsDone = millis();
+#endif
 #if CROSSINK_APP_CAP_TOUCH
   buildFootnoteTouchTargets(*page, fontId, orientedMarginTop, orientedMarginLeft);
 #endif
 
   const bool pageHasImages = page->hasImages();
-  const ReaderUtils::ReaderRefreshScope readerRefresh(renderer, updatePanel, !pageHasImages);
+  const auto refreshContent = pageHasImages ? GfxRenderer::RefreshContent::Image
+                                            : ReaderUtils::ReaderRefreshScope::text(SETTINGS.twoToneTextAA);
+  const ReaderUtils::ReaderRefreshScope readerRefresh(renderer, refreshContent, updatePanel);
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
   bool needsImageGrayscale = !renderer.isDisplayInverted() && SETTINGS.imageGrayscale && pageHasImages;
   bool needsTextGrayscale = renderer.supportsTextGrayscale() && SETTINGS.textAntiAliasing && foregroundBlack &&
@@ -8265,12 +8421,13 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     finalizeBufferComposition();
   };
 
+  bool imageReplayOk = true;
   const auto composeGrayscaleBuffer = [&]() {
     if (needsTextGrayscale) {
       page->renderText(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
     }
     if (needsImageGrayscale) {
-      page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      imageReplayOk = page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop) && imageReplayOk;
     }
     finalizeBufferComposition();
   };
@@ -8293,6 +8450,10 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   }
   composePageBuffer();
   renderStatusBar();
+#if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
+  timing.bwDone = millis();
+  timing.composed = true;
+#endif
   if (updatePanel && SdCardFont::takeCorruptGlyphNotice()) {
     pendingFontDamagedToast = true;
     renderModeToastShowTime = millis();
@@ -8350,6 +8511,18 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (!updatePanel) {
     return true;
   }
+  const auto displayMonochromePage = [&]() {
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderer.clearScreen(ReaderUtils::readerBackgroundColor());
+    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, false);
+    finalizeBufferComposition();
+    renderStatusBar();
+    drawPageFeedback(false);
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    pagesUntilFullRefresh = 1;
+    return true;
+  };
 #ifndef SIMULATOR
   const bool absoluteImageGrayscale =
       needsImageGrayscale && !gpio.deviceIsX3() && renderer.supportsAbsoluteGrayscale() &&
@@ -8362,7 +8535,11 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
                           : cleanImageBasePending   ? HalDisplay::HALF_REFRESH
                                                     : HalDisplay::FAST_REFRESH;
     if (pendingFontDamagedToast) drawRenderModeToastBuffer(tr(STR_FONT_DAMAGED));
-    if (renderer.displayAbsoluteGrayscaleBase(baseMode)) {
+    // Preserve manual/strong cleanup turns. On ordinary image turns the
+    // controller may fold the base into its complete-plane waveform.
+    const bool directImagePass = baseMode == HalDisplay::FAST_REFRESH && renderer.supportsDirectGrayscale();
+    if ((directImagePass && renderer.displayDirectGrayscaleBase(baseMode)) ||
+        renderer.displayAbsoluteGrayscaleBase(baseMode)) {
       auto renderImageOverlays = [&]() {
         finalizeBufferComposition();
         renderStatusBar();
@@ -8372,14 +8549,12 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
               renderer, *page, fontId, orientedMarginLeft, orientedMarginTop, deferredGrayscalePlanes.lsb.get(),
               deferredGrayscalePlanes.msb.get(), deferredGrayscalePlanes.bytes,
               [](void* context) { (*static_cast<const decltype(renderImageOverlays)*>(context))(); },
-              &renderImageOverlays)) {
+              &renderImageOverlays, needsTextGrayscale, foregroundBlack)) {
         cleanImageBasePending = false;
         pagesUntilFullRefresh = 1;
         return true;
       }
-      renderer.setRenderMode(GfxRenderer::BW);
-      renderer.displayBuffer(baseMode);
-      return true;
+      return displayMonochromePage();
     }
     LOG_ERR("ERS", "Absolute image grayscale unavailable; using overlay");
   }
@@ -8463,11 +8638,14 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
   }
+  bool imageReplayFailed = false;
   if (EpubGrayscale::runTiledGrayscalePass(renderer, *page, fontId, orientedMarginLeft, orientedMarginTop,
                                            foregroundBlack, needsTextGrayscale, needsImageGrayscale,
-                                           grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh)) {
+                                           grayscaleStripScratch.get(), grayscaleStripScratchSize, overlapRefresh,
+                                           &imageReplayFailed)) {
     return true;
   }
+  if (imageReplayFailed) return displayMonochromePage();
 
   // Save bw buffer to reset buffer state after grayscale data sync
   const bool storedBwBuffer = needsAnyGrayscale && renderer.storeBwBuffer();
@@ -8484,12 +8662,22 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     composeGrayscaleBuffer();
+    if (!imageReplayOk) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return displayMonochromePage();
+    }
     renderer.copyGrayscaleLsbBuffers();
 
     // Render and copy to MSB buffer
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     composeGrayscaleBuffer();
+    if (!imageReplayOk) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.restoreBwBuffer();
+      return displayMonochromePage();
+    }
     renderer.copyGrayscaleMsbBuffers();
 
     // display grayscale part
