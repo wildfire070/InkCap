@@ -1,5 +1,9 @@
 #include "ActivityManager.h"
 
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+#include "util/BatteryDiagnosticLog.h"
+#endif
+
 #include "activities/plugins/PluginCatalogActivity.h"
 
 #if CROSSINK_SCALABLE_FONTS
@@ -47,6 +51,7 @@
 #include "reader/BookReadingStats.h"
 #include "reader/BookStatsActivity.h"
 #include "reader/BookStatsTracking.h"
+#include "reader/EpubReaderActivity.h"
 #include "reader/GlobalReadingStats.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
@@ -508,7 +513,13 @@ void ActivityManager::renderTaskLoop() {
       language_benchmark::beginFrame(currentActivity->name.c_str());
 #endif
       mappedInput.setMenuMode(currentActivity->usesMenuButtonOrientation());
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+      BatteryDiagnosticLog::beginDisplayFrame();
+#endif
       currentActivity->render(std::move(lock));
+#if FREEINK_DEVICE_PICCO && CROSSINK_BATTERY_DIAG_LOG
+      BatteryDiagnosticLog::finishDisplayFrame();
+#endif
 #if defined(CROSSINK_LANGUAGE_BENCHMARK)
       language_benchmark::endFrame();
 #endif
@@ -1163,12 +1174,13 @@ void ActivityManager::goToReaderAndRunMenuAction(std::string path, const uint8_t
   goToReader(std::move(path));
 }
 
-void ActivityManager::goToSleep(bool fromTimeout) {
+bool ActivityManager::goToSleep(bool fromTimeout) {
   const bool canSnapshotOverlay = currentActivity && currentActivity->canSnapshotForSleepOverlay();
   const GfxRenderer::Orientation sleepPopupOrientation = renderer.getOrientation();
   std::string currentBookPath = getCurrentBookPath();
   auto sleepActivity = makeUniqueNoThrow<SleepActivity>(renderer, mappedInput, canSnapshotOverlay,
                                                         std::move(currentBookPath), fromTimeout, sleepPopupOrientation);
+  const auto* sleepScreen = sleepActivity.get();
   const bool renderBeforeExit = currentActivity && sleepActivity && sleepActivity->rendersBeforeExit();
   if (!sleepActivity) {
     LOG_ERR("ACT", "Could not allocate sleep activity; saving outgoing activities before sleep");
@@ -1187,13 +1199,14 @@ void ActivityManager::goToSleep(bool fromTimeout) {
     pendingActivity.reset();
     pendingAction = PendingAction::None;
     currentActivity = std::move(sleepActivity);
-    return;
+    return sleepScreen && currentActivity.get() == sleepScreen && sleepScreen->hasMonochromeFrame();
   }
   replaceActivity(std::move(sleepActivity));
   // Input capture has stopped. Do not poll the outgoing reader again: the
   // fallback input state can still contain the Power hold from boot, turning a
   // short sleep press into a reader long-press shortcut. onExit still saves it.
   processPendingActivities();  // Sleep renders synchronously in onEnter before the caller powers down.
+  return sleepScreen && currentActivity.get() == sleepScreen && sleepScreen->hasMonochromeFrame();
 }
 
 void ActivityManager::goToBoot() { replaceActivity(std::make_unique<BootActivity>(renderer, mappedInput)); }
@@ -1274,6 +1287,19 @@ bool ActivityManager::requiresExclusiveStorageLoop() const {
 bool ActivityManager::blocksGlobalInput() const { return currentActivity && currentActivity->blocksGlobalInput(); }
 
 bool ActivityManager::isHomeActivity() const { return currentActivity && currentActivity->name == "Home"; }
+
+bool ActivityManager::canSyncOpenEpubOverUsb() const {
+  return pendingAction == PendingAction::None && currentActivity && currentActivity->isEpubReaderActivity();
+}
+
+bool ActivityManager::closeOpenEpubForUsbSync(std::string& path) {
+  if (!canSyncOpenEpubOverUsb()) return false;
+  auto& reader = static_cast<EpubReaderActivity&>(*currentActivity);
+  path = reader.getCurrentBookPath();
+  if (path.empty() || !reader.checkpointForUsbSync()) return false;
+  goHome();
+  return true;
+}
 
 bool ActivityManager::isReaderActivity() const {
   if (currentActivity && currentActivity->isReaderActivity()) {

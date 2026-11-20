@@ -36,20 +36,19 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // addLineToPage() uses to draw its flanking lines).
 // v80 (upstream): Ordered lists, marker suppression, and list-container insets affect page layout.
 // v81 (upstream): Inline CSS padding affects dialogue and other styled text positions.
-// v82 (this branch's own, now retired): Character spacing joined the header under this
-// branch's prior ported implementation -- superseded by upstream's own native character
-// spacing, see v88.
+// v82 (this branch's own, now retired): Character spacing joined the header under this branch's prior
+// ported implementation -- superseded by upstream's own native character spacing, see v88.
 // v83 (upstream): Hangul word boundaries and line-end splits change cached page positions.
 // v84 (upstream): Small EPUB images can share text lines; HTML/body text indents inherit into
 // descendant blocks; scalable headings and blocks serialize point size and line height; nested
 // blocks inherit bold and italic styles; suppressed CSS borders no longer draw horizontal rules
-// -- all these change cached page positions or glyphs (this branch's and upstream's v84 bundles
-// landed on the same number independently; both are superseded here regardless).
+// -- all these change cached page positions or glyphs (this branch's and upstream's v84 bundles landed
+// on the same number independently; both are superseded here regardless).
 // v85 (upstream): Branches independently changed hyphenation identity and paragraph layout.
 // v86 (upstream): Combine external hyphenation identity with incremental paragraph layout fixes.
 // v87 (upstream): Publisher decorations, whitespace, contextual CSS, and per-word font sizes.
-// v88 (upstream): Character spacing in the layout identity and cached text blocks -- this
-// branch's native adoption of upstream's character spacing feature, replacing the v82 port above.
+// v88 (upstream): Character spacing in the layout identity and cached text blocks -- this branch's
+// native adoption of upstream's character spacing feature, replacing the v82 port above.
 // v89 (upstream): C3 bitmap heading/CSS sizes change layout and cached font identities.
 // v90 (upstream): S3 bitmap heading/CSS sizes now participate in layout.
 // v91 (upstream): Figure containers apply publisher alignment and spacing to chapter ornaments.
@@ -67,11 +66,16 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v106 (upstream): Persist per-word source ranges for stable clipping anchors.
 // v107 (upstream): Lay out chapter heading groups with their publisher spacing and alignment.
 // v108 (upstream): Runtime outline advances defer rounding until pixel placement.
-constexpr uint8_t SECTION_FILE_VERSION = 108;
+// v109 (upstream): Recognize oversized opening spans as drop caps, including nested styles.
+// v110 (upstream): Image-backed thematic breaks retain a visible fallback rule.
+// v111 (upstream): Smaller body declarations retain the reader-selected font size -- a separate,
+// complementary mechanism to this branch's own BodySizeProbe/bodySizeScale_ census-based correction
+// (see resolveBlockFont()); both are kept, see the merge notes for the comparison.
+constexpr uint8_t SECTION_FILE_VERSION = 111;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xDD;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xE0;
 constexpr uint32_t HEADER_SIZE =
     4 * sizeof(uint32_t) + sizeof(PublisherFonts) + sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) +
     sizeof(float) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +
@@ -106,18 +110,12 @@ size_t sectionHtmlStreamChunkSize(const bool preview) {
   return SECTION_HTML_STREAM_CHUNK_SIZE;
 }
 
-std::string sectionBackupPath(const std::string& filePath) { return filePath + ".bak"; }
-
-// Chapters bucketed into subfolders rather than one flat "sections/" folder: opening a file by
-// path searches its parent directory from the first entry, so a book of hundreds or thousands
-// of chapters paid that cost against an ever-larger single folder on every chapter open. 32 is
-// small enough to keep each bucket's own directory-search cost negligible while still cutting
-// the per-open cost by roughly the chapter count divided by this constant.
-constexpr int CHAPTERS_PER_CACHE_FOLDER = 32;
-
-std::string sectionCacheDir(const std::string& cachePath, const int spineIndex) {
-  return cachePath + "/sections/" + std::to_string(spineIndex / CHAPTERS_PER_CACHE_FOLDER);
+// Each FAT directory holds at most 32 chapter numbers (plus their layout variants).
+std::string chapterDirectory(const Epub& epub, const char* root, int spine) {
+  return epub.getCachePath() + root + "/" + std::to_string(spine / 32);
 }
+
+std::string sectionBackupPath(const std::string& filePath) { return filePath + ".bak"; }
 
 void recoverSectionCacheBackup(const std::string& filePath) {
   const std::string backupPath = sectionBackupPath(filePath);
@@ -169,7 +167,7 @@ Section::Section(Epub& epub, const int spineIndex, GfxRenderer& renderer, const 
     : epub(&epub),
       spineIndex(spineIndex),
       renderer(renderer),
-      filePath(sectionCacheDir(epub.getCachePath(), spineIndex) + "/" + std::to_string(spineIndex) +
+      filePath(chapterDirectory(epub, "/layout", spineIndex) + "/" + std::to_string(spineIndex) +
                (cacheSuffix ? cacheSuffix : "") + ".bin") {
   recoverSectionCacheBackup(filePath);
 }
@@ -272,7 +270,8 @@ uint32_t Section::publisherBodyFontFamily() {
     return 0;
   }
   const std::string path =
-      build_ ? build_->parsePath : epub->getCachePath() + "/html/" + std::to_string(spineIndex) + ".html";
+      build_ ? build_->parsePath
+             : chapterDirectory(*epub, "/content", spineIndex) + "/" + std::to_string(spineIndex) + ".html";
   const auto family = ChapterHtmlSlimParser::publisherBodyFontFamily(path, *css);
   if (ownsCss) css->clear();
   return family;
@@ -548,7 +547,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   const uint8_t wordSpacing = spec.wordSpacing;
   const EpubRenderMode renderMode = spec.renderMode;
   const auto localPath = epub->getSpineItem(spineIndex).href;
-  const auto htmlDir = epub->getCachePath() + "/html";
+  const auto htmlDir = chapterDirectory(*epub, "/content", spineIndex);
   const auto htmlPath = htmlDir + "/" + std::to_string(spineIndex) + ".html";
   const auto tmpHtmlPath = htmlDir + "/.tmp_" + std::to_string(spineIndex) + ".html";
   const auto tmpSectionPath = filePath + ".tmp";
@@ -585,8 +584,8 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
 
   // Create cache directory if it doesn't exist
   {
-    const auto sectionsDir = sectionCacheDir(epub->getCachePath(), spineIndex);
-    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "sections/"
+    const auto sectionsDir = chapterDirectory(*epub, "/layout", spineIndex);
+    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "layout/"
   }
 
   // Reuse the previously unzipped HTML if we already have it. The unzipped HTML is keyed only on the
@@ -783,6 +782,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
       cancelled = true;
       break;
     }
+    if (buildOptions.onBuildCheckpoint) buildOptions.onBuildCheckpoint();
     const auto status = visitor.parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
       visitor.abortParse();
@@ -925,7 +925,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   }
 
   const auto localPath = epub->getSpineItem(spineIndex).href;
-  const auto htmlDir = epub->getCachePath() + "/html";
+  const auto htmlDir = chapterDirectory(*epub, "/content", spineIndex);
   const auto htmlPath = htmlDir + "/" + std::to_string(spineIndex) + ".html";
   const auto tmpHtmlPath = htmlDir + "/.tmp_" + std::to_string(spineIndex) + ".html";
   const auto tmpSectionPath = binTmpPath();
@@ -950,8 +950,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
           ESP.getMaxAllocHeap());
 
   {
-    const auto sectionsDir = sectionCacheDir(epub->getCachePath(), spineIndex);
-    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "sections/"
+    const auto sectionsDir = chapterDirectory(*epub, "/layout", spineIndex);
+    Storage.mkdir(sectionsDir.c_str());  // recursive by default: also creates the parent "layout/"
   }
 
   const bool reusedHtml = Storage.exists(htmlPath.c_str());
@@ -1166,7 +1166,8 @@ bool Section::buildSomeMore(const int maxPages) {
 }
 
 bool Section::hasHtmlCache() const {
-  const std::string htmlPath = epub->getCachePath() + "/html/" + std::to_string(spineIndex) + ".html";
+  const std::string htmlPath =
+      chapterDirectory(*epub, "/content", spineIndex) + "/" + std::to_string(spineIndex) + ".html";
   return Storage.exists(htmlPath.c_str());
 }
 

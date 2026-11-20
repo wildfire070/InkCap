@@ -41,17 +41,15 @@ void CalibreConnectActivity::onEnter() {
   requestUpdate();
   state = CalibreConnectState::WIFI_SELECTION;
   {
-    // connectedIP/connectedSSID/currentUploadName/lastCompleteName/
-    // lastProgressReceived/lastProgressTotal/lastCompleteAt are all read by
-    // render() on the render task with no lock of its own on that side
-    // either -- see the identical guard in loop()'s handleClient() path,
-    // which documents this exact hazard for these same fields.
+    // connectedIP/connectedSSID/progress/lastCompleteName/lastCompleteAt
+    // are all read by render() on the render task with no lock of its own
+    // on that side either -- see the identical guard in loop()'s
+    // handleClient() path, which documents this exact hazard for these
+    // same fields.
     RenderLock lock(*this);
     connectedIP.clear();
     connectedSSID.clear();
-    lastProgressReceived = 0;
-    lastProgressTotal = 0;
-    currentUploadName.clear();
+    progress = {};
     lastCompleteName.clear();
     lastCompleteAt = 0;
     batchSucceeded.clear();
@@ -242,29 +240,11 @@ void CalibreConnectActivity::loop() {
 
     const auto status = webServer->getWsUploadStatus();
     RenderLock lock;  // Publish upload strings and their counters together with respect to render().
-    bool changed = false;
+    bool changed = progress.update(status.inProgress, status.filename, status.received, status.total, millis());
     {
-      // currentUploadName/lastCompleteName/lastProgressReceived/lastProgressTotal/
-      // lastCompleteAt are all read by render() on the render task with no lock of
-      // its own on that side either -- this is the only place they're mutated, so
-      // guard it here. Without this, render() reading currentUploadName mid-assignment
-      // (a std::string reallocation, trivial for any real upload filename) is UB --
-      // a torn pointer/length read or a dereference of already-freed heap memory.
-      RenderLock lock(*this);
-      if (status.inProgress) {
-        if (status.received != lastProgressReceived || status.total != lastProgressTotal ||
-            status.filename != currentUploadName) {
-          lastProgressReceived = status.received;
-          lastProgressTotal = status.total;
-          currentUploadName = status.filename;
-          changed = true;
-        }
-      } else if (lastProgressReceived != 0 || lastProgressTotal != 0) {
-        lastProgressReceived = 0;
-        lastProgressTotal = 0;
-        currentUploadName.clear();
-        changed = true;
-      }
+      // lastCompleteName/lastCompleteAt are read by render() on the render task
+      // with no lock of its own either -- this is the only place they're mutated,
+      // so the outer `lock` above guards this whole block.
       // Only update lastCompleteAt if the server has a NEW value (not one we already processed)
       // This prevents restoring an old value after the 6s timeout clears it
       if (status.lastCompleteAt != 0 && status.lastCompleteAt != lastProcessedCompleteAt) {
@@ -305,8 +285,8 @@ void CalibreConnectActivity::loop() {
       // cleared its own live batch post-confirmation doesn't blank out the
       // summary just shown (the frozen snapshot stays as-is until step 1 above
       // detects genuinely new activity).
-      if (!batchConfirmed && (status.batchSucceeded.size() != batchSucceeded.size() ||
-                              status.batchFailed.size() != batchFailed.size())) {
+      if (!batchConfirmed &&
+          (status.batchSucceeded.size() != batchSucceeded.size() || status.batchFailed.size() != batchFailed.size())) {
         batchSucceeded = status.batchSucceeded;
         batchFailed = status.batchFailed;
         lastCompleteAt = 0;
@@ -388,11 +368,11 @@ void CalibreConnectActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
     y += heightText12 + metrics.verticalSpacing * 2;
 
-    const bool showUploadProgress = lastProgressTotal > 0 && lastProgressReceived <= lastProgressTotal;
+    const bool showUploadProgress = progress.total > 0 && progress.received <= progress.total;
     if (showUploadProgress) {
       std::string label = tr(STR_CALIBRE_RECEIVING);
-      if (!currentUploadName.empty()) {
-        label += ": " + currentUploadName;
+      if (!progress.filename.empty()) {
+        label += ": " + progress.filename;
         label = renderer.truncatedText(SMALL_FONT_ID, label.c_str(), pageWidth - metrics.contentSidePadding * 2,
                                        EpdFontFamily::REGULAR);
       }
@@ -400,7 +380,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
       GUI.drawProgressBar(renderer,
                           Rect{safe.x + metrics.contentSidePadding, y + height + metrics.verticalSpacing,
                                pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
-                          lastProgressReceived, lastProgressTotal);
+                          progress.received, progress.total);
       y += height + metrics.verticalSpacing * 2 + metrics.progressBarHeight;
     } else if (hasBatchResults) {
       char doneMsg[64];
