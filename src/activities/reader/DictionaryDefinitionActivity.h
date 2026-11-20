@@ -149,9 +149,15 @@ class DictionaryDefinitionActivity final : public Activity {
   // One of extraLocations_, paired with its already-resolved
   // DictDefinitionSlice so page turns don't re-resolve dictionary metadata.
   // Entries whose slice failed to resolve are dropped when this is built.
+  // Each entry owns its own DictionaryDefinitionSource (mirroring
+  // definitionSource_ for the primary) since a dictzip-compressed entry's
+  // slice resolution extracts it to its own activity-owned scratch file,
+  // which later page turns stream from directly -- that file must stay
+  // alive (and distinct per entry) for as long as extraEntries_ does.
   struct CombinedEntry {
     DictLocation location;
     DictDefinitionSlice slice;
+    std::unique_ptr<DictionaryDefinitionSource> source;
   };
   std::vector<CombinedEntry> extraEntries_;
 
