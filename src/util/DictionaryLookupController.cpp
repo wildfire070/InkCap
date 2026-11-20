@@ -200,18 +200,10 @@ DictionaryLookupController::LookupEvent DictionaryLookupController::handleInput(
 #endif
     ) {
       setState(LookupState::Idle);
-      // A synonym can resolve to several distinct headwords; combine each
-      // one's own entries (itself possibly more than one — a duplicated
-      // .idx headword) into one bounded result list.
-      std::vector<DictLocation> combined;
-      for (const auto& canonical : Dictionary::resolveAltFormAll(altFormWord, cachePath.c_str())) {
-        if (combined.size() >= Dictionary::MAX_COMBINED_ENTRIES) break;
-        for (auto& loc : Dictionary::locateAll(canonical, {}, cachePath.c_str())) {
-          if (!loc.found) continue;
-          combined.push_back(std::move(loc));
-          if (combined.size() >= Dictionary::MAX_COMBINED_ENTRIES) break;
-        }
-      }
+      // A synonym can resolve to several distinct headwords. resolveAltFormAll
+      // already returns full DictLocations (headword + definition range)
+      // directly, bounded by MAX_COMBINED_ENTRIES -- no second lookup needed.
+      std::vector<DictLocation> combined = Dictionary::resolveAltFormAll(altFormWord, cachePath.c_str());
       if (!combined.empty()) {
         foundWord = combined.front().headword;
         foundLocation = combined.front();

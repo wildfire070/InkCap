@@ -649,7 +649,7 @@ inline SettingInfo buildCompanionCharacterSetting() {
   }
   return s;
 }
-// 113: crossink/development's own 110 common entries plus this branch's own
+// 114: crossink/development's own 111 common entries plus this branch's own
 // unconditional additions (Companion, AO3 Library, BookFusion) it doesn't have --
 // counted directly against the add()/optional-add() calls below rather than
 // reused verbatim, since upstream's own count excludes all three. This is a
@@ -659,9 +659,9 @@ inline SettingInfo buildCompanionCharacterSetting() {
 // gesture entries on touch devices; getBaseSettingsCapacity() adds the three
 // persisted IMU entries.
 #if CROSSINK_SCALABLE_FONTS
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 114 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 115 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
 #else
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 113 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 114 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
 #endif
 
 #if FREEINK_DEVICE_PICCO
@@ -904,7 +904,7 @@ inline std::vector<SettingInfo> buildBookReaderSettingsParentList(const std::vec
 
 inline std::vector<SettingInfo> buildReaderFontSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(11);
+  settings.reserve(13);
   addSettingByName(settings, allSettings, StrId::STR_FONT_FAMILY);
   addSettingByName(settings, allSettings, StrId::STR_FONT_SIZE);
   addSettingByName(settings, allSettings, StrId::STR_PUBLISHER_FONTS);
@@ -914,6 +914,10 @@ inline std::vector<SettingInfo> buildReaderFontSettingsList(const std::vector<Se
   addSettingByName(settings, allSettings, StrId::STR_WORD_SPACING);
   addSettingByName(settings, allSettings, StrId::STR_CHARACTER_SPACING);
   addSettingByName(settings, allSettings, StrId::STR_TEXT_AA);
+#if FREEINK_DEVICE_EEGO_A4
+  addSettingByName(settings, allSettings, StrId::STR_TWO_TONE_TEXT_AA);
+#endif
+  addSettingByName(settings, allSettings, StrId::STR_TEXT_DARKNESS);
   settings.push_back(SettingInfo::Action(StrId::STR_DOWNLOAD_FONTS, SettingAction::DownloadFonts));
   addSettingByName(settings, allSettings, StrId::STR_SD_FONT_SIZE_RANGE);
   return settings;

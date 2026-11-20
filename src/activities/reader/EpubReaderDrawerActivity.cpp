@@ -25,6 +25,7 @@
 #include "FilenameFontSystem.h"
 #include "MappedInputManager.h"
 #include "ReaderFontLoading.h"
+#include "ReaderRefreshScope.h"
 #include "ReaderUtils.h"
 #include "SettingsList.h"
 #include "StablePageSelectionModel.h"
@@ -710,6 +711,8 @@ ReaderSettingsDraft EpubReaderDrawerActivity::captureSettings() {
   value.orientation = SETTINGS.orientation;
   value.paragraphAlignment = SETTINGS.paragraphAlignment;
   value.textAntiAliasing = SETTINGS.textAntiAliasing;
+  value.twoToneTextAA = SETTINGS.twoToneTextAA;
+  value.textDarkness = SETTINGS.textDarkness;
   value.focusReadingEnabled = SETTINGS.focusReadingEnabled;
   value.guideReadingEnabled = SETTINGS.guideReadingEnabled;
   value.hyphenationEnabled = SETTINGS.hyphenationEnabled;
@@ -738,6 +741,8 @@ void EpubReaderDrawerActivity::applySettings(const ReaderSettingsDraft& value) {
   SETTINGS.orientation = value.orientation;
   SETTINGS.paragraphAlignment = value.paragraphAlignment;
   SETTINGS.textAntiAliasing = value.textAntiAliasing;
+  SETTINGS.twoToneTextAA = value.twoToneTextAA;
+  SETTINGS.textDarkness = value.textDarkness;
   SETTINGS.focusReadingEnabled = value.focusReadingEnabled;
   SETTINGS.guideReadingEnabled = value.guideReadingEnabled;
   SETTINGS.hyphenationEnabled = value.hyphenationEnabled;
@@ -1383,7 +1388,7 @@ void EpubReaderDrawerActivity::buildDrawerKeypad(UiApp::ScreenType& screen, cons
   readout.align = fui::TextAlign::Center;
   const int16_t readoutLh = screen.target().lineHeight(readout.font);
   const int16_t readoutRowH = std::max<int16_t>(theme.rowHeight, static_cast<int16_t>(readoutLh + 16));
-  const bool beside = mappedInput.hasTouchHardware() && isLandscapeOrientation(renderer.getOrientation());
+  const bool beside = isLandscapeOrientation(renderer.getOrientation());
   const auto layout = fui::keyGridReadoutLayout(
       screen.body(), readoutRowH, static_cast<int16_t>(screen.target().measureText(readout.font, value, readout).width),
       theme.spaceLg, theme.spaceLg, beside);
@@ -1862,6 +1867,7 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
       openPane(ReaderDrawerPane::FontFamily);
       return;
     case RowId::FontSize:
+    case RowId::TextDarkness:
     case RowId::DictionaryFontFamily:
     case RowId::DictionaryFontSize:
     case RowId::Orientation:
@@ -1938,6 +1944,7 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
       closeAndReturn(false, EpubReaderMenuAction::RESET_BOOK_READER_SETTINGS);
       return;
     case RowId::TextAa:
+    case RowId::TwoToneTextAa:
     case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
@@ -2032,6 +2039,9 @@ void EpubReaderDrawerActivity::activateRow(const RowId row) {
 
 void EpubReaderDrawerActivity::toggleSetting(const RowId row) {
   switch (row) {
+    case RowId::TwoToneTextAa:
+      draft.twoToneTextAA = !draft.twoToneTextAA;
+      break;
     case RowId::TextAa:
       draft.textAntiAliasing = !draft.textAntiAliasing;
       break;
@@ -2059,7 +2069,7 @@ void EpubReaderDrawerActivity::toggleSetting(const RowId row) {
     default:
       return;
   }
-  if (row == RowId::TextAa) {
+  if (row == RowId::TextAa || row == RowId::TwoToneTextAa) {
     // Anti-aliasing changes pixels only. Rebuilding the EPUB section here
     // makes the in-drawer preview appear to zoom while the page reflows.
     markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::NonLayout);
@@ -2104,6 +2114,12 @@ void EpubReaderDrawerActivity::showEnumOptions(const RowId row) {
   }
 
   switch (row) {
+    case RowId::TextDarkness:
+      title = StrId::STR_TEXT_DARKNESS;
+      labels = {tr(STR_SENSITIVITY_NORMAL), tr(STR_DARK), tr(STR_DARKER)};
+      raw = {0, 1, 2};
+      currentRaw = draft.textDarkness;
+      break;
     case RowId::Orientation:
       title = StrId::STR_ORIENTATION;
       labels = {tr(STR_PORTRAIT), tr(STR_LANDSCAPE_CW), tr(STR_LANDSCAPE_CCW), tr(STR_ORIENTATION_INVERTED)};
@@ -2259,6 +2275,10 @@ void EpubReaderDrawerActivity::selectEnumOption(const int index) {
       enumOptionSelectedIndex = static_cast<int16_t>(index);
       previewedEnumOptionIndex = -1;
       markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::Relayout);
+      break;
+    case RowId::TextDarkness:
+      draft.textDarkness = value;
+      markSettingChanged(ReaderSettingsChangeMask::Preview | ReaderSettingsChangeMask::NonLayout);
       break;
     case RowId::PublisherFonts:
       draft.publisherFonts = value;
@@ -2688,6 +2708,7 @@ void EpubReaderDrawerActivity::renderPreviewContents(const ReaderSettingsDraft& 
 }
 
 void EpubReaderDrawerActivity::renderPreviewText(const ReaderSettingsDraft& previewSettings, const int previewFontId) {
+  const GfxRenderer::TextDarknessScope darkness(renderer, previewSettings.textDarkness);
   if (CROSSINK_APP_READER_SAMPLE_PREVIEW) {
     renderSamplePreviewText(previewSettings, previewFontId);
     return;
@@ -2847,6 +2868,10 @@ void EpubReaderDrawerActivity::renderPreviewWithAntiAliasing(const int previewFo
   if (!previewModel || !previewModel->valid()) return;
 
   const ReaderSettingsDraft previewSettings = draft;
+#if FREEINK_DEVICE_EEGO_A4
+  const ReaderUtils::ReaderRefreshScope refresh(renderer,
+                                                ReaderUtils::ReaderRefreshScope::text(previewSettings.twoToneTextAA));
+#endif
   // The BW refresh has already drawn the reader preview and drawer. Re-render
   // only preview text into the grayscale planes so the drawer stays crisp.
   ReaderUtils::renderAntiAliased(
@@ -3228,6 +3253,10 @@ const char* EpubReaderDrawerActivity::rowLabel(const RowId row) const {
       return tr(STR_SPACING);
     case RowId::CharacterSpacing:
       return tr(STR_CHARACTER_SPACING);
+    case RowId::TextDarkness:
+      return tr(STR_TEXT_DARKNESS);
+    case RowId::TwoToneTextAa:
+      return tr(STR_TWO_TONE_TEXT_AA);
     case RowId::TextAa:
       return tr(STR_TEXT_AA);
     case RowId::Focus:
@@ -3385,6 +3414,10 @@ const char* EpubReaderDrawerActivity::rowValue(const RowId row, char* buffer, co
       if (draft.fontFamily >= labels.size()) return tr(STR_UNAVAILABLE);
       return I18N.get(labels[draft.fontFamily]);
     }
+    case RowId::TextDarkness:
+      return draft.textDarkness == 2   ? tr(STR_DARKER)
+             : draft.textDarkness == 1 ? tr(STR_DARK)
+                                       : tr(STR_SENSITIVITY_NORMAL);
     case RowId::CharacterSpacing:
       CrossPointSettings::formatCharacterSpacing(draft.characterSpacing, buffer, bufferSize);
       return buffer;
@@ -3457,6 +3490,7 @@ bool EpubReaderDrawerActivity::rowIsToggle(const RowId row) const {
   switch (row) {
     case RowId::TrackBookStats:
     case RowId::TextAa:
+    case RowId::TwoToneTextAa:
     case RowId::Focus:
     case RowId::GuideDots:
     case RowId::Hyphenation:
@@ -3505,6 +3539,8 @@ bool EpubReaderDrawerActivity::rowToggleValue(const RowId row) const {
   switch (row) {
     case RowId::TrackBookStats:
       return bookStatsEnabled;
+    case RowId::TwoToneTextAa:
+      return draft.twoToneTextAA;
     case RowId::TextAa:
       return draft.textAntiAliasing;
     case RowId::Focus:

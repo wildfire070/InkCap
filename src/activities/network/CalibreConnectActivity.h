@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "CalibreUploadProgress.h"
 #include "activities/Activity.h"
 #include "activities/ScreenTransitionRefresh.h"
 #include "network/CrossPointWebServer.h"
@@ -23,9 +24,7 @@ class CalibreConnectActivity final : public Activity {
   std::string connectedIP;
   std::string connectedSSID;
   unsigned long lastHandleClientTime = 0;
-  size_t lastProgressReceived = 0;
-  size_t lastProgressTotal = 0;
-  std::string currentUploadName;
+  CalibreUploadProgress progress;
   std::string lastCompleteName;
   unsigned long lastCompleteAt = 0;
   unsigned long lastProcessedCompleteAt = 0;  // Track which server value we've already processed
