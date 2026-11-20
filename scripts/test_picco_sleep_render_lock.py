@@ -96,6 +96,10 @@ int main(){
 def main():
     source = (ROOT / "src/main.cpp").read_text()
     production = definition(source, "struct SleepChargeOverlay {") + ";\n"
+    # This branch's own thin wrapper, shared with another call site elsewhere in main.cpp
+    # (not part of upstream's own, self-contained holdSleepWhileUsbPowered) -- needed
+    # too, since holdSleepWhileUsbPowered calls it rather than powerManager directly.
+    production += definition(source, "static bool holdPiccoUsbSleep(SleepChargeOverlay* overlay = nullptr) {") + "\n"
     production += definition(source, "static bool holdSleepWhileUsbPowered(bool monochrome = false) {")
     with tempfile.TemporaryDirectory(prefix="crossink-picco-sleep-lock-") as temp:
         path = Path(temp)
