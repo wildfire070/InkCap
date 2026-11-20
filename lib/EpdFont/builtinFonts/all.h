@@ -17,7 +17,6 @@
 #include <builtinFonts/bitter_14_italic.h>
 #include <builtinFonts/bitter_14_regular.h>
 #include <builtinFonts/bitter_16_bold.h>
-#include <builtinFonts/bitter_16_bolditalic.h>
 #include <builtinFonts/bitter_16_italic.h>
 #include <builtinFonts/bitter_16_regular.h>
 #include <builtinFonts/lexenddeca_10_bold.h>
@@ -32,8 +31,9 @@
 #include <builtinFonts/lexenddeca_16_bold.h>
 #include <builtinFonts/lexenddeca_16_italic.h>
 #include <builtinFonts/lexenddeca_16_regular.h>
-// bolditalic variants are intentionally omitted on non-scalable-font hardware (flash budget):
-// EpdFontFamily::getFont() falls back to bold when boldItalic is null (see main.cpp).
+// LexendDeca's bolditalic variants, and Bitter's 16pt bolditalic, are intentionally
+// omitted on non-scalable-font hardware (flash budget): EpdFontFamily::getFont() falls
+// back to bold when boldItalic is null (see main.cpp).
 
 #endif
 
