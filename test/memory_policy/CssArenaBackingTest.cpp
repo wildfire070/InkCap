@@ -544,7 +544,10 @@ TEST_F(CssArenaBackingTest, StylesSurviveLowHeapWithHydratedAndDiskBackedRules) 
 
 TEST_F(CssArenaBackingTest, CompactLengthsPreservePrecisionAndCacheBytes) {
   EXPECT_EQ(sizeof(CssLength), 5u);
-  EXPECT_EQ(sizeof(CssStyle), 100u);
+  // 116, not upstream's 100: this branch's own borderTop/Right/Bottom/Left,
+  // fontSizeMultiplier, and cssFloat fields (see CssStyle.h) add real bytes
+  // beyond upstream's narrower CssStyle.
+  EXPECT_EQ(sizeof(CssStyle), 116u);
   for (const bool psram : {false, true}) {
     fakeheap::reset(psram);
     const std::string text = "p { font-size: 137.125%; margin-left: -1.2345em; padding-top: 2.75pt; }";

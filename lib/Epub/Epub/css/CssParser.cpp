@@ -1693,6 +1693,7 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
     pos += sizeof(value);
     const auto unit = static_cast<CssUnit>(buf[pos++]);
     len = CssLength(value, unit);
+  };
 
   style.textAlign = static_cast<CssTextAlign>(getByte());
   style.fontStyle = static_cast<CssFontStyle>(getByte());
