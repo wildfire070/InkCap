@@ -30,5 +30,9 @@ endif()
 
 file(GLOB OTF_SHAPER_SOURCES ../../lib/OtShaper/*.cpp)
 target_sources(otf_scalable PRIVATE ../../lib/EpdFont/ComplexShaper.cpp
-  ../../lib/Utf8/Utf8.cpp ${OTF_SHAPER_SOURCES})
+  ../../lib/Utf8/Utf8.cpp ../../lib/Utf8/IndicReorder.cpp ${OTF_SHAPER_SOURCES})
 target_include_directories(otf_scalable PRIVATE ../../lib/OtShaper ../../lib/Utf8 ../complex_shaper/stubs)
+# This target exercises Indic shaping on scalable (TTF) fonts directly, independent
+# of the firmware's own CROSSINK_INDIC_SHAPING=0 default (see platformio.ini) --
+# keep the real shaping path under test even while it's disabled in production.
+target_compile_definitions(otf_scalable PRIVATE CROSSINK_INDIC_SHAPING=1)
