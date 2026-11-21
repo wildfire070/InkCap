@@ -1,10 +1,13 @@
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
 #include <GfxRenderer.h>
+#include <ShapingTokens.h>
+#include <Utf8.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <string>
 #include <vector>
 
 namespace {
@@ -185,6 +188,70 @@ TEST(FontScratch, HandlesLargestGeneratedGroupAndZeroSizeGlyph) {
   EXPECT_TRUE(fakeheap::live.empty());
   EXPECT_NE(decoder.getBitmap(&font.data, &font.glyphs[2], 2), nullptr);
   EXPECT_EQ(decoder.getStats().cacheHits, 1u);
+}
+
+TEST(VerticalGlyphBounds, ConsumesOneLookupAndKeepsFallbackMetrics) {
+  struct Lookups {
+    int calls = 0;
+    EpdGlyph body = {5, 7, 80, 0, 6, 0, 0};
+    EpdGlyph quote = {2, 3, 40, 0, 9, 0, 0};
+    EpdGlyph replacement = {4, 5, 64, 0, 5, 0, 0};
+  } lookups;
+  EpdFontData data{};
+  data.ascender = 10;
+  data.glyphMissCtx = &lookups;
+  data.glyphMissHandler = [](void* context, uint32_t cp) -> const EpdGlyph* {
+    auto& counts = *static_cast<Lookups*>(context);
+    ++counts.calls;
+    switch (cp) {
+      case 'v':
+        return &counts.body;
+      case 0x2018:
+      case shaping::glyphToken(1):
+        return &counts.quote;
+      case 0xfffd:
+        return &counts.replacement;
+      default:
+        return nullptr;
+    }
+  };
+  EpdFont font(&data);
+  HalDisplay display(80, 80);
+  GfxRenderer renderer(display);
+  renderer.insertFont(1, EpdFontFamily(&font));
+
+  auto bounds = renderer.getTextVerticalBounds(1, "vvvv");
+  EXPECT_EQ(lookups.calls, 1);  // All four letters share the first measurement.
+  EXPECT_EQ(bounds.top, 4);
+  EXPECT_EQ(bounds.bottom, 11);
+
+  // Measure a stored display form with both a cached letter and a positioned glyph.
+  std::string shaped = "v";
+  utf8AppendCodepoint(shaping::offsetToken(0, -3), shaped);
+  utf8AppendCodepoint(shaping::glyphToken(1), shaped);
+  lookups.calls = 0;
+  bounds =
+      renderer.getTextVerticalBounds(1, "vv", EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO, 0, shaped.c_str());
+  EXPECT_EQ(lookups.calls, 1);
+  EXPECT_EQ(bounds.top, -2);
+  EXPECT_EQ(bounds.bottom, 11);
+
+  lookups.calls = 0;
+  bounds = renderer.getTextVerticalBounds(1, "\xca\xbb");  // Alias turned comma to left quotation mark.
+  EXPECT_EQ(lookups.calls, 2);
+  EXPECT_EQ(bounds.top, 1);
+  EXPECT_EQ(bounds.bottom, 4);
+
+  lookups.calls = 0;
+  bounds = renderer.getTextVerticalBounds(1, "x");
+  EXPECT_EQ(lookups.calls, 2);
+  EXPECT_EQ(bounds.top, 5);
+  EXPECT_EQ(bounds.bottom, 10);
+
+  lookups.calls = 0;
+  bounds = renderer.getTextVerticalBounds(1, "\xc2\xa0");  // Blank nonbreaking space has no vertical ink.
+  EXPECT_EQ(lookups.calls, 1);
+  EXPECT_EQ(bounds.top, bounds.bottom);
 }
 
 TEST(ScaledFallback, MatchesDrawingFromTheOwningFont) {

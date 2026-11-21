@@ -331,7 +331,8 @@ class BaseTheme {
   // avoid touching already-verified rendering code for an input-only change.
   virtual int getButtonMenuPageItems(const GfxRenderer& renderer, Rect rect, int buttonCount) const;
   // With preserveBackdrop, leave the popup on the display but restore the backing
-  // pixels for the next redraw. Caller must own RenderLock.
+  // pixels for the next redraw. An empty rect means preservation failed and the
+  // popup was skipped. Caller must own RenderLock.
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, bool preserveBackdrop = false) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, OptionLabels options, int selectedIndex,
                                bool showConfirmationFooter = false, const char* cancelLabel = nullptr,

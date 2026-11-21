@@ -8,8 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "ComplexShaper.h"
 #include "EpdFont.h"
 #include "EpdFontData.h"
+
+class HalFile;
 
 // On-disk binary format version for .cpfont files. Defined as a preprocessor
 // macro (rather than a constexpr) so it can be stringified into the SD-fonts
@@ -149,7 +152,7 @@ class SdCardFont {
   const Stats& getStats() const { return stats_; }
   bool lastPrewarmFailed() const { return lastPrewarmFailed_; }
 
-  // Content hash of the file header + style TOC entries (computed during load).
+  // Content hash of the file header + style TOC entries + shaping blobs (computed during load).
   // Used to generate deterministic font IDs for section cache invalidation.
   uint32_t contentHash() const { return contentHash_; }
 
@@ -262,6 +265,14 @@ class SdCardFont {
     uint32_t miniKernMatrixCapacity = 0;
     bool miniKernBuilt = false;  // Covers every resident glyph, including no-pair pages.
 
+    // Optional shaping section (see docs/file-formats.md): the layout font
+    // the shaper shapes complex-script runs with. The shaper loads it on first
+    // use and drops it in releaseResidentCaches().
+    uint32_t shapingBlobOffset = 0;
+    uint32_t shapingBlobLength = 0;
+    uint32_t shapingBlobKey = 0;  // content hash from the section header
+    std::unique_ptr<ComplexShaper> shaper;
+
     // The EpdFont whose data pointer we manage
     EpdFont epdFont{&stubData};
 
@@ -317,7 +328,8 @@ class SdCardFont {
   struct ContentMetricsEntry {
     uint32_t codepoint = 0;
     EpdGlyph glyph{};
-    uint8_t style = MAX_STYLES;  // Invalid until a successful read.
+    uint8_t style : 7 = MAX_STYLES;  // Invalid until a successful read.
+    uint8_t recentlyUsed : 1 = 0;    // Body metrics only; leaves bitmap eviction unchanged.
     bool bitmapValid = false;
     uint16_t bitmapOffset = 0;  // Packed cache offset; uses the entry's existing padding.
   };
@@ -334,6 +346,8 @@ class SdCardFont {
   uint32_t contentBitmapNext_ = 0;
   uint16_t contentBitmapInternalLimit_ = 0;
   bool contentBitmapsAttempted_ = false;
+  bool bodyMetricsAttempted_ = false;
+  mutable uint8_t bodyMetricsClock_ = 0;
   uint16_t metricsDepth_ = 0;
   ContentMetricsEntry* contentGlyphMetrics(uint32_t codepoint, uint8_t styleIdx, int32_t glyphIndex) const;
   void prepareContentBitmaps();
@@ -393,6 +407,13 @@ class SdCardFont {
 
   // Static callback for EpdFontData::glyphMissHandler (per-style via OverflowContext)
   static const EpdGlyph* onGlyphMiss(void* ctx, uint32_t codepoint);
+
+  // Static callback for EpdFontData::shapeHandler (per-style via OverflowContext).
+  static bool onShape(void* ctx, const char* utf8, std::string* out);
+  // ComplexShaper::BlobLoader: maps or reads this style's layout font.
+  static bool loadShapingBlob(void* ctx, ComplexShaper::Blob* out);
+  // Reads and validates the shaping section header of style `styleIdx`.
+  bool loadShapingSection(HalFile& file, uint8_t styleIdx, uint32_t sectionOffset);
 
   // Static callback for EpdFontData::coverageHandler: answers hasCodepoint()
   // from the RAM-resident full interval table, without SD I/O.

@@ -110,7 +110,7 @@ class Dictionary {
   static void setLookupDictPathOverride(const char* folderPath);
   static void clearLookupDictPathOverride();
 
-  // Writes folderPath to /.crosspoint/dictionary.bin (global setting).
+  // Store the global dictionary selection as a dictionary base path.
   // Pass empty string to clear the global dictionary.
   static void saveGlobalDictPath(const char* folderPath);
 
@@ -120,10 +120,11 @@ class Dictionary {
 
   // Returns true if a dictionary is configured and all required files exist.
   static bool exists(const char* cachePath = nullptr);
+  static bool existsAt(const std::string& folderPath);
 
   // Returns true if a .syn file exists for the active dictionary.
   // Gates all alternate-form UI — checked at runtime against the physical file.
-  static bool hasAltForms(const char* cachePath = nullptr);
+  static bool hasAltFormsAt(const std::string& path);
 
   // Validates the dictionary path stored in /.crosspoint/dictionary.bin against the SD card.
   // If the path is missing or the required files are gone, clears the file. Returns true if valid.
@@ -168,6 +169,18 @@ class Dictionary {
                                                              const DictLookupCallbacks& cbs = {},
                                                              const char* cachePath = nullptr);
 
+  static DictLocation locateWithStemVariantsIn(const std::string& folderPath, const std::string& word,
+                                               bool* matchedStem, const DictLookupCallbacks& cbs);
+  static bool prepareQuickIndexIn(const std::string& folderPath, const DictLookupCallbacks& cbs);
+
+  // Like locateAllWithStemVariants(), but takes an explicit dictionary folder
+  // instead of resolving one from the current book's own cachePath --
+  // DictionaryLookupController's runLookup() calls this for every dictionary
+  // it searches (the primary one and, on a miss, each installed fallback),
+  // so combined-entries results survive the multi-dictionary search too.
+  static std::vector<DictLocation> locateAllWithStemVariantsIn(const std::string& folderPath, const std::string& word,
+                                                               bool* matchedStem, const DictLookupCallbacks& cbs);
+
   // Look up word in .idx (via .idx.oft if present). Returns definition or empty string.
   static std::string lookup(const std::string& word, const DictLookupCallbacks& cbs = {},
                             const char* cachePath = nullptr);
@@ -188,6 +201,14 @@ class Dictionary {
   // to several base headwords -- e.g. an inflected form shared by two verbs),
   // bounded by MAX_COMBINED_ENTRIES. Empty when not found.
   static std::vector<DictLocation> resolveAltFormAll(const std::string& word, const char* cachePath = nullptr);
+
+  static DictLocation resolveAltFormIn(const std::string& path, const std::string& word,
+                                       const DictLookupCallbacks& cbs);
+
+  // Like resolveAltFormAll(), but takes an explicit dictionary folder instead
+  // of resolving one from cachePath -- used the same way
+  // locateAllWithStemVariantsIn() is, for the multi-dictionary alt-form search.
+  static std::vector<DictLocation> resolveAltFormAllIn(const std::string& path, const std::string& word);
 
   static std::string cleanWord(const std::string& word);
   static std::vector<std::string> getStemVariants(const std::string& word);
@@ -218,12 +239,13 @@ class Dictionary {
     LookupAccelerator acceleratorKind = LookupAccelerator::None;
   };
 
-  static DictLocation resolveExactAltForm(const std::string& word, const std::string& folderPath);
+  static DictLocation resolveExactAltForm(const std::string& word, const std::string& folderPath,
+                                          const DictLookupCallbacks& cbs);
   static std::vector<DictLocation> resolveExactAltFormAll(const std::string& word, const std::string& folderPath);
   static DictLocation locateExactInSession(LookupSession& session, const std::string& word,
                                            const DictLookupCallbacks& cbs);
 
-  static bool openLookupSession(LookupSession& session, const char* cachePath);
+  static bool openLookupSession(LookupSession& session, const std::string& folderPath);
   static void closeLookupSession(LookupSession& session);
   static DictLocation locateInSession(LookupSession& session, const std::string& word, const DictLookupCallbacks& cbs);
 
@@ -249,7 +271,7 @@ class Dictionary {
 
   // Read the word at ordinal `ordinal` in .idx.
   // folderPath is the dictionary base path (e.g. /dictionary/dict-en-en/dict-data).
-  static DictLocation locateByOrdinal(const std::string& folderPath, uint32_t ordinal);
+  static DictLocation locateByOrdinal(const std::string& folderPath, uint32_t ordinal, const DictLookupCallbacks& cbs);
 
   static std::string readDefinition(const std::string& path, uint32_t offset, uint32_t size);
 

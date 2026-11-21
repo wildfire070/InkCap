@@ -16,7 +16,7 @@ struct CssArenaBackingTest : testing::Test {
     const std::string text =
         "p { text-align: center; margin-top: 12px; font-size: 150%; } .em { font-weight: bold; } div p { font-style: "
         "italic; } "
-        ".plain { list-style-type: none; }";
+        ".plain { list-style-type: none; visibility:hidden; background-color:black; }";
     Storage.put("input.css", {text.begin(), text.end()});
     FsFile file;
     ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
@@ -41,6 +41,8 @@ struct CssArenaBackingTest : testing::Test {
     EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
     EXPECT_EQ(style.textAlign, CssTextAlign::Center);
     const auto listStyle = css.resolveStyle("ol", "plain");
+    EXPECT_TRUE(listStyle.defined.visibility && listStyle.visibilityHidden);
+    EXPECT_TRUE(listStyle.hasBackgroundBlack() && listStyle.backgroundBlack);
     EXPECT_TRUE(listStyle.hasListStyleType());
     EXPECT_EQ(listStyle.listStyleType, CssListStyleType::None);
   }
@@ -378,8 +380,8 @@ TEST_F(CssArenaBackingTest, PublisherDecorationsAndContextSurviveAllCacheBacking
   for (int mode = 0; mode < 3; ++mode) {
     fakeheap::reset(mode != 0);
     const std::string text =
-        "section#chapter > p.note.wide { border: 2px dashed; background: #ddd; white-space: pre-wrap; } "
-        "p.note::first-letter { initial-letter: 3; float: left; }";
+        "section#Chapter > p.Note.Wide { border: 2px dashed; background: #ddd; white-space: pre-wrap; } "
+        "p.Note::first-letter { initial-letter: 3; float: left; }";
     Storage.put("input.css", {text.begin(), text.end()});
     FsFile file;
     ASSERT_TRUE(Storage.openFileForRead("test", "input.css", file));
@@ -390,12 +392,12 @@ TEST_F(CssArenaBackingTest, PublisherDecorationsAndContextSurviveAllCacheBacking
     css.clear();
     if (mode == 2) fakeheap::external.fail = 1;
     ASSERT_TRUE(css.loadFromCache());
-    auto style = css.resolveStyle("p", "wide note", {{0, "section", "", "chapter"}});
+    auto style = css.resolveStyle("p", "WIDE Note", {{0, "section", "", "Chapter"}});
     EXPECT_EQ(style.borders[0].width, 2);
     EXPECT_EQ(style.borders[0].style, CssBorderStyle::Dashed);
     EXPECT_TRUE(style.shaded);
     EXPECT_TRUE(style.preserveWhitespace);
-    auto cap = css.resolveStyle("p", "note", {}, {}, true);
+    auto cap = css.resolveStyle("p", "Note", {}, {}, true);
     EXPECT_EQ(cap.initialLetter, 3);
     EXPECT_TRUE(cap.floatLeft);
   }

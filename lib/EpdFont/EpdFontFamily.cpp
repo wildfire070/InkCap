@@ -195,6 +195,12 @@ void EpdFontFamily::getTextDimensions(const char* string, int* w, int* h, const 
 
 const EpdFontData* EpdFontFamily::getData(const Style style) const { return getFont(style)->data; }
 
+const EpdFontData* EpdFontFamily::shapingData(const Style style) const {
+  const auto* primary = getData(style);
+  const auto* extra = getFallbackFont(style);
+  return primary->shapeHandler || !extra ? primary : extra->data;
+}
+
 EpdFontFamily::GlyphData EpdFontFamily::findGlyphData(const uint32_t cp, const Style style) const {
   const EpdFont* font = getFont(style);
   if (const EpdGlyph* glyph = font->findGlyph(cp)) {
@@ -255,14 +261,28 @@ uint16_t EpdFontFamily::getSpaceAdvanceX(const uint32_t cp, const Style style) c
   return syntheticGlyph::spaceAdvanceX(cp, em, space, figure, punctuation);
 }
 
-uint32_t EpdFontFamily::getFallbackCodepoint(const uint32_t cp, const Style style) const {
-  if (syntheticGlyph::isSpaceFallback(cp)) return cp;
-  if (findGlyphData(cp, style).glyph) return cp;
+uint32_t EpdFontFamily::getFallbackCodepoint(const uint32_t cp, const Style style, const EpdGlyph** glyph) const {
+  if (syntheticGlyph::isSpaceFallback(cp)) {
+    if (glyph) *glyph = findGlyphData(cp, style).glyph;
+    return cp;
+  }
+  const auto* matching = findGlyphData(cp, style).glyph;
+  if (matching) {
+    if (glyph) *glyph = matching;
+    return cp;
+  }
   const uint32_t aliasCp = syntheticGlyph::aliasCodepoint(cp);
   if (aliasCp != cp) {
-    return findGlyphData(aliasCp, style).glyph ? aliasCp : REPLACEMENT_GLYPH;
+    matching = findGlyphData(aliasCp, style).glyph;
+    if (matching) {
+      if (glyph) *glyph = matching;
+      return aliasCp;
+    }
+  } else if (syntheticGlyph::isSolid(cp) || syntheticGlyph::isGreekFallback(cp)) {
+    if (glyph) *glyph = nullptr;
+    return cp;
   }
-  if (syntheticGlyph::isSolid(cp) || syntheticGlyph::isGreekFallback(cp)) return cp;
+  if (glyph) *glyph = cp == REPLACEMENT_GLYPH ? nullptr : findGlyphData(REPLACEMENT_GLYPH, style).glyph;
   return REPLACEMENT_GLYPH;
 }
 

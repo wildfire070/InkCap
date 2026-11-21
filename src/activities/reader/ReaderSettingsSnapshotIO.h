@@ -35,6 +35,7 @@ struct ReaderSettingsSnapshot {
   uint8_t hyphenationEnabled = 0;
   uint8_t textAntiAliasing = 1;
   uint8_t textDarkness = 0;
+  uint8_t ruledLines = 0;
   uint8_t twoToneTextAA = 0;
   uint8_t imageRendering = 0;
   uint8_t imageGrayscale = 1;
@@ -66,8 +67,9 @@ struct BookReaderSettingsData {
 // Character Spacing byte after the mask. v12 (upstream, folded in on top of ours): appends an
 // Image Grayscale byte after that. v13 (upstream): appends a Publisher Fonts byte after that.
 // v14 (upstream): appends a Text Darkness byte after that. v15 (upstream): appends a Two-Tone
-// Text AA byte (EEGO A4) after that. Each new field is append-only at the tail -- never reorder
-// or reuse a version number for a different meaning, or an old on-disk file gets misread.
+// Text AA byte (EEGO A4) after that. v16 (upstream): appends a Ruled Lines byte after that.
+// Each new field is append-only at the tail -- never reorder or reuse a version number for a
+// different meaning, or an old on-disk file gets misread.
 constexpr uint8_t LEGACY_READER_SETTINGS_FILE_VERSION = 1;
 constexpr uint8_t PRE_WORD_SPACING_READER_SETTINGS_FILE_VERSION = 2;
 constexpr uint8_t PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION = 3;
@@ -85,7 +87,8 @@ constexpr uint8_t PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION = 11;
 constexpr uint8_t PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION = 12;
 constexpr uint8_t PRE_TEXT_DARKNESS_READER_SETTINGS_FILE_VERSION = 13;
 constexpr uint8_t PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION = 14;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 15;
+constexpr uint8_t PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION = 15;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 16;
 
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
@@ -127,11 +130,12 @@ constexpr uint32_t CHARACTER_SPACING_OVERRIDE = SD_FONT_FAMILY_OVERRIDE << 1;
 // Publisher Fonts joined upstream after Character Spacing did on our side; same reasoning as
 // Character Spacing above -- its own bit after it rather than joining the table.
 constexpr uint32_t PUBLISHER_FONTS_OVERRIDE = CHARACTER_SPACING_OVERRIDE << 1;
-// Text Darkness and Two-Tone Text AA (EEGO A4) are upstream's, each appended the same way
-// Publisher Fonts was -- its own bit after the previous one rather than joining the table.
+// Text Darkness, Two-Tone Text AA (EEGO A4), and Ruled Lines are upstream's, each appended the
+// same way Publisher Fonts was -- its own bit after the previous one rather than joining the table.
 constexpr uint32_t TEXT_DARKNESS_OVERRIDE = PUBLISHER_FONTS_OVERRIDE << 1;
 constexpr uint32_t TWO_TONE_TEXT_AA_OVERRIDE = TEXT_DARKNESS_OVERRIDE << 1;
-constexpr uint32_t ALL_READER_SETTING_OVERRIDES = (TWO_TONE_TEXT_AA_OVERRIDE << 1) - 1;
+constexpr uint32_t RULED_LINES_OVERRIDE = TWO_TONE_TEXT_AA_OVERRIDE << 1;
+constexpr uint32_t ALL_READER_SETTING_OVERRIDES = (RULED_LINES_OVERRIDE << 1) - 1;
 constexpr uint32_t READER_FONT_OVERRIDES = (1U << 0) | (1U << 1) | SD_FONT_FAMILY_OVERRIDE;
 // Anti-aliasing and grayscale change page drawing, but not the saved line/page layout.
 constexpr uint32_t READER_LAYOUT_SETTING_OVERRIDES =

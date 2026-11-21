@@ -12,6 +12,14 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 
 class GfxRenderer {
  public:
+  enum RenderMode { BW };
+  RenderMode getRenderMode() const { return BW; }
+  struct ShapingMemoScope {
+    explicit ShapingMemoScope(bool) {}
+  };
+  bool resolveForDisplay(int, const char*, EpdFontFamily::Style, BidiUtils::BidiBaseDir, std::string&) const {
+    return false;
+  }
   uint64_t textCullGeneration() const { return 0; }
   int getWriteOriginY() const { return 0; }
   int getWriteRows() const { return 480; }
@@ -25,6 +33,18 @@ class GfxRenderer {
   int getFontIdForSize(int id, uint8_t size) const { return scalable && size ? size : id; }
   int resolveBookFont(int id, uint32_t family, uint8_t size = 0) const {
     return family && publisherFont ? publisherFont : getFontIdForSize(id, size);
+  }
+  struct TextVerticalBounds {
+    int top;
+    int bottom;
+  };
+  bool getLatinBodyBounds(int font, TextVerticalBounds& body, TextVerticalBounds& extent) const {
+    body = extent = {0, getFontAscenderSize(font)};
+    return true;
+  }
+  template <class... Args>
+  TextVerticalBounds getTextVerticalBounds(int font, const char*, Args...) const {
+    return {0, getFontAscenderSize(font)};
   }
   int getFontAscenderSize(int id) const {
     ++ascenderCalls;
@@ -43,8 +63,8 @@ class GfxRenderer {
     const int n = characters(text);
     return n * (6 + id) + (n > 1 ? (n - 1) * characterSpacing : 0);
   }
-  int getTextAdvanceX(int id, const char* text, EpdFontFamily::Style style, uint32_t = 0,
-                      int8_t characterSpacing = 0) const {
+  int getTextAdvanceX(int id, const char* text, EpdFontFamily::Style style, uint32_t = 0, int8_t characterSpacing = 0,
+                      const char* = nullptr) const {
     return getTextWidth(id, text, style, BidiUtils::BidiBaseDir::AUTO, characterSpacing);
   }
   int getSpaceWidth(int id, EpdFontFamily::Style) const { return 3 + id; }

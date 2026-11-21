@@ -45,8 +45,32 @@ namespace {
 // This sync (upstream's v109-111: opening-span drop caps, thematic-break
 // fallback rule, and smaller-body font-size retention) retires 108/0xDD,
 // 109/0xDE, and 110/0xDF below in turn.
-constexpr uint8_t kFullVersion = 111;
-constexpr uint8_t kPartialVersion = 0xE0;
+//
+// This sync (upstream's v112-119: adjustable ruled lines, inline publisher
+// page breaks in the anchor map, Indic script letterforms, and centered
+// heading spans + inline redactions) retires 111/0xE0 through 117/0xE6 below
+// in turn. v118/0xE7 never existed as a real on-disk value -- one upstream
+// commit bundled it with v119 in a single jump, so there is nothing to reject
+// at that byte.
+constexpr uint8_t kFullVersion = 120;
+constexpr uint8_t kPartialVersion = 0xE9;
+constexpr uint8_t kHeadingRedactionFullVersion = 119;  // upstream v118+v119 bundled (centered heading spans +
+constexpr uint8_t kHeadingRedactionPartialVersion = 0xE8;  // inline redactions), superseded by this sync's v120
+constexpr uint8_t kIndicScriptsFullVersion = 117;  // upstream v117 (Indic scripts with proper letterforms)
+constexpr uint8_t kIndicScriptsPartialVersion = 0xE6;
+constexpr uint8_t kPublisherPageBreakAnchorFullVersion = 116;  // upstream v116 (inline publisher page breaks in the
+constexpr uint8_t kPublisherPageBreakAnchorPartialVersion = 0xE5;  // anchor map)
+constexpr uint8_t kRuledCenteredFullVersion = 115;  // upstream v115 (ruled lines: center the main letter body)
+constexpr uint8_t kRuledCenteredPartialVersion = 0xE4;
+constexpr uint8_t kRuledLoweredFullVersion = 114;  // upstream v114 (ruled lines: lower text by a pixel)
+constexpr uint8_t kRuledLoweredPartialVersion = 0xE3;
+constexpr uint8_t kRuledFontBaselineFullVersion = 113;  // upstream v113 (ruled lines: share a font baseline)
+constexpr uint8_t kRuledFontBaselinePartialVersion = 0xE2;
+constexpr uint8_t kRuledDescenderClearanceFullVersion = 112;  // upstream v112 (ruled lines: reserve descender
+constexpr uint8_t kRuledDescenderClearancePartialVersion = 0xE1;  // clearance) -- also where adjustable ruled
+                                                                   // lines itself landed
+constexpr uint8_t kPreRuledLinesFullVersion = 111;  // this branch's own former-current, superseded by upstream's
+constexpr uint8_t kPreRuledLinesPartialVersion = 0xE0;  // v112 (ruled lines)
 constexpr uint8_t kPreBodyNormalizationFullVersion = 110;  // former-current, superseded by v111 (body-size retention)
 constexpr uint8_t kPreBodyNormalizationPartialVersion = 0xDF;
 constexpr uint8_t kPreThematicBreakFullVersion = 109;  // former-current, superseded by v110 (thematic-break fallback)
@@ -274,7 +298,12 @@ TEST_F(SectionPersistenceTest, FailedCommitKeepsThePreviousReadableCache) {
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion :
-       {kPreBodyNormalizationFullVersion, kPreBodyNormalizationPartialVersion, kPreThematicBreakFullVersion,
+       {kHeadingRedactionFullVersion, kHeadingRedactionPartialVersion, kIndicScriptsFullVersion,
+        kIndicScriptsPartialVersion, kPublisherPageBreakAnchorFullVersion, kPublisherPageBreakAnchorPartialVersion,
+        kRuledCenteredFullVersion, kRuledCenteredPartialVersion, kRuledLoweredFullVersion, kRuledLoweredPartialVersion,
+        kRuledFontBaselineFullVersion, kRuledFontBaselinePartialVersion, kRuledDescenderClearanceFullVersion,
+        kRuledDescenderClearancePartialVersion, kPreRuledLinesFullVersion, kPreRuledLinesPartialVersion,
+        kPreBodyNormalizationFullVersion, kPreBodyNormalizationPartialVersion, kPreThematicBreakFullVersion,
         kPreThematicBreakPartialVersion, kPreOpeningSpanDropCapFullVersion, kPreOpeningSpanDropCapPartialVersion,
         kHeadingGroupFullVersion, kHeadingGroupPartialVersion, kLowHeapCssFullVersion, kLowHeapCssPartialVersion,
         kPreHeadingGroupFullVersion, kPreHeadingGroupPartialVersion, kPreSourceRangeFullVersion,
@@ -395,6 +424,25 @@ TEST_F(SectionPersistenceTest, SyncLookupsUseTheSelectedRenderModesCache) {
     Section section(epub, 0, renderer, sectionCacheSuffixForRenderMode(modes[i]));
     EXPECT_EQ(section.getCachedPageCount(), i + 2);
     EXPECT_EQ(section.getPageForParagraphIndex((i + 1) * 3), i + 1);
+  }
+}
+
+TEST_F(SectionPersistenceTest, RuledLayoutInvalidatesCompleteAndSuspendedSections) {
+  for (const auto version : {kFullVersion, kPartialVersion}) {
+    Storage.reset();
+    SectionHarness harness;
+    harness.spec.ruled = true;
+    harness.begin();
+    harness.appendPages(1);
+    ASSERT_TRUE(harness.commit(version, version == kPartialVersion ? 100 : 0, 200));
+    harness.finishSuccessfulCommit();
+    {
+      Section same(harness.epub, 0, harness.renderer);
+      EXPECT_TRUE(same.loadSectionFile(harness.spec));
+    }
+    harness.spec.ruled = false;
+    Section changed(harness.epub, 0, harness.renderer);
+    EXPECT_FALSE(changed.loadSectionFile(harness.spec));
   }
 }
 

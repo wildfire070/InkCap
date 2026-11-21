@@ -95,9 +95,9 @@ enum class CssFloat : uint8_t { None = 0, Left = 1, Right = 2 };
 // block/line -- it's used to tell apart elements like <dt>/<dd> that FanFicFare
 // (and similar EPUB generators) mark `display: inline` in specific contexts
 // (e.g. a Series row) from their ordinary block-level siblings (e.g. a Tags
-// row) in otherwise-identical markup. Keeping inline distinct also lets
-// replaced elements participate in text layout.
-enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2 };
+// row) in otherwise-identical markup, and so replaced elements can
+// participate in text layout.
+enum class CssDisplay : uint8_t { Block = 0, None = 1, Inline = 2, Other = 3 };
 
 // Vertical alignment options for inline elements (e.g. superscript/subscript)
 enum class CssVerticalAlign : uint8_t { Baseline = 0, Super = 1, Sub = 2 };
@@ -151,6 +151,7 @@ struct CssPropertyFlags {
   uint64_t fontFamily : 1;
   uint64_t cssFloat : 1;
   uint64_t backgroundImage : 1;
+  uint64_t visibility : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -189,7 +190,8 @@ struct CssPropertyFlags {
         initialLetter(0),
         fontFamily(0),
         cssFloat(0),
-        backgroundImage(0) {}
+        backgroundImage(0),
+        visibility(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
@@ -197,7 +199,7 @@ struct CssPropertyFlags {
            imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
            pageBreakAfter || fontVariantCaps || borderTop || borderRight || borderBottom || borderLeft ||
            fontSizeMultiplier || listStyleType || fontSize || border || whiteSpace || shaded || floatLeft ||
-           initialLetter || fontFamily || cssFloat || backgroundImage;
+           initialLetter || fontFamily || cssFloat || backgroundImage || visibility;
   }
 
   void clearAll() {
@@ -210,8 +212,7 @@ struct CssPropertyFlags {
     fontSizeMultiplier = 0;
     listStyleType = 0;
     fontSize = border = whiteSpace = shaded = floatLeft = initialLetter = fontFamily = 0;
-    cssFloat = 0;
-    backgroundImage = 0;
+    cssFloat = backgroundImage = visibility = 0;
   }
 };
 
@@ -244,6 +245,7 @@ struct CssStyle {
   CssLength imageWidth;     // Width for img when both or only width set
   CssDisplay display = CssDisplay::Block;
   CssBorderSide borders[4];  // top, right, bottom, left; shares the existing defined edge masks
+  bool visibilityHidden = false;
   bool shaded = false;
   bool floatLeft = false;
   uint8_t initialLetter = 0;
@@ -391,6 +393,10 @@ struct CssStyle {
     if (base.hasDisplay()) {
       display = base.display;
       defined.display = 1;
+    }
+    if (base.defined.visibility) {
+      visibilityHidden = base.visibilityHidden;
+      defined.visibility = 1;
     }
     if (base.hasBackgroundBlack()) {
       backgroundBlack = base.backgroundBlack;
