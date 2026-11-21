@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 #include <BufferedFile.h>
+#if CROSSINK_INDIC_SHAPING
 #include <ComplexShaper.h>
+#endif
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -779,7 +781,9 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
       true, spec.characterSpacing);
   visitor.setFontSizeLadder(spec.fontSizeLadder);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
+#if CROSSINK_INDIC_SHAPING
   ComplexShaper::setDocumentLanguage(epub->getLanguage().c_str());
+#endif
   bool cancelled = false;
   bool success = false;
   if (cancelBuild()) {
@@ -1124,7 +1128,9 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   ctx->parser->setCharacterSpacing(spec.characterSpacing);
 
   Hyphenator::setPreferredLanguage(epub->getLanguage());
+#if CROSSINK_INDIC_SHAPING
   ComplexShaper::setDocumentLanguage(epub->getLanguage().c_str());
+#endif
   build_ = std::move(ctx);
   build_->parser->setRuled(spec.ruled);
   build_->parser->setPublisherFonts(spec.publisherFonts);

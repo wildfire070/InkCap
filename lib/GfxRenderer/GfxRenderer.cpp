@@ -1,7 +1,9 @@
 #include "GfxRenderer.h"
 
+#if CROSSINK_INDIC_SHAPING
 #include <ComplexShaper.h>
 #include <IndicReorder.h>
+#endif
 #include <ShapingTokens.h>
 #include <TextScan.h>
 #if CROSSINK_SCALABLE_FONTS
@@ -266,7 +268,9 @@ bool GfxRenderer::releaseSdCardFontForLowMemory(int fontId, const bool preserveA
   auto it = sdCardFonts_.find(fontId);
   if (it == sdCardFonts_.end()) return false;
 
+#if CROSSINK_INDIC_SHAPING
   ComplexShaper::releaseAll();
+#endif
   it->second->releaseForLowMemory(preserveAdvanceTable);
   return true;
 }
@@ -1238,7 +1242,11 @@ VisualText resolveComplexText(const char* text, std::string& visualBuffer, const
   std::string rewritten;
   const bool shaped = shapingFont != nullptr && shapingFont->shapeHandler != nullptr &&
                       shapingFont->shapeHandler(shapingFont->glyphMissCtx, text, &rewritten);
+#if CROSSINK_INDIC_SHAPING
   if (!shaped && !indicReorderForDisplay(text, rewritten)) return {text, false};
+#else
+  if (!shaped) return {text, false};
+#endif
   visualBuffer.swap(rewritten);
   return {visualBuffer.c_str(), shaped};
 }
@@ -3328,10 +3336,14 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
 }
 
 GfxRenderer::ShapingMemoScope::ShapingMemoScope(bool enabled) : enabled_(enabled) {
+#if CROSSINK_INDIC_SHAPING
   if (enabled_) ComplexShaper::beginMemo();
+#endif
 }
 GfxRenderer::ShapingMemoScope::~ShapingMemoScope() {
+#if CROSSINK_INDIC_SHAPING
   if (enabled_) ComplexShaper::endMemo();
+#endif
 }
 
 bool GfxRenderer::resolveForDisplay(int fontId, const char* text, EpdFontFamily::Style style,
