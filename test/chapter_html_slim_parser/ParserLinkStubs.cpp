@@ -26,7 +26,8 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
                      const std::vector<uint16_t>&, const std::vector<uint16_t>&, const std::vector<uint8_t>& wordFlags,
                      const std::vector<bool>&, const BlockStyle& blockStyle, std::vector<std::string> rubyTexts,
                      const std::vector<uint8_t>& wordSizes, const char*, int8_t characterSpacing,
-                     const std::vector<uint32_t>& fontFamilies, const std::vector<SourceRange>& sourceRanges)
+                     const std::vector<uint32_t>& fontFamilies, const std::vector<SourceRange>& sourceRanges,
+                     const std::vector<std::string>&)
     : blockStyle(blockStyle),
       characterSpacing(characterSpacing),
       numWords(static_cast<uint16_t>(words.size())),
@@ -97,7 +98,7 @@ CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, int, uint16_t, uin
     : renderer_(renderer), tableStyle_(tableStyle), characterSpacing_(characterSpacing) {}
 bool CompactTableLayout::beginRow() { return true; }
 bool CompactTableLayout::beginCell(bool, uint8_t, uint32_t, const BlockStyle&) { return true; }
-bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t, uint32_t) {
+bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t, uint32_t, bool, bool) {
   return true;
 }
 bool CompactTableLayout::endCell(const std::vector<std::pair<int, FootnoteEntry>>&) { return true; }
@@ -137,6 +138,9 @@ int TextBlock::maxAscender(const GfxRenderer& r, int font) const {
   int result = r.getFontAscenderSize(resolvedFontId(r, font));
   for (uint16_t i = 0; i < numWords; ++i) result = std::max(result, r.getFontAscenderSize(wordFontId(r, font, i)));
   return result;
+}
+RuledLineLayout TextBlock::ruledLayout(const GfxRenderer& r, int font, int requested) const {
+  return RuledLineLayout::center(r, font, requested, {0, r.getFontAscenderSize(font)});
 }
 int TextBlock::maxLineHeight(const GfxRenderer& r, int font) const {
   int result = r.getLineHeight(resolvedFontId(r, font));

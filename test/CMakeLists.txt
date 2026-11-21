@@ -24,6 +24,18 @@ FetchContent_MakeAvailable(googletest)
 
 set(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+# lib/OtShaper, the Indic shaping engine, for tests that shape.
+file(GLOB OT_SHAPER_SOURCES ${REPO_ROOT}/lib/OtShaper/*.cpp)
+set(OT_SHAPER_INCLUDE_DIR ${REPO_ROOT}/lib/OtShaper)
+
+# The full-display tests exercise the real shaper and its bounded host allocator.
+add_library(host_indic_shaper STATIC ${OT_SHAPER_SOURCES}
+  ${REPO_ROOT}/lib/EpdFont/ComplexShaper.cpp ${REPO_ROOT}/lib/EpdFont/FlashBlobCache.cpp
+  ${REPO_ROOT}/lib/Utf8/IndicReorder.cpp)
+target_include_directories(host_indic_shaper PRIVATE ${REPO_ROOT}/test/complex_shaper/stubs
+  ${REPO_ROOT}/lib/EpdFont ${REPO_ROOT}/lib/Utf8 ${REPO_ROOT}/lib/HalFlashPartition ${OT_SHAPER_INCLUDE_DIR})
+target_compile_definitions(host_indic_shaper PRIVATE ESP=indicHostEsp millis=indicHostMillis)
+
 add_library(crosspoint_test_common INTERFACE)
 target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
@@ -118,10 +130,16 @@ add_subdirectory(fs_helpers)
 add_subdirectory(persistable_store_atomic)
 add_subdirectory(book_reading_stats_atomic)
 add_subdirectory(opds_parser)
+
+add_subdirectory(indic_text)
+add_subdirectory(ot_shaper)
+add_subdirectory(complex_shaper)
+add_subdirectory(flash_blob_cache)
 add_subdirectory(library_text)
 add_subdirectory(library_format)
 add_subdirectory(library_index_file)
 add_subdirectory(content_opf_parser)
+add_subdirectory(toc_spine_memo)
 add_subdirectory(adobe_font_obfuscation)
 add_subdirectory(library_builder)
 add_subdirectory(library_input_buffer)
@@ -143,6 +161,8 @@ add_subdirectory(interval_selection_layout)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME CrashTaskContextRegression
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_crash_task_context.py)
+add_test(NAME EpubBookMetadataBounds
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_epub_book_metadata_bounds.py)
 add_subdirectory(frontlight_settings_boot)
 add_subdirectory(eego_frontlight)
 add_subdirectory(eego_uid)
@@ -220,6 +240,8 @@ add_test(NAME BookmarkListMemoryRegression
 add_subdirectory(bookmark_store)
 add_test(NAME UpstreamPortRegressions
   COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_upstream_ports.py)
+add_test(NAME SharedBuiltinFontTables
+  COMMAND ${Python3_EXECUTABLE} ${REPO_ROOT}/test/scripts/test_shared_builtin_font_tables.py)
 add_subdirectory(gif_support)
 add_subdirectory(clipping_sync)
 add_subdirectory(progress_slots)

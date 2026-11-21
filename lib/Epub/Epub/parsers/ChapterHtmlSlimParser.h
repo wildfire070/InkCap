@@ -75,7 +75,12 @@ class ChapterHtmlSlimParser {
   bool headingOpenerActive = false;
   // buffer for building up words from characters, will auto break if longer than this
   // leave one char at end for null pointer
-  char partWordBuffer[MAX_WORD_SIZE + 1] = {};
+  char inlineWordBuffer[MAX_WORD_SIZE + 1] = {};
+  // Used only if the normal token limit falls inside an Indic run.
+  std::unique_ptr<char[]> extendedWordBuffer;
+  int wordBufferCapacity = MAX_WORD_SIZE;
+  char* partWordBuffer() { return extendedWordBuffer ? extendedWordBuffer.get() : inlineWordBuffer; }
+  bool makeRoomForWordCodepoint(const unsigned char* next);
   int partWordBufferIndex = 0;
   uint32_t partWordVisibleOffset = 0;
   uint32_t visibleTextOffset = 0;
@@ -112,6 +117,7 @@ class ChapterHtmlSlimParser {
   int currentTextFontId() const;
   // Returns true only when a smaller body declaration was normalized.
   bool applyBlockFontSize(const CssStyle& cssStyle, const char* tag, BlockStyle& style);
+  bool ruled = false;
   float lineCompression;
   bool extraParagraphSpacing;
   bool forceParagraphIndents;
@@ -228,6 +234,7 @@ class ChapterHtmlSlimParser {
     bool hasUnderline = false, underline = false;
     bool hasStrikethrough = false, strikethrough = false;
     bool hasBackgroundBlack = false, backgroundBlack = false;
+    bool hasVisibility = false, visibilityHidden = false;
     bool hasDirection = false;
     CssTextDirection direction = CssTextDirection::Ltr;
     bool setsParagraphDirection = false;
@@ -300,6 +307,8 @@ class ChapterHtmlSlimParser {
   bool effectiveUnderline = false;
   bool effectiveStrikethrough = false;
   bool effectiveBackgroundBlack = false;
+  bool effectiveHidden = false;
+  bool pendingBackgroundSpace = false;
   bool effectiveDirectionDefined = false;
   CssTextDirection effectiveDirection = CssTextDirection::Ltr;
   bool effectiveSup = false;
@@ -428,9 +437,12 @@ class ChapterHtmlSlimParser {
   int wordsExtractedInBlock = 0;
 
   struct PendingPublisherPageMarker {
-    int wordIndex = 0;
+    uint32_t wordIndex = 0;
     char label[16] = {};
+    std::string anchor;
   };
+  // Markers can refer to the first word of the next paragraph.
+  uint32_t wordsLaidOut = 0;
   std::vector<PendingPublisherPageMarker> pendingPublisherPageMarkers;
 
   void updateEffectiveInlineStyle();
@@ -441,8 +453,8 @@ class ChapterHtmlSlimParser {
   bool startNewPage(const char* reason);
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
-  void addPendingPublisherPageMarker(const char* label);
-  void attachPendingPublisherPageMarkers(int yPos);
+  void addPendingPublisherPageMarker(const char* label, const char* anchor);
+  void attachPendingPublisherPageMarkers(int yPos, bool includeLineEnd = true);
   void flushPartWordBuffer();
   void queueInlinePadding(const CssStyle& cssStyle);
   void flushLongTextRunIfNeeded(bool force = false, bool flushLastLine = false);
@@ -453,6 +465,7 @@ class ChapterHtmlSlimParser {
   void setCurrentPageVisibleOffset(uint32_t offset, uint32_t referenceOffset = UINT32_MAX);
   void completeCurrentPage();
   void makePages(bool completeBlock = true);
+  int textRowHeight(TextBlock& line, int rowFont) const;
   int effectiveLineHeight() const;
   int effectiveLineHeight(int fontIdForLine) const;
   // Narrows `effectiveWidth` for a block that will render at
@@ -476,7 +489,7 @@ class ChapterHtmlSlimParser {
   void pushCssAncestor(int depth, const char* tag, std::string_view classAttr, std::string_view idAttr = {});
   void pushBlockFontStyle(const CssStyle& cssStyle);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
-  static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
+  static void applyInheritedTextStyle(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);
   void emitHorizontalRule(const BlockStyle& blockStyle, bool visible);
   void beginCssBorderBoxIfNeeded(const BlockStyle& blockStyle);
@@ -587,6 +600,7 @@ class ChapterHtmlSlimParser {
   uint32_t getReferenceTextLength() const { return referenceTextOffset; }
   bool parseAndBuildPages();
   static uint32_t publisherBodyFontFamily(const std::string& path, const CssParser& css);
+  void setRuled(bool enabled) { ruled = enabled; }
   void setPublisherFonts(PublisherFonts mode) { publisherFonts = mode; }
   void setDeferAdvancePrewarm(bool defer) { deferAdvancePrewarm_ = defer; }
   bool prewarmSectionAdvanceStep();

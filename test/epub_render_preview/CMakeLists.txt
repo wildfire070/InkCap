@@ -13,6 +13,7 @@ add_executable(EpubRenderPreview
   ${REPO_ROOT}/lib/Epub/Epub/Page.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/TextBlock.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/ImageBlock.cpp
+  ${REPO_ROOT}/lib/Epub/Epub/RuledLineLayout.cpp
   ${REPO_ROOT}/lib/Epub/Epub/hyphenation/HyphenationCommon.cpp
   ${REPO_ROOT}/lib/GfxRenderer/GfxRenderer.cpp
   ${REPO_ROOT}/lib/GfxRenderer/Bitmap.cpp
@@ -25,6 +26,7 @@ add_executable(EpubRenderPreview
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/Memory/BuildScratch.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/lib/Utf8/IndicReorder.cpp
   ${REPO_ROOT}/lib/MiniBidi/BidiUtils.cpp
   ${REPO_ROOT}/lib/MiniBidi/minibidi.c
   ${REPO_ROOT}/lib/uzlib/src/tinflate.c
@@ -55,4 +57,4 @@ target_include_directories(EpubRenderPreview PRIVATE
   ${REPO_ROOT}/test/memory_policy/stubs
 )
 target_compile_definitions(EpubRenderPreview PRIVATE ARDUINO_ARCH_ESP32=1 CROSSINK_MEMORY_TEST=1)
-target_link_libraries(EpubRenderPreview PRIVATE crosspoint_test_common expat)
+target_link_libraries(EpubRenderPreview PRIVATE crosspoint_test_common expat host_indic_shaper)

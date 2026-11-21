@@ -257,9 +257,11 @@ inline CenteredReaderStatusBarGeometry layoutCenteredReaderStatusBarItems(
   CenteredReaderStatusBarGeometry result;
   result.widths = widths;
   int count = 0;
+  int sum = 0;
   for (auto& w : result.widths) {
     if (w < 0) w = 0;
     if (w > 0) ++count;
+    sum += w;
   }
   if (count == 0) return result;
 
@@ -267,24 +269,26 @@ inline CenteredReaderStatusBarGeometry layoutCenteredReaderStatusBarItems(
   const int minX = leftEdge + std::max(0, bookmarkReserve);
   const int available = std::max(0, rightEdge - minX);
   const int budget = std::max(0, available - (count - 1) * joinCost);
-  const int sum = std::accumulate(result.widths.begin(), result.widths.end(), 0);
   if (sum > budget) {
     int low = 0;
     int high = budget;
     while (low < high) {
       const int cap = low + (high - low + 1) / 2;
       const int used = std::accumulate(result.widths.begin(), result.widths.end(), 0,
-                                       [cap](int acc, int w) { return acc + std::min(w, cap); });
+                                       [cap](int total, int width) { return total + std::min(width, cap); });
       if (used <= budget)
         low = cap;
       else
         high = cap - 1;
     }
-    std::transform(result.widths.begin(), result.widths.end(), result.widths.begin(),
-                   [low](int w) { return std::min(w, low); });
+    sum = 0;
+    for (auto& w : result.widths) {
+      w = std::min(w, low);
+      sum += w;
+    }
   }
 
-  const int total = (count - 1) * joinCost + std::accumulate(result.widths.begin(), result.widths.end(), 0);
+  const int total = (count - 1) * joinCost + sum;
   result.totalWidth = total;
   int cursor = std::max(minX, std::min(centerX - total / 2, rightEdge - total));
   bool placedAny = false;

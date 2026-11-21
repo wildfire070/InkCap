@@ -1,5 +1,6 @@
 #pragma once
 #if CROSSINK_SCALABLE_FONTS
+#include <ComplexShaper.h>
 #include <EpdFontFamily.h>
 #include <FtFont.h>
 #include <HalStorage.h>
@@ -122,12 +123,17 @@ class HalScalableFont {
     // Returned metrics survive subsequent lookups in the same draw operation.
     EpdGlyph glyphs[32]{};
     uint8_t cursor = 0;
+    std::unique_ptr<ComplexShaper> shaper;
   };
   static const EpdGlyph* glyph(void* ctx, uint32_t cp);
   static const uint8_t* bitmap(void* ctx, const EpdGlyph* glyph);
   static bool covers(void* ctx, uint32_t cp);
   static int8_t kerning(void* ctx, uint32_t left, uint32_t right);
   static uint32_t ligature(void* ctx, uint32_t left, uint32_t right);
+  static bool shape(void* ctx, const char* text, std::string* out);
+  static int32_t shapingAdvance(void* ctx, uint32_t glyph);
+  static uint8_t* loadShapingTable(void* ctx, uint32_t tag, uint32_t* length);
+  bool readSource(size_t offset, uint8_t* buffer, size_t count);
   static unsigned long streamRead(void* ctx, unsigned long offset, unsigned char* buffer, unsigned long count);
   static constexpr size_t StreamWindowBytes = 1024;
   static constexpr size_t StreamWindowCount = 4;
@@ -170,6 +176,7 @@ class HalScalableFont {
   StreamWindow streamWindows_[StreamWindowCount]{};
   size_t nextStreamWindow_ = 0;
   bool streamed_ = false;
+  bool drawsIndic_ = false;
   // Declared last so it releases borrowed bytes/the stream before their owners.
   freeink::font::FtFont font_;
 };

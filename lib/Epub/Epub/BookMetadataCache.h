@@ -9,6 +9,8 @@
 #include <memory>
 #include <string>
 
+#include "TocSpineMemo.h"
+
 class BookMetadataCache {
  public:
   struct BookMetadata {
@@ -95,6 +97,7 @@ class BookMetadataCache {
   };
   Arena spineHrefIndexArena;
   ArenaVector<SpineHrefIndexEntry> spineHrefIndex;
+  TocSpineMemo tocSpineMemo;
   bool useSpineHrefIndex = false;
   bool lowMemoryFailure = false;
 
