@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
+#if CROSSINK_INDIC_SHAPING
 #include "ComplexShaper.h"
+#endif
 #include "EpdFont.h"
 #include "EpdFontData.h"
 
@@ -271,7 +273,9 @@ class SdCardFont {
     uint32_t shapingBlobOffset = 0;
     uint32_t shapingBlobLength = 0;
     uint32_t shapingBlobKey = 0;  // content hash from the section header
+#if CROSSINK_INDIC_SHAPING
     std::unique_ptr<ComplexShaper> shaper;
+#endif
 
     // The EpdFont whose data pointer we manage
     EpdFont epdFont{&stubData};
@@ -408,12 +412,14 @@ class SdCardFont {
   // Static callback for EpdFontData::glyphMissHandler (per-style via OverflowContext)
   static const EpdGlyph* onGlyphMiss(void* ctx, uint32_t codepoint);
 
+#if CROSSINK_INDIC_SHAPING
   // Static callback for EpdFontData::shapeHandler (per-style via OverflowContext).
   static bool onShape(void* ctx, const char* utf8, std::string* out);
   // ComplexShaper::BlobLoader: maps or reads this style's layout font.
   static bool loadShapingBlob(void* ctx, ComplexShaper::Blob* out);
   // Reads and validates the shaping section header of style `styleIdx`.
   bool loadShapingSection(HalFile& file, uint8_t styleIdx, uint32_t sectionOffset);
+#endif
 
   // Static callback for EpdFontData::coverageHandler: answers hasCodepoint()
   // from the RAM-resident full interval table, without SD I/O.

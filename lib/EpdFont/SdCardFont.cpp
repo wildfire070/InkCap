@@ -13,9 +13,11 @@
 #include <cstring>
 #include <memory>
 
+#if CROSSINK_INDIC_SHAPING
 #include "ComplexShaper.h"
-#include "EpdFontFamily.h"
 #include "FlashBlobCache.h"
+#endif
+#include "EpdFontFamily.h"
 #include "Fnv1a.h"
 #include "ShapingTokens.h"
 
@@ -322,7 +324,9 @@ void SdCardFont::freeStyleAll(PerStyle& s) {
   s.kernBlockIndex = nullptr;
   s.kernBlockIndexReady = false;
   s.present = false;
+#if CROSSINK_INDIC_SHAPING
   s.shaper.reset();
+#endif
   s.shapingBlobOffset = 0;
   s.shapingBlobLength = 0;
   s.shapingBlobKey = 0;
@@ -667,7 +671,11 @@ void SdCardFont::applyGlyphMissCallback(uint8_t styleIdx) {
   s.stubData.glyphMissHandler = &SdCardFont::onGlyphMiss;
   s.stubData.glyphMissCtx = &overflowCtx_[styleIdx];
   s.stubData.coverageHandler = &SdCardFont::onCoverageQuery;
+#if CROSSINK_INDIC_SHAPING
   s.stubData.shapeHandler = s.shaper ? &SdCardFont::onShape : nullptr;
+#else
+  s.stubData.shapeHandler = nullptr;
+#endif
 }
 
 bool SdCardFont::onCoverageQuery(void* ctx, const uint32_t codepoint) {
@@ -678,6 +686,7 @@ bool SdCardFont::onCoverageQuery(void* ctx, const uint32_t codepoint) {
 }
 
 // --- Shaping section ---
+#if CROSSINK_INDIC_SHAPING
 
 namespace {
 constexpr char SHAPING_MAGIC[4] = {'C', 'P', 'S', 'H'};
@@ -790,6 +799,8 @@ bool SdCardFont::onShape(void* ctx, const char* utf8, std::string* out) {
   const auto& shaper = octx->self->styles_[octx->styleIdx].shaper;
   return shaper != nullptr && shaper->shape(utf8, *out);
 }
+
+#endif  // CROSSINK_INDIC_SHAPING
 
 // --- Compute per-style file offsets from a base data offset ---
 
@@ -1198,10 +1209,12 @@ bool SdCardFont::load(const char* path, const size_t residentLimit, const size_t
     s.epdFont.data = &s.stubData;
     // A bad shaping section only costs complex-script shaping, not the font.
     // Page caches store the layout font's glyph IDs, so its hash joins the font's.
+#if CROSSINK_INDIC_SHAPING
     if (shapingOffsets[i] != 0 && loadShapingSection(file, i, shapingOffsets[i])) {
       contentHash_ =
           fnv1a::hash(reinterpret_cast<const uint8_t*>(&s.shapingBlobKey), sizeof(s.shapingBlobKey), contentHash_);
     }
+#endif
     applyGlyphMissCallback(i);
   }
 
@@ -1924,7 +1937,11 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
   s.miniData.glyphMissHandler = &SdCardFont::onGlyphMiss;
   s.miniData.glyphMissCtx = &overflowCtx_[styleIdx];
   s.miniData.coverageHandler = &SdCardFont::onCoverageQuery;
+#if CROSSINK_INDIC_SHAPING
   s.miniData.shapeHandler = s.shaper ? &SdCardFont::onShape : nullptr;
+#else
+  s.miniData.shapeHandler = nullptr;
+#endif
 
   s.epdFont.data = &s.miniData;
 
