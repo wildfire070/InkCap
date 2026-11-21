@@ -90,6 +90,14 @@ Word Spacing preserves saved values `0..4`. Values `5..8` encode levels `-1..-4`
 
 ## TXT `index.bin`
 
+Version 9 rebuilds page offsets for ruled rows centered on the main letter body. Its binary layout matches version 8.
+
+Version 8 rebuilds page offsets for the one-pixel shift in ruled text. Its binary layout matches version 7.
+
+Version 7 rebuilds page offsets for the updated ruled baseline. Its binary layout matches version 6.
+
+Version 6 appends two signed 32-bit values after the page count and before page offsets. Ruled pages store their viewport height and requested row height in pixels. Unruled pages store -1 and 0.
+
 Version 5 adds signed `characterSpacing` (-5..5) after the source file size in the index header. A changed spacing value or older version rebuilds pagination around the stored text position. Home reads this same header before displaying reading progress.
 
 ## TXT `progress.bin`
@@ -584,7 +592,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 15
+### Version 16
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -609,6 +617,8 @@ Version 11 appends the image-grayscale toggle after the mask and moves the SD-fo
 mask bit from 18 to 19. Older records retain their existing overrides and inherit
 the global image-grayscale setting. This drawing-only setting does not invalidate
 EPUB layout or image caches.
+Version 16 appends `u8 ruledLines` (0 Off, 1 Light, 2 Medium, 3 Dark), with override bit 24. Older books inherit the global setting. Changing the shade redraws the page using its existing layout.
+
 Version 15 appends `u8 twoToneTextAA` (0 off, 1 on), with override bit 23. Older records inherit the global EEGO text AA quality. Changing it preserves the EPUB layout cache.
 
 Version 14 appends `u8 textDarkness` (0 Normal, 1 Dark, 2 Darker), with override bit 22. Older records inherit global text darkness. This affects glyph shading only; existing EPUB layout caches remain valid.
@@ -627,7 +637,7 @@ fallback successfully opens a difficult book.
 
 ```c++
 struct ReaderSettingsBin {
-    u8 version; // 15
+    u8 version; // 16
     u8 flags;   // bit 0 = at least one custom reader field, bit 1 = custom auto-page-turn interval, bit 2 = render mode override, bit 3 = dictionary font override, bit 4 = Safe Mode override
     u16 autoPageTurnSeconds;
     u8 renderMode; // 0 = CrossInk Default, 1 = Balanced, 2 = Light
@@ -660,6 +670,7 @@ struct ReaderSettingsBin {
     u8 publisherFonts; // 0..2; override bit 21
     u8 textDarkness; // 0 Normal, 1 Dark, 2 Darker; override bit 22
     u8 twoToneTextAA; // 0 off, 1 on; override bit 23
+    u8 ruledLines; // 0 Off, 1 Light, 2 Medium, 3 Dark; override bit 24
 };
 ```
 
@@ -685,13 +696,13 @@ valid remains the file starts fresh (see below). Integers are little-endian.
 
 Books whose local state changed since their last successful upload.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| version | `uint8` | `1` |
-| entries | repeated | until the CRC |
-| entry.mask | `uint8` | `1` progress, `2` reading stats, `4` clippings |
-| entry.path | `uint16` length + bytes | absolute book path, at most 1024 bytes |
-| crc | `uint32` | |
+| Field      | Type                    | Notes                                          |
+| ---------- | ----------------------- | ---------------------------------------------- |
+| version    | `uint8`                 | `1`                                            |
+| entries    | repeated                | until the CRC                                  |
+| entry.mask | `uint8`                 | `1` progress, `2` reading stats, `4` clippings |
+| entry.path | `uint16` length + bytes | absolute book path, at most 1024 bytes         |
+| crc        | `uint32`                |                                                |
 
 Entries are only added while a sync account exists, and stats/clippings bits
 only while their What to Sync toggle is on. An entry is removed when its mask is
@@ -701,24 +712,24 @@ in `sync_state.bin` are reset so they run again.
 
 ### `/.crosspoint/sync_state.bin` (version 2)
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| version | `uint8` | `1` |
-| baseUrl | `uint16` length + bytes | account this state belongs to |
-| username | `uint16` length + bytes | |
-| flags | `uint8` | bit 0 stats caught up, bit 1 clippings caught up |
-| statsCatchupId | `uint32` | non-zero while a stats catch-up is unfinished |
-| clippingsCatchupId | `uint32` | same for clippings |
-| nextStampId | `uint32` | next catch-up/walk id; random start, never reused |
-| scopes | repeated | version 2: prepared sync scopes, until the CRC |
-| scope.path | `uint16` length + bytes | folder, or `/` for the whole card; at most 255 bytes |
-| scope.flags | `uint8` | bit 0 prepared, bit 1 stats caught up, bit 2 clippings caught up |
-| scope.cursor | `uint32` | change feed cursor for this scope |
-| scope.lastSynced | `uint32` | stamp id of the last sync; the oldest is dropped beyond 32 scopes |
-| scope.walkId | `uint32` | non-zero while the scope's first walk is unfinished |
-| scope.statsCatchupId | `uint32` | unfinished stats catch-up for this scope |
-| scope.clippingsCatchupId | `uint32` | unfinished clippings catch-up for this scope |
-| crc | `uint32` | |
+| Field                    | Type                    | Notes                                                             |
+| ------------------------ | ----------------------- | ----------------------------------------------------------------- |
+| version                  | `uint8`                 | `1`                                                               |
+| baseUrl                  | `uint16` length + bytes | account this state belongs to                                     |
+| username                 | `uint16` length + bytes |                                                                   |
+| flags                    | `uint8`                 | bit 0 stats caught up, bit 1 clippings caught up                  |
+| statsCatchupId           | `uint32`                | non-zero while a stats catch-up is unfinished                     |
+| clippingsCatchupId       | `uint32`                | same for clippings                                                |
+| nextStampId              | `uint32`                | next catch-up/walk id; random start, never reused                 |
+| scopes                   | repeated                | version 2: prepared sync scopes, until the CRC                    |
+| scope.path               | `uint16` length + bytes | folder, or `/` for the whole card; at most 255 bytes              |
+| scope.flags              | `uint8`                 | bit 0 prepared, bit 1 stats caught up, bit 2 clippings caught up  |
+| scope.cursor             | `uint32`                | change feed cursor for this scope                                 |
+| scope.lastSynced         | `uint32`                | stamp id of the last sync; the oldest is dropped beyond 32 scopes |
+| scope.walkId             | `uint32`                | non-zero while the scope's first walk is unfinished               |
+| scope.statsCatchupId     | `uint32`                | unfinished stats catch-up for this scope                          |
+| scope.clippingsCatchupId | `uint32`                | unfinished clippings catch-up for this scope                      |
+| crc                      | `uint32`                |                                                                   |
 
 Version 1 files (no scopes) are read and rewritten as version 2. A different
 base URL or username reads as a fresh state (catch-ups and first walks run
@@ -735,15 +746,15 @@ compaction) still use the `.tmp` swap. A confirmed Document Matching change
 deletes it, together with `sync_parked.bin` and every scope's cursor, first walk
 and catch-ups in `sync_state.bin`.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| version | `uint8` | `1` |
-| method | `uint8` | `DocumentMatchMethod`; another method reads as an empty map |
-| generation | `uint32` | changes whenever the file is created anew, compacted, or rebuilt after a corrupt entry |
-| headerCrc | `uint32` | CRC32 of the 6 bytes above |
-| entry.id | 16 bytes | raw KOReader document MD5 |
-| entry.path | `uint8` length + bytes | absolute book path, at most 255 bytes |
-| entry.crc | `uint32` | CRC32 of the entry's id, length and path |
+| Field      | Type                   | Notes                                                                                  |
+| ---------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| version    | `uint8`                | `1`                                                                                    |
+| method     | `uint8`                | `DocumentMatchMethod`; another method reads as an empty map                            |
+| generation | `uint32`               | changes whenever the file is created anew, compacted, or rebuilt after a corrupt entry |
+| headerCrc  | `uint32`               | CRC32 of the 6 bytes above                                                             |
+| entry.id   | 16 bytes               | raw KOReader document MD5                                                              |
+| entry.path | `uint8` length + bytes | absolute book path, at most 255 bytes                                                  |
+| entry.crc  | `uint32`               | CRC32 of the entry's id, length and path                                               |
 
 A torn append only loses that entry: the next record finds the partial tail and
 rewrites the file before appending. If the main file is missing after a crash
@@ -762,39 +773,39 @@ whose CRC does not match (torn write, or zeroed by a removal) is empty. There is
 no file header or file CRC. Removing the last valid entry deletes the file, so
 opening a book with nothing kept stops at the missing file.
 
-| Offset | Field | Type | Notes |
-| --- | --- | --- | --- |
-| 0 | version | `uint8` | `1`; `0` = empty slot |
-| 1 | hashCount | `uint8` | 1-4 |
-| 2 | flags | `uint8` | bit 0: rich position present |
-| 3 | reserved | `uint8` | |
-| 4 | hashes | 4 x 16 bytes | raw document MD5s: canonical first, then aliases |
-| 68 | percentage | `float` | |
-| 72 | timestamp | `int64` | remote write time |
-| 80 | pctQ | `uint32` | rich position |
-| 84 | spine, page, pages, paragraph | 4 x `uint16` | rich position; paragraph 0 = none |
-| 92 | device | 32 bytes | remote device name, NUL-padded |
-| 124 | xpath length | `uint16` | at most 252; longer positions are not parked |
-| 126 | xpath | 252 bytes | |
-| 380 | crc | `uint32` | CRC32 of bytes 0-379 |
+| Offset | Field                         | Type         | Notes                                            |
+| ------ | ----------------------------- | ------------ | ------------------------------------------------ |
+| 0      | version                       | `uint8`      | `1`; `0` = empty slot                            |
+| 1      | hashCount                     | `uint8`      | 1-4                                              |
+| 2      | flags                         | `uint8`      | bit 0: rich position present                     |
+| 3      | reserved                      | `uint8`      |                                                  |
+| 4      | hashes                        | 4 x 16 bytes | raw document MD5s: canonical first, then aliases |
+| 68     | percentage                    | `float`      |                                                  |
+| 72     | timestamp                     | `int64`      | remote write time                                |
+| 80     | pctQ                          | `uint32`     | rich position                                    |
+| 84     | spine, page, pages, paragraph | 4 x `uint16` | rich position; paragraph 0 = none                |
+| 92     | device                        | 32 bytes     | remote device name, NUL-padded                   |
+| 124    | xpath length                  | `uint16`     | at most 252; longer positions are not parked     |
+| 126    | xpath                         | 252 bytes    |                                                  |
+| 380    | crc                           | `uint32`     | CRC32 of bytes 0-379                             |
 
 ### `<book cache>/sync.bin` (version 2)
 
 In the book's `epub_<hash>/` or `xtc_<hash>/` folder; only written when that
 folder already exists.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| version | `uint8` | `1` |
-| hasId | `uint8` | `1` when `id` is valid |
-| method | `uint8` | `DocumentMatchMethod` the id was computed with |
-| id | 16 bytes | raw KOReader document MD5 |
-| fileSize | `uint32` | book size when `id` was recorded; binary matching samples the current file at lookup |
-| statsStamp | `uint32` | stats catch-up id that last sent this book |
-| clippingsStamp | `uint32` | clippings catch-up id that last sent this book |
-| walkStamp | `uint32` | version 2: first-walk id that finished this book |
-| idsGeneration | `uint32` | version 2: `sync_ids.bin` generation the book was recorded in; 0 = not recorded |
-| crc | `uint32` | |
+| Field          | Type     | Notes                                                                                |
+| -------------- | -------- | ------------------------------------------------------------------------------------ |
+| version        | `uint8`  | `1`                                                                                  |
+| hasId          | `uint8`  | `1` when `id` is valid                                                               |
+| method         | `uint8`  | `DocumentMatchMethod` the id was computed with                                       |
+| id             | 16 bytes | raw KOReader document MD5                                                            |
+| fileSize       | `uint32` | book size when `id` was recorded; binary matching samples the current file at lookup |
+| statsStamp     | `uint32` | stats catch-up id that last sent this book                                           |
+| clippingsStamp | `uint32` | clippings catch-up id that last sent this book                                       |
+| walkStamp      | `uint32` | version 2: first-walk id that finished this book                                     |
+| idsGeneration  | `uint32` | version 2: `sync_ids.bin` generation the book was recorded in; 0 = not recorded      |
+| crc            | `uint32` |                                                                                      |
 
 Version 1 records are read with both new fields 0.
 
@@ -951,16 +962,16 @@ progress is not written; existing progress-save debounce remains in effect.
 
 Each new record is 20 bytes, little-endian:
 
-| Offset | Bytes | Value |
-| --- | --- | --- |
-| 0 | 2 | Spine index |
-| 2 | 2 | Page index |
-| 4 | 2 | Page count |
-| 6 | 4 | Visible-text offset, zero if absent |
-| 10 | 1 | Marker `0xC5` |
-| 11 | 1 | Flags: bit 0 means visible-text offset is present |
-| 12 | 4 | Sequence, compared modulo 2^32 |
-| 16 | 4 | IEEE CRC-32 of bytes 0–15 |
+| Offset | Bytes | Value                                             |
+| ------ | ----- | ------------------------------------------------- |
+| 0      | 2     | Spine index                                       |
+| 2      | 2     | Page index                                        |
+| 4      | 2     | Page count                                        |
+| 6      | 4     | Visible-text offset, zero if absent               |
+| 10     | 1     | Marker `0xC5`                                     |
+| 11     | 1     | Flags: bit 0 means visible-text offset is present |
+| 12     | 4     | Sequence, compared modulo 2^32                    |
+| 16     | 4     | IEEE CRC-32 of bytes 0–15                         |
 
 Legacy 4-, 6-, and 10-byte records remain readable. Migration writes the other
 slot first so an interrupted first save cannot destroy the only legacy copy.
@@ -1142,7 +1153,41 @@ body-only and built-in font identities stay unchanged. No binary payload changes
 
 ## `section.bin`
 
-### Version 111 (current development)
+### Version 119 (current development)
+
+Complete sections use version 119 and partial sections use `0xE8`. Block-styled spans can affect pagination. In the optional per-word font-size byte, bits 0–5 store the point size, bit 6 marks a black background on the preceding space, and bit 7 hides the glyphs while retaining their layout width.
+
+### Version 118 (2.0.0 release)
+
+The release branch uses version 118 and partial version `0xE7` for the same span layout and paint changes. Version 119 also includes the display forms introduced on development in version 117.
+
+### Version 117
+
+EPUB layout stores each shaped word beside its logical UTF-8 text in the existing line arena. The source-range flags byte uses bit 0 for source ranges and bit 1 for display forms. In a line with display forms, each word slot holds the NUL-terminated logical text and optionally a second NUL-terminated display string. Word offsets delimit each slot. Selection and search continue to use the logical text. Complete sections use version 117 and suspended sections use `0xE6`.
+
+### Version 116
+
+Blockquotes receive a default horizontal inset where publisher margins are absent or ignored. Complete and suspended sections rebuild so existing books use the new layout. Complete sections use version 116 and suspended sections use `0xE5`. The binary layout matches version 115.
+
+### Version 115
+
+Ruled prose centers the regular ascender-to-baseline band between rules. The binary layout matches version 114. Complete sections use version 115 and suspended sections use `0xE4`.
+
+### Version 114
+
+Ruled prose sits one pixel lower. Capital-only rows center their visible ink. A row can grow one pixel to retain clearance. The binary layout matches version 113. Complete sections use version 114 and suspended sections use `0xE3`.
+
+### Version 113
+
+Ruled prose uses a common font baseline. The binary layout matches version 112. Complete sections use version 113 and suspended sections use `0xE2`.
+
+### Version 112
+
+Each text block stores a signed 16-bit text offset after its row height so selections and rules share the centered layout. A boolean after Guide Dots records whether the page layout reserves space for ruled lines.
+Changing between Off and a shade rebuilds the section. All three shades share one layout.
+Complete sections use version 112 and suspended sections use `0xE1`.
+
+### Version 111
 
 Smaller publisher body-font declarations no longer shrink prose below the
 reader-selected size. Complete section caches use `111`; suspended partial
@@ -1869,13 +1914,13 @@ Device-local counters live in `/.crosspoint/daily_reading/YYYY-MM.a.bin` and
 `YYYY-MM.b.bin`. Each month uses at most two 264-byte snapshots, regardless of
 how many days were read (dates support 2000–2099). All integers are little-endian:
 
-| Offset | Size | Meaning |
-| --- | --- | --- |
-| 0 | 4 | Version 2, ASCII `D`, ASCII `R`, reserved zero |
-| 4 | 4 | Month's first day index since 2000-01-01 |
-| 8 | 4 | Generation, incremented for each snapshot (wrap-safe comparison) |
-| 12 | 248 | 31 pairs of uint32 cumulative seconds and acknowledged seconds |
-| 260 | 4 | FNV-1a checksum of bytes 0–259, initial hash 2166136261 |
+| Offset | Size | Meaning                                                          |
+| ------ | ---- | ---------------------------------------------------------------- |
+| 0      | 4    | Version 2, ASCII `D`, ASCII `R`, reserved zero                   |
+| 4      | 4    | Month's first day index since 2000-01-01                         |
+| 8      | 4    | Generation, incremented for each snapshot (wrap-safe comparison) |
+| 12     | 248  | 31 pairs of uint32 cumulative seconds and acknowledged seconds   |
+| 260    | 4    | FNV-1a checksum of bytes 0–259, initial hash 2166136261          |
 
 Records after the month's last day must be zero. Acknowledged seconds must not
 exceed cumulative seconds. Saves overwrite the older/invalid slot, sync and close
@@ -2076,7 +2121,6 @@ Section cache version 96 (partial version `0xD1`) adds breakable, space-free tok
 
 Section cache version 97 (partial version `0xD2`) prevents justification from stretching boundaries inside hyphenated words. Complete and suspended layouts from earlier versions rebuild automatically; the binary payload is unchanged.
 
-
 ## Reading session outbox
 
 New measured sessions supplement the existing book/global counters and daily
@@ -2094,16 +2138,16 @@ cache cleanup and follows the configured KOReader document identity at capture.
 writes, CRC validation, and `.tmp`/`.bak` recovery. Fields are written separately
 in the firmware's little-endian integer representation, without struct padding:
 
-| Field | Bytes |
-|---|---:|
-| Format version (1) | 1 |
-| Session ID, ASCII hex without terminator | 32 |
-| Document ID, ASCII hex without terminator | 32 |
-| UTC start timestamp, seconds | 8 |
-| UTC end timestamp, seconds | 8 |
-| Cumulative active reading seconds | 4 |
-| Signed UTC offset, minutes | 2 |
-| CRC32 over preceding bytes | 4 |
+| Field                                     | Bytes |
+| ----------------------------------------- | ----: |
+| Format version (1)                        |     1 |
+| Session ID, ASCII hex without terminator  |    32 |
+| Document ID, ASCII hex without terminator |    32 |
+| UTC start timestamp, seconds              |     8 |
+| UTC end timestamp, seconds                |     8 |
+| Cumulative active reading seconds         |     4 |
+| Signed UTC offset, minutes                |     2 |
+| CRC32 over preceding bytes                |     4 |
 
 Session IDs remain unchanged as checkpoints grow and across upload retries.
 Uploads use the existing stats credentials and privacy switches, with at most
@@ -2200,7 +2244,6 @@ copy until Save. Eight-byte version 1 records retain their four edges and inheri
 the device's default corner clearances; the next saved adjustment writes version 2.
 Older firmware does not understand version 2 and falls back to its defaults.
 
-
 ## Reading-stat backup recovery
 
 New files in `/.crossink-stats-backup/` use the global-stats payload followed by
@@ -2224,7 +2267,6 @@ has been saved and read back. An interrupted recovery remains protected on the
 next boot. A confirmed restore advances the same live-reader refresh revision
 as an explicit statistics reset, so an open reader imports the recovered totals.
 
-
 ### CSS rules cache revision 23
 
 The rule payload and offsets are unchanged from revision 22. Header flag bit 0
@@ -2245,3 +2287,103 @@ publication; partial marker writes cannot authorize reuse. Existing layouts rema
 unchanged during unchanged terminal reuse or a retry that is still transiently
 partial. Source/version invalidation rebuilds CSS and refreshes layouts under the
 existing invalid-cache policy. Progress files are unaffected.
+
+### CSS rules cache revision 25
+
+The defined-property mask uses bit 31 for CSS visibility. In the background byte, bit 0 indicates black and bit 1 indicates hidden text. Older rules rebuild on reopen.
+
+### CSS rules cache revision 24
+
+Mixed-case selectors now use the same comparison when merging and matching
+rules. Revision 24 rebuilds the rules and chapter layouts on book reopen so
+cached pages pick up the corrected styling. The binary format is unchanged.
+
+## `.cpfont` shaping section
+
+A style that shapes an Indic script carries a shaping section after every
+style's bitmap data. Its absolute file offset is the style TOC's last `u32`
+(`shapingOffset`); 0 means the style has none. Readers that predate the
+section never look past the bitmaps.
+
+The section header is little-endian:
+
+| Field | Type | Meaning |
+|---|---|---|
+| magic | `char[4]` | `CPSH` |
+| version | `u16` | 2 (the layout font carries `CPpl`; firmware ignores version 1) |
+| reserved | `u16` | 0 |
+| ppem26_6 | `u32` | size the section was built for, in 26.6 pixels |
+| blobLength | `u32` | bytes of layout font that follow |
+| blobHash | `u32` | FNV-1a of the layout font; keys its flash slot and shared face |
+
+The layout font that follows is an OpenType font holding only `head`, `hhea`,
+`maxp`, `hmtx`, `cmap`, `GDEF`, `GSUB`, `GPOS`, `CPpl` and (when it fits the
+128 KB flash slot) `CPac`. Its glyph order is the one the style's glyph tokens
+(U+F0000 + glyph ID) index.
+
+On the standard C3 flash layout, the shaper can map two 128 KiB blobs from the last 384 KiB of hyphenation bank 1. The first 128 KiB region holds the directory. Bank starts and language slots retain their addresses. If an existing pack occupies the tail, the cache leaves it alone. New pack installs reserve the tail when it is free.
+
+### `CPac`: lookup filters
+
+`CPac` lets `lib/OtShaper` skip lookups and subtables that cannot match
+without computing filters on the device. A font without it (or whose counts
+do not match its lookups) has them computed on the heap instead.
+
+Every field is big-endian except the digest records:
+
+| Field | Type | Meaning |
+|---|---|---|
+| version | `u16` | 1 |
+| reserved | `u16` | 0 |
+| gsubLookups, gposLookups | `u16` each | lookups in GSUB and GPOS |
+| gsubSubtables, gposSubtables | `u32` each | subtables across those lookups |
+
+Then, for GSUB and then GPOS:
+
+1. one digest record per lookup: the glyphs any of its subtables can start at;
+2. one `u32` per lookup: the index of its first subtable record;
+3. one digest record per subtable.
+
+A digest record is HarfBuzz's set digest: three 64-bit masks (bit
+`(glyph >> shift) & 63`, shifts 4, 0 and 6), stored as little-endian `u64`s
+so the device can copy them into memory as they are.
+
+### `CPpl`: shaping plans
+
+`CPpl` holds the plans `lib/OtShaper` would otherwise build from `GSUB` and
+`GPOS` on the device (`ot::Plan`): which lookups run, in which stages, with
+which masks. The converter (`shaping_blob.py`) stores one per script and pair
+of language systems a request of up to three language tags can select;
+identical plans are stored once. Firmware without TTF support reads plans
+only from here. Every field is big-endian:
+
+| Field | Type | Meaning |
+|---|---|---|
+| version | `u16` | 1 |
+| planCount | `u16` | plan records that follow |
+
+Each plan record is 14 bytes:
+
+| Field | Type | Meaning |
+|---|---|---|
+| script | `u8` | `ot::Script` (0 Devanagari … 9 Sinhala) |
+| reserved | `u8` | 0 |
+| gsubKey, gposKey | `u32` each | the language system chosen in GSUB and GPOS: its tag, `dflt`, or 0 for the script's default |
+| offset | `u32` | from the start of `CPpl` to the plan |
+
+A plan:
+
+| Field | Type | Meaning |
+|---|---|---|
+| chosenScript | `u32` | the GSUB script tag the plan follows (`dev2`, `deva`, …) |
+| shaper | `u8` | 0 default, 1 Indic, 2 USE |
+| reserved | `u8[3]` | 0 |
+| globalMask | `u32` | mask of the features on by default |
+| masks | `u32[10]` | glyph mask bit of `rphf pref blwf abvf half pstf init isol medi fina` (0 = absent) |
+| wouldStages | `u8[5]` | GSUB stage of `rphf pref blwf pstf vatu`; 0xFF = absent |
+| reserved | `u8[3]` | 0 |
+
+Then, for GSUB and then GPOS: `stageCount` and `lookupCount` (`u16` each),
+`stageCount` stages (`u16` lookups before the stage ends, `u8` `ot::Pause`
+run after it, `u8` reserved) and `lookupCount` lookups (`u16` lookup index,
+`u8` lookup flags, `u8` reserved, `u32` mask).

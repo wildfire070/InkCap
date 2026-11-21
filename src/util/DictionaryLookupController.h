@@ -67,7 +67,7 @@ class DictionaryLookupController {
   // Start a lookup. Transitions Idle → LookingUp and notifies the shared
   // background worker.
   // If recordHistory is true (default), adds the word to lookup history on success.
-  void startLookup(const std::string& word, bool recordHistory = true);
+  void startLookup(const std::string& word, bool recordHistory = true, bool allowFallback = true);
 
   // Like startLookup but marks the result as Suggestion (word came from fuzzy suggestions list).
   void startLookupAsSuggestion(const std::string& word);
@@ -165,6 +165,7 @@ class DictionaryLookupController {
   FoundStatus foundStatus = FoundStatus::Direct;
   bool nextIsSuggestion = false;
   bool lookupMatchedStem = false;
+  bool allowFallback_ = true;
   bool recordHistory_ = true;
   bool lookupToastEnabled_ = true;
   bool fullScreenChildWasShown_ = false;
@@ -176,7 +177,8 @@ class DictionaryLookupController {
   std::string foundWord;
   DictLocation foundLocation;
   std::vector<DictLocation> foundExtraLocations;
-  std::string altFormWord;
+  bool searchingAltForms_ = false;
+  bool hasAltForms_ = false;
 
   // CLEANUP: on Auto-only commit, delete only this line (threshold/cache/method below drive Auto mode — keep)
   static constexpr uint32_t AUTO_POPUP_CSPT_ENTRY_THRESHOLD = 50000;
@@ -190,9 +192,9 @@ class DictionaryLookupController {
   std::atomic<bool> lookupReadError = false;
 
   // render() (called from the owning activity's render(RenderLock&&), i.e.
-  // on the render task under that lock) reads state/lookupWord/altFormWord
-  // directly. Route every mutation of state through this so the render-side
-  // read can't observe a torn write from the main task.
+  // on the render task under that lock) reads state/lookupWord directly.
+  // Route every mutation of state through this so the render-side read
+  // can't observe a torn write from the main task.
   void setState(LookupState newState);
 
   void runLookup();

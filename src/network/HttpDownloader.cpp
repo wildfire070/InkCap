@@ -13,6 +13,7 @@
 #include <esp_http_client.h>
 #include <strings.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -479,11 +480,12 @@ HttpDownloader::DownloadError runGetWolfSsl(const std::string& url, const std::s
           // The pinned SDK exposes repeated fields only as a copy: at most
           // 8192 header bytes + 64 pairs, only on this cold 401 path, released
           // before retrying. Do not copy headers for successful feed requests.
-          for (const auto& header : http.getHeaders())
-            if (header.first == "www-authenticate" && isBasicChallenge(header.second)) {
-              sink.diagnostics->basicChallenge = true;
-              break;
-            }
+          const auto headers = http.getHeaders();
+          if (std::any_of(headers.begin(), headers.end(), [](const auto& header) {
+                return header.first == "www-authenticate" && isBasicChallenge(header.second);
+              })) {
+            sink.diagnostics->basicChallenge = true;
+          }
         }
       }
       sink.diagnostics->challengeComplete = status == 401 && !challengeRejected && http.responseComplete();
@@ -855,8 +857,9 @@ HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, 
   const size_t bufferSize = options.bufferSize > 0 ? options.bufferSize : DEFAULT_DOWNLOAD_BUFFER_SIZE;
   const auto result = runGet(url, username, password, options.bearerToken, options.authorizationOrigin, sink,
                              bufferSize, options.transport);
+  // The guard reads success in its destructor to discard failed sessions and their final URLs.
+  // cppcheck-suppress unreadVariable
   sessionGuard.success = result == OK;
-  if (result != OK && options.finalUrl) options.finalUrl->clear();
   return result;
 }
 

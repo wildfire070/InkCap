@@ -202,7 +202,8 @@ TEST_F(TextLayoutBackingTest, MixedWordSizesSurviveCacheRoundTripAcrossPools) {
     fakeheap::reset(psram);
     ParsedText text(false, false, false, false, false, 0, BlockStyle{});
     text.addWord("Base", EpdFontFamily::REGULAR, false, false, false, 0, 0);
-    text.addWord("Large", EpdFontFamily::BOLD, false, false, false, 0, 5, 5, 0, false, 36);
+    text.addWord("Large", EpdFontFamily::BOLD, false, false, true, 0, 5, 5, 0, false,
+                 TextBlock::packWordSize(36, true, true));
     text.addWord("Base", EpdFontFamily::REGULAR, false, false, false, 0, 11);
     GfxRenderer renderer;
     FsFile output;
@@ -220,6 +221,8 @@ TEST_F(TextLayoutBackingTest, MixedWordSizesSurviveCacheRoundTripAcrossPools) {
     EXPECT_EQ(restored->wordFontSize(0), 0);
     EXPECT_EQ(restored->wordFontSize(1), 36);
     EXPECT_EQ(restored->wordFontSize(2), 0);
+    EXPECT_TRUE(restored->wordHidden(1));
+    EXPECT_TRUE(restored->wordBackgroundSpace(1));
     EXPECT_STREQ(restored->wordText(1), "Large");
   }
 }
@@ -338,4 +341,23 @@ TEST_F(TextLayoutBackingTest, SourceRangesSurviveCacheRoundTrip) {
   EXPECT_EQ(restored->wordSourceRange(0).end, 24U);
   EXPECT_EQ(restored->wordSourceRange(1).start, 25U);
   EXPECT_EQ(restored->wordSourceRange(1).end, 31U);
+}
+
+TEST_F(TextLayoutBackingTest, CachedIndicWordPreservesLogicalTextAndSourceRange) {
+  const std::vector<std::string> words{"कि", "end"};
+  const std::vector<std::string> forms{"display", ""};
+  const std::vector<TextBlock::SourceRange> ranges{{10, 12}, {13, 16}};
+  TextBlock block(words, {0, 50}, {EpdFontFamily::REGULAR, EpdFontFamily::BOLD}, {}, {}, {}, {}, {}, BlockStyle{}, {},
+                  {}, "", 0, {}, ranges, forms);
+  ASSERT_TRUE(block.valid());
+  HalFile file(std::make_shared<HostFileData>());
+  ASSERT_TRUE(block.serialize(file));
+  ASSERT_TRUE(file.seek(0));
+  auto restored = TextBlock::deserialize(file);
+  ASSERT_NE(restored, nullptr);
+  EXPECT_STREQ(restored->wordText(0), words[0].c_str());
+  EXPECT_EQ(restored->wordTextLen(0), words[0].size());
+  EXPECT_STREQ(restored->displayForm(0), "display");
+  EXPECT_EQ(restored->displayForm(1), nullptr);
+  EXPECT_EQ(restored->wordSourceRange(0).end, 12u);
 }

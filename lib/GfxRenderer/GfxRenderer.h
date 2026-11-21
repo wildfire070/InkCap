@@ -16,10 +16,12 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 class FontCacheManager;
 class SdCardFont;
 
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -187,6 +189,7 @@ class GfxRenderer {
   // Coupled to avoid dangling SdCardFont* in sdCardFonts_ when callers free
   // the underlying SdCardFont and forget the SD-side unregister.
   void removeFont(int fontId) {
+    ruledFontCached_ = false;
     fontMap.erase(fontId);
     sdCardFonts_.erase(fontId);
   }
@@ -194,9 +197,15 @@ class GfxRenderer {
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
-  void registerSdCardFont(int fontId, SdCardFont* font) { sdCardFonts_[fontId] = font; }
+  void registerSdCardFont(int fontId, SdCardFont* font) {
+    ruledFontCached_ = false;
+    sdCardFonts_[fontId] = font;
+  }
   void unregisterSdCardFont(int fontId) { removeFont(fontId); }
-  void clearSdCardFonts() { sdCardFonts_.clear(); }
+  void clearSdCardFonts() {
+    ruledFontCached_ = false;
+    sdCardFonts_.clear();
+  }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
   // Shared UI families fill missing characters; legacy metadata aliases use
@@ -283,6 +292,7 @@ class GfxRenderer {
 
   // Drawing
   bool isPixelBlack(int x, int y) const;
+  bool hasBlackPixels(int x, int y, int width, int height) const;
   void drawPixel(int x, int y, bool state = true) const;
   // Unscaled glyphs share one clipped, orientation-aware rasterizer.
   void drawGlyphBitmap(const uint8_t* bitmap, int width, int height, const glyphBitmap::Frame& frame, bool twoBit,
@@ -337,9 +347,45 @@ class GfxRenderer {
   struct TextVerticalBounds {
     int top = 0;
     int bottom = 0;
+    void include(int y, int height) {
+      if (height <= 0) return;
+      if (top == bottom) {
+        top = y;
+        bottom = y + height;
+      } else {
+        if (y < top) top = y;
+        if (y + height > bottom) bottom = y + height;
+      }
+    }
   };
-  // Visible regular-text glyph bounds relative to the y coordinate passed to drawText().
-  TextVerticalBounds getTextVerticalBounds(int fontId, const char* text) const;
+
+ private:
+  // One entry for the last regular face. Font registration changes run with readers quiesced.
+  mutable std::mutex ruledFontMutex_;
+  mutable bool ruledFontCached_ = false;
+  struct LetterInk {
+    uint8_t encodedTop = 0;  // Zero is empty, 1..255 encodes -127..127.
+    uint8_t height = 0;
+  };
+  mutable std::array<LetterInk, 95> latinLetters_{};
+  void selectRuledFont(int fontId) const;
+  mutable bool latinBodyValid_ = false;
+  mutable int ruledFontId_ = 0;
+  mutable TextVerticalBounds latinBody_{}, latinExtent_{};
+  // `scale` (trailing, default 1.0f) is the same drawTextScaled()-only knob
+  // drawText() documents above -- every existing caller omits it unchanged.
+  void drawOrMeasureText(int fontId, int x, int y, const char* text, bool black, EpdFontFamily::Style style,
+                         BidiUtils::BidiBaseDir baseDir, int8_t spacing, TextVerticalBounds* bounds,
+                         const char* display, LetterInk* letters = nullptr, float scale = 1.0f) const;
+
+ public:
+  // Regular ascender-to-baseline band and ordinary ink extents, relative to the text origin.
+  bool getLatinBodyBounds(int fontId, TextVerticalBounds& body, TextVerticalBounds& extent) const;
+  // Visible glyph bounds relative to the y coordinate passed to drawText().
+  TextVerticalBounds getTextVerticalBounds(int fontId, const char* text,
+                                           EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                                           BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO,
+                                           int8_t spacing = 0, const char* display = nullptr) const;
   int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                    BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t characterSpacing = 0) const;
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
@@ -350,8 +396,8 @@ class GfxRenderer {
   // byte identical); call drawTextScaled() directly instead of passing this.
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
-                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, float scale = 1.0f,
-                int8_t characterSpacing = 0) const;
+                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int8_t characterSpacing = 0,
+                const char* display = nullptr) const;
   // Like drawText(), but resamples each glyph's bitmap to `scale` instead of
   // drawing it at native size. Fallback path for a block-level CSS font-size
   // that FontSizeLadder couldn't map onto a real pre-rendered font resource --
@@ -364,7 +410,7 @@ class GfxRenderer {
   // title-page headings and `pre` blocks are plain text).
   void drawTextScaled(int fontId, int x, int y, const char* text, bool black, EpdFontFamily::Style style, float scale,
                       BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO,
-                      int8_t characterSpacing = 0) const;
+                      int8_t characterSpacing = 0, const char* display = nullptr) const;
   // Guard text/background pixels while a table cell is rendered. The guard is
   // intentionally single-level and scoped by the caller; nested use is a
   // programming error caught in debug builds.
@@ -381,8 +427,19 @@ class GfxRenderer {
   /// Returns the rendered advance of \p text. When \p followingCp is supplied,
   /// includes its kerning with the final glyph in the same fixed-point rounding
   /// step that drawText() uses, without drawing or consuming that codepoint.
+  class ShapingMemoScope {
+    bool enabled_;
+
+   public:
+    explicit ShapingMemoScope(bool enabled);
+    ~ShapingMemoScope();
+    ShapingMemoScope(const ShapingMemoScope&) = delete;
+    ShapingMemoScope& operator=(const ShapingMemoScope&) = delete;
+  };
+  bool resolveForDisplay(int fontId, const char* text, EpdFontFamily::Style style, BidiUtils::BidiBaseDir dir,
+                         std::string& out) const;
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style, uint32_t followingCp = 0,
-                      int8_t characterSpacing = 0) const;
+                      int8_t characterSpacing = 0, const char* display = nullptr) const;
   bool getCodepointMetrics(int fontId, uint32_t cp, EpdFontFamily::Style style, int32_t& advanceFP, int& top) const;
   int drawScaledCodepoint(int fontId, uint32_t cp, EpdFontFamily::Style style, int x, int baselineY, int scale256,
                           bool pixelState = true) const;

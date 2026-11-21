@@ -300,7 +300,7 @@ inline SettingInfo buildDictionaryFontSizeSetting(const SdCardFontRegistry* regi
   return s;
 }
 
-inline SettingInfo buildDictionarySetting(const DictionaryRegistry* dictRegistry) {
+inline SettingInfo buildDictionarySetting(const DictionaryRegistry& dictRegistry) {
   SettingInfo s;
   s.nameId = StrId::STR_DICTIONARY;
   s.type = SettingType::ENUM;
@@ -308,36 +308,23 @@ inline SettingInfo buildDictionarySetting(const DictionaryRegistry* dictRegistry
   s.category = StrId::STR_CAT_READER;
   s.enumStringValues.push_back(I18N.get(StrId::STR_NONE_OPT));
 
-  std::vector<DictionaryEntry> entries;
-  if (dictRegistry) {
-    entries = dictRegistry->getEntries();
-    s.enumStringValues.reserve(entries.size() + 1);
-    for (const auto& entry : entries) {
-      s.enumStringValues.push_back(entry.name);
-    }
+  const auto& entries = dictRegistry.getEntries();
+  std::vector<std::string> paths;
+  paths.reserve(entries.size());
+  s.enumStringValues.reserve(entries.size() + 1);
+  for (const auto& entry : entries) {
+    paths.push_back(entry.basePath);
+    s.enumStringValues.push_back(entry.name);
   }
 
-  s.valueGetter = [entries]() -> uint8_t {
-    const std::string activePath = Dictionary::readDictPath();
-    if (activePath.empty()) {
-      return 0;
-    }
-    for (size_t i = 0; i < entries.size(); i++) {
-      if (entries[i].basePath == activePath) {
-        return static_cast<uint8_t>(i + 1);
-      }
-    }
-    return 0;
+  s.valueGetter = [paths]() -> uint8_t {
+    const auto path = Dictionary::readConfiguredDictPath();
+    const auto it = std::find(paths.begin(), paths.end(), path);
+    return it == paths.end() ? 0 : static_cast<uint8_t>(std::distance(paths.begin(), it) + 1);
   };
-
-  s.valueSetter = [entries](uint8_t v) {
-    if (v == 0) {
-      Dictionary::saveGlobalDictPath("");
-      return;
-    }
-    const size_t entryIndex = static_cast<size_t>(v - 1);
-    if (entryIndex < entries.size()) {
-      Dictionary::saveGlobalDictPath(entries[entryIndex].basePath.c_str());
+  s.valueSetter = [paths = std::move(paths)](uint8_t value) {
+    if (value <= paths.size()) {
+      Dictionary::saveGlobalDictPath(value == 0 ? "" : paths[value - 1].c_str());
     }
   };
 
@@ -649,19 +636,19 @@ inline SettingInfo buildCompanionCharacterSetting() {
   }
   return s;
 }
-// 114: crossink/development's own 111 common entries plus this branch's own
-// unconditional additions (Companion, AO3 Library, BookFusion) it doesn't have --
-// counted directly against the add()/optional-add() calls below rather than
-// reused verbatim, since upstream's own count excludes all three. This is a
-// reserve() hint, not a hard cap, so an undercount here only costs a
-// reallocation, never correctness; verified against the actual runtime list
-// size below. Plus Publisher Fonts on scalable-font builds and four edge
-// gesture entries on touch devices; getBaseSettingsCapacity() adds the three
-// persisted IMU entries.
+// 115: crossink/development's own 112 common entries (111 plus this merge's new
+// touch-only setting) plus this branch's own unconditional additions (Companion,
+// AO3 Library, BookFusion) it doesn't have -- counted directly against the
+// add()/optional-add() calls below rather than reused verbatim, since upstream's
+// own count excludes all three. This is a reserve() hint, not a hard cap, so an
+// undercount here only costs a reallocation, never correctness; verified against
+// the actual runtime list size below. Plus Publisher Fonts on scalable-font
+// builds and five edge gesture entries on touch devices (four plus this merge's
+// new one); getBaseSettingsCapacity() adds the three persisted IMU entries.
 #if CROSSINK_SCALABLE_FONTS
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 115 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 116 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0);
 #else
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 114 + (CROSSINK_APP_CAP_TOUCH ? 4 : 0);
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 115 + (CROSSINK_APP_CAP_TOUCH ? 5 : 0);
 #endif
 
 #if FREEINK_DEVICE_PICCO
@@ -733,7 +720,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   if (!hasTouch) {
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_NEXT_PAGE ||
+                             return s.nameId == StrId::STR_WORD_HOLD_ACTION ||
+                                    s.nameId == StrId::STR_DISABLE_TOUCHSCREEN || s.nameId == StrId::STR_NEXT_PAGE ||
                                     s.nameId == StrId::STR_PREV_PAGE || s.nameId == StrId::STR_TAP_HIDE_STATUS_BAR ||
                                     s.nameId == StrId::STR_PINCH_FONT_RESIZE ||
                                     s.nameId == StrId::STR_TWO_FINGER_ROTATION ||
@@ -861,7 +849,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     auto guideIt =
         std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_GUIDE_READING; });
     const auto insertPos = guideIt == v.end() ? v.end() : guideIt + 1;
-    v.insert(insertPos, buildDictionarySetting(dictRegistry));
+    v.insert(insertPos, buildDictionarySetting(*dictRegistry));
   }
   return v;
 }
@@ -877,7 +865,7 @@ inline void addSettingByName(std::vector<SettingInfo>& target, const std::vector
 
 inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> readerSettings;
-  readerSettings.reserve(13);
+  readerSettings.reserve(11);
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_FONT_OPTIONS, SettingAction::ReaderFontOptions));
   readerSettings.push_back(SettingInfo::Submenu(StrId::STR_READER_PAGE_LAYOUT, SettingAction::ReaderPageLayout));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_STATUS_BARS, SettingAction::CustomiseStatusBar));
@@ -886,8 +874,6 @@ inline std::vector<SettingInfo> buildReaderSettingsParentList(const std::vector<
   addSettingByName(readerSettings, allSettings, StrId::STR_DISABLE_TOUCHSCREEN);
   addSettingByName(readerSettings, allSettings, StrId::STR_EMBEDDED_STYLE);
   addSettingByName(readerSettings, allSettings, StrId::STR_IMAGES);
-  addSettingByName(readerSettings, allSettings, StrId::STR_FOCUS_READING);
-  addSettingByName(readerSettings, allSettings, StrId::STR_GUIDE_READING);
   addSettingByName(readerSettings, allSettings, StrId::STR_DICTIONARY);
   addSettingByName(readerSettings, allSettings, StrId::STR_INDEXING_METHOD);
   return readerSettings;
@@ -904,7 +890,7 @@ inline std::vector<SettingInfo> buildBookReaderSettingsParentList(const std::vec
 
 inline std::vector<SettingInfo> buildReaderFontSettingsList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> settings;
-  settings.reserve(13);
+  settings.reserve(16);
   addSettingByName(settings, allSettings, StrId::STR_FONT_FAMILY);
   addSettingByName(settings, allSettings, StrId::STR_FONT_SIZE);
   addSettingByName(settings, allSettings, StrId::STR_PUBLISHER_FONTS);
@@ -918,6 +904,9 @@ inline std::vector<SettingInfo> buildReaderFontSettingsList(const std::vector<Se
   addSettingByName(settings, allSettings, StrId::STR_TWO_TONE_TEXT_AA);
 #endif
   addSettingByName(settings, allSettings, StrId::STR_TEXT_DARKNESS);
+  addSettingByName(settings, allSettings, StrId::STR_FOCUS_READING);
+  addSettingByName(settings, allSettings, StrId::STR_GUIDE_READING);
+  addSettingByName(settings, allSettings, StrId::STR_RULED_LINES);
   settings.push_back(SettingInfo::Action(StrId::STR_DOWNLOAD_FONTS, SettingAction::DownloadFonts));
   addSettingByName(settings, allSettings, StrId::STR_SD_FONT_SIZE_RANGE);
   return settings;
@@ -1005,10 +994,11 @@ inline std::vector<SettingInfo> buildControlsTapsGesturesSettingsList(const std:
   const bool hasRotation = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_ROTATION);
   const bool hasTwoFingerSwipe = hasSettingByName(allSettings, StrId::STR_TWO_FINGER_SWIPE_UP);
   const bool hasEdgeGestures = hasSettingByName(allSettings, StrId::STR_LEFT_EDGE_UP);
-  settings.reserve(4 + (hasPinch ? 1u : 0u) + (hasRotation ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u) +
+  settings.reserve(5 + (hasPinch ? 1u : 0u) + (hasRotation ? 1u : 0u) + (hasTwoFingerSwipe ? 1u : 0u) +
                    (hasEdgeGestures ? 1u : 0u));
   addSettingByName(settings, allSettings, StrId::STR_NEXT_PAGE);
   addSettingByName(settings, allSettings, StrId::STR_PREV_PAGE);
+  addSettingByName(settings, allSettings, StrId::STR_WORD_HOLD_ACTION);
   if (hasPinch) addSettingByName(settings, allSettings, StrId::STR_PINCH_FONT_RESIZE);
   if (hasRotation) addSettingByName(settings, allSettings, StrId::STR_TWO_FINGER_ROTATION);
   addSettingByName(settings, allSettings, StrId::STR_TAP_HIDE_STATUS_BAR);
