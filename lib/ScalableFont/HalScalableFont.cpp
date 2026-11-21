@@ -936,6 +936,7 @@ const EpdFont* HalScalableFont::atSize(uint8_t points) {
     d.coverageHandler = covers;
     d.kerningHandler = kerning;
     d.ligatureHandler = ligature;
+#if CROSSINK_INDIC_SHAPING
     if (drawsIndic_ && !size.shaper) {
       // Only sizes actually used for Indic text own a shaper. The face tables
       // are shared by ComplexShaper across these small, stable descriptors.
@@ -949,6 +950,7 @@ const EpdFont* HalScalableFont::atSize(uint8_t points) {
         LOG_ERR("TTF", "Cannot allocate Indic shaper at %u pt", unsigned(points));
       }
     }
+#endif
     freeink::font::FtFont::LineMetrics metrics;
     if (!font_.lineMetrics26_6(scalableFontPixelSize26_6(points), metrics)) {
       LOG_ERR("TTF", "Line metrics failed at %u pt: %s (size=%u)", unsigned(points), streamPath_,
@@ -977,7 +979,11 @@ const EpdGlyph* HalScalableFont::glyph(void* ctx, uint32_t cp) {
   ScalableFontAccess access;
   auto& s = *static_cast<Size*>(ctx);
   s.owner->fontDataFailure_ = false;
+#if CROSSINK_INDIC_SHAPING
   if (shaping::isGlyphToken(cp) && !s.shaper) return nullptr;
+#else
+  if (shaping::isGlyphToken(cp)) return nullptr;
+#endif
   const auto ligatureGlyph = shaping::isGlyphToken(cp)      ? shaping::glyphTokenId(cp)
                              : cp >= 0xfb00 && cp <= 0xfb04 ? s.owner->ligatureGlyphs_[cp - 0xfb00]
                                                             : 0;
@@ -1011,6 +1017,7 @@ const EpdGlyph* HalScalableFont::glyph(void* ctx, uint32_t cp) {
   }
   return &g;
 }
+#if CROSSINK_INDIC_SHAPING
 bool HalScalableFont::shape(void* ctx, const char* text, std::string* out) {
   ScalableFontAccess access;
   auto& size = *static_cast<Size*>(ctx);
@@ -1067,6 +1074,7 @@ uint8_t* HalScalableFont::loadShapingTable(void* ctx, uint32_t tag, uint32_t* le
   }
   return nullptr;
 }
+#endif  // CROSSINK_INDIC_SHAPING
 
 const uint8_t* HalScalableFont::bitmap(void* ctx, const EpdGlyph* g) {
   ScalableFontAccess access;
@@ -1100,7 +1108,13 @@ const uint8_t* HalScalableFont::bitmap(void* ctx, const EpdGlyph* g) {
 bool HalScalableFont::covers(void* ctx, uint32_t cp) {
   ScalableFontAccess access;
   auto& s = *static_cast<Size*>(ctx);
-  if (shaping::isGlyphToken(cp)) return bool(s.shaper);
+  if (shaping::isGlyphToken(cp)) {
+#if CROSSINK_INDIC_SHAPING
+    return bool(s.shaper);
+#else
+    return false;
+#endif
+  }
   if (cp >= 0xfb00 && cp <= 0xfb04 && s.owner->ligatureGlyphs_[cp - 0xfb00]) return true;
   return s.owner->font_.hasGlyph(cp);
 }
