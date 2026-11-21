@@ -120,6 +120,9 @@ void forEachBaseSetting(SettingVisitor visitor, void* context) {
                           StrId::STR_CAT_READER));
   add(SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
                           StrId::STR_CAT_READER));
+  add(SettingInfo::Enum(StrId::STR_RULED_LINES, &CrossPointSettings::ruledLines,
+                        {StrId::STR_OFF, StrId::STR_LIGHT, StrId::STR_MEDIUM, StrId::STR_DARK}, "ruledLines",
+                        StrId::STR_CAT_READER));
   add(SettingInfo::Enum(StrId::STR_TEXT_DARKNESS, &CrossPointSettings::textDarkness,
                         {StrId::STR_SENSITIVITY_NORMAL, StrId::STR_DARK, StrId::STR_DARKER}, "textDarkness",
                         StrId::STR_CAT_READER));
@@ -151,6 +154,11 @@ void forEachBaseSetting(SettingVisitor visitor, void* context) {
                         StrId::STR_CAT_READER));
 
   // --- Controls ---
+#if CROSSINK_APP_CAP_TOUCH
+  add(SettingInfo::Enum(StrId::STR_WORD_HOLD_ACTION, &CrossPointSettings::wordHoldAction,
+                        {StrId::STR_LOOKUP_SHORT, StrId::STR_CLIP, StrId::STR_ASK}, "wordHoldAction",
+                        StrId::STR_CAT_CONTROLS));
+#endif
   add(SettingInfo::Toggle(StrId::STR_PINCH_FONT_RESIZE, &CrossPointSettings::pinchFontResizeEnabled,
                           "pinchFontResizeEnabled", StrId::STR_CAT_CONTROLS));
   add(SettingInfo::Toggle(StrId::STR_TWO_FINGER_ROTATION, &CrossPointSettings::twoFingerRotationEnabled,

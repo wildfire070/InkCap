@@ -80,6 +80,7 @@ uint32_t changedReaderSettingsMask(const ReaderSettingsSnapshot& current, const 
   if (current.publisherFonts != global.publisherFonts) mask |= PUBLISHER_FONTS_OVERRIDE;
   if (current.textDarkness != global.textDarkness) mask |= TEXT_DARKNESS_OVERRIDE;
   if (current.twoToneTextAA != global.twoToneTextAA) mask |= TWO_TONE_TEXT_AA_OVERRIDE;
+  if (current.ruledLines != global.ruledLines) mask |= RULED_LINES_OVERRIDE;
   return mask;
 }
 
@@ -98,6 +99,7 @@ void applyReaderSettingsOverrides(ReaderSettingsSnapshot& target, const ReaderSe
   if (mask & PUBLISHER_FONTS_OVERRIDE) target.publisherFonts = book.publisherFonts;
   if (mask & TEXT_DARKNESS_OVERRIDE) target.textDarkness = book.textDarkness;
   if (mask & TWO_TONE_TEXT_AA_OVERRIDE) target.twoToneTextAA = book.twoToneTextAA;
+  if (mask & RULED_LINES_OVERRIDE) target.ruledLines = book.ruledLines;
 }
 
 bool readReaderSettingsSnapshot(FsFile& file, ReaderSettingsSnapshot& out, const bool includesWordSpacing,
@@ -193,7 +195,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       version != PRE_IMAGE_GRAYSCALE_READER_SETTINGS_FILE_VERSION &&
       version != PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION &&
       version != PRE_TEXT_DARKNESS_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -212,9 +215,11 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   snapshot.imageGrayscale = data.readerSettings.imageGrayscale;
   // Books saved before Publisher Fonts existed inherit the current global setting.
   snapshot.publisherFonts = data.readerSettings.publisherFonts;
-  // Books saved before Text Darkness/Two-Tone Text AA existed inherit the current global setting.
+  // Books saved before Text Darkness/Two-Tone Text AA/Ruled Lines existed inherit the current
+  // global setting.
   snapshot.textDarkness = data.readerSettings.textDarkness;
   snapshot.twoToneTextAA = data.readerSettings.twoToneTextAA;
+  snapshot.ruledLines = data.readerSettings.ruledLines;
   bool ok = readU8(file, flags) && readU16(file, seconds);
   if (ok) {
     ok = readU8(file, renderMode);
@@ -256,8 +261,11 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   if (ok && version >= PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.textDarkness) && snapshot.textDarkness <= 2;
   }
-  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+  if (ok && version >= PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.twoToneTextAA) && snapshot.twoToneTextAA <= 1;
+  }
+  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+    ok = readU8(file, snapshot.ruledLines) && snapshot.ruledLines <= 3;
   }
   file.close();
   if (!ok) {
@@ -336,7 +344,8 @@ bool writeBookReaderSettingsFile(FsFile& file, const BookReaderSettingsData& dat
                   writeU8(file, normalizedReaderSettings.imageGrayscale ? 1 : 0) &&
                   writeU8(file, std::min<uint8_t>(normalizedReaderSettings.publisherFonts, MAX_PUBLISHER_FONTS)) &&
                   writeU8(file, std::min<uint8_t>(normalizedReaderSettings.textDarkness, 2)) &&
-                  writeU8(file, normalizedReaderSettings.twoToneTextAA ? 1 : 0);
+                  writeU8(file, normalizedReaderSettings.twoToneTextAA ? 1 : 0) &&
+                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.ruledLines, 3));
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Short write saving reader settings");

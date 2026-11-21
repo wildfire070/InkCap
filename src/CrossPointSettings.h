@@ -540,6 +540,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t textAntiAliasing = 1;
   uint8_t twoToneTextAA = 0;
   uint8_t textDarkness = 0;
+  uint8_t ruledLines = 0;
   // Touch screen reader zones/gestures on boards with a touch controller.
   // Shortcut-only pause; keep the saved tap/swipe choices unchanged.
   uint8_t disablePageTurnGestures = 0;
@@ -550,6 +551,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t tapToHideStatusBar = 1;
   // Disables all touchscreen input while a reader is active. Reader menus temporarily override this.
   uint8_t disableReaderTouchscreen = 0;
+  enum WordHoldAction : uint8_t { WORD_HOLD_LOOKUP, WORD_HOLD_CLIP, WORD_HOLD_ASK };
+  uint8_t wordHoldAction = WORD_HOLD_LOOKUP;
   // Available only on multi-touch hardware; defaults on for pinch font resizing.
   uint8_t pinchFontResizeEnabled = 1;
   // Two-finger twist rotates the reader screen. Multi-touch hardware only.
@@ -829,6 +832,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   }
 
   bool shortPowerPressWakes() const { return shortPwrBtn == SLEEP || shortPwrBtn == WAKE_ONLY; }
+
+  bool usesQuickResumeSleep(bool fromTimeout) const {
+    return sleepScreen == QUICK_RESUME || (fromTimeout && quickResumeSleepScreen == QUICK_RESUME_AFTER_TIMEOUT);
+  }
 
   bool shouldTrackReadingStats() const { return trackReadingStats != 0; }
   static const char* getDefaultDeviceName();

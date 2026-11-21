@@ -22,7 +22,7 @@ inline PageWordGeometry pageWordGeometry(const GfxRenderer& renderer, const int 
   const auto style = static_cast<EpdFontFamily::Style>(block.wordStyle(wordIndex) & ~EpdFontFamily::UNDERLINE);
   const int lineFontId = block.wordFontId(renderer, fontId, wordIndex);
   int width = renderer.getTextAdvanceX(lineFontId, block.visibleWordText(wordIndex), style, 0,
-                                       block.getCharacterSpacing());
+                                       block.getCharacterSpacing(), block.displayForm(wordIndex));
   if (wordIndex + 1 < block.wordCount() && block.wordXpos(wordIndex + 1) > block.wordXpos(wordIndex)) {
     width = std::min(width, static_cast<int>(block.wordXpos(wordIndex + 1) - block.wordXpos(wordIndex)));
   }

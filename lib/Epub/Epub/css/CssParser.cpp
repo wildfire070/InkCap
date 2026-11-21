@@ -90,11 +90,10 @@ constexpr std::string_view trimCssWhitespace(std::string_view s) {
 
 constexpr char asciiToLower(const char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; }
 
-// Case-insensitive equality on ASCII. lowercaseKeyword MUST already be
-// lowercase; CSS keywords are ASCII by spec so byte-wise tolower is safe.
-constexpr bool iequalsAscii(std::string_view value, std::string_view lowercaseKeyword) {
-  return std::equal(value.begin(), value.end(), lowercaseKeyword.begin(), lowercaseKeyword.end(),
-                    [](char a, char b) { return asciiToLower(a) == b; });
+// Both selector operands may come directly from the book and retain uppercase letters.
+constexpr bool iequalsAscii(std::string_view left, std::string_view right) {
+  return std::equal(left.begin(), left.end(), right.begin(), right.end(),
+                    [](char a, char b) { return asciiToLower(a) == asciiToLower(b); });
 }
 
 // Walk s and invoke fn(token) for each non-empty run between delimiters.
@@ -411,11 +410,7 @@ size_t CssParser::SvHash::operator()(CompositeKey k) const noexcept {
 }
 
 bool CssParser::SvEqual::operator()(std::string_view a, std::string_view b) const noexcept {
-  if (a.size() != b.size()) return false;
-  for (size_t i = 0; i < a.size(); ++i) {
-    if (asciiToLower(a[i]) != asciiToLower(b[i])) return false;
-  }
-  return true;
+  return iequalsAscii(a, b);
 }
 
 bool CssParser::SvEqual::operator()(const std::string& a, std::string_view b) const noexcept {
@@ -926,10 +921,18 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
       style.display = CssDisplay::None;
     } else if (iequalsAscii(displayValue, "inline") || iequalsAscii(displayValue, "inline-block")) {
       style.display = CssDisplay::Inline;
-    } else {
+    } else if (iequalsAscii(displayValue, "block")) {
       style.display = CssDisplay::Block;
+    } else {
+      style.display = CssDisplay::Other;
     }
     style.defined.display = 1;
+  } else if (iequalsAscii(name, "visibility")) {
+    const auto visibility = stripTrailingImportant(value);
+    if (iequalsAscii(visibility, "hidden") || iequalsAscii(visibility, "visible")) {
+      style.visibilityHidden = iequalsAscii(visibility, "hidden");
+      style.defined.visibility = 1;
+    }
   } else if (iequalsAscii(name, "background-image")) {
     const auto image = trimCssWhitespace(stripTrailingImportant(value));
     const bool hasImage = hasBackgroundImageUrl(image);
@@ -1603,7 +1606,7 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   putLength(style.imageWidth);
   putLength(style.fontSize);
   putByte(static_cast<uint8_t>(style.display));
-  putByte(static_cast<uint8_t>(style.backgroundBlack ? 1 : 0));
+  putByte(static_cast<uint8_t>((style.backgroundBlack ? 1 : 0) | (style.visibilityHidden ? 2 : 0)));
   putByte(static_cast<uint8_t>(style.verticalAlign));
   putByte(static_cast<uint8_t>(style.direction));
   putByte(static_cast<uint8_t>(style.pageBreakBefore ? 1 : 0));
@@ -1667,6 +1670,7 @@ bool CssParser::writeCssStylePayload(FsFile& file, const CssStyle& style) {
   if (style.defined.fontFamily) definedBits |= 1ull << 34;
   if (style.defined.cssFloat) definedBits |= 1ull << 35;
   if (style.defined.backgroundImage) definedBits |= 1ull << 36;
+  if (style.defined.visibility) definedBits |= 1ull << 37;
   putBytes(&definedBits, sizeof(definedBits));
   putBytes(&style.fontFamily, sizeof(style.fontFamily));
 
@@ -1713,7 +1717,10 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   getLength(style.imageWidth);
   getLength(style.fontSize);
   style.display = static_cast<CssDisplay>(getByte());
-  style.backgroundBlack = getByte() != 0;
+  const uint8_t backgroundBlackVal = getByte();
+  if (backgroundBlackVal > 3) return false;
+  style.backgroundBlack = (backgroundBlackVal & 1) != 0;
+  style.visibilityHidden = (backgroundBlackVal & 2) != 0;
   style.verticalAlign = static_cast<CssVerticalAlign>(getByte());
   style.direction = static_cast<CssTextDirection>(getByte());
   style.pageBreakBefore = getByte() != 0;
@@ -1798,6 +1805,7 @@ bool CssParser::readCssStylePayload(FsFile& file, CssStyle& style) {
   style.defined.fontFamily = (definedBits & 1ull << 34) != 0;
   style.defined.cssFloat = (definedBits & 1ull << 35) != 0;
   style.defined.backgroundImage = (definedBits & 1ull << 36) != 0;
+  style.defined.visibility = (definedBits & 1ull << 37) != 0;
   getBytes(&style.fontFamily, sizeof(style.fontFamily));
   if (style.hasFontSize() && (!std::isfinite(style.fontSize.value()) || style.fontSize.value() <= 0 ||
                               static_cast<uint8_t>(style.fontSize.unit) > static_cast<uint8_t>(CssUnit::Percent)))

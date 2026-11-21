@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <BidiUtils.h>
 #include <BookKey.h>
+#include <ComplexShaper.h>
 #include <Epub/Page.h>
 #include <Epub/PageCountEstimator.h>
 #include <Epub/SpineSizeLookup.h>
@@ -35,6 +36,7 @@
 #include <memory>
 #include <new>
 #include <type_traits>
+#include <utility>
 
 #include "../../Ao3Librarian.h"
 #include "../../Ao3NewChaptersStore.h"
@@ -74,6 +76,7 @@
 #include "ReaderAo3MoveGuards.h"
 #include "ReaderFontLoading.h"
 #include "ReaderRefreshScope.h"
+#include "ReaderRuling.h"
 #include "ReaderUtils.h"
 #include "ReadingPace.h"
 #include "ReadingSessionStats.h"
@@ -1209,6 +1212,7 @@ void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.textAntiAliasing = SETTINGS.textAntiAliasing;
   out.twoToneTextAA = SETTINGS.twoToneTextAA;
   out.textDarkness = SETTINGS.textDarkness;
+  out.ruledLines = SETTINGS.ruledLines;
   out.imageRendering = SETTINGS.imageRendering;
   out.imageGrayscale = SETTINGS.imageGrayscale;
   out.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
@@ -1253,6 +1257,7 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   SETTINGS.textAntiAliasing = in.textAntiAliasing ? 1 : 0;
   SETTINGS.twoToneTextAA = in.twoToneTextAA != 0;
   SETTINGS.textDarkness = in.textDarkness <= 2 ? in.textDarkness : 0;
+  SETTINGS.ruledLines = in.ruledLines <= 3 ? in.ruledLines : 0;
   SETTINGS.imageRendering =
       in.imageRendering < CrossPointSettings::IMAGE_RENDERING_COUNT ? in.imageRendering : SETTINGS.imageRendering;
   SETTINGS.imageGrayscale = in.imageGrayscale ? 1 : 0;
@@ -1288,7 +1293,7 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath,
     data.readerSettings = defaults;
     std::strncpy(data.dictionarySdFontFamilyName, SETTINGS.dictionarySdFontFamilyName,
                  sizeof(data.dictionarySdFontFamilyName) - 1);
-    data.dictionarySdFontFamilyName[sizeof(data.dictionarySdFontFamilyName) - 1] = '\0';
+    data.dictionarySdFontFamilyName[sizeof(data.dictionarySdFontFamilyName) - 1] = ' ';
     data.dictionaryFontPointSize = SETTINGS.dictionaryFontPointSize;
     if (status && !Storage.exists((cachePath + READER_SETTINGS_FILE_NAME).c_str())) {
       *status = EpubReaderActivity::BookSettingsReadStatus::Missing;
@@ -2206,6 +2211,8 @@ void EpubReaderActivity::endGlobalSettingsEdit() {
     }
     captureReaderSettings(initialBookReaderSettings.readerSettings);
     effectiveChanges = changedReaderSettingsMask(initialBookReaderSettings.readerSettings, suspendedBookReaderSettings);
+    if ((initialBookReaderSettings.readerSettings.ruledLines != 0) == (suspendedBookReaderSettings.ruledLines != 0))
+      effectiveChanges &= ~RULED_LINES_OVERRIDE;
     bookReaderSettingsSuspendedForGlobalEdit = false;
   }
 
@@ -2281,6 +2288,7 @@ bool EpubReaderActivity::usesMenuButtonOrientation() const {
 
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
+  ComplexShaper::setDocumentLanguage(epub->getLanguage().c_str());
   pageLoadRetryCount = 0;
   touchReaderDrawerState = initialReaderDrawerState(mappedInput.hasTouchHardware());
 
@@ -2546,6 +2554,8 @@ void EpubReaderActivity::onExit() {
   bookFontSystem.close();
 #endif
   section.reset();
+  ComplexShaper::releaseAll();
+  ComplexShaper::setDocumentLanguage("");
   if (epub && !saveLinkStack()) {
     LOG_ERR("ERS", "Failed to save link return stack on exit");
   }
@@ -5324,13 +5334,24 @@ void EpubReaderActivity::startClipSelection(const DictionaryClippingRequest* dic
         if (textPoolFull) return false;
         const auto& block = *line.block;
         const uint16_t count = block.wordCount();
+        bool hasSpaceBefore = false;
+        bool hasWordInBlock = false;
+        const auto trackingJoinSlack =
+            static_cast<uint8_t>((std::clamp<int>(block.getCharacterSpacing(), 0, 5) + 1) / 2);
         for (uint16_t i = 0; i < count; ++i) {
           const char* wordText = block.wordText(i);
-          if (!hasVisibleWordText(wordText)) continue;
+          hasSpaceBefore |= i > 0 && block.wordHasSpaceBefore(i);
+          if (!hasVisibleWordText(wordText)) {
+            // Nonbreaking spaces are separate layout tokens, but cannot be selected.
+            hasSpaceBefore |= *wordText != '\0';
+            continue;
+          }
 
           const auto textStyle = static_cast<EpdFontFamily::Style>(block.wordStyle(i) & ~EpdFontFamily::UNDERLINE);
           const PageWordGeometry geometry = pageWordGeometry(renderer, readerFontId, line, block, i);
           if (geometry.width <= 0) continue;
+          const bool wordHasSpaceBefore = std::exchange(hasSpaceBefore, false);
+          const bool followsWordInBlock = std::exchange(hasWordInBlock, true);
           const size_t wordIndexOnPage = pageWordIndex++;
           if (wordIndexOnPage < firstWordToKeep) continue;
           if (wordIndexOnPage >= firstWordToKeep + wordsToKeep) break;
@@ -5365,6 +5386,9 @@ void EpubReaderActivity::startClipSelection(const DictionaryClippingRequest* dic
           word.style = textStyle;
           word.endsWithInsertedHyphen = block.wordEndsWithInsertedHyphen(i);
           word.lineIsRtl = block.getBlockStyle().isRtl;
+          word.hasSpaceBefore = wordHasSpaceBefore;
+          word.followsWordInBlock = followsWordInBlock;
+          word.trackingJoinSlack = trackingJoinSlack;
           wordStore.words.push_back(word);
         }
         return !textPoolFull && wordStore.words.size() < maxSelectableWords;
@@ -8276,12 +8300,21 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
 #endif
   };
 
+  const ReaderRuling ruling{SETTINGS.ruledLines, orientedMarginLeft,
+                            renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight, contentBottom,
+                            SETTINGS.lineHeightPercent};
+  const auto drawTextAndRules = [&]() {
+    page->renderText(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+    ruling.drawPage(renderer, *page, fontId, orientedMarginTop);
+  };
   const auto composePageBuffer = [&]() {
+    drawTextAndRules();
     if (deferImageLoading) {
-      page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
-                                        /*renderCachedImages=*/false, SETTINGS.imageGrayscale);
+      page->renderImagesWithPlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
+                                         /*renderCachedImages=*/false, SETTINGS.imageGrayscale);
     } else {
-      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, SETTINGS.imageGrayscale);
+      page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
+                         SETTINGS.imageGrayscale);
     }
     finalizeBufferComposition();
   };
@@ -8297,8 +8330,9 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     finalizeBufferComposition();
   };
   if (updatePanel && pageHasImagesNeedingDecode) {
-    page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
-                                      /*renderCachedImages=*/true, SETTINGS.imageGrayscale);
+    drawTextAndRules();
+    page->renderImagesWithPlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
+                                       /*renderCachedImages=*/true, SETTINGS.imageGrayscale);
     finalizeBufferComposition();
     renderStatusBar();
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -8379,7 +8413,8 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const auto displayMonochromePage = [&]() {
     renderer.setRenderMode(GfxRenderer::BW);
     renderer.clearScreen(ReaderUtils::readerBackgroundColor());
-    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, false);
+    drawTextAndRules();
+    page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack, false);
     finalizeBufferComposition();
     renderStatusBar();
     drawPageFeedback(false);
@@ -8614,10 +8649,6 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     return;
   }
 
-  // The BW frame owns the dithered marker and its redrawn black text. Repeating
-  // that marker in the grayscale anti-aliasing planes overlays gray pixels on
-  // the glyphs and makes a saved clipping look washed out.
-
   // Bounded to 256 bytes; keep rendering allocation-free.
   std::array<ClippingPageMatch, CLIPPING_MAX_PAGE_MATCHES> matches;
   uint16_t matchCount = 0;
@@ -8651,6 +8682,18 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
   if (matchCount == 0) {
     return;
   }
+
+  // Add only the ink dots of the light-gray marker. Painting the spaces
+  // between dots white would erase ruled lines and neighboring descenders.
+  const auto drawMarker = [&](int x, int y, int width, int height) {
+    const int right = std::min(x + width, renderer.getScreenWidth());
+    const int bottom = std::min(y + height, renderer.getScreenHeight());
+    const int left = (std::max(0, x) + 1) & ~1;
+    const int top = (std::max(0, y) + 1) & ~1;
+    for (int py = top; py < bottom; py += 2) {
+      for (int px = left; px < right; px += 2) renderer.drawPixel(px, py);
+    }
+  };
 
   const auto isHighlightedWord = [&matches, matchCount](const uint16_t pageWordIndex, const PageTextLine& line,
                                                         const uint16_t blockWordIndex) {
@@ -8695,9 +8738,10 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
         hasEmSpace ? renderer.getTextAdvanceX(lineFontId, "\xe2\x80\x83", textStyle, 0, tracking) + tracking : 0;
     const PageWordGeometry geometry = pageWordGeometry(renderer, fontId, line, block, wordIndex);
     const int wordX = orientedMarginLeft + line.xPos + geometry.xOffset + skipX;
-    const auto band =
-        ClippingHighlightGeometry::lineBand(orientedMarginTop + line.yPos, block.maxLineHeight(renderer, fontId),
-                                            line.lineHeight, SETTINGS.lineHeightPercent);
+    const auto band = ClippingHighlightGeometry::lineBand(
+        orientedMarginTop + line.yPos - block.getBlockStyle().ruledTextOffset,
+        SETTINGS.ruledLines && line.lineHeight ? line.lineHeight : block.maxLineHeight(renderer, fontId),
+        line.lineHeight, SETTINGS.lineHeightPercent);
     const int wordY = band.y;
     int wordW = geometry.width - skipX;
     const int wordH = band.height;
@@ -8731,9 +8775,9 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       // the immediate-word lookahead above.
       if (hasPreviousHighlight && previousHighlightBlock == &block &&
           ClippingHighlightGeometry::gapBetweenAdjacentWords(previousHighlight, currentHighlight, gap)) {
-        renderer.fillRectDither(gap.x, gap.y, gap.width, gap.height, Color::LightGray);
+        drawMarker(gap.x, gap.y, gap.width, gap.height);
       }
-      renderer.fillRectDither(wordX, wordY, wordW, wordH, Color::LightGray);
+      drawMarker(wordX, wordY, wordW, wordH);
       if (clipped) renderer.endTextClip();
       previousHighlight = currentHighlight;
       previousHighlightBlock = &block;
@@ -8741,20 +8785,6 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     } else {
       hasPreviousHighlight = false;
     }
-    return true;
-  });
-
-  // Paint every marker before restoring text. At tight spacing a marker can
-  // touch neighboring glyphs, including an unselected word's descender. Reuse
-  // the normal line renderer so mixed fonts, ruby and Focus Reading stay intact.
-  forEachPageTextLine(page, [&](const PageTextLine& line) {
-    const bool clipped = line.clipWidth > 0 && line.clipHeight > 0;
-    if (clipped) {
-      renderer.beginTextClip(orientedMarginLeft + line.clipX, orientedMarginTop + line.clipY, line.clipWidth,
-                             line.clipHeight);
-    }
-    line.block->render(renderer, fontId, orientedMarginLeft + line.xPos, orientedMarginTop + line.yPos, true);
-    if (clipped) renderer.endTextClip();
     return true;
   });
 }
@@ -8903,6 +8933,7 @@ void EpubReaderActivity::refreshChapterGroupEstimate(const uint16_t viewportWidt
   mix(SETTINGS.publisherFonts);
   mix(SETTINGS.imageRendering);
   mix(SETTINGS.focusReadingEnabled);
+  if (SETTINGS.ruledLines) mix(4);
   mix(SETTINGS.guideReadingEnabled);
   mix(SETTINGS.wordSpacing);
   mix(SETTINGS.characterSpacing);
@@ -9034,13 +9065,6 @@ bool EpubReaderActivity::isTocChapterDestination(const int targetSpineIndex, con
   return false;
 }
 
-bool EpubReaderActivity::shouldUseFootnotePreview(const int targetSpineIndex, const std::string& anchor) const {
-  if (!epub || anchor.empty() || targetSpineIndex < 0 || targetSpineIndex >= epub->getSpineItemsCount()) {
-    return false;
-  }
-  return targetSpineIndex != currentSpineIndex && !isTocChapterDestination(targetSpineIndex, anchor);
-}
-
 std::string EpubReaderActivity::footnotePreviewCacheSuffix(const EpubRenderMode renderMode,
                                                            const std::string& anchor) const {
   const uint64_t anchorHash = hashFootnotePreviewAnchor(anchor);
@@ -9084,35 +9108,28 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
 
   clearPendingManualPageTurns();
 
-  // Internal links are collected with footnotes so their rendered words can
-  // be tapped. A destination declared in the book TOC is a chapter jump,
-  // though: it must replace the current chapter instead of opening a preview.
-  const bool chapterDestination = isTocChapterDestination(targetSpineIndex, anchor);
-  // A link clicked in a contents document is a chapter jump, not a footnote.
-  // Serialize its source scan with rendering: real SD cards allow only one
-  // reader, and ZIP inflation borrows the framebuffer's storage.
-  bool sourceScanSucceeded = true;
-  bool contentsNavigation = false;
-  if (chapterDestination) {
-    RenderLock lock(*this);
-    GfxRenderer::FrameBufferLoan loan(renderer);
-    contentsNavigation = epub->isNavigationDocumentSpine(currentSpineIndex, &sourceScanSucceeded);
-  }
-  if (!sourceScanSucceeded) {
-    LOG_ERR("ERS", "Could not inspect contents source for link: %s", hrefStr.c_str());
-  }
-  // Keep the return stack for an endnote that happens to point at a TOC
-  // chapter.
-  const bool saveReturnPosition = savePosition && !contentsNavigation;
-  if (saveReturnPosition) {
-    EpubLinkReturnState::push(savedPositions, footnoteDepth,
-                              {currentSpineIndex, section ? section->currentPage : nextPageNumber});
-  }
-
+  bool saveReturnPosition = savePosition;
   {
     RenderLock lock(*this);
-    const bool useFootnotePreview = saveReturnPosition && !chapterDestination && !anchor.empty() &&
-                                    (preferFootnotePreview || shouldUseFootnotePreview(targetSpineIndex, anchor));
+    if (savePosition) {
+      // Contents links can point at a place inside a chapter, including page-list
+      // anchors that are absent from the chapter list. Check the source first.
+      // The scan reads from SD and ZIP inflation can borrow the framebuffer.
+      GfxRenderer::FrameBufferLoan loan(renderer);
+      bool sourceScanSucceeded = false;
+      saveReturnPosition = !epub->isNavigationDocumentSpine(currentSpineIndex, &sourceScanSucceeded);
+      if (!sourceScanSucceeded) {
+        LOG_ERR("ERS", "Could not inspect contents source for link: %s", hrefStr.c_str());
+      }
+    }
+    if (saveReturnPosition) {
+      EpubLinkReturnState::push(savedPositions, footnoteDepth,
+                                {currentSpineIndex, section ? section->currentPage : nextPageNumber});
+    }
+
+    const bool useFootnotePreview = saveReturnPosition && !anchor.empty() &&
+                                    (preferFootnotePreview || targetSpineIndex != currentSpineIndex) &&
+                                    !isTocChapterDestination(targetSpineIndex, anchor);
     pendingAnchor = anchor;
     pendingFootnotePreviewAnchor = useFootnotePreview ? anchor : std::string{};
     activeFootnotePreview = false;
@@ -9318,7 +9335,11 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
     ImageBlock::setExtractor(nullptr, nullptr, nullptr);
   }
   renderer.clearScreen(ReaderUtils::readerBackgroundColor());
-  page->render(renderer, renderFontId, layout.marginLeft, layout.marginTop, ReaderUtils::readerForegroundBlack());
+  page->renderText(renderer, renderFontId, layout.marginLeft, layout.marginTop, ReaderUtils::readerForegroundBlack());
+  ReaderRuling{SETTINGS.ruledLines, layout.marginLeft, layout.viewportWidth, layout.marginTop + layout.viewportHeight,
+               SETTINGS.lineHeightPercent}
+      .drawPage(renderer, *page, renderFontId, layout.marginTop);
+  page->renderImages(renderer, renderFontId, layout.marginLeft, layout.marginTop, ReaderUtils::readerForegroundBlack());
   drawPublisherPageMarkers(renderer, *page, layout.marginTop, renderer.getScreenHeight() - layout.marginBottom,
                            ReaderUtils::readerForegroundBlack());
   // No displayBuffer call; caller (SleepActivity) handles that after compositing the overlay.
