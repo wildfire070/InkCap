@@ -1295,7 +1295,7 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath,
     data.readerSettings = defaults;
     std::strncpy(data.dictionarySdFontFamilyName, SETTINGS.dictionarySdFontFamilyName,
                  sizeof(data.dictionarySdFontFamilyName) - 1);
-    data.dictionarySdFontFamilyName[sizeof(data.dictionarySdFontFamilyName) - 1] = ' ';
+    data.dictionarySdFontFamilyName[sizeof(data.dictionarySdFontFamilyName) - 1] = '\0';
     data.dictionaryFontPointSize = SETTINGS.dictionaryFontPointSize;
     if (status && !Storage.exists((cachePath + READER_SETTINGS_FILE_NAME).c_str())) {
       *status = EpubReaderActivity::BookSettingsReadStatus::Missing;
