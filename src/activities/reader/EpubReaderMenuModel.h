@@ -171,6 +171,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   BookFusionSync,
   NearbyPositionSync,
   SendNearbyBook,
+  BookWordHoldAction,
 };
 
 struct ReaderDrawerAvailability {
@@ -204,6 +205,7 @@ using ReaderDrawerCatalog = std::array<ReaderDrawerTabCatalog, READER_DRAWER_TAB
 // Append new entries at the next free bit; never renumber or reuse one (an old settings.json
 // stores the raw bits). Bits 0-30 are shared with InkCap's non-AO3 catalog; CycleStatus is this
 // branch's own AO3-only addition, so it gets the next free bit (31) rather than one of those.
+// BookWordHoldAction (32, upstream's "set what the long-press text action does") landed after.
 constexpr int readerDrawerItemVisibilityBit(const ReaderDrawerCatalogItem item) {
   switch (item) {
     // More tab.
@@ -273,6 +275,8 @@ constexpr int readerDrawerItemVisibilityBit(const ReaderDrawerCatalogItem item) 
       return 30;
     case ReaderDrawerCatalogItem::CycleStatus:
       return 31;
+    case ReaderDrawerCatalogItem::BookWordHoldAction:
+      return 32;
     default:
       return -1;
   }
@@ -352,6 +356,9 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   auto& settings = catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
   addIfVisible(settings, ReaderDrawerCatalogItem::StatusBar);
   addIfVisible(settings, ReaderDrawerCatalogItem::Controls);
+#if CROSSINK_APP_CAP_TOUCH
+  if (!available.buttonDevice) addIfVisible(settings, ReaderDrawerCatalogItem::BookWordHoldAction);
+#endif
   addIfVisible(settings, ReaderDrawerCatalogItem::BookDictionary);
   addIfVisible(settings, ReaderDrawerCatalogItem::RenderMode);
   addIfVisible(settings, ReaderDrawerCatalogItem::IndexingMethod);

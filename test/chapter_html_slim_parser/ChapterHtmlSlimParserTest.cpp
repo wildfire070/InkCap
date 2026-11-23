@@ -1,22 +1,32 @@
-#include <Epub/Page.h>
+#include <Epub/FootnoteEntry.h>
+#include <Epub/PageCountEstimator.h>
+#include <Epub/blocks/ImageBlock.h>
+#include <Epub/blocks/TextBlock.h>
 #include <Epub/converters/ImageDimsProbe.h>
 #include <GfxRenderer.h>
-#include <UniqueCodepointSet.h>
+#include <HalStorage.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <deque>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #define class struct
 #define private public
+#include <Epub/Page.h>
+
 #include "Epub/parsers/ChapterHtmlSlimParser.h"
 #undef private
 #undef class
 
 #include <Epub.h>
+#include <Epub/image/OptimizerFormat.h>
 #include <MemoryBudget.h>
 
 namespace {
@@ -87,6 +97,7 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
 
   void SetUp() override {
     Storage.files.clear();
+    Storage.failNextSeekOnReadOpen = false;
     GfxRenderer::loanActive = false;
     GfxRenderer::fileProbeHadLoan = false;
     MemoryBudget::imageAllowed = true;
@@ -94,6 +105,61 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
     parser.inlineStyleBuf_ = inlineStyles.data();
     parser.blockStyleBuf_ = blockStyles.data();
     parser.blockStyleCount_ = 1;
+  }
+
+  struct TableCellInput {
+    const char* text;
+    const char* colSpan;
+    bool header;
+  };
+
+  void appendTableCell(const TableCellInput& cell) {
+    const char* attributes[] = {"colspan", cell.colSpan, nullptr};
+    const char* tag = cell.header ? "th" : "td";
+    ChapterHtmlSlimParser::startElement(&parser, tag, cell.colSpan ? attributes : nullptr);
+    ChapterHtmlSlimParser::characterData(&parser, cell.text, std::strlen(cell.text));
+    ChapterHtmlSlimParser::endElement(&parser, tag);
+  }
+
+  void parseMixedColspanTable(const bool streaming, const bool addRaggedRow = false) {
+    static constexpr const char* longText = "abcdefghij klmnopqrst uvwxyzabcd efghijklmn";
+    static constexpr TableCellInput firstRow[] = {{longText, "2", true},
+                                                  {"v1", nullptr, false},
+                                                  {"v2", nullptr, false},
+                                                  {"v3", nullptr, false},
+                                                  {"v4", nullptr, false}};
+    static constexpr TableCellInput secondRow[] = {{longText, nullptr, true}, {"v1", nullptr, true},
+                                                   {"v2", nullptr, false},    {"v3", nullptr, false},
+                                                   {"v4", nullptr, false},    {"v5", nullptr, false}};
+    static constexpr TableCellInput raggedRow[] = {
+        {"r1", nullptr, false}, {"r2", nullptr, false}, {"r3", nullptr, false}};
+
+    renderer.textAdvancePerChar = 4;
+    ChapterHtmlSlimParser::startElement(&parser, "table", nullptr);
+    ASSERT_NE(parser.currentTableBuffer, nullptr);
+    parser.currentTableBuffer->streaming = streaming;
+    parser.currentTableBuffer->columnPlan.count = 6;
+    parser.currentTableBuffer->columnPlan.ends = {50, 100, 180, 260, 360, 480, 0, 0};
+    auto appendRow = [&](const TableCellInput* cells, const size_t count) {
+      ChapterHtmlSlimParser::startElement(&parser, "tr", nullptr);
+      for (size_t i = 0; i < count; ++i) appendTableCell(cells[i]);
+      ChapterHtmlSlimParser::endElement(&parser, "tr");
+    };
+    appendRow(firstRow, std::size(firstRow));
+    appendRow(secondRow, std::size(secondRow));
+    if (addRaggedRow) appendRow(raggedRow, std::size(raggedRow));
+    ChapterHtmlSlimParser::endElement(&parser, "table");
+  }
+
+  std::vector<const PageTableFragment*> tableFragments() const {
+    std::vector<const PageTableFragment*> fragments;
+    if (!parser.currentPage) return fragments;
+    for (const auto& element : parser.currentPage->elements) {
+      if (element->getTag() == TAG_PageTableFragment) {
+        fragments.push_back(static_cast<const PageTableFragment*>(element.get()));
+      }
+    }
+    return fragments;
   }
 
   void expectWordAcrossLayoutThreshold(const std::string& first, const std::string& second) {
@@ -508,6 +574,167 @@ TEST_F(ChapterHtmlSlimParserTest, TableCellBlocksInheritOverrideAndRestoreFontSt
   EXPECT_EQ(parser.inlineStyleCount_, 0u);
   ChapterHtmlSlimParser::endElement(&parser, "tr");
   ChapterHtmlSlimParser::endElement(&parser, "table");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, StreamingRichTableUsesLogicalColumnsForMixedColspans) {
+  parseMixedColspanTable(true);
+
+  const auto fragments = tableFragments();
+  ASSERT_EQ(fragments.size(), 1u);
+  ASSERT_EQ(fragments[0]->columnCount, 6u);
+  ASSERT_EQ(fragments[0]->rows.size(), 2u);
+
+  const auto& mergedHeading = fragments[0]->rows[0].cells;
+  ASSERT_EQ(mergedHeading.size(), 5u);
+  EXPECT_EQ(mergedHeading[0].colSpan, 2u);
+  EXPECT_EQ(mergedHeading[0].rightEdge, 100u);
+  EXPECT_EQ(mergedHeading[1].colSpan, 1u);
+  EXPECT_EQ(mergedHeading[1].rightEdge, 180u);
+
+  const auto& singleColumnHeading = fragments[0]->rows[1].cells;
+  ASSERT_EQ(singleColumnHeading.size(), 6u);
+  EXPECT_EQ(singleColumnHeading[0].colSpan, 1u);
+  EXPECT_EQ(singleColumnHeading[0].rightEdge, 50u);
+  EXPECT_EQ(singleColumnHeading[5].rightEdge, 480u);
+  EXPECT_LT(mergedHeading[0].lines.size(), singleColumnHeading[0].lines.size());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BufferedRichTableUsesLogicalSpansAndPadsOrdinaryShortRows) {
+  parseMixedColspanTable(false, true);
+
+  const auto fragments = tableFragments();
+  ASSERT_EQ(fragments.size(), 1u);
+  ASSERT_EQ(fragments[0]->columnCount, 6u);
+  ASSERT_EQ(fragments[0]->rows.size(), 3u);
+
+  const auto& mergedHeading = fragments[0]->rows[0].cells;
+  ASSERT_EQ(mergedHeading.size(), 5u);
+  EXPECT_EQ(mergedHeading[0].colSpan, 2u);
+  EXPECT_EQ(mergedHeading[0].rightEdge, 100u);
+  const auto& singleColumnHeading = fragments[0]->rows[1].cells;
+  ASSERT_EQ(singleColumnHeading.size(), 6u);
+  EXPECT_EQ(singleColumnHeading[0].colSpan, 1u);
+  EXPECT_EQ(singleColumnHeading[0].rightEdge, 50u);
+  EXPECT_EQ(singleColumnHeading[5].rightEdge, 480u);
+  EXPECT_LT(mergedHeading[0].lines.size(), singleColumnHeading[0].lines.size());
+
+  const auto& paddedRaggedRow = fragments[0]->rows[2].cells;
+  ASSERT_EQ(paddedRaggedRow.size(), 6u);
+  EXPECT_EQ(paddedRaggedRow[5].colSpan, 1u);
+  EXPECT_TRUE(paddedRaggedRow[5].lines.empty());
+  EXPECT_EQ(paddedRaggedRow[2].rightEdge, 180u);
+  EXPECT_EQ(paddedRaggedRow[3].rightEdge, 260u);
+  EXPECT_EQ(paddedRaggedRow[4].rightEdge, 360u);
+  EXPECT_EQ(paddedRaggedRow[5].rightEdge, 480u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, CompactSdFontTableBoundsLinesAcrossColspanFragmentsAndKeepsRowsAtomic) {
+  std::vector<std::unique_ptr<Page>> pages;
+  std::vector<uint32_t> visibleOffsets;
+  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t visibleOffset, uint32_t) {
+    pages.push_back(std::move(page));
+    visibleOffsets.push_back(visibleOffset);
+  };
+  parser.currentCompactTable = std::make_unique<CompactTableLayout>(renderer, 0, 480, 800, 16, 6, BlockStyle{});
+  ASSERT_TRUE(parser.currentCompactTable->valid());
+  parser.compactTablePageLineLimitEnabled = true;
+  parser.compactTableTopSpacingApplied = true;
+  parser.currentPage = std::make_unique<Page>();
+
+  auto makeRow = [](const size_t cellCount, const size_t linesPerCell, const uint16_t height) {
+    TableFragmentRow row;
+    row.height = height;
+    row.cells.resize(cellCount);
+    for (auto& cell : row.cells) cell.lines.resize(linesPerCell);
+    return row;
+  };
+
+  auto colspanHeading = makeRow(1, 1, 28);
+  colspanHeading.cells[0].isHeader = true;
+  colspanHeading.cells[0].colSpan = 8;
+  ASSERT_TRUE(parser.emitCompactTableRow(colspanHeading, 10, 1, false));
+
+  auto denseDataRow = makeRow(8, 6, 108);  // 48 line blocks across eight cells.
+  ASSERT_TRUE(parser.emitCompactTableRow(denseDataRow, 20, 8, false));
+  auto followingRow = makeRow(8, 1, 28);
+  ASSERT_TRUE(parser.emitCompactTableRow(followingRow, 30, 8, false));
+
+  // A row may exceed the normal page budget when it fits by itself. The next
+  // row must then start a fresh page, keeping that oversized source row atomic.
+  auto oversizedRow = makeRow(8, 7, 124);
+  ASSERT_TRUE(parser.emitCompactTableRow(oversizedRow, 40, 8, false));
+  auto rowAfterOversized = makeRow(8, 1, 28);
+  ASSERT_TRUE(parser.emitCompactTableRow(rowAfterOversized, 50, 8, false));
+
+  ASSERT_TRUE(parser.flushCompactTableFragment());
+  parser.completeCurrentPage();
+  ASSERT_EQ(pages.size(), 5u);
+  EXPECT_EQ(visibleOffsets, (std::vector<uint32_t>{0, 20, 30, 40, 50}));
+
+  auto fragmentForPage = [](const Page& page) -> const PageTableFragment& {
+    EXPECT_EQ(page.elements.size(), 1u);
+    EXPECT_EQ(page.elements[0]->getTag(), TAG_PageTableFragment);
+    return *static_cast<const PageTableFragment*>(page.elements[0].get());
+  };
+  const auto& headingPage = fragmentForPage(*pages[0]);
+  ASSERT_EQ(headingPage.rows.size(), 1u);
+  ASSERT_EQ(headingPage.rows[0].cells.size(), 1u);
+  EXPECT_EQ(headingPage.rows[0].cells[0].colSpan, 8u);
+  EXPECT_EQ(headingPage.rows[0].cells[0].lines.size(), 1u);
+
+  const auto& densePage = fragmentForPage(*pages[1]);
+  ASSERT_EQ(densePage.rows.size(), 1u);
+  ASSERT_EQ(densePage.rows[0].cells.size(), 8u);
+  for (const auto& cell : densePage.rows[0].cells) EXPECT_EQ(cell.lines.size(), 6u);
+
+  const auto& followingPage = fragmentForPage(*pages[2]);
+  ASSERT_EQ(followingPage.rows.size(), 1u);
+  ASSERT_EQ(followingPage.rows[0].cells.size(), 8u);
+  const auto& oversizedPage = fragmentForPage(*pages[3]);
+  ASSERT_EQ(oversizedPage.rows.size(), 1u);
+  ASSERT_EQ(oversizedPage.rows[0].cells.size(), 8u);
+  for (const auto& cell : oversizedPage.rows[0].cells) EXPECT_EQ(cell.lines.size(), 7u);
+  const auto& lastPage = fragmentForPage(*pages[4]);
+  ASSERT_EQ(lastPage.rows.size(), 1u);
+  ASSERT_EQ(lastPage.rows[0].cells.size(), 8u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BuiltInFontCompactTableKeepsExistingPageGeometry) {
+  std::vector<std::unique_ptr<Page>> pages;
+  parser.completePageFn = [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
+    pages.push_back(std::move(page));
+  };
+  parser.currentCompactTable = std::make_unique<CompactTableLayout>(renderer, 0, 480, 800, 16, 6, BlockStyle{});
+  ASSERT_TRUE(parser.currentCompactTable->valid());
+  parser.compactTablePageLineLimitEnabled = false;
+  parser.compactTableTopSpacingApplied = true;
+  parser.currentPage = std::make_unique<Page>();
+
+  auto makeRow = [](const size_t cellCount, const size_t linesPerCell, const uint16_t height) {
+    TableFragmentRow row;
+    row.height = height;
+    row.cells.resize(cellCount);
+    for (auto& cell : row.cells) cell.lines.resize(linesPerCell);
+    return row;
+  };
+  auto colspanHeading = makeRow(1, 1, 28);
+  colspanHeading.cells[0].colSpan = 8;
+  ASSERT_TRUE(parser.emitCompactTableRow(colspanHeading, 10, 1, false));
+  auto denseDataRow = makeRow(8, 6, 108);
+  ASSERT_TRUE(parser.emitCompactTableRow(denseDataRow, 20, 8, false));
+  auto followingRow = makeRow(8, 1, 28);
+  ASSERT_TRUE(parser.emitCompactTableRow(followingRow, 30, 8, false));
+
+  ASSERT_TRUE(parser.flushCompactTableFragment());
+  parser.completeCurrentPage();
+  ASSERT_EQ(pages.size(), 1u);
+  ASSERT_EQ(pages[0]->elements.size(), 2u);
+  const auto* heading = static_cast<const PageTableFragment*>(pages[0]->elements[0].get());
+  const auto* grid = static_cast<const PageTableFragment*>(pages[0]->elements[1].get());
+  ASSERT_EQ(heading->rows.size(), 1u);
+  EXPECT_EQ(heading->rows[0].cells[0].colSpan, 8u);
+  ASSERT_EQ(grid->rows.size(), 2u);
+  EXPECT_EQ(parser.compactTablePageLineCount, 0u);
 }
 
 TEST_F(ChapterHtmlSlimParserTest, InheritsBodyTextIndentAndPreservesExplicitParagraphZero) {
@@ -2873,6 +3100,95 @@ TEST_F(ChapterHtmlSlimParserTest, PreservedWhitespaceKeepsSpacesAndLineBreaks) {
   EXPECT_EQ(parser.visibleTextOffset, 6u);
 }
 
+TEST_F(ChapterHtmlSlimParserTest, PrePreservesPoemIndentationAndDoesNotLeakIntoProse) {
+  parser.embeddedStyle = false;
+  parser.cssParser = nullptr;
+  ChapterHtmlSlimParser::startElement(&parser, "pre", nullptr);
+  EXPECT_TRUE(parser.effectivePreserveWhitespace);
+  ChapterHtmlSlimParser::characterData(&parser, "  First\n   ", 11);
+  ChapterHtmlSlimParser::startElement(&parser, "em", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Second", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "em");
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 4u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], " ");
+  EXPECT_EQ(parser.currentTextBlock->words[2], " ");
+  EXPECT_EQ(parser.currentTextBlock->words[3], "Second");
+  EXPECT_EQ(parser.currentTextBlock->wordStyles.back(), EpdFontFamily::ITALIC);
+  ChapterHtmlSlimParser::endElement(&parser, "pre");
+  EXPECT_FALSE(parser.effectivePreserveWhitespace);
+  // Bare text may follow a pre block with no paragraph tag in between.
+  ChapterHtmlSlimParser::characterData(&parser, "After   poem", 12);
+  parser.flushPartWordBuffer();
+  EXPECT_EQ(parser.currentTextBlock->words.size(), 2u);
+  EXPECT_EQ(parser.currentTextBlock->words.front(), "After");
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PreKeepsHardLineRhythmWithProseSpacingEnabled) {
+  parser.extraParagraphSpacing = true;
+  ChapterHtmlSlimParser::startElement(&parser, "pre", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "A\nB\n\nC", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "pre");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "D", 1);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "E", 1);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  parser.makePages();
+  ASSERT_TRUE(parser.currentPage);
+  std::vector<int> lines;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() == TAG_PageLine) lines.push_back(element->yPos);
+  }
+  ASSERT_EQ(lines.size(), 5u);
+  const int lineHeight = renderer.getLineHeight(0);
+  EXPECT_EQ(lines[1] - lines[0], lineHeight);
+  EXPECT_EQ(lines[2] - lines[1], lineHeight * 2);
+  EXPECT_EQ(lines[3] - lines[2], lineHeight + lineHeight / 2);
+  EXPECT_EQ(lines[4] - lines[3], lineHeight + lineHeight / 2);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PreClosingGapDoesNotDependOnTrailingNewline) {
+  parser.extraParagraphSpacing = true;
+  for (const std::string_view verse : {"A", "B\n"}) {
+    ChapterHtmlSlimParser::startElement(&parser, "pre", nullptr);
+    ChapterHtmlSlimParser::characterData(&parser, verse.data(), verse.size());
+    ChapterHtmlSlimParser::endElement(&parser, "pre");
+    ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+    ChapterHtmlSlimParser::characterData(&parser, "Prose", 5);
+    ChapterHtmlSlimParser::endElement(&parser, "p");
+  }
+  parser.makePages();
+  ASSERT_TRUE(parser.currentPage);
+  std::vector<int> lines;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() == TAG_PageLine) lines.push_back(element->yPos);
+  }
+  ASSERT_EQ(lines.size(), 4u);
+  const int lineHeight = renderer.getLineHeight(0);
+  EXPECT_EQ(lines[1] - lines[0], lineHeight + lineHeight / 2);
+  EXPECT_EQ(lines[3] - lines[2], lines[1] - lines[0]);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PreKeepsPublisherAlignmentInheritedFromContainer) {
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);
+  const XML_Char* parentAttrs[] = {"style", "text-align: center", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", parentAttrs);
+  ChapterHtmlSlimParser::startElement(&parser, "pre", nullptr);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Center);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, AuthorWhiteSpaceNormalOverridesPreDefault) {
+  ASSERT_TRUE(cssParser.processRuleBlockWithStyle("pre", CssParser::parseInlineStyle("white-space: normal")));
+  ChapterHtmlSlimParser::startElement(&parser, "pre", nullptr);
+  EXPECT_FALSE(parser.effectivePreserveWhitespace);
+  ChapterHtmlSlimParser::characterData(&parser, "A  B\nC", 6);
+  parser.flushPartWordBuffer();
+  ASSERT_EQ(parser.currentTextBlock->words.size(), 3u);
+  EXPECT_EQ(parser.currentTextBlock->words.back(), "C");
+  ChapterHtmlSlimParser::endElement(&parser, "pre");
+}
+
 TEST_F(ChapterHtmlSlimParserTest, WhitespaceOverrideRestoresParentStyle) {
   const XML_Char* pre[] = {"style", "white-space: pre-wrap", nullptr};
   const XML_Char* normal[] = {"style", "white-space: normal", nullptr};
@@ -3391,6 +3707,28 @@ TEST_F(ChapterHtmlSlimParserTest, DisabledFamilySpanPreservesFocusWordBoundary) 
   EXPECT_TRUE(parser.currentTextBlock->wordFontFamilies.empty());
 }
 
+TEST(ParsedTextFocusTest, ReservesForSegmentsAndTracksTheirSourceOffsets) {
+  ParsedText text(false, false, false, true, false, 0, BlockStyle(), true);
+  std::string word(1024, 'a');
+  word += '!';
+  word += std::string(1024, 'b');
+
+  text.addWord(word, EpdFontFamily::REGULAR, false, false, false, 0, 10, 50);
+
+  ASSERT_EQ(text.words.size(), 3u);
+  EXPECT_EQ(text.words[0].size(), 1024u);
+  EXPECT_EQ(text.words[1], "!");
+  EXPECT_EQ(text.words[2].size(), 1024u);
+  EXPECT_LE(text.wordStyles.capacity(), 16u);
+  EXPECT_EQ(text.visibleOffsetAt(0), 10u);
+  EXPECT_EQ(text.visibleOffsetAt(1), 1034u);
+  EXPECT_EQ(text.visibleOffsetAt(2), 1035u);
+  ASSERT_EQ(text.wordReferenceOffsets.size(), 3u);
+  EXPECT_EQ(text.wordReferenceOffsets[0], 50u);
+  EXPECT_EQ(text.wordReferenceOffsets[1], 1074u);
+  EXPECT_EQ(text.wordReferenceOffsets[2], 1075u);
+}
+
 TEST_F(ChapterHtmlSlimParserTest, ChunkedAnchorsRetainOrderPagesAndReferencesAcrossGrowth) {
   for (int i = 0; i < 1100; ++i) {
     parser.pendingAnchorId = "anchor-" + std::to_string(i);
@@ -3449,6 +3787,138 @@ TEST_F(ChapterHtmlSlimParserTest, DeferredPrewarmDoesNotDelayBeginAndRestoresPar
   EXPECT_EQ(std::count(renderer.prewarmed.begin(), renderer.prewarmed.end(), 0x5B57), 1);
   parser.abortParse();
   EXPECT_FALSE(parser.prewarmSectionAdvanceStep());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FailedInputReadAbortsInsteadOfAcceptingTruncatedMarkup) {
+  Storage.files[filepath] = "<html><body><p>Valid XHTML content.</p></body></html>";
+  ASSERT_TRUE(parser.beginParse());
+  parser.parseFile_.failNextRead();
+
+  EXPECT_EQ(parser.parseStep(), ChapterHtmlSlimParser::ParseStatus::Error);
+  EXPECT_TRUE(parser.inputReadError);
+  EXPECT_FALSE(parser.malformedMarkupTruncated);
+  EXPECT_FALSE(parser.lowMemoryAbort);
+  parser.abortParse();
+}
+
+TEST_F(ChapterHtmlSlimParserTest, EagerPrefixAndDeferredPrewarmKeepTheLowestCodepoints) {
+  const auto appendUtf8 = [](std::string& output, const uint32_t codepoint) {
+    if (codepoint <= 0xFFFF) {
+      output.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+      output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+      output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else {
+      output.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+      output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+      output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+      output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+  };
+  std::string html;
+  for (uint32_t i = 17000; i > 0; --i) appendUtf8(html, 0x10000 + i - 1);
+  html += 'a';  // This common glyph follows more than 4,096 unique glyphs and 64 KiB of input.
+  Storage.files[filepath] = html;
+  renderer.sdFont = true;
+
+  for (const bool deferred : {false, true}) {
+    renderer.prewarmCalls = 0;
+    renderer.prewarmed.clear();
+    parser.setDeferAdvancePrewarm(deferred);
+    ASSERT_TRUE(parser.beginParse());
+    if (deferred) {
+      int slices = 0;
+      while (parser.prewarmSectionAdvanceStep()) ASSERT_LT(++slices, 1000);
+    }
+
+    ASSERT_EQ(renderer.prewarmed.size(), ChapterHtmlSlimParser::SECTION_ADVANCE_PREWARM_FEED_LIMIT);
+    EXPECT_TRUE(std::is_sorted(renderer.prewarmed.begin(), renderer.prewarmed.end()));
+    if (deferred) {
+      EXPECT_EQ(renderer.prewarmed.front(), 'a');
+      for (size_t i = 1; i < renderer.prewarmed.size(); ++i) {
+        EXPECT_EQ(renderer.prewarmed[i], 0x10000 + i - 1);
+      }
+    } else {
+      const uint32_t prefixLowest =
+          0x10000 + 17000 - ChapterHtmlSlimParser::SECTION_ADVANCE_PREWARM_EAGER_SCAN_BYTES / 4;
+      for (size_t i = 0; i < renderer.prewarmed.size(); ++i) {
+        EXPECT_EQ(renderer.prewarmed[i], prefixLowest + i);
+      }
+    }
+    parser.abortParse();
+  }
+}
+
+TEST_F(ChapterHtmlSlimParserTest, PrewarmIgnoresSplitAttributeUtf8AndKeepsSplitTextUtf8) {
+  const auto appendUtf8 = [](std::string& output, const uint32_t codepoint) {
+    output.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+    output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+    output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+  };
+  std::string html = "<span data-note=\"";
+  html.append(511 - html.size(), 'q');
+  appendUtf8(html, 0x00E9);  // The first byte lands at the end of the 512-byte read.
+  html += "\"><p>";
+  const size_t padding = (511 + 512 - (html.size() % 512)) % 512;
+  html.append(padding, 'x');
+  appendUtf8(html, 0x5B57);  // This text codepoint also spans two prewarm reads.
+  html += "</p></span>";
+  Storage.files[filepath] = html;
+  renderer.sdFont = true;
+
+  for (const bool deferred : {false, true}) {
+    renderer.prewarmed.clear();
+    parser.setDeferAdvancePrewarm(deferred);
+    ASSERT_TRUE(parser.beginParse());
+    if (deferred) {
+      int slices = 0;
+      while (parser.prewarmSectionAdvanceStep()) ASSERT_LT(++slices, 100);
+    }
+    EXPECT_EQ(std::count(renderer.prewarmed.begin(), renderer.prewarmed.end(), 0x00E9), 0);
+    EXPECT_EQ(std::count(renderer.prewarmed.begin(), renderer.prewarmed.end(), 'q'), 0);
+    EXPECT_EQ(std::count(renderer.prewarmed.begin(), renderer.prewarmed.end(), 0x5B57), 1);
+    parser.abortParse();
+  }
+}
+
+TEST_F(ChapterHtmlSlimParserTest, FullPrewarmReopensInputWhenItsRewindSeekFails) {
+  Storage.files[filepath] = "<html><body><!--valid--></body></html>";
+  renderer.sdFont = true;
+  Storage.failNextSeekOnReadOpen = true;
+
+  ASSERT_TRUE(parser.beginParse());
+  ASSERT_TRUE(parser.parseFile_);
+  EXPECT_FALSE(parser.inputReadError);
+  EXPECT_EQ(parser.parseFile_.position(), 0U);
+  EXPECT_EQ(parser.parseStep(), ChapterHtmlSlimParser::ParseStatus::Done);
+  EXPECT_EQ(parser.parseBytesConsumed(), Storage.files[filepath].size());
+  parser.abortParse();
+}
+
+TEST_F(ChapterHtmlSlimParserTest, OneParseStepBoundsWorkBeforeTheFirstPage) {
+  Storage.files[filepath] = "<html><body><!--" + std::string(128 * 1024, 'x') + "--><p>after</p></body></html>";
+  ASSERT_TRUE(parser.beginParse());
+
+  EXPECT_EQ(parser.parseStep(), ChapterHtmlSlimParser::ParseStatus::More);
+  EXPECT_EQ(parser.parseBytesConsumed(), 1024U);
+  parser.abortParse();
+}
+
+TEST_F(ChapterHtmlSlimParserTest, MalformedInputCrcCoversEarlierChunkAndFailingChunk) {
+  std::string html = "<html><body>";
+  html.append(1024 - html.size(), 'x');
+  html += "</wrong></body></html>";
+  Storage.files[filepath] = html;
+  parser.setTrackMalformedInputCrc(true);
+  ASSERT_TRUE(parser.beginParse());
+
+  EXPECT_EQ(parser.parseStep(), ChapterHtmlSlimParser::ParseStatus::More);
+  EXPECT_EQ(parser.malformedInputCrcLength_, 0U);  // Only expose the digest after actual salvage.
+  EXPECT_EQ(parser.parseStep(), ChapterHtmlSlimParser::ParseStatus::Done);
+  ASSERT_TRUE(parser.wasMalformedMarkupTruncated());
+  EXPECT_EQ(parser.malformedInputCrcLength(), html.size());
+  EXPECT_EQ(parser.malformedInputCrc(),
+            OptimizerFormat::crc(0, reinterpret_cast<const uint8_t*>(html.data()), html.size()));
+  parser.abortParse();
 }
 
 TEST_F(ChapterHtmlSlimParserTest, SourceOffsetsIncludeHiddenBodyTextAndRestartAtBody) {

@@ -60,6 +60,10 @@ struct BookReaderSettingsData {
   uint8_t renderMode = 0;
   char dictionarySdFontFamilyName[64] = "";
   uint8_t dictionaryFontPointSize = 0;
+  // Mirrors CrossPointSettings::WORD_HOLD_USE_GLOBAL (3) -- kept as a literal for the same
+  // reason as characterSpacing/indexingMethod above. Means "no per-book override, follow
+  // SETTINGS.wordHoldAction".
+  uint8_t wordHoldAction = 3;
   ReaderSettingsSnapshot readerSettings;
 };
 
@@ -68,6 +72,7 @@ struct BookReaderSettingsData {
 // Image Grayscale byte after that. v13 (upstream): appends a Publisher Fonts byte after that.
 // v14 (upstream): appends a Text Darkness byte after that. v15 (upstream): appends a Two-Tone
 // Text AA byte (EEGO A4) after that. v16 (upstream): appends a Ruled Lines byte after that.
+// v17 (upstream): appends a Word Hold Action byte after that.
 // Each new field is append-only at the tail -- never reorder or reuse a version number for a
 // different meaning, or an old on-disk file gets misread.
 constexpr uint8_t LEGACY_READER_SETTINGS_FILE_VERSION = 1;
@@ -88,7 +93,8 @@ constexpr uint8_t PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION = 12;
 constexpr uint8_t PRE_TEXT_DARKNESS_READER_SETTINGS_FILE_VERSION = 13;
 constexpr uint8_t PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION = 14;
 constexpr uint8_t PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION = 15;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 16;
+constexpr uint8_t PRE_WORD_HOLD_ACTION_READER_SETTINGS_FILE_VERSION = 16;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 17;
 
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;

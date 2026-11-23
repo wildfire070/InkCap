@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -79,6 +80,43 @@ def prepare_fs(temp_root: Path, book: Path) -> str:
     return f"/books/{book.name}"
 
 
+def prepare_css_retry_fixtures(temp_root: Path, book: Path) -> tuple[Path, Path, str]:
+    """Make a source-read failure fixture and its repaired version for partial CSS retries."""
+    with zipfile.ZipFile(book) as source:
+        css_names = [name for name in source.namelist() if name.lower().endswith(".css")]
+        opf_names = [name for name in source.namelist() if name.lower().endswith(".opf")]
+        if not css_names or not opf_names:
+            raise ValueError("--css-toggle needs an EPUB with a stylesheet and package document")
+        opf_name = opf_names[0]
+        css_href = "styles/smoke-retry-extra.css"
+        css_path = (Path(opf_name).parent / css_href).as_posix()
+        package = source.read(opf_name).decode("utf-8")
+        if "</manifest>" not in package:
+            raise ValueError("--css-toggle package document has no manifest")
+        package = package.replace(
+            "</manifest>",
+            f'<item id="smoke-retry-extra" href="{css_href}" media-type="text/css"/>\n  </manifest>',
+            1,
+        ).encode("utf-8")
+        extra_rules = "".join(
+            f".smoke-retry-{index:04d} {{ font-size: 12px; }}\n" for index in range(900)
+        ).encode("ascii")
+
+        def write_fixture(path: Path, include_extra_css: bool) -> None:
+            with zipfile.ZipFile(path, "w") as target:
+                for info in source.infolist():
+                    payload = package if info.filename == opf_name else source.read(info.filename)
+                    target.writestr(copy.copy(info), payload)
+                if include_extra_css:
+                    target.writestr(css_path, extra_rules)
+
+        failed_path = temp_root / "css-retry-failed.epub"
+        repaired_path = temp_root / "css-retry-repaired.epub"
+        write_fixture(failed_path, include_extra_css=False)
+        write_fixture(repaired_path, include_extra_css=True)
+    return failed_path, repaired_path, css_path
+
+
 def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: bool = False) -> Path:
     """Copy immutable producer bytes into a disposable mock, or make local fixtures.
 
@@ -96,8 +134,17 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
             raise ValueError("--asset-snapshot must name one snapshot directory or snapshot.json")
         kinds = (("hyphenation", "cphyph"),) if hyphenation_only else (("hyphenation", "cphyph"), ("translation", "yaml"))
         for kind, extension in kinds:
-            catalog_file = source / "catalogs" / "stable" / f"{kind}.json"
-            catalog = json.loads(catalog_file.read_bytes())
+            filename = "hyphenation-v2.json" if kind == "hyphenation" else f"{kind}.json"
+            catalog_file = source / "catalogs" / "stable" / filename
+            if kind == "hyphenation" and not catalog_file.is_file():
+                # Archived fixtures predate extended catalog discovery. Adapt
+                # protocol version only; leave their payloads and digests intact.
+                catalog_file = catalog_file.with_name("hyphenation.json")
+            catalog_data = catalog_file.read_bytes()
+            catalog = json.loads(catalog_data)
+            if kind == "hyphenation" and catalog_file.name == "hyphenation.json":
+                catalog["schema"] = 2
+                catalog_data = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode()
             for entry in catalog["entries"]:
                 if not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) or not 0 < entry["bytes"] <= 262144:
                     raise ValueError("Snapshot contains an invalid digest or payload size")
@@ -108,7 +155,7 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
                 destination = mock / "snapshots" / catalog["revision"] / kind / payload.name
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(payload, destination)
-            shutil.copy2(catalog_file, mock / catalog_file.name)
+            (mock / filename).write_bytes(catalog_data)
         # Derive each recipient closure from both exact indexes, including
         # opaque source archives. This fixture validator never approves a release.
         indexes = {}
@@ -118,7 +165,8 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
                 raise ValueError("Companion index exceeds bound")
             indexes[name] = json.loads(raw)
         for kind, _ in kinds:
-            catalog = json.loads((mock / f"{kind}.json").read_bytes())
+            filename = "hyphenation-v2.json" if kind == "hyphenation" else f"{kind}.json"
+            catalog = json.loads((mock / filename).read_bytes())
             prefix = f"snapshots/{catalog['revision']}/"
             for name in indexes:
                 target = mock / prefix / name
@@ -161,14 +209,15 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
         print(f"Asset smoke uses copied, unpublished snapshot and complete indexed companions: {source}", flush=True)
     else:
         from generate_language_template import generate
-        from package_hyphenation import CODES, pack_bytes
+        from package_hyphenation_v2 import CODES, artifacts as hyphenation_artifacts
+        packs = hyphenation_artifacts()
         generated = generate("simulator-local-fixture")
         contract = json.loads(generated["language-template.json"])
         common = {"schema": 1, "channel": "stable", "revision": contract["sourceCommit"],
                   "format": 1, "requires": 0, "notices": "notices.json", "sources": "sources.json"}
-        hyphenation = dict(common, kind="hyphenation", entries=[])
+        hyphenation = dict(common, schema=2, kind="hyphenation", entries=[])
         for code in CODES:
-            data = pack_bytes(code)
+            data = packs[f".crossink/hyphenation/hyph-{code}.cphyph"]
             digest = hashlib.sha256(data).hexdigest()
             (mock / f"{digest}.cphyph").write_bytes(data)
             hyphenation["entries"].append({"code": code, "bytes": len(data), "sha256": digest})
@@ -183,7 +232,8 @@ def prepare_asset_mock(temp_root: Path, snapshot: str | None, hyphenation_only: 
             translation["entries"].append({"code": language["code"], "name": language["name"],
                                             "bytes": len(data), "sha256": reference["sha256"]})
         for kind, catalog in (("hyphenation", hyphenation), ("translation", translation)):
-            (mock / f"{kind}.json").write_text(json.dumps(catalog, ensure_ascii=False, separators=(",", ":")))
+            filename = "hyphenation-v2.json" if kind == "hyphenation" else f"{kind}.json"
+            (mock / filename).write_text(json.dumps(catalog, ensure_ascii=False, separators=(",", ":")))
         revision = common["revision"]
         prefix = f"snapshots/{revision}/"
         notice = b"TEST-ONLY functional fixture; not a distributable source/license arrangement.\n"
@@ -228,6 +278,49 @@ def run_smoke(args: argparse.Namespace) -> int:
         print(f"Smoke test book not found: {book}", file=sys.stderr)
         return 2
 
+    key_change_book = Path(args.publisher_font_key_change_book).resolve() if args.publisher_font_key_change_book else None
+    if key_change_book:
+        if not args.publisher_fonts:
+            print("--publisher-font-key-change-book requires --publisher-fonts", file=sys.stderr)
+            return 2
+        if not key_change_book.is_file():
+            print(f"Publisher font key-change fixture not found: {key_change_book}", file=sys.stderr)
+            return 2
+        with zipfile.ZipFile(book) as original, zipfile.ZipFile(key_change_book) as changed:
+            original_info = original.getinfo("OEBPS/body.ttf")
+            changed_info = changed.getinfo("OEBPS/body.ttf")
+            if (original_info.CRC, original_info.compress_size, original_info.file_size) != (
+                    changed_info.CRC, changed_info.compress_size, changed_info.file_size):
+                print("Adobe key-change fixtures must keep the body font ZIP member identical", file=sys.stderr)
+                return 2
+            if original.read("OEBPS/body.ttf") != changed.read("OEBPS/body.ttf"):
+                print("Adobe key-change fixtures contain different body font bytes", file=sys.stderr)
+                return 2
+            if original.read("OEBPS/content.opf") == changed.read("OEBPS/content.opf"):
+                print("Adobe key-change fixtures must have different package identifiers", file=sys.stderr)
+                return 2
+
+    recovery_initial = (Path(args.publisher_font_recovery_initial_book).resolve()
+                        if args.publisher_font_recovery_initial_book else None)
+    recovery_book = Path(args.publisher_font_recovery_book).resolve() if args.publisher_font_recovery_book else None
+    if bool(recovery_initial) != bool(recovery_book):
+        print("Publisher font recovery requires both initial and repaired EPUBs", file=sys.stderr)
+        return 2
+    if recovery_initial:
+        if not args.publisher_fonts:
+            print("Publisher font recovery requires --publisher-fonts", file=sys.stderr)
+            return 2
+        if not recovery_initial.is_file() or not recovery_book.is_file():
+            print("Publisher font recovery fixture not found", file=sys.stderr)
+            return 2
+        with zipfile.ZipFile(recovery_initial) as initial, zipfile.ZipFile(recovery_book) as repaired:
+            if (initial.read("OEBPS/content.opf") != repaired.read("OEBPS/content.opf") or
+                    initial.read("OEBPS/style.css") != repaired.read("OEBPS/style.css") or
+                    initial.read("OEBPS/body-bold.ttf") != repaired.read("OEBPS/body-bold.ttf") or
+                    initial.read("OEBPS/body.ttf") == repaired.read("OEBPS/body.ttf")):
+                print("Publisher recovery fixtures must only repair the regular body font", file=sys.stderr)
+                return 2
+
     if args.build:
         build_simulator(args.env)
 
@@ -239,7 +332,15 @@ def run_smoke(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix="crossink-sim-smoke-") as temp_dir_name:
         temp_root = Path(temp_dir_name)
-        simulator_book_path = prepare_fs(temp_root, book)
+        repaired_css_retry_book = None
+        if args.css_toggle:
+            simulator_book, repaired_css_retry_book, css_retry_member = prepare_css_retry_fixtures(temp_root, book)
+        else:
+            simulator_book = book
+        simulator_book_path = prepare_fs(temp_root, simulator_book)
+        repaired_css_retry_book_path = (
+            prepare_fs(temp_root, repaired_css_retry_book) if repaired_css_retry_book else None
+        )
 
         if args.custom_sleep_images:
             # Small square with black/white halves: Fit needs centered margins,
@@ -253,6 +354,16 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_dir:
             shutil.copytree(Path(args.font_dir), temp_root / "fs_" / "fonts", dirs_exist_ok=True)
         env = os.environ.copy()
+        if args.publisher_fonts:
+            env["CROSSINK_SIMULATOR_SMOKE_PUBLISHER_FONTS"] = "1"
+        if args.css_toggle:
+            env["CROSSINK_SIMULATOR_SMOKE_CSS_TOGGLE"] = "1"
+            env["CROSSINK_SIMULATOR_SMOKE_CSS_RETRY_REPAIRED_BOOK"] = repaired_css_retry_book_path
+        if key_change_book:
+            env["CROSSINK_SIMULATOR_SMOKE_ADOBE_KEY_CHANGE_BOOK"] = str(key_change_book)
+        if recovery_initial:
+            env["CROSSINK_SIMULATOR_SMOKE_PUBLISHER_RECOVERY_INITIAL_BOOK"] = str(recovery_initial)
+            env["CROSSINK_SIMULATOR_SMOKE_PUBLISHER_RECOVERY_BOOK"] = str(recovery_book)
         if args.ruled_lines:
             env["CROSSINK_SIMULATOR_SMOKE_RULED_LINES"] = "1"
         if args.text_darkness:
@@ -297,7 +408,7 @@ def run_smoke(args: argparse.Namespace) -> int:
                 env["CROSSINK_ASSET_SMOKE_EXPECT_TRANSLATION_REJECTION"] = "1"
             env["CROSSINK_SIM_HTTP_MOCK_ROOT"] = str(prepare_asset_mock(temp_root, args.asset_snapshot, args.asset_hyphenation_only))
             if args.asset_empty_catalog:
-                catalog_path = Path(env["CROSSINK_SIM_HTTP_MOCK_ROOT"]) / "hyphenation.json"
+                catalog_path = Path(env["CROSSINK_SIM_HTTP_MOCK_ROOT"]) / "hyphenation-v2.json"
                 catalog = json.loads(catalog_path.read_bytes())
                 catalog["entries"] = []
                 catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, separators=(",", ":")))
@@ -549,6 +660,23 @@ def run_smoke(args: argparse.Namespace) -> int:
         print(f"Simulator smoke test failed with exit code {proc.returncode}", file=sys.stderr)
         return proc.returncode
 
+    if args.publisher_fonts and "Simulator smoke test passed: publisher fonts" not in proc.stdout:
+        print("Simulator did not complete publisher-font checks", file=sys.stderr)
+        return 2
+
+    if args.css_toggle and "Simulator smoke test passed: CSS toggle" not in proc.stdout:
+        print("Simulator did not complete CSS-toggle checks", file=sys.stderr)
+        return 2
+    if args.css_toggle and f"Could not read CSS file: {css_retry_member}" not in proc.stdout:
+        print("Simulator did not exercise the injected stylesheet read failure", file=sys.stderr)
+        return 2
+    if args.css_toggle and "CSS completion retry stopped; keeping the existing partial rules cache" not in proc.stdout:
+        print("Simulator did not exercise a failed warm CSS completion retry", file=sys.stderr)
+        return 2
+    if args.css_toggle and "Partial CSS retry preserved cache/layout bytes" not in proc.stdout:
+        print("Simulator did not verify CSS cache/layout preservation and completion", file=sys.stderr)
+        return 2
+
     if args.language_file and f"Mapped {code} " not in proc.stdout:
         print(f"Simulator did not boot with cached language {code}", file=sys.stderr)
         return 2
@@ -654,6 +782,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--factory-flash", action="store_true",
                         help="Use the reported 80 KiB factory partition; verify it remains unchanged (S3 profiles)")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
+    parser.add_argument("--publisher-fonts", action="store_true",
+                        help="Run publisher-font cache, registration and extraction checks")
+    parser.add_argument("--css-toggle", action="store_true",
+                        help="Build CSS and full/incremental sections, then verify partial-cache retry preservation")
+    parser.add_argument("--publisher-font-key-change-book",
+                        help="Second Adobe-obfuscated EPUB with the same font member and a changed UUID")
+    parser.add_argument("--publisher-font-recovery-initial-book",
+                        help="Bold-only EPUB whose regular body face initially fails to load")
+    parser.add_argument("--publisher-font-recovery-book",
+                        help="Same EPUB after repairing the regular body face")
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
     parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")

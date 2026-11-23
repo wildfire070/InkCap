@@ -196,7 +196,8 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       version != PRE_PUBLISHER_FONTS_READER_SETTINGS_FILE_VERSION &&
       version != PRE_TEXT_DARKNESS_READER_SETTINGS_FILE_VERSION &&
       version != PRE_TWO_TONE_AA_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_WORD_HOLD_ACTION_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -264,14 +265,21 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
   if (ok && version >= PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.twoToneTextAA) && snapshot.twoToneTextAA <= 1;
   }
-  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+  if (ok && version >= PRE_WORD_HOLD_ACTION_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, snapshot.ruledLines) && snapshot.ruledLines <= 3;
+  }
+  // Unlike the other trailing fields above, an out-of-range byte here doesn't fail the whole
+  // parse -- it just leaves data.wordHoldAction at its already-defaulted "use global" sentinel.
+  uint8_t wordHoldAction = 3;  // Mirrors CrossPointSettings::WORD_HOLD_USE_GLOBAL.
+  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+    ok = readU8(file, wordHoldAction);
   }
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Reader settings file is truncated, using defaults");
     return data;
   }
+  if (wordHoldAction <= 2) data.wordHoldAction = wordHoldAction;  // 2 mirrors WORD_HOLD_ASK.
 
   if ((flags & READER_SETTINGS_FLAG_AUTO_PAGE_TURN) && seconds != 0) {
     data.hasAutoPageTurnInterval = true;
@@ -299,7 +307,13 @@ BookReaderSettingsData parseBookReaderSettingsFile(FsFile& file, const ReaderSet
       data.readerSettingsOverrideMask &= ~TEXT_DARKNESS_OVERRIDE;
     }
     // Files older than v15 never stored a two-tone-text-AA choice either.
-    if (version < READER_SETTINGS_FILE_VERSION) data.readerSettingsOverrideMask &= ~TWO_TONE_TEXT_AA_OVERRIDE;
+    if (version < PRE_RULED_LINES_READER_SETTINGS_FILE_VERSION) {
+      data.readerSettingsOverrideMask &= ~TWO_TONE_TEXT_AA_OVERRIDE;
+    }
+    // Files older than v16 never stored a ruled-lines choice either.
+    if (version < PRE_WORD_HOLD_ACTION_READER_SETTINGS_FILE_VERSION) {
+      data.readerSettingsOverrideMask &= ~RULED_LINES_OVERRIDE;
+    }
     data.hasCustomReaderSettings = data.readerSettingsOverrideMask != 0;
     applyReaderSettingsOverrides(data.readerSettings, snapshot, data.readerSettingsOverrideMask);
   }
@@ -334,7 +348,12 @@ bool writeBookReaderSettingsFile(FsFile& file, const BookReaderSettingsData& dat
   const uint16_t clampedSeconds = clampAutoPageTurnIntervalSeconds(data.autoPageTurnSeconds);
   ReaderSettingsSnapshot normalizedReaderSettings = data.readerSettings;
   normalizedReaderSettings.epubRenderMode = normalizeRenderModeRaw(data.renderMode);
-  const bool ok = writeU8(file, READER_SETTINGS_FILE_VERSION) && writeU8(file, flags) &&
+  // Keep version 16 readable by older firmware when the book has no long-press override: only
+  // bump to 17 (and append the trailing byte) when there's actually an override to carry.
+  const bool hasWordHoldOverride = data.wordHoldAction <= 2;  // 2 mirrors WORD_HOLD_ASK.
+  const uint8_t version =
+      hasWordHoldOverride ? READER_SETTINGS_FILE_VERSION : PRE_WORD_HOLD_ACTION_READER_SETTINGS_FILE_VERSION;
+  const bool ok = writeU8(file, version) && writeU8(file, flags) &&
                   writeU16(file, clampedSeconds) && writeU8(file, normalizeRenderModeRaw(data.renderMode)) &&
                   writeReaderSettingsSnapshot(file, normalizedReaderSettings) &&
                   writeExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName)) &&
@@ -345,7 +364,8 @@ bool writeBookReaderSettingsFile(FsFile& file, const BookReaderSettingsData& dat
                   writeU8(file, std::min<uint8_t>(normalizedReaderSettings.publisherFonts, MAX_PUBLISHER_FONTS)) &&
                   writeU8(file, std::min<uint8_t>(normalizedReaderSettings.textDarkness, 2)) &&
                   writeU8(file, normalizedReaderSettings.twoToneTextAA ? 1 : 0) &&
-                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.ruledLines, 3));
+                  writeU8(file, std::min<uint8_t>(normalizedReaderSettings.ruledLines, 3)) &&
+                  (!hasWordHoldOverride || writeU8(file, data.wordHoldAction));
   file.close();
   if (!ok) {
     LOG_ERR("ERS", "Short write saving reader settings");

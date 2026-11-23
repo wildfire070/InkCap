@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <iterator>
 #include <new>
 #include <string>
 
@@ -25,7 +24,8 @@ EpdFontFamily::Style baseStyle(const EpdFontFamily::Style style, const bool fall
 
 CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, const int fontId, const uint16_t viewportWidth,
                                        const uint16_t viewportHeight, const uint16_t lineHeight,
-                                       const uint8_t cellPadding, BlockStyle tableStyle, const int8_t characterSpacing)
+                                       const uint8_t cellPadding, BlockStyle tableStyle, const int8_t characterSpacing,
+                                       const TableColumnLayout::Plan columnPlan)
     : renderer_(renderer),
       fontId_(fontId),
       characterSpacing_(characterSpacing),
@@ -33,9 +33,10 @@ CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, const int fontId, 
       viewportHeight_(viewportHeight),
       lineHeight_(lineHeight),
       cellPadding_(cellPadding),
-      tableStyle_(tableStyle) {
-  // One shared row buffer avoids a ParsedText arena per table cell. It is kept
-  // for the table lifetime and grows at most once to the bounded 4 KiB maximum.
+      tableStyle_(tableStyle),
+      columnPlan_(columnPlan) {
+  // One shared row buffer avoids a ParsedText arena per table cell. It starts
+  // small for ordinary rows and grows at most once to the bounded 4 KiB maximum.
   buffer_ = makeUniqueNoThrow<char[]>(INITIAL_ROW_TEXT_BYTES);
   if (!buffer_) {
     LOG_ERR("EHP", "Compact table row buffer allocation failed (%u bytes)", INITIAL_ROW_TEXT_BYTES);
@@ -67,6 +68,27 @@ bool CompactTableLayout::ensureBuffer(const size_t additionalBytes) {
   return true;
 }
 
+bool CompactTableLayout::ensureTokenCapacity(const size_t required) {
+  if (tokens_.ensureCapacity(required)) return true;
+  LOG_ERR("EHP", "Compact table token storage allocation failed (%u tokens)", MAX_ROW_TOKENS);
+  allocationFailure_ = true;
+  return false;
+}
+
+bool CompactTableLayout::ensureCellCapacity(const size_t required) {
+  if (cells_.ensureCapacity(required)) return true;
+  LOG_ERR("EHP", "Compact table cell storage allocation failed (%u cells)", MAX_CELLS_PER_ROW);
+  allocationFailure_ = true;
+  return false;
+}
+
+bool CompactTableLayout::ensureFootnoteCapacity(const size_t required) {
+  if (rowFootnotes_.ensureCapacity(required)) return true;
+  LOG_ERR("EHP", "Compact table footnote storage allocation failed (%u entries)", Page::MAX_FOOTNOTES_PER_PAGE);
+  allocationFailure_ = true;
+  return false;
+}
+
 uint16_t CompactTableLayout::tableWidth() const {
   const int inset = tableStyle_.totalHorizontalInset();
   return inset < viewportWidth_ ? static_cast<uint16_t>(viewportWidth_ - inset) : viewportWidth_;
@@ -74,7 +96,7 @@ uint16_t CompactTableLayout::tableWidth() const {
 
 uint16_t CompactTableLayout::innerWidthForSpan(const uint8_t columns, const uint8_t startColumn,
                                                const uint8_t span) const {
-  return TableColumnLayout::innerWidth(tableWidth(), columns, startColumn, span, cellPadding_);
+  return TableColumnLayout::innerWidth(tableWidth(), columns, startColumn, span, cellPadding_, columnPlan_);
 }
 
 uint16_t CompactTableLayout::measure(const uint16_t offset, const uint16_t length, const EpdFontFamily::Style style) {
@@ -101,9 +123,6 @@ bool CompactTableLayout::beginRow() {
   allocationFailure_ = false;
   unsupported_ = false;
   rowActive_ = true;
-  for (auto& cell : cells_) {
-    cell = Cell{};
-  }
   return true;
 }
 
@@ -113,7 +132,9 @@ bool CompactTableLayout::beginCell(const bool isHeader, const uint8_t colSpan, c
   if (static_cast<uint16_t>(effectiveColumnCount_ + colSpan) > MAX_COLUMNS) {
     unsupported_ = true;
   }
+  if (!ensureCellCapacity(static_cast<size_t>(cellCount_) + 1)) return false;
   auto& cell = cells_[cellCount_];
+  cell = Cell{};
   cell.firstToken = tokenCount_;
   cell.colSpan = colSpan;
   cell.isHeader = isHeader;
@@ -133,6 +154,7 @@ bool CompactTableLayout::appendWord(const std::string_view text, const EpdFontFa
     LOG_DBG("EHP", "Compact table row exceeds %u text runs", MAX_ROW_TOKENS);
     return false;
   }
+  if (!ensureTokenCapacity(static_cast<size_t>(tokenCount_) + 1)) return false;
 
   EpdFontFamily::Style style = baseStyle(requestedStyle, baseStyleFallback_);
   if (!haveLastStyle_) {
@@ -181,6 +203,8 @@ bool CompactTableLayout::endCell(const std::vector<std::pair<int, FootnoteEntry>
   auto& cell = cells_[cellCount_ - 1];
   cell.tokenCount = static_cast<uint16_t>(tokenCount_ - cell.firstToken);
   const size_t count = std::min<size_t>(footnotes.size(), FOOTNOTE_LIMIT);
+  const size_t toCapture = std::min<size_t>(count, FOOTNOTE_LIMIT - rowFootnoteCount_);
+  if (!ensureFootnoteCapacity(static_cast<size_t>(rowFootnoteCount_) + toCapture)) return false;
   for (size_t i = 0; i < count; ++i) {
     if (rowFootnoteCount_ >= FOOTNOTE_LIMIT) break;
     rowFootnotes_[rowFootnoteCount_++] = footnotes[i].second;
@@ -194,7 +218,7 @@ int CompactTableLayout::gapBefore(const LineToken& previous, const uint16_t offs
   if (!attached) return renderer_.getSpaceWidth(fontId_, style);
   if (characterSpacing_ == 0) return 0;
   auto* cursor = reinterpret_cast<const unsigned char*>(buffer_.get() + previous.offset);
-  const auto* end = cursor + previous.length;
+  const auto* end = cursor + previous.length();
   uint32_t left = 0;
   while (cursor < end) left = utf8NextCodepoint(&cursor);
   cursor = reinterpret_cast<const unsigned char*>(buffer_.get() + offset);
@@ -204,11 +228,18 @@ int CompactTableLayout::gapBefore(const LineToken& previous, const uint16_t offs
 }
 
 TextBlock::SourceRange CompactTableLayout::sourceRange(const uint16_t offset, const uint16_t length) const {
-  const auto end = tokens_.begin() + tokenCount_;
-  const auto after = std::upper_bound(tokens_.begin(), end, offset,
-                                      [](uint16_t value, const Token& token) { return value < token.offset; });
-  if (after == tokens_.begin()) return {};
-  const Token& token = *(after - 1);
+  uint16_t low = 0;
+  uint16_t high = tokenCount_;
+  while (low < high) {
+    const uint16_t middle = static_cast<uint16_t>(low + (high - low) / 2);
+    if (tokens_[middle].offset <= offset) {
+      low = static_cast<uint16_t>(middle + 1);
+    } else {
+      high = middle;
+    }
+  }
+  if (low == 0) return {};
+  const Token& token = tokens_[low - 1];
   if (token.sourceOffset == UINT32_MAX || offset + length > token.offset + token.length) return {};
   auto* cursor = reinterpret_cast<const unsigned char*>(buffer_.get() + token.offset);
   const auto* start = reinterpret_cast<const unsigned char*>(buffer_.get() + offset);
@@ -226,10 +257,10 @@ TextBlock::SourceRange CompactTableLayout::sourceRange(const uint16_t offset, co
   return range;
 }
 
-bool CompactTableLayout::emitLine(std::array<LineToken, MAX_ROW_TOKENS>& line, const uint16_t lineCount,
-                                  const uint16_t lineWidth, const uint16_t maxWidth, const BlockStyle& style,
-                                  TableFragmentCell& output) {
+bool CompactTableLayout::emitLine(const LineStorage& line, const uint16_t lineCount, const uint16_t lineWidth,
+                                  const uint16_t maxWidth, const BlockStyle& style, const LineOutput& output) {
   if (lineCount == 0) return true;
+  if (output.grid && output.grid->lines.size() >= MAX_LINES_PER_CELL) return false;
 
   std::vector<TextBlock::SourceRange> sources;
   sources.reserve(lineCount);
@@ -246,15 +277,15 @@ bool CompactTableLayout::emitLine(std::array<LineToken, MAX_ROW_TOKENS>& line, c
   std::vector<uint8_t> wordSizes;
   bool anyFlags = false;
   for (uint16_t i = 0; i < lineCount; ++i) {
-    sources.push_back(sourceRange(line[i].offset, line[i].length));
-    words.emplace_back(buffer_.get() + line[i].offset, line[i].length);
+    sources.push_back(sourceRange(line[i].offset, line[i].length()));
+    words.emplace_back(buffer_.get() + line[i].offset, line[i].length());
     styles.push_back(line[i].style);
     flags.push_back(line[i].flags);
-    if (line[i].paint) {
+    if (line[i].paint()) {
       if (wordSizes.empty()) wordSizes.resize(lineCount);
-      wordSizes[i] = line[i].paint;
+      wordSizes[i] = line[i].paint();
     }
-    hasSpaceBefore.push_back(i > 0 && !line[i].attachToPrevious);
+    hasSpaceBefore.push_back(i > 0 && !line[i].attached());
     anyFlags = anyFlags || line[i].flags != 0;
   }
 
@@ -278,7 +309,7 @@ bool CompactTableLayout::emitLine(std::array<LineToken, MAX_ROW_TOKENS>& line, c
       rightEdge -= line[i].width;
       xPositions.push_back(static_cast<int16_t>(std::clamp(rightEdge, 0, INT16_MAX)));
       if (i + 1 < lineCount) {
-        rightEdge -= gapBefore(line[i], line[i + 1].offset, line[i + 1].style, line[i + 1].attachToPrevious);
+        rightEdge -= gapBefore(line[i], line[i + 1].offset, line[i + 1].style, line[i + 1].attached());
       }
     }
   } else {
@@ -297,7 +328,7 @@ bool CompactTableLayout::emitLine(std::array<LineToken, MAX_ROW_TOKENS>& line, c
       xPositions.push_back(static_cast<int16_t>(std::clamp(x, 0, INT16_MAX)));
       x += line[i].width;
       if (i + 1 < lineCount) {
-        x += gapBefore(line[i], line[i + 1].offset, line[i + 1].style, line[i + 1].attachToPrevious);
+        x += gapBefore(line[i], line[i + 1].offset, line[i + 1].style, line[i + 1].attached());
       }
     }
   }
@@ -310,39 +341,51 @@ bool CompactTableLayout::emitLine(std::array<LineToken, MAX_ROW_TOKENS>& line, c
     allocationFailure_ = true;
     return false;
   }
-  output.lines.emplace_back(std::move(owned));
-  return output.lines.size() <= TableFragmentCell::MAX_SERIALIZED_LINES;
+  if (output.paragraph) return output.paragraph(output.context, std::move(owned), output.visibleOffset);
+  output.grid->lines.emplace_back(std::move(owned));
+  return true;
 }
 
-bool CompactTableLayout::appendLineToken(std::array<LineToken, MAX_ROW_TOKENS>& line, uint16_t& lineCount,
-                                         uint16_t& lineWidth, const uint16_t maxWidth, const uint16_t offset,
-                                         const uint16_t length, const EpdFontFamily::Style style, const uint8_t flags,
-                                         const bool attachToPrevious, const uint8_t paint, bool& emittedAny,
-                                         const BlockStyle& cellStyle, TableFragmentCell& output) {
+bool CompactTableLayout::appendLineToken(uint16_t& lineCount, uint16_t& lineWidth, const uint16_t maxWidth,
+                                         const uint16_t offset, const uint16_t length, const EpdFontFamily::Style style,
+                                         const uint8_t flags, const bool attachToPrevious, const uint8_t paint,
+                                         bool& emittedAny, const BlockStyle& cellStyle, const LineOutput& output) {
   const uint16_t width = measure(offset, length, style);
-  const int gap = lineCount > 0 ? gapBefore(line[lineCount - 1], offset, style, attachToPrevious) : 0;
+  const int gap = lineCount > 0 ? gapBefore(lineScratch_[lineCount - 1], offset, style, attachToPrevious) : 0;
   if (lineCount > 0 && static_cast<int>(lineWidth) + gap + width > maxWidth) {
-    if (!emitLine(line, lineCount, lineWidth, maxWidth, cellStyle, output)) return false;
+    if (!emitLine(lineScratch_, lineCount, lineWidth, maxWidth, cellStyle, output)) return false;
+    lineCount = 0;
+    lineWidth = 0;
+    emittedAny = true;
+  }
+  if (lineCount >= INLINE_ROW_TOKENS && !lineScratchLimited_ &&
+      !lineScratch_.ensureCapacity(static_cast<size_t>(lineCount) + 1)) {
+    // Keep all text if a wide line cannot allocate its spill storage. The
+    // bounded common-case slice may add a soft wrap at this point.
+    LOG_DBG("EHP", "Compact table line scratch limited to %u words", INLINE_ROW_TOKENS);
+    lineScratchLimited_ = true;
+  }
+  if (lineScratchLimited_ && lineCount >= INLINE_ROW_TOKENS) {
+    if (!emitLine(lineScratch_, lineCount, lineWidth, maxWidth, cellStyle, output)) return false;
     lineCount = 0;
     lineWidth = 0;
     emittedAny = true;
   }
   if (lineCount >= MAX_ROW_TOKENS) return false;
-  line[lineCount++] = {offset, length, width, style, flags, attachToPrevious, paint};
+  lineScratch_[lineCount++] = {offset, LineToken::pack(length, attachToPrevious, paint), width, style, flags};
   lineWidth = static_cast<uint16_t>(std::max(0, static_cast<int>(lineWidth) + (lineCount > 1 ? gap : 0) + width));
   return true;
 }
 
-bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, TableFragmentCell& output) {
+bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, const LineOutput& output) {
   if (maxWidth < 1) return false;
-  auto& line = lineScratch_;
   uint16_t lineCount = 0;
   uint16_t lineWidth = 0;
   bool emittedAny = false;
 
   auto flush = [&]() -> bool {
     if (lineCount == 0) return true;
-    const bool ok = emitLine(line, lineCount, lineWidth, maxWidth, cell.style, output);
+    const bool ok = emitLine(lineScratch_, lineCount, lineWidth, maxWidth, cell.style, output);
     lineCount = 0;
     lineWidth = 0;
     emittedAny = true;
@@ -357,9 +400,9 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
     bool attach = token.attachToPrevious;
     while (remainingLength > 0) {
       const uint16_t fullWidth = measure(remainingOffset, remainingLength, style);
-      const int gap = lineCount > 0 ? gapBefore(line[lineCount - 1], remainingOffset, style, attach) : 0;
+      const int gap = lineCount > 0 ? gapBefore(lineScratch_[lineCount - 1], remainingOffset, style, attach) : 0;
       if (fullWidth <= maxWidth && (lineCount == 0 || static_cast<int>(lineWidth) + gap + fullWidth <= maxWidth)) {
-        if (!appendLineToken(line, lineCount, lineWidth, maxWidth, remainingOffset, remainingLength, style, token.flags,
+        if (!appendLineToken(lineCount, lineWidth, maxWidth, remainingOffset, remainingLength, style, token.flags,
                              attach, token.paint, emittedAny, cell.style, output)) {
           return false;
         }
@@ -404,7 +447,8 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
       }
       const uint16_t chunkLen = best;
       const uint16_t chunkWidth = measure(remainingOffset, chunkLen, style);
-      line[lineCount++] = {remainingOffset, chunkLen, chunkWidth, style, token.flags, attach, token.paint};
+      lineScratch_[lineCount++] = {remainingOffset, LineToken::pack(chunkLen, attach, token.paint), chunkWidth, style,
+                                   token.flags};
       lineWidth = chunkWidth;
       if (!flush()) return false;
       remainingOffset = static_cast<uint16_t>(remainingOffset + chunkLen);
@@ -414,37 +458,27 @@ bool CompactTableLayout::wrapCell(const Cell& cell, const uint16_t maxWidth, Tab
   }
 
   if (!flush()) return false;
-  return output.lines.size() <= MAX_LINES_PER_CELL;
+  return true;
 }
 
-bool CompactTableLayout::flattenCell(const Cell& cell, std::vector<std::shared_ptr<TextBlock>>& output) {
-  TableFragmentCell flattened;
-  if (!wrapCell(cell, static_cast<uint16_t>(tableWidth() > cellPadding_ * 2 ? tableWidth() - cellPadding_ * 2 : 1),
-                flattened)) {
-    return false;
+bool CompactTableLayout::visitCapturedParagraphs(const ParagraphVisitor visitor, void* context) {
+  if (!visitor || fatal_ || !rowActive_ || cellActive_) return false;
+  const uint16_t width = static_cast<uint16_t>(tableWidth() > cellPadding_ * 2 ? tableWidth() - cellPadding_ * 2 : 1);
+  for (uint8_t i = 0; i < cellCount_; ++i) {
+    const auto& cell = cells_[i];
+    if (!wrapCell(cell, width, {nullptr, visitor, context, cell.visibleTextOffset})) return false;
   }
-  output.insert(output.end(), std::make_move_iterator(flattened.lines.begin()),
-                std::make_move_iterator(flattened.lines.end()));
+  rowActive_ = false;
   return true;
 }
 
 CompactTableLayout::RowResult CompactTableLayout::finishRowInternal(const bool forceFlatten, TableFragmentRow& gridRow,
-                                                                    std::vector<std::shared_ptr<TextBlock>>& flatLines,
-                                                                    std::vector<FootnoteEntry>& footnotes,
                                                                     uint32_t& visibleTextOffset) {
   if (fatal_ || !rowActive_ || cellActive_) return RowResult::Abort;
   if (cellCount_ == 0 || effectiveColumnCount_ == 0) forceFlatten ? flattened_ = true : unsupported_ = true;
   const bool flatten = forceFlatten || unsupported_ || flattened_;
   visibleTextOffset = cellCount_ > 0 ? cells_[0].visibleTextOffset : visibleTextOffset;
-  footnotes.clear();
-  for (uint8_t i = 0; i < rowFootnoteCount_; ++i) {
-    footnotes.push_back(rowFootnotes_[i]);
-  }
-
   if (flatten) {
-    for (uint8_t i = 0; i < cellCount_; ++i) {
-      if (!flattenCell(cells_[i], flatLines)) return RowResult::Abort;
-    }
     flattened_ = true;
   } else {
     if (columnCount_ == 0) {
@@ -454,8 +488,28 @@ CompactTableLayout::RowResult CompactTableLayout::finishRowInternal(const bool f
     bool validGrid = fullWidth || effectiveColumnCount_ == columnCount_;
     if (!validGrid || columnCount_ == 0 || columnCount_ > MAX_COLUMNS) {
       unsupported_ = true;
-      return finishRowInternal(true, gridRow, flatLines, footnotes, visibleTextOffset);
+      return finishRowInternal(true, gridRow, visibleTextOffset);
     }
+
+    const bool planned = !fullWidth && columnCount_ == columnPlan_.count;
+    const auto fallback = [&] {
+      // Release the partially wrapped cells before rewrapping the same tokens.
+      gridRow.cells.clear();
+      if (planned && !plannedRowEmitted_) {
+        // No planned row is visible yet, so keep the old widths for the
+        // entire table rather than taking a new and premature fallback.
+        columnPlan_ = {};
+        return finishRowInternal(false, gridRow, visibleTextOffset);
+      }
+      const auto result = finishRowInternal(true, gridRow, visibleTextOffset);
+      if (result == RowResult::Flatten) {
+        // This row alone could not fit. The established column geometry is
+        // still usable by subsequent rows, including in the equal grid.
+        flattened_ = false;
+        return RowResult::FlattenRow;
+      }
+      return result;
+    };
 
     gridRow.cells.clear();
     // Store one serialized cell per source cell; colSpan carries the logical
@@ -473,15 +527,14 @@ CompactTableLayout::RowResult CompactTableLayout::finishRowInternal(const bool f
       // fragment may use one physical column for that row, but the payload
       // still describes the meaningful source grid span.
       destination.colSpan = cells_[i].colSpan;
+      if (planned) {
+        destination.rightEdge = columnPlan_.ends[logicalColumn + destination.colSpan - 1];
+      }
       hasHeader = hasHeader || cells_[i].isHeader;
       hasData = hasData || !cells_[i].isHeader;
-      if (!wrapCell(cells_[i], innerWidthForSpan(columnCount_, logicalColumn, destination.colSpan), destination)) {
+      if (!wrapCell(cells_[i], innerWidthForSpan(columnCount_, logicalColumn, destination.colSpan), {&destination})) {
         if (allocationFailure_) return RowResult::Abort;
-        // Release the partially wrapped cells before re-wrapping as paragraphs;
-        // the flatten retry only runs when heap is already scarce.
-        gridRow.cells.clear();
-        flatLines.clear();
-        return finishRowInternal(true, gridRow, flatLines, footnotes, visibleTextOffset);
+        return fallback();
       }
       const uint16_t cellHeight =
           static_cast<uint16_t>(std::max<size_t>(1, destination.lines.size()) * lineHeight_ + cellPadding_ * 2);
@@ -491,26 +544,32 @@ CompactTableLayout::RowResult CompactTableLayout::finishRowInternal(const bool f
     if (rowHeight >= viewportHeight_) {
       // A grid row must fit on one page fragment. Rewrap the same captured
       // tokens as ordinary lines so the parser can page-break between lines.
-      gridRow.cells.clear();
-      flatLines.clear();
-      return finishRowInternal(true, gridRow, flatLines, footnotes, visibleTextOffset);
+      return fallback();
     }
+    plannedRowEmitted_ |= planned;
     gridRow.height = rowHeight;
     gridRow.headerSeparator = hasHeader && !hasData;
   }
 
-  rowActive_ = false;
+  rowActive_ = flatten;
   cellActive_ = false;
   return flatten ? RowResult::Flatten : RowResult::Ok;
 }
 
 CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow& gridRow,
-                                                            std::vector<std::shared_ptr<TextBlock>>& flatLines,
                                                             std::vector<FootnoteEntry>& footnotes,
                                                             uint32_t& visibleTextOffset) {
-  flatLines.clear();
-  const RowResult result =
-      finishRowInternal(unsupported_ || flattened_, gridRow, flatLines, footnotes, visibleTextOffset);
+  const RowResult result = finishRow(gridRow, visibleTextOffset);
+  footnotes.clear();
+  footnotes.reserve(rowFootnoteCount_);
+  for (uint8_t i = 0; i < rowFootnoteCount_; ++i) {
+    footnotes.push_back(rowFootnotes_[i]);
+  }
+  return result;
+}
+
+CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow& gridRow, uint32_t& visibleTextOffset) {
+  const RowResult result = finishRowInternal(unsupported_ || flattened_, gridRow, visibleTextOffset);
   if (result == RowResult::Abort) {
     fatal_ = true;
     LOG_ERR("EHP", "Compact table row layout failed");

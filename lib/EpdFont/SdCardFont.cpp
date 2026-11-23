@@ -2,6 +2,9 @@
 // CrossPoint #3831 (9610da70), including the correctness fixes in #3838.
 #include "SdCardFont.h"
 
+#if defined(ESP_PLATFORM) || defined(SIMULATOR)
+#include <AssetFlashLayout.h>
+#endif
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -773,6 +776,13 @@ bool SdCardFont::loadShapingBlob(void* ctx, ComplexShaper::Blob* out) {
     } else {
       LOG_ERR("SDCF", "%u-byte shaping data fits neither the heap nor a flash cache here; text is not shaped",
               s.shapingBlobLength);
+#if CROSSINK_SHAPING_FLASH_CACHE
+      // A valid source that needs the reserved flash tail can recover on a
+      // later boot. Do not permanently classify it as malformed.
+      if (!asset_flash_layout::hasShapingReservation() && s.shapingBlobLength <= FlashBlobCache::MAX_BLOB_BYTES) {
+        ComplexShaper::noteSourceUnavailable(true);
+      }
+#endif
     }
     file.close();
     return false;
@@ -1442,31 +1452,121 @@ int SdCardFont::prewarm(const char* utf8Text, uint8_t styleMask, bool metadataOn
     if (cp == 0) break;
     if (shaping::isPositionToken(cp) || utf8IsVariationSelector(cp)) continue;
 
-    bool found = false;
-    for (uint32_t i = 0; i < cpCount; i++) {
-      if (codepoints[i] == cp) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      codepoints[cpCount++] = cp;
-    }
+    uint32_t* const end = codepoints.get() + cpCount;
+    uint32_t* const position = std::lower_bound(codepoints.get(), end, cp);
+    if (position != end && *position == cp) continue;
+    const size_t index = static_cast<size_t>(position - codepoints.get());
+    memmove(position + 1, position, static_cast<size_t>(end - position) * sizeof(*position));
+    codepoints[index] = cp;
+    ++cpCount;
   }
 
-  // Always include the replacement character
-  {
-    bool hasReplacement = false;
-    for (uint32_t i = 0; i < cpCount; i++) {
-      if (codepoints[i] == REPLACEMENT_GLYPH) {
-        hasReplacement = true;
-        break;
+  return prewarmCodepointSet(codepoints.get(), cpCount, styleMask, metadataOnly, includeKerning, startMs);
+}
+
+int SdCardFont::prewarmCodepoints(const uint32_t* sortedCodepoints, const uint32_t requestedCount, uint8_t styleMask,
+                                  const bool metadataOnly, const bool includeKerning) {
+  lastPrewarmFailed_ = false;
+  if (!loaded_ || (requestedCount > 0 && !sortedCodepoints) || requestedCount > MAX_PAGE_GLYPHS) return failPrewarm(-1);
+  styleMask = resolveStyleMask(styleMask);
+  if (styleMask == 0) return 0;
+  if (leanContent_) {
+    for (uint8_t style = 0; style < MAX_STYLES; ++style) {
+      if ((styleMask & (1 << style)) && !loadStyleLigatures(styles_[style])) return failPrewarm(-1);
+    }
+    if (!metadataOnly) prepareContentBitmaps();
+    return 0;
+  }
+
+  const unsigned long startMs = millis();
+  const uint32_t emptyCodepoint = 0;
+  const uint32_t* const codepointSpan = sortedCodepoints ? sortedCodepoints : &emptyCodepoint;
+  // The common repeated-page case is already present in the resident mini.
+  // Check that set before making the temporary 2 KiB expansion buffer. A hit
+  // is allocation-free when the resident ligatures and requested kern matrix
+  // are also ready.
+  auto miniContains = [](const PerStyle& style, const uint32_t codepoint) {
+    for (uint32_t i = 0; i < style.miniIntervalCount; ++i) {
+      if (codepoint < style.miniIntervals[i].first) break;
+      if (codepoint <= style.miniIntervals[i].last) return true;
+    }
+    return false;
+  };
+  auto miniCanServe = [&](const uint8_t styleIdx) {
+    const PerStyle& style = styles_[styleIdx];
+    if (!style.miniGlyphCount || style.miniIntervalCount == 0 || (style.miniMetadataOnly && !metadataOnly))
+      return false;
+    if (!metadataOnly && style.header.ligaturePairCount && !style.ligaturesLoaded) return false;
+    if (!metadataOnly && includeKerning && !style.miniKernBuilt) return false;
+
+    auto isCoveredOrMissing = [&](const uint32_t codepoint) {
+      return miniContains(style, codepoint) || findGlobalGlyphIndex(style, codepoint) < 0;
+    };
+    for (uint32_t i = 0; i < requestedCount; ++i) {
+      if (!isCoveredOrMissing(codepointSpan[i])) return false;
+    }
+    if (!isCoveredOrMissing(REPLACEMENT_GLYPH)) return false;
+
+    if (!metadataOnly && style.ligaturePairs) {
+      for (uint8_t i = 0; i < style.header.ligaturePairCount; ++i) {
+        const uint32_t left = style.ligaturePairs[i].pair >> 16;
+        const uint32_t right = style.ligaturePairs[i].pair & 0xFFFF;
+        const bool hasLeft =
+            left == REPLACEMENT_GLYPH || std::binary_search(codepointSpan, codepointSpan + requestedCount, left);
+        const bool hasRight =
+            right == REPLACEMENT_GLYPH || std::binary_search(codepointSpan, codepointSpan + requestedCount, right);
+        const uint32_t output = style.ligaturePairs[i].ligatureCp;
+        if (hasLeft && hasRight && !isCoveredOrMissing(output)) return false;
       }
     }
-    if (!hasReplacement && cpCount < MAX_PAGE_GLYPHS) {
-      codepoints[cpCount++] = REPLACEMENT_GLYPH;
+    return true;
+  };
+
+  bool miniHit = true;
+  for (uint8_t style = 0; style < MAX_STYLES; ++style) {
+    if ((styleMask & (1 << style)) && !miniCanServe(style)) {
+      miniHit = false;
+      break;
     }
   }
+  if (miniHit) {
+    int missed = 0;
+    for (uint8_t style = 0; style < MAX_STYLES; ++style) {
+      if (styleMask & (1 << style))
+        missed += prewarmStyle(style, codepointSpan, requestedCount, metadataOnly, includeKerning);
+    }
+    stats_.prewarmTotalMs = millis() - startMs;
+    return missed;
+  }
+
+  std::unique_ptr<uint32_t[]> codepoints(new (std::nothrow) uint32_t[MAX_PAGE_GLYPHS]);
+  if (!codepoints) {
+    LOG_ERR("SDCF", "Failed to allocate codepoint buffer (%u bytes)", MAX_PAGE_GLYPHS * 4);
+    return failPrewarm(-1);
+  }
+  const uint32_t cpCount = requestedCount;
+  if (cpCount) memcpy(codepoints.get(), codepointSpan, cpCount * sizeof(uint32_t));
+  return prewarmCodepointSet(codepoints.get(), cpCount, styleMask, metadataOnly, includeKerning, startMs);
+}
+
+int SdCardFont::prewarmCodepointSet(uint32_t* codepoints, uint32_t cpCount, const uint8_t styleMask,
+                                    const bool metadataOnly, const bool includeKerning, const unsigned long startMs) {
+  // The span is sorted and unique. Insert any additions in-place so interval
+  // merging below keeps its sorted-input contract without another sort pass.
+  auto insertCodepoint = [&](const uint32_t cp) {
+    uint32_t* const end = codepoints + cpCount;
+    uint32_t* const position = std::lower_bound(codepoints, end, cp);
+    if (position != end && *position == cp) return true;
+    if (cpCount >= MAX_PAGE_GLYPHS) return false;
+    const size_t index = static_cast<size_t>(position - codepoints);
+    memmove(position + 1, position, static_cast<size_t>(end - position) * sizeof(*position));
+    codepoints[index] = cp;
+    ++cpCount;
+    return true;
+  };
+
+  // Always include the replacement character
+  insertCodepoint(REPLACEMENT_GLYPH);
 
   // Add ligature output codepoints from all styles being prewarmed.
   // Skip during metadata-only prewarm (layout measurement) to avoid loading
@@ -1484,37 +1584,20 @@ int SdCardFont::prewarm(const char* utf8Text, uint8_t styleMask, bool metadataOn
           uint32_t rightCp = s.ligaturePairs[li].pair & 0xFFFF;
           uint32_t outCp = s.ligaturePairs[li].ligatureCp;
 
-          bool hasLeft = false, hasRight = false;
-          for (uint32_t i = 0; i < cpCount; i++) {
-            if (codepoints[i] == leftCp) hasLeft = true;
-            if (codepoints[i] == rightCp) hasRight = true;
-            if (hasLeft && hasRight) break;
-          }
-          if (!hasLeft || !hasRight) continue;
-
-          bool hasOut = false;
-          for (uint32_t i = 0; i < cpCount; i++) {
-            if (codepoints[i] == outCp) {
-              hasOut = true;
-              break;
-            }
-          }
-          if (!hasOut) {
-            codepoints[cpCount++] = outCp;
-          }
+          if (!std::binary_search(codepoints, codepoints + cpCount, leftCp) ||
+              !std::binary_search(codepoints, codepoints + cpCount, rightCp))
+            continue;
+          insertCodepoint(outCp);
         }
       }
     }
   }
 
-  // Sort codepoints for ordered interval building
-  std::sort(codepoints.get(), codepoints.get() + cpCount);
-
   // Prewarm each requested style
   int totalMissed = 0;
   for (uint8_t si = 0; si < MAX_STYLES; si++) {
     if (!(styleMask & (1 << si)) || !styles_[si].present) continue;
-    totalMissed += prewarmStyle(si, codepoints.get(), cpCount, metadataOnly, includeKerning);
+    totalMissed += prewarmStyle(si, codepoints, cpCount, metadataOnly, includeKerning);
   }
 
   stats_.prewarmTotalMs = millis() - startMs;
@@ -1966,6 +2049,45 @@ void SdCardFont::clearCache() {
     resetStyleMiniData(styles_[i]);
     applyGlyphMissCallback(i);
   }
+}
+
+bool SdCardFont::releaseBitmapCachesForLowMemory() {
+  // Lean content overflow points into fixed/shared scratch, not heap owned
+  // by the ring. Keep that required drawing scratch allocated.
+  const bool hadContentBitmaps = contentBitmaps_ != nullptr;
+  bool released = hadContentBitmaps;
+  if (!leanContent_) {
+    for (uint32_t i = 0; i < overflowCount_; ++i) {
+      released |= overflow_[i].bitmap != nullptr;
+    }
+  }
+  clearOverflow();
+  contentBitmaps_.reset();
+  contentBitmapCapacity_ = 0;
+  contentBitmapNext_ = 0;
+  contentBitmapsAttempted_ = false;
+  if (hadContentBitmaps && contentMetrics_) {
+    for (size_t i = 0; i < CONTENT_METRICS_CACHE_SIZE; ++i) contentMetrics_[i].bitmapValid = false;
+  }
+
+  for (uint8_t i = 0; i < MAX_STYLES; ++i) {
+    auto& style = styles_[i];
+    if (!style.present || !style.miniBitmap) continue;
+    if (style.miniMetadataOnly) {
+      // The old pixel block is just retained capacity. These glyph offsets
+      // still refer to the file, not to that block.
+      style.miniBitmap.reset();
+      style.miniBitmapCapacity = 0;
+      style.miniBitmapPool = MemoryPool::None;
+    } else {
+      // These glyph offsets refer to the mini atlas, not the font file. Switch
+      // back to the lazy stub rather than publishing a bitmap-less mini view.
+      freeStyleMiniData(style);
+      applyGlyphMissCallback(i);
+    }
+    released = true;
+  }
+  return released;
 }
 
 void SdCardFont::releaseForLowMemory(const bool preserveAdvanceTable) {

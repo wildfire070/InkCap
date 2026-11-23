@@ -235,13 +235,13 @@ EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitte
 EpdFont bitter14RegularFont(&bitter_14_regular);
 EpdFont bitter14BoldFont(&bitter_14_bold);
 EpdFont bitter14ItalicFont(&bitter_14_italic);
-EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
-EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
+// No bolditalic variant on non-scalable-font hardware (flash budget); getFont() falls back to bold.
+EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, nullptr);
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
-EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
-EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
+// No bolditalic variant on non-scalable-font hardware (flash budget); getFont() falls back to bold.
+EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, nullptr);
 
 #endif
 EpdFont smallFont(&inter_8_regular);
@@ -2285,7 +2285,8 @@ void loop() {
 #endif
   const unsigned long activityDuration = millis() - activityStartTime;
   // A blocking activity (for example an OPDS download) is not idle time.
-  lastActivityTime += activityDuration;
+  // Optional work performed while reading counts toward the ordinary sleep deadline.
+  lastActivityTime += activityDuration - std::min(activityDuration, activityManager.lastLoopIdleWorkMs());
 
 #ifdef SIMULATOR
   runSimulatorSmokeTestTick();
