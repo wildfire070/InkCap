@@ -32,4 +32,12 @@ target_link_libraries(SectionPersistenceTest PRIVATE
   expat
 )
 
+# This target exercises Section's own shaping-recovery logic (claimShapingRecovery,
+# the retry/readiness gating) against the lightweight ComplexShaper stub in
+# SectionPersistenceLinkStubs.cpp, not the real shaping engine -- so overriding the
+# firmware's own CROSSINK_INDIC_SHAPING=0 default (see platformio.ini) here costs
+# nothing in link size and keeps that logic under test even while it's disabled
+# in production.
+target_compile_definitions(SectionPersistenceTest PRIVATE CROSSINK_INDIC_SHAPING=1)
+
 gtest_discover_tests(SectionPersistenceTest)

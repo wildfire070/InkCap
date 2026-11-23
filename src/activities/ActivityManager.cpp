@@ -543,6 +543,7 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  idleWorkMs = 0;
   if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
     currentActivity->loop();
     // USB Drive normally restarts the device rather than replacing itself. The

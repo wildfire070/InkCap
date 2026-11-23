@@ -17,7 +17,7 @@ namespace {
 // English hyphenation patterns (3/3 minimum prefix/suffix length)
 LanguageHyphenator englishHyphenator(en_patterns, isLatinLetter, toLowerLatin, 3, 3);
 
-using EntryArray = std::array<LanguageEntry, 10>;
+using EntryArray = std::array<LanguageEntry, HYPHENATION_LANGUAGE_COUNT>;
 
 const EntryArray& entries() {
   static const EntryArray kEntries = {{{"english", "en", &englishHyphenator},
@@ -29,7 +29,8 @@ const EntryArray& entries() {
                                        {"polish", "pl", nullptr},
                                        {"portuguese", "pt", nullptr},
                                        {"swedish", "sv", nullptr},
-                                       {"ukrainian", "uk", nullptr}}};
+                                       {"ukrainian", "uk", nullptr},
+                                       {"dutch", "nl", nullptr}}};
   return kEntries;
 }
 
