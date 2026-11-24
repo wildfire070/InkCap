@@ -7,7 +7,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 source = (ROOT / "src/main.cpp").read_text()
 start = source.index("struct SleepChargeOverlay {")
-end = source.index("\n#endif\n\nvoid enterDeepSleep", start)
+# Anchor on holdSleepWhileUsbPowered's own closing brace, not on whatever
+# function happens to follow -- a Sync on Sleep block now sits between this
+# and enterDeepSleep(), and searching for "\n#endif\n\nvoid enterDeepSleep"
+# used to swallow that unrelated block (and its Wi-Fi/Arduino symbols) too.
+end = source.index("\n  return buttonPressed;\n}", start) + len("\n  return buttonPressed;\n}")
 production = source[start:end]
 harness = r'''
 
