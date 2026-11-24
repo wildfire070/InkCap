@@ -35,6 +35,7 @@
 #include "ReaderSettingsSnapshotIO.h"
 #include "ReadingSessionJournal.h"
 #include "ReadingSessionStats.h"
+#include "SectionCacheRepairState.h"
 #include "StableReadingPace.h"
 #include "activities/Activity.h"
 #include "activities/reader/TouchReaderPreviewModel.h"
@@ -77,6 +78,7 @@ class EpubReaderActivity final : public Activity {
   // reference (inside and outside this file) keeps compiling unchanged.
   using ReaderSettingsSnapshot = ReaderSettingsIO::ReaderSettingsSnapshot;
   using BookReaderSettingsData = ReaderSettingsIO::BookReaderSettingsData;
+
 
  private:
   ReaderUtils::DeferredGrayscalePlanes deferredGrayscalePlanes;
@@ -277,6 +279,7 @@ class EpubReaderActivity final : public Activity {
   ReaderButtonShortcuts readerButtonShortcuts;
   bool touchDictionaryLookupHandled = false;
   int pageLoadRetryCount = 0;
+  SectionCacheRepairState sectionCacheRepair;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
@@ -370,6 +373,8 @@ class EpubReaderActivity final : public Activity {
   // One-shot guard for the silent restart used before EPUB layout fallback modes. The restart token
   // restores this guard after boot so the resumed attempt can fall through to those modes.
   bool lowMemoryPartialRestartAttempted = false;
+  bool hasIndexingPsram = false;
+  unsigned long lastIdleIndexMs = 0;
   bool backgroundBuildPausedForLowMemory = false;
   BackgroundBuildMemoryGuard backgroundBuildMemoryGuard;
   // Input should win the next RenderLock race. Keep the incremental parser alive,
@@ -444,16 +449,9 @@ class EpubReaderActivity final : public Activity {
   // main loop a chance to observe input between pages.
   static constexpr int INTERACTIVE_BUILD_PAGES_PER_CHUNK = 1;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
-  // How many pages to keep laid out ahead of the reader for a still-building section. A page
-  // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
-  // -- a tiny buffer is enough. The background build stops once the watermark is this far
-  // ahead and resumes as the reader advances; building unbounded instead locked up input by
-  // monopolizing the RenderLock. A giant single-spine book therefore never finalizes its .bin
-  // in one sitting -- instant reopen comes from Section::suspendBuild() persisting the pages
-  // already laid out as a partial file on exit/sleep.
+  // Fill this window promptly. Only PSRAM readers continue beyond it, at idle priority.
   static constexpr int BUILD_WINDOW_AHEAD = 5;
-  // Reopening a partial does not immediately restart its whole-chapter extension build.
-  // Start it only when the reader is close enough to need pages past the watermark.
+  // Begin replaying saved pages before the reader reaches the end of a partial cache.
   static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
@@ -473,6 +471,7 @@ class EpubReaderActivity final : public Activity {
   // Remap the cached reading position once the saved paragraph and prior readable watermark are rebuilt
   // (used after a settings change re-paginates a chapter). Returns true if currentPage moved.
   bool isRelayoutCatchUpComplete() const;
+  bool isRelayoutCatchUpComplete(const Section& candidate) const;
   bool applyDeferredReposition();
   // Saves are suppressed while a footnote preview is on screen so the preview's own
   // position cannot overwrite the reader's. Set allowDuringFootnotePreview for the
@@ -626,21 +625,20 @@ class EpubReaderActivity final : public Activity {
     return true;
   }
   bool preventAutoSleep() override { return automaticPageTurnActive; }
-  // Hold the loop hot only while the build has work this loop would do: a kept-alive
-  // build sitting outside the lookahead window is dormant, and reporting it here would
-  // pin the CPU at full clock (no power saving, yield-only loop) for the whole read.
-  // Mirrors the tick condition in loop(): catch-up phase, or watermark inside the window.
-  // Caller must own RenderLock: render() can replace or finalize section.
-  bool sectionBuildWantsTick() const {
+  // Caller holds RenderLock. Distant partial-cache replay on PSRAM is optional idle work.
+  bool sectionBuildNeedsFastTick() const {
     return section && section->isBuilding() &&
-           (!section->activeBuildHasCaughtReadablePages() ||
-            static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD);
+           (static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD ||
+            (!section->activeBuildHasCaughtReadablePages() &&
+             (!hasIndexingPsram || section->currentPage + PARTIAL_REBUILD_START_MARGIN >= section->pageCount)));
   }
+  void advanceBackgroundSectionBuild();
+  void runBackgroundSectionBuildStep();
   bool backgroundSectionBuildHasHeap();
   void idlePrewarmNextPage();
   void maybeRunAutoSync();
   bool skipLoopDelay() override {
-    return backgroundBuildCanUsePageBuffer() && sectionBuildWantsTick() && !backgroundBuildPausedForLowMemory &&
+    return backgroundBuildCanUsePageBuffer() && sectionBuildNeedsFastTick() && !backgroundBuildPausedForLowMemory &&
            !backgroundBuildYieldForInput.load(std::memory_order_relaxed);
   }
   bool isReaderActivity() const override { return true; }

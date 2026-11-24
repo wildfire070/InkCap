@@ -32,6 +32,10 @@ namespace glyphBitmap {
 struct Frame;
 }
 
+#if defined(CROSSINK_MEMORY_TEST) || (defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2)
+#define CROSSINK_GFX_BUFFER_DIAGNOSTICS
+#endif
+
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
 enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
@@ -41,6 +45,25 @@ class GfxRenderer {
   friend struct UpstreamFeatureSmokeTest;
 #endif
  public:
+#ifdef CROSSINK_GFX_BUFFER_DIAGNOSTICS
+  struct BwBufferSnapshotStats {
+    uint32_t storeAttempts = 0;
+    uint32_t storeFailures = 0;
+    uint32_t restoreAttempts = 0;
+    uint32_t restoreFailures = 0;
+    uint32_t lastStoreMicros = 0;
+    uint32_t lastRestoreMicros = 0;
+    uint32_t lastStoredBytes = 0;
+    uint32_t lastRestoredBytes = 0;
+  };
+#endif
+
+#ifdef CROSSINK_MEMORY_TEST
+  using BwBufferAllocateForTest = uint8_t* (*)(size_t);
+  using BwBufferFreeForTest = void (*)(void*);
+  static void setBwBufferAllocatorForTest(BwBufferAllocateForTest allocate, BwBufferFreeForTest release);
+#endif
+
   enum RenderMode { BW, GRAYSCALE_LSB, GRAYSCALE_MSB };
 
   // Logical screen orientation from the perspective of callers
@@ -68,6 +91,9 @@ class GfxRenderer {
   uint16_t panelWidthBytes = HalDisplay::DISPLAY_WIDTH_BYTES;
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
+#ifdef CROSSINK_GFX_BUFFER_DIAGNOSTICS
+  BwBufferSnapshotStats bwBufferSnapshotStats_;
+#endif
   std::map<int, EpdFontFamily> fontMap;
   // Serializes framebuffer access across tasks: taken by RenderLock (ActivityManager)
   // before any Activity::render() call, and by NetworkBufferLoan/FrameBufferLoan below
@@ -197,6 +223,16 @@ class GfxRenderer {
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
+  bool hasComplexShapingSource(int fontId) const {
+    const auto font = fontMap.find(fontId);
+    if (font == fontMap.end()) return false;
+    for (auto style :
+         {EpdFontFamily::REGULAR, EpdFontFamily::BOLD, EpdFontFamily::ITALIC, EpdFontFamily::BOLD_ITALIC}) {
+      const auto* data = font->second.shapingData(style);
+      if (data && data->shapeHandler) return true;
+    }
+    return false;
+  }
   void registerSdCardFont(int fontId, SdCardFont* font) {
     ruledFontCached_ = false;
     sdCardFonts_[fontId] = font;
@@ -227,6 +263,9 @@ class GfxRenderer {
   bool collectSdCardFontShapedRtlCodepoints(const char* utf8Text, uint32_t* codepoints, uint16_t& cpCount,
                                             uint16_t capacity, std::string& tokenScratch,
                                             std::string& visualScratch) const;
+  // Safe between scan/draw operations, when no caller holds a glyph pointer.
+  // Leaves live shapers and layout advances alone; reports actual eviction.
+  bool releaseSdCardFontBitmapsForLowMemory(int fontId) const;
   bool releaseSdCardFontForLowMemory(int fontId, bool preserveAdvanceTable = false) const;
 
   // Orientation control (affects logical width/height and coordinate transforms)
@@ -533,6 +572,9 @@ class GfxRenderer {
   bool supportsStripGrayscale() const;
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
   void restoreBwBuffer();  // Restore and free the stored buffer
+#ifdef CROSSINK_GFX_BUFFER_DIAGNOSTICS
+  const BwBufferSnapshotStats& getBwBufferSnapshotStats() const { return bwBufferSnapshotStats_; }
+#endif
   void cleanupGrayscaleWithFrameBuffer() const;
 
   // Font helpers

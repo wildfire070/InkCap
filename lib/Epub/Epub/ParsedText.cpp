@@ -16,6 +16,7 @@
 #include <limits>
 #include <vector>
 
+#include "FocusReading.h"
 #include "InlineImageToken.h"
 #include "TokenBoundary.h"
 #include "WordSpacing.h"
@@ -35,7 +36,6 @@ constexpr int RTL_PER_WORD_PROBE_DEPTH = 64;
 constexpr size_t MIN_JUSTIFY_GAPS = 1;
 constexpr char GUIDE_DOT_UTF8[] = "\xc2\xb7";
 constexpr uint32_t GUIDE_DOT_CODEPOINT = 0x00B7;
-constexpr size_t FOCUS_READING_PERCENT = 43;
 constexpr size_t LAYOUT_ARENA_SLAB_BYTES = 4096;
 constexpr size_t INITIAL_TOKEN_VECTOR_RESERVE = 16;
 
@@ -339,9 +339,7 @@ FocusTokenMetadata computeFocusMetadata(const std::string_view segment, const Ep
     return {baseStyle, 0};
   }
 
-  // Target 43% for 1-bold at 4 chars and 3-bold at 7 chars with floor truncation.
-  size_t targetBoldChars = (charCount * FOCUS_READING_PERCENT) / 100;
-  targetBoldChars = std::clamp<size_t>(targetBoldChars, 1, 9);
+  const size_t targetBoldChars = FocusReading::boldPrefixLength(charCount);
 
   if (targetBoldChars >= charCount) {
     return {static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::BOLD), 0};
@@ -878,22 +876,31 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
   // --- FOCUS READING LOGIC BELOW ---
 
-  // Worst case: a segment boundary on each byte (highly punctuated UTF-8 text).
-  reserveTokenCapacity(word.length());
+  // Reserve for actual punctuation/word transitions instead of every input
+  // byte. A long word with one punctuation mark needs only three token slots.
+  const auto countSegments = [&] {
+    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(word.c_str());
+    const unsigned char* const end = cursor + word.length();
+    uint32_t firstCodepoint = utf8NextCodepoint(&cursor);
+    bool inWordSegment = isWordCharacter(firstCodepoint);
+    size_t segments = 1;
+    while (cursor < end) {
+      const uint32_t cp = utf8NextCodepoint(&cursor);
+      const bool isWordChar = utf8IsVariationSelector(cp) ? inWordSegment : isWordCharacter(cp);
+      if (isWordChar != inWordSegment) {
+        ++segments;
+        inWordSegment = isWordChar;
+      }
+    }
+    return segments;
+  };
+  reserveTokenCapacity(countSegments());
 
   // Lambda helper to process and push individual sub-segments of the string
   // Use std::string_view to avoid heap allocations when slicing
   auto processSegment = [&](std::string_view segment, bool isWord, bool attach, bool noSpaceBefore,
-                            const int16_t segmentLeadingPadding) {
-    const auto* begin = reinterpret_cast<const unsigned char*>(word.data());
-    const auto* segmentBegin = reinterpret_cast<const unsigned char*>(segment.data());
-    uint32_t segmentOffset = visibleTextOffset;
-    uint32_t segmentReferenceOffset = referenceTextOffset;
-    while (begin < segmentBegin) {
-      utf8NextCodepoint(&begin);
-      segmentOffset++;
-      segmentReferenceOffset++;
-    }
+                            const int16_t segmentLeadingPadding, const uint32_t segmentOffset,
+                            const uint32_t segmentReferenceOffset) {
     if (!isWord) {
       // Punctuation and Numbers stay regular
       pushToken(std::string(segment), attach, noSpaceBefore, baseStyle, 0, segmentOffset, segmentReferenceOffset,
@@ -912,6 +919,8 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   const unsigned char* segmentStart = ptr;
   uint32_t firstCp = utf8NextCodepoint(&ptr);  // Consume the first char to determine initial state
   bool inWordSegment = isWordCharacter(firstCp);
+  uint32_t segmentCodepointOffset = 0;
+  uint32_t codepointsScanned = 1;
 
   bool isFirstSegment = true;
 
@@ -930,20 +939,24 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       // Only the very first segment inherits the original attachToPrevious flag.
       // Every subsequent segment MUST attach=true so it glues seamlessly to the prefix.
       processSegment(segment, inWordSegment, isFirstSegment ? effectiveAttachToPrevious : true,
-                     isFirstSegment ? effectiveNoSpaceBefore : false, isFirstSegment ? leadingPadding : 0);
+                     isFirstSegment ? effectiveNoSpaceBefore : false, isFirstSegment ? leadingPadding : 0,
+                     visibleTextOffset + segmentCodepointOffset, referenceTextOffset + segmentCodepointOffset);
 
       // Setup for the next segment
       segmentStart = currentCpStart;
       inWordSegment = isWordChar;
+      segmentCodepointOffset = codepointsScanned;
       isFirstSegment = false;
     }
+    ++codepointsScanned;
   }
 
   // Process the final remaining segment
   size_t segmentLen = end - segmentStart;
   std::string_view segment(reinterpret_cast<const char*>(segmentStart), segmentLen);
   processSegment(segment, inWordSegment, isFirstSegment ? effectiveAttachToPrevious : true,
-                 isFirstSegment ? effectiveNoSpaceBefore : false, isFirstSegment ? leadingPadding : 0);
+                 isFirstSegment ? effectiveNoSpaceBefore : false, isFirstSegment ? leadingPadding : 0,
+                 visibleTextOffset + segmentCodepointOffset, referenceTextOffset + segmentCodepointOffset);
   if (wordStartsRtl) {
     hasRtlWord = true;
   }

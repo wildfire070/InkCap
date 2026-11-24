@@ -15,6 +15,10 @@
 #include "blocks/ImageBlock.h"
 #include "blocks/TextBlock.h"
 
+namespace PageDeserializationBudget {
+class HeapBudget;
+}
+
 enum PageElementTag : uint8_t {
   TAG_PageLine = 1,
   TAG_PageImage = 2,  // New tag
@@ -208,10 +212,13 @@ struct TableFragmentCell {
   static constexpr uint8_t MAX_SERIALIZED_LINES = 64;
   bool isHeader = false;
   uint8_t colSpan = 1;
+  // Fits the implicit alignment padding before the vector. Zero = legacy grid.
+  uint16_t rightEdge = 0;
   std::vector<std::shared_ptr<TextBlock>> lines;
 
   bool serialize(Print& file) const;
-  static bool deserialize(FsFile& file, TableFragmentCell& outCell);
+  static bool deserialize(FsFile& file, TableFragmentCell& outCell,
+                          PageDeserializationBudget::HeapBudget* heapBudget = nullptr);
 };
 
 struct TableFragmentRow {
@@ -221,7 +228,8 @@ struct TableFragmentRow {
   std::vector<TableFragmentCell> cells;
 
   bool serialize(Print& file) const;
-  static bool deserialize(FsFile& file, TableFragmentRow& outRow);
+  static bool deserialize(FsFile& file, TableFragmentRow& outRow,
+                          PageDeserializationBudget::HeapBudget* heapBudget = nullptr);
 };
 
 struct PageTextLine {
@@ -268,7 +276,8 @@ class PageTableFragment final : public PageElement {
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
   bool serialize(Print& file) override;
   PageElementTag getTag() const override { return TAG_PageTableFragment; }
-  static std::unique_ptr<PageTableFragment> deserialize(FsFile& file);
+  static std::unique_ptr<PageTableFragment> deserialize(FsFile& file,
+                                                        PageDeserializationBudget::HeapBudget* heapBudget = nullptr);
   uint16_t getHeight() const;
 };
 
@@ -351,6 +360,7 @@ class Page {
                                     bool foregroundBlack = true, bool renderCachedImages = true,
                                     bool imageGrayscale = true) const;
   bool forEachTextLine(PageTextLineVisitor visitor, void* context) const;
+  bool hasRecoverableUnshapedText(const GfxRenderer& renderer, int fontId) const;
   bool serialize(Print& file) const;
   static std::unique_ptr<Page> deserialize(FsFile& file);
 
@@ -371,12 +381,12 @@ class Page {
     });
   }
 
-  void prepareImageCaches() const;
+  void prepareImageCaches(bool grayscale) const;
 
-  bool hasImagesNeedingDecode() const {
-    return std::any_of(elements.begin(), elements.end(), [](const std::unique_ptr<PageElement>& element) {
+  bool hasImagesNeedingDecode(const bool grayscale) const {
+    return std::any_of(elements.begin(), elements.end(), [grayscale](const std::unique_ptr<PageElement>& element) {
       return element->getTag() == TAG_PageImage &&
-             static_cast<const PageImage&>(*element).getImageBlock().needsDecode();
+             static_cast<const PageImage&>(*element).getImageBlock().needsDecode(grayscale);
     });
   }
 

@@ -168,6 +168,7 @@ enum class ReaderDrawerCatalogItem : uint8_t {
   BookFusionSync,
   NearbyPositionSync,
   SendNearbyBook,
+  BookWordHoldAction,
 };
 
 struct ReaderDrawerAvailability {
@@ -195,7 +196,8 @@ using ReaderDrawerCatalog = std::array<ReaderDrawerTabCatalog, READER_DRAWER_TAB
 // More/Location/Settings tabs' action rows are hideable -- Font/Layout tab items are settings
 // pickers, not optional menu actions, and are never gated here. -1 means "always shown".
 // Append new entries at the next free bit; never renumber or reuse one (an old settings.json
-// stores the raw bits).
+// stores the raw bits). Bit 31 is reserved/unused here (CycleStatus on the AO3-capable sibling
+// branches) so BookWordHoldAction stays at the same bit (32) on every branch.
 constexpr int readerDrawerItemVisibilityBit(const ReaderDrawerCatalogItem item) {
   switch (item) {
     // More tab.
@@ -263,6 +265,8 @@ constexpr int readerDrawerItemVisibilityBit(const ReaderDrawerCatalogItem item) 
       return 29;
     case ReaderDrawerCatalogItem::ResetBookReaderSettings:
       return 30;
+    case ReaderDrawerCatalogItem::BookWordHoldAction:
+      return 32;
     default:
       return -1;
   }
@@ -342,6 +346,9 @@ constexpr ReaderDrawerCatalog makeReaderDrawerCatalog(const ReaderDrawerAvailabi
   auto& settings = catalog[static_cast<size_t>(ReaderDrawerTab::Settings)];
   addIfVisible(settings, ReaderDrawerCatalogItem::StatusBar);
   addIfVisible(settings, ReaderDrawerCatalogItem::Controls);
+#if CROSSINK_APP_CAP_TOUCH
+  if (!available.buttonDevice) addIfVisible(settings, ReaderDrawerCatalogItem::BookWordHoldAction);
+#endif
   addIfVisible(settings, ReaderDrawerCatalogItem::BookDictionary);
   addIfVisible(settings, ReaderDrawerCatalogItem::RenderMode);
   addIfVisible(settings, ReaderDrawerCatalogItem::IndexingMethod);

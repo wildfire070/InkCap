@@ -94,18 +94,27 @@ void PageImage::renderPlaceholder(GfxRenderer&, int, int, bool) const {}
 bool PageImage::serialize(Print&) { return false; }
 
 CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, int, uint16_t, uint16_t, uint16_t, uint8_t,
-                                       BlockStyle tableStyle, int8_t characterSpacing)
-    : renderer_(renderer), tableStyle_(tableStyle), characterSpacing_(characterSpacing) {}
+                                       BlockStyle tableStyle, int8_t characterSpacing,
+                                       TableColumnLayout::Plan columnPlan)
+    : renderer_(renderer), characterSpacing_(characterSpacing), tableStyle_(tableStyle), columnPlan_(columnPlan) {
+  buffer_ = makeUniqueNoThrow<char[]>(INITIAL_ROW_TEXT_BYTES);
+  if (buffer_) {
+    bufferCapacity_ = INITIAL_ROW_TEXT_BYTES;
+  } else {
+    fatal_ = true;
+  }
+}
 bool CompactTableLayout::beginRow() { return true; }
 bool CompactTableLayout::beginCell(bool, uint8_t, uint32_t, const BlockStyle&) { return true; }
 bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t, uint32_t, bool, bool) {
   return true;
 }
 bool CompactTableLayout::endCell(const std::vector<std::pair<int, FootnoteEntry>>&) { return true; }
-CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow&, std::vector<std::shared_ptr<TextBlock>>&,
-                                                            std::vector<FootnoteEntry>&, uint32_t&) {
+bool CompactTableLayout::visitCapturedParagraphs(ParagraphVisitor, void*) { return true; }
+CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow&, std::vector<FootnoteEntry>&, uint32_t&) {
   return RowResult::Ok;
 }
+CompactTableLayout::RowResult CompactTableLayout::finishRow(TableFragmentRow&, uint32_t&) { return RowResult::Ok; }
 
 void PageLine::render(GfxRenderer&, int, int, int, bool) {}
 bool PageLine::serialize(Print&) { return false; }

@@ -164,6 +164,34 @@ the stem-darkening toggle. Missing families use automatic hinting, grayscale
 output, the default interpreter, and no outline adjustments. The file currently
 keeps at most 24 modified family profiles to bound RAM use while settings are open.
 
+## Publisher font extraction cache
+
+Each book cache keeps at most two extracted unprotected publisher-font files per
+face: `publisher-font-<face>.a` and `.b`, each paired with a `.meta` marker.
+The marker is 52 bytes: `BKF1` magic, little-endian flags, source ZIP CRC-32,
+compressed size, uncompressed size, extracted file size, the scalable-font
+content fingerprint, a sequence number, the exact 16-byte Adobe obfuscation
+key (zeroed when unused), and an FNV-1a checksum of bytes 0–47. Only flag bit 0
+(Adobe-obfuscated) is defined; unknown flags invalidate the marker. The face is
+reusable only when the source identity, extracted size, and Adobe key match and
+the font parser returns the recorded fingerprint. Missing, truncated, corrupt,
+or mismatched markers cause extraction to be rebuilt. Hidden `.tmp` files are
+staging files and are not cache entries.
+
+New output is written and parsed in a staging file before it replaces the older
+of the two slots. That keeps the newest complete extraction available if an SD
+write, close, or font parse fails. The next successful replacement removes the
+older slot, so repeated EPUB updates do not grow the cache directory. Protected
+AES/LCP-protected font resources are extracted to a session file and removed
+when the reader closes because their content key is not exposed to the cache.
+Adobe-obfuscated fonts can be reused because their public package-UUID-derived
+16-byte transform key is recorded exactly; a changed identifier invalidates the
+cached bytes even when the encrypted ZIP member is unchanged. These files are
+disposable and rebuild automatically; no section-cache reset is needed.
+Section pages retain the CSS family and point size per word. Cache replay checks
+the saved face signature, then registers only the exact sizes requested when
+those words are rendered.
+
 ## `/.crosspoint/sleep_<hash>.bmp`
 
 Custom sleep images are converted to native 1-bit or 2-bit BMPs using the selected
@@ -586,7 +614,7 @@ if (parsedSize != fileSize) {
 
 ## `reader_settings.bin`
 
-### Version 16
+### Version 17
 
 Each EPUB cache directory may contain `reader_settings.bin`. Missing files mean
 the book uses global Reader settings and the default auto-page-turn interval.
@@ -611,6 +639,11 @@ Version 11 appends the image-grayscale toggle after the mask and moves the SD-fo
 mask bit from 18 to 19. Older records retain their existing overrides and inherit
 the global image-grayscale setting. This drawing-only setting does not invalidate
 EPUB layout or image caches.
+Version 17 appends `u8 wordHoldAction` when the book overrides the global
+Long-press Text setting. Books that use the global setting are still saved as
+version 16. Versions 1–16 inherit the global action. This setting does not
+affect EPUB layout caches.
+
 Version 16 appends `u8 ruledLines` (0 Off, 1 Light, 2 Medium, 3 Dark), with override bit 24. Older books inherit the global setting. Changing the shade redraws the page using its existing layout.
 
 Version 15 appends `u8 twoToneTextAA` (0 off, 1 on), with override bit 23. Older records inherit the global EEGO text AA quality. Changing it preserves the EPUB layout cache.
@@ -631,7 +664,7 @@ fallback successfully opens a difficult book.
 
 ```c++
 struct ReaderSettingsBin {
-    u8 version; // 16
+    u8 version; // 16 or 17
     u8 flags;   // bit 0 = at least one custom reader field, bit 1 = custom auto-page-turn interval, bit 2 = render mode override, bit 3 = dictionary font override, bit 4 = Safe Mode override
     u16 autoPageTurnSeconds;
     u8 renderMode; // 0 = CrossInk Default, 1 = Balanced, 2 = Light
@@ -665,6 +698,7 @@ struct ReaderSettingsBin {
     u8 textDarkness; // 0 Normal, 1 Dark, 2 Darker; override bit 22
     u8 twoToneTextAA; // 0 off, 1 on; override bit 23
     u8 ruledLines; // 0 Off, 1 Light, 2 Medium, 3 Dark; override bit 24
+    u8 wordHoldAction; // version 17 only: 0 Look Up, 1 Clip, 2 Ask
 };
 ```
 
@@ -1145,9 +1179,72 @@ through cache cleanup, so measurement and drawing use the same glyph substitutio
 The new identity rebuilds existing full and partial layouts for these families;
 body-only and built-in font identities stay unchanged. No binary payload changes.
 
+## Inline EPUB image pixel cache (`.pxc`)
+
+Inline images use separate target-sized Gray (`_gray_v4.pxc`) and monochrome
+(`_mono_v1.pxc`) cache identities. Both use the existing 2-bit packed rows;
+monochrome stores only black (0) and white (3), including in Night Mode. Older
+pixel-cache names are ignored and can be regenerated without invalidating
+chapter layout or reading progress. Optimizer sidecars are only usable for Gray
+and at their exact dimensions; mismatches fall back to the source EPUB image.
+
 ## `section.bin`
 
-### Version 119 (current development)
+### Version 124 (current development)
+
+Simple EPUB tables can measure widths for up to eight logical columns before
+layout when they contain enough numeric values. Numeric cells after a spanning
+row label receive enough width for their measured text when the viewport allows
+it. Complex and nonnumeric wide tables keep the existing fallback layout.
+Complete sections use version 124 and suspended sections use `0xED`; existing
+pages rebuild automatically.
+
+### Version 123
+
+CrossInk Default preserves merged cells in EPUB tables during full and
+incremental indexing. On C3 devices with an SD-card font, a dense table may
+start a new page between rows to limit the number of text lines held in RAM.
+Both indexing modes use the same page breaks. Previously indexed chapters
+rebuild on open using the book's selected rendering mode. Complete sections
+use version 123 and suspended sections use `0xEC`. Both use the existing
+table-cell payload.
+
+### Version 122
+
+C3 uses compact-first table pagination. Complete sections use version 122 and
+partials use `0xEB` so existing pages rebuild using the new layout policy. The
+binary format and reading progress are unchanged.
+
+The existing 32-bit hyphenation identity also includes the Focus Reading
+layout identity when enabled. Older Focus Reading layouts rebuild on open, including
+suspended partial layouts. Layouts with Focus Reading disabled keep their
+existing identity.
+
+### Version 121
+
+Compact tables can carry optional content-proportional column geometry. A
+table cell's two-byte geometry packs its colspan into bits 0–3, header flag
+into bit 4 and its right edge relative to the table in pixels into bits 5–15.
+A zero edge retains the default grid geometry. This replaces the former separate
+header/span bytes without increasing the serialized cell size. Complete layouts
+use version 121 and partial layouts use `0xEA`; reading progress is unchanged.
+
+### Version 120
+
+Native EPUB `<pre>` blocks preserve the book's spaces and hard line breaks.
+Complete sections use version 120 and suspended sections use `0xE9`; the
+page and reading-progress payloads are unchanged.
+
+Complete and suspended sections can carry an optional 28-byte `SHR1` trailer
+after the visible/reference text lookup tables and any partial-build watermark.
+It records whether an equipped SD font fell back while shaping, up to two
+face/script identities, and the relevant heap/flash retry conditions. A missing
+or torn stamp does not invalidate the cached pages. A corrected layout is only
+promoted from a temporary file after the failed face/script combinations shape
+successfully. Earlier layouts are only retried automatically when the requested
+cached page contains raw Indic text that the selected SD font can now shape.
+
+### Version 119
 
 Complete sections use version 119 and partial sections use `0xE8`. Block-styled spans can affect pagination. In the optional per-word font-size byte, bits 0–5 store the point size, bit 6 marks a black background on the preceding space, and bit 7 hides the glyphs while retaining their layout width.
 
@@ -1613,7 +1710,7 @@ struct PageHorizontalRule {
 };
 
 struct TableFragmentCell {
-    bool isHeader;
+    u16 geometry; // bits 0..3 colspan, bit 4 header, bits 5..15 right edge
     u8 lineCount;
     TextBlock lines[lineCount];
 };

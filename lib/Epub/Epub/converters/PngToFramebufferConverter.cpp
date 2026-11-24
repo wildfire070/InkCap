@@ -214,9 +214,15 @@ void convertLineToGray(const uint8_t* pPixels, uint8_t* grayLine, int width, int
 void mappedPngRow(void* user, int dstY, const uint8_t* levels, int width) {
   auto* ctx = static_cast<PngContext*>(user);
   const int outY = ctx->config->y + dstY;
+  // Prefetch calls (picture-prefetch-on-page-turn) warm the pixel cache for an
+  // upcoming page without touching the live framebuffer -- see the pngDrawCallback
+  // paint-gating above for why pw must stay untouched in that case.
+  const bool paint = !ctx->config->cacheOnly;
   DirectPixelWriter pw;
-  pw.init(*ctx->renderer, ctx->config->useGrayscale);
-  pw.beginRow(outY);
+  if (paint) {
+    pw.init(*ctx->renderer, ctx->config->useGrayscale, ctx->config->finalMonochrome);
+    pw.beginRow(outY);
+  }
   DirectCacheWriter cw;
   if (ctx->caching) {
     if (!ctx->cache.advanceTo(dstY)) {
@@ -228,11 +234,12 @@ void mappedPngRow(void* user, int dstY, const uint8_t* levels, int width) {
   }
   for (int x = 0; x < width; ++x) {
     const int outX = ctx->config->x + x;
-    if (outX >= 0 && outX < ctx->screenWidth && outY >= 0 && outY < ctx->screenHeight) {
-      pw.writePixel(outX, levels[x]);
+    const uint8_t value = ctx->config->finalMonochrome ? levels[x] * 3 : levels[x];
+    if (paint && outX >= 0 && outX < ctx->screenWidth && outY >= 0 && outY < ctx->screenHeight) {
+      pw.writePixel(outX, value);
     }
     // Cache all image pixels even when the live framebuffer clips the row.
-    if (ctx->caching) cw.writePixel(outX, levels[x]);
+    if (ctx->caching) cw.writePixel(outX, value);
   }
 }
 
@@ -291,7 +298,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   // state (write target, render mode) that has nothing to do with this decode.
   const bool paint = !ctx->config->cacheOnly;
   DirectPixelWriter pw;
-  if (paint) pw.init(*ctx->renderer, ctx->config->useGrayscale);
+  if (paint) pw.init(*ctx->renderer, ctx->config->useGrayscale, ctx->config->finalMonochrome);
 
   for (int dstY = firstDstY; dstY < endDstY; dstY++) {
     ctx->lastDstY = dstY;
@@ -324,12 +331,9 @@ int pngDrawCallback(PNGDRAW* pDraw) {
       if (outX >= 0 && outX < screenWidth) {
         uint8_t gray = ctx->grayLineBuffer[srcX];
 
-        uint8_t ditheredGray;
-        if (useDithering) {
-          ditheredGray = applyBayerDither4Level(gray, outX, outY);
-        } else {
-          ditheredGray = quantizeGrayTo4Level(gray);
-        }
+        const uint8_t ditheredGray = ctx->config->finalMonochrome ? quantizeGrayToMono(gray, dstX, dstY, useDithering)
+                                     : useDithering               ? applyBayerDither4Level(gray, outX, outY)
+                                                                  : quantizeGrayTo4Level(gray);
         if (paint) pw.writePixel(outX, ditheredGray);
         if (caching) cw.writePixel(outX, ditheredGray);
       }
@@ -506,7 +510,8 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   if (PngToneMapperPolicy::mayMap(config.useDithering, renderer.getRenderMode() == GfxRenderer::BW, ctx.caching) &&
       PngToneMapperPolicy::admits(ctx.srcWidth, ctx.srcHeight, ctx.dstWidth, ctx.dstHeight, heap.freeHeap,
                                   heap.maxAllocHeap)) {
-    if (toneMapper.begin(ctx.srcWidth, ctx.srcHeight, ctx.dstWidth, ctx.dstHeight, 4, mappedPngRow, &ctx)) {
+    if (toneMapper.begin(ctx.srcWidth, ctx.srcHeight, ctx.dstWidth, ctx.dstHeight, config.finalMonochrome ? 2 : 4,
+                         mappedPngRow, &ctx)) {
       ctx.toneMapper = &toneMapper;
     } else {
       LOG_ERR("PNG", "Tone mapper OOM; using nearest-neighbor scaling");

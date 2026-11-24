@@ -365,6 +365,11 @@ void incrementalChecks(const std::string& path) {
       assert(glyph->advanceX == advance(cp == 0xFFFD ? 4 : cp - 'A', 0));
     }
     assert(font.prewarm("DCBA", 1) == 0 && readCalls == reads);
+    const uint32_t sortedPage[] = {'A', 'B', 'C', 0xFFFD};
+    arrayCalls = 0;
+    assert(font.prewarmCodepoints(sortedPage, 4, 1) == 0);
+    assert(font.prewarmCodepoints(nullptr, 0, 1, false, false) == 0);
+    assert(arrayCalls == 0);  // covered mini + loaded ligatures/kern need no scratch allocation
     std::puts("Incremental cpfont: ABC -> ABCD reads only D (2 reads); repeated ABCD needs 0 reads");
   }
   // Fail every array allocation and file read in an extension. The published
@@ -634,6 +639,60 @@ void bodyMetricsCacheSaturationChecks(const std::string& path) {
   measure(hot);
   measure(hot);
   assert(readCalls - coldReads == 1);
+}
+
+void bitmapReclamationChecks(const std::string& path) {
+  contentCacheFixture(path);
+  {
+    SdCardFont body;
+    assert(body.load(path.c_str()));
+    body.buildAdvanceTable("ABC", 1);
+    const auto* advances = body.advanceTable_[0];
+    assert(advances && body.getAdvance('A', 0) == advance('A', 0));
+    {
+      SdCardFont::MetricsScope metrics(&body);
+      assert(body.getEpdFont()->getGlyph('D')->advanceX == advance('D', 0));
+    }
+    const auto* metrics = body.contentMetrics_.get();
+    assert(metrics);
+    body.prewarm("ABC", 1);
+    body.prewarm("DEF", 2, true);  // An independent metadata-only style must survive.
+    assert(!body.lastPrewarmFailed());
+    assert(body.getEpdFont()->data->bitmap);
+    const auto* metadata = body.getEpdFont(1)->data;
+    assert(metadata->glyph && !metadata->bitmap);
+    const auto* overflow = body.getEpdFont()->getGlyph('z');
+    assert(overflow && body.getOverflowBitmap(overflow)[0] == 'z');
+    const auto before = arrayBytes();
+    assert(body.releaseBitmapCachesForLowMemory());
+    assert(arrayBytes() < before);
+    assert(body.advanceTable_[0] == advances && body.getAdvance('A', 0) == advance('A', 0));
+    assert(body.contentMetrics_.get() == metrics);
+    assert(body.getEpdFont(1)->data == metadata && metadata->glyph && !metadata->bitmap);
+    assert(body.getEpdFont()->data == &body.styles_[0].stubData && body.overflowCount_ == 0);
+    assert(!body.releaseBitmapCachesForLowMemory());
+    body.prewarm("ABC", 1);
+    assert(!body.lastPrewarmFailed());
+    const auto* glyph = body.getEpdFont()->getGlyph('A');
+    assert(glyph && body.getEpdFont()->data->bitmap[glyph->dataOffset] == 'A');
+  }
+  {
+    SdCardFont size;
+    assert(size.load(path.c_str(), 12U * 1024U));
+    size.prepareContentBitmaps();
+    assert(size.contentBitmaps_ && size.contentBitmap_);
+    const auto* metrics = size.contentMetrics_.get();
+    const auto* scratch = size.contentBitmap_.get();
+    const auto* cached = size.getEpdFont()->getGlyph('A');
+    assert(cached && size.contentMetricsIndex(cached) >= 0 && size.getOverflowBitmap(cached)[0] == 'A');
+    assert(size.releaseBitmapCachesForLowMemory());
+    assert(!size.contentBitmaps_ && size.contentMetrics_.get() == metrics && size.contentBitmap_.get() == scratch);
+    assert(!size.getOverflowBitmap(cached));  // Invalid until reloaded; metrics stay live.
+    assert(!size.releaseBitmapCachesForLowMemory());
+    const auto* reloaded = size.getEpdFont()->getGlyph('A');
+    assert(reloaded && size.getOverflowBitmap(reloaded)[0] == 'A');
+  }
+  assert(arrayBytes() == 0 && openFiles == 0);
 }
 
 void contentCacheCollisionChecks(const std::string& path) {
@@ -1287,6 +1346,7 @@ int main() {
     assert(drawn && body.getOverflowBitmap(drawn)[0] == 'a');
   }
   bodyMetricsCacheSaturationChecks(path);
+  bitmapReclamationChecks(path);
   contentCacheCollisionChecks(path);
   compactContentBudgetChecks(path);
   sharedContentScratchChecks(path);
