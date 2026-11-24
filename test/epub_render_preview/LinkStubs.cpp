@@ -21,8 +21,8 @@ PreviewBlockLocator::~PreviewBlockLocator() = default;
 bool PreviewBlockLocator::feed(const char*, int, bool) { return false; }
 
 CompactTableLayout::CompactTableLayout(GfxRenderer& renderer, int, uint16_t, uint16_t, uint16_t, uint8_t,
-                                       BlockStyle tableStyle, int8_t, TableColumnLayout::Plan)
-    : renderer_(renderer), tableStyle_(tableStyle) {}
+                                       BlockStyle tableStyle, int8_t characterSpacing, TableColumnLayout::Plan)
+    : renderer_(renderer), characterSpacing_(characterSpacing), tableStyle_(tableStyle) {}
 bool CompactTableLayout::beginRow() { return true; }
 bool CompactTableLayout::beginCell(bool, uint8_t, uint32_t, const BlockStyle&) { return true; }
 bool CompactTableLayout::appendWord(std::string_view, EpdFontFamily::Style, bool, bool, uint8_t, uint32_t, bool,
