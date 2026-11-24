@@ -1,7 +1,6 @@
 #pragma once
 #include <Arena.h>
 #include <HalStorage.h>
-#include <UniqueCodepointSet.h>
 #include <ZipFile.h>
 #include <expat.h>
 
@@ -38,6 +37,9 @@ class ChapterHtmlSlimParser {
  private:
   static constexpr uint8_t MAX_SIMPLE_TABLE_COLUMNS = 8;
   static constexpr uint16_t MAX_SIMPLE_TABLE_CELL_WORDS = 160;
+  // Dense SD-font table rows retain many TextBlocks on C3. Bound their combined
+  // line count per physical page so incremental indexing can keep making progress.
+  static constexpr uint16_t MAX_COMPACT_TABLE_TEXT_LINES_PER_PAGE = 48;
   static constexpr uint8_t TABLE_CELL_PADDING = 6;
   static constexpr size_t MAX_INLINE_STYLE_DEPTH = 64;
   static constexpr size_t MAX_PENDING_INLINE_IMAGES = 16;
@@ -136,7 +138,7 @@ class ChapterHtmlSlimParser {
   uint32_t bodyFontFamily = 0;
   bool detectBodyFont();
   static bool scanBodyFont(XML_Parser parser, FsFile& file, const CssParser& css, uint32_t& family,
-                           bool preferParagraph);
+                           bool preferParagraph, bool* lowMemoryAbort = nullptr, bool* inputReadError = nullptr);
   // Measured once per chapter build (see BodySizeProbe/detectBodySizeScale): the factor every
   // block's fontSizeMultiplier is rescaled by in resolveBlockFont(), so a publisher stylesheet
   // that declares every paragraph's font-size away from the nominal 100% reads at the user's
@@ -202,6 +204,7 @@ class ChapterHtmlSlimParser {
   bool floatZoneJustAttached_ = false;
   bool lowMemoryImageFallback = false;
   bool lowMemoryAbort = false;
+  bool inputReadError = false;
   bool attemptedTextLayoutFontCacheRelease = false;
   EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
   std::string previewAnchor;
@@ -213,6 +216,11 @@ class ChapterHtmlSlimParser {
   uint32_t previewStartOrdinal = 0;
   uint32_t previewElementOrdinal = 0;
   bool malformedMarkupTruncated = false;
+  bool trackMalformedInputCrc_ = false;
+  uint32_t inputCrc_ = 0;
+  uint32_t inputCrcLength_ = 0;
+  uint32_t malformedInputCrcLength_ = 0;
+  uint32_t malformedInputCrc_ = 0;
   bool htmlEnded_ = false;
   bool syntheticCharacterData = false;
   XML_Parser activeParser = nullptr;
@@ -315,6 +323,7 @@ class ChapterHtmlSlimParser {
   bool effectiveSub = false;
   bool effectiveSmallCaps = false;
   bool effectivePreserveWhitespace = false;
+  bool afterPreservedBreak = false;
   uint8_t effectiveInlineFontSize = 0;
   void applyInlineFontSize(StyleStackEntry& entry, const CssStyle& css, const char* tag);
 
@@ -369,6 +378,7 @@ class ChapterHtmlSlimParser {
 
   struct BufferedTable {
     BlockStyle blockStyle;
+    TableColumnLayout::Plan columnPlan;
     std::vector<BufferedTableRow> rows;
     uint16_t maxCols = 0;
     uint16_t totalCells = 0;
@@ -406,6 +416,10 @@ class ChapterHtmlSlimParser {
   bool compactTableFlattened = false;
   bool compactTableUnsupported = false;
   bool compactTableTopSpacingApplied = false;
+  bool compactTableParagraphFallback = false;
+  bool compactTablePageLineLimitEnabled = false;
+  uint16_t compactTablePageLineCount = 0;
+  int compactTableFallbackBottomSpacing = 0;
   uint8_t compactFragmentColumnCount = 0;
   uint16_t compactFragmentHeight = 1;
   uint32_t compactFragmentVisibleOffset = 0;
@@ -464,7 +478,7 @@ class ChapterHtmlSlimParser {
   void markCurrentPageFromCurrentElement();
   void setCurrentPageVisibleOffset(uint32_t offset, uint32_t referenceOffset = UINT32_MAX);
   void completeCurrentPage();
-  void makePages(bool completeBlock = true);
+  void makePages(bool completeBlock = true, bool addParagraphSpacing = true);
   int textRowHeight(TextBlock& line, int rowFont) const;
   int effectiveLineHeight() const;
   int effectiveLineHeight(int fontIdForLine) const;
@@ -506,9 +520,11 @@ class ChapterHtmlSlimParser {
   void emitStreamingTableRowsAsParagraphs(BufferedTable& table);
   void finishStreamingTable(BufferedTable& table);
   bool flushCompactTableFragment();
-  bool emitCompactTableRow(TableFragmentRow& row, std::vector<std::shared_ptr<TextBlock>>& flatLines,
-                           const std::vector<FootnoteEntry>& footnotes, uint32_t visibleTextOffset,
-                           uint8_t fragmentColumnCount, bool flatten);
+  bool emitCompactTableRow(TableFragmentRow& row, uint32_t visibleTextOffset, uint8_t fragmentColumnCount,
+                           bool flatten);
+  bool emitCompactTableParagraphLine(const std::shared_ptr<TextBlock>& line, uint32_t visibleOffset);
+  bool streamCapturedTableParagraphs();
+  bool startCompactTableParagraphFallback(const BlockStyle& cellStyle);
   void finishCompactTable();
   void fallbackStreamingTableToParagraphs(const char* reason);
   void emitCurrentTableBuffer();
@@ -518,10 +534,14 @@ class ChapterHtmlSlimParser {
   // Whole-section advance prewarm: scan the HTML bytes for unique codepoints, then load
   // their advances. beginParse() runs it in one go; a deferred one runs one bounded
   // slice per background build tick (prewarmSectionAdvanceStep).
+  static constexpr size_t SECTION_ADVANCE_PREWARM_FEED_LIMIT = 254;
+  static constexpr size_t SECTION_ADVANCE_PREWARM_EAGER_SCAN_BYTES = 16 * 1024;
   struct AdvancePrewarm {
-    std::unique_ptr<uint32_t[]> codepoints;
+    // Keep the lowest codepoints so the per-style 256-entry font tables receive
+    // a useful subset without a 16 KiB chapter-sized scratch allocation.
+    std::array<uint32_t, SECTION_ADVANCE_PREWARM_FEED_LIMIT> codepoints{};
+    uint32_t asciiSeen[4] = {};
     std::unique_ptr<uint8_t[]> buffer;
-    std::unique_ptr<UniqueCodepointSet> unique;
     size_t offset = 0;  // next HTML byte to scan
     uint32_t cpCount = 0;
     uint32_t fedCount = 0;  // codepoints already handed to the font
@@ -530,6 +550,7 @@ class ChapterHtmlSlimParser {
     bool inTag = false;
     bool inEntity = false;
     bool hitCap = false;
+    bool scanLimited = false;
     bool scanned = false;
     uint32_t busyMs = 0;
   };
@@ -537,9 +558,11 @@ class ChapterHtmlSlimParser {
   bool deferAdvancePrewarm_ = false;
   bool advancePrewarmPending_ = false;
   std::unique_ptr<AdvancePrewarm> startAdvancePrewarm() const;
-  void scanAdvancePrewarmChunk(AdvancePrewarm& state, FsFile& file) const;
+  void addAdvancePrewarmCodepoint(AdvancePrewarm& state, uint32_t codepoint) const;
+  void feedAdvancePrewarmUtf8Byte(uint8_t byte, AdvancePrewarm& state) const;
+  void scanAdvancePrewarmChunk(AdvancePrewarm& state, FsFile& file, size_t byteLimit = 0) const;
   void feedAdvancePrewarm(AdvancePrewarm& state, uint32_t maxCount) const;
-  void prewarmSectionAdvanceTable(FsFile& file) const;
+  bool prewarmSectionAdvanceTable(FsFile& file);
   // XML callbacks
   static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void XMLCALL characterData(void* userData, const XML_Char* s, int len);
@@ -602,6 +625,7 @@ class ChapterHtmlSlimParser {
   static uint32_t publisherBodyFontFamily(const std::string& path, const CssParser& css);
   void setRuled(bool enabled) { ruled = enabled; }
   void setPublisherFonts(PublisherFonts mode) { publisherFonts = mode; }
+  void setTrackMalformedInputCrc(bool enabled) { trackMalformedInputCrc_ = enabled; }
   void setDeferAdvancePrewarm(bool defer) { deferAdvancePrewarm_ = defer; }
   bool prewarmSectionAdvanceStep();
   bool beginParse();
@@ -614,6 +638,9 @@ class ChapterHtmlSlimParser {
   const std::deque<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
   bool wasLowMemoryFallbackTriggered() const { return lowMemoryImageFallback; }
   bool wasLowMemoryAbortTriggered() const { return lowMemoryAbort; }
+  bool wasMalformedMarkupTruncated() const;
+  uint32_t malformedInputCrcLength() const;
+  uint32_t malformedInputCrc() const;
 
   // Byte progress of the in-flight parse, used to estimate a still-building section's total page
   // count (a giant single-spine book never fully lays out, so its real count is unknown). Valid

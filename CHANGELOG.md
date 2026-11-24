@@ -2,16 +2,25 @@
 
 ### Added
 
-- Show a Delete button when opening a clipping on button-only readers (#936).
 - Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
-- Add a Delete button below Open when viewing a clipping on touch readers.
+- Show a Delete button when viewing a clipping (#936).
+- Add an optional Dutch hyphenation pack for EPUBs (#970).
 
 ### Changed
 
+- With Incremental indexing, devices with PSRAM finish laying out the current EPUB chapter while you read instead of stopping after a set number of pages.
+- Focus Reading bolds the first letter of short words and half of longer words, rounded up to a maximum of nine letters.
+
 ### Fixed
+
+- Preserve the original line breaks and indentation in EPUB preformatted text, such as shaped poems.
 
 - Stay in the selected chapter when following EPUB Contents links, including links to positions within a chapter.
 - Indent EPUB blockquotes that rely on default margins (#956).
+- Keep the last readable EPUB chapter when an SD read or write interrupts full or incremental indexing.
+- Fix slow EPUB indexing and page turns caused by repeated glyph scans, stylesheet checks, and small chapter-index writes.
+- On X3 and X4, look up publisher styles on the SD card before retrying a chapter in Safe Mode when memory runs low.
+- Keep wide EPUB tables in a grid on X3 and X4 when an SD-card font leaves less memory for indexing.
 
 ## [v2.0.0] - 2026-11-19
 
@@ -102,6 +111,7 @@
 - Hide tilt controls when the sensor cannot support page turning or fails its startup check, while keeping saved preferences (CrossPoint 8fc2b66 and #4078).
 - Make EPUB highlight handles easier to grab and drag across lines on touch readers.
 - Reduce repeated SD card reads when indexing EPUBs with ruled lines and a custom reader font.
+- Dither EPUB illustrations only after resizing, with separate output for Gray and B&W (including Night Mode).
 
 ## [v1.6.1] - 2026-10-03
 

@@ -1078,11 +1078,10 @@ bool DictionaryWordSelectActivity::handleTouchSelection() {
     hasPendingClippingRequest_ = false;
     captureClippingRequest();
     touchLookupEnabled_ = Dictionary::exists(cachePath.c_str());
-    if (applyAction &&
-        ((SETTINGS.wordHoldAction == CrossPointSettings::WORD_HOLD_LOOKUP && touchLookupEnabled_) ||
-         (SETTINGS.wordHoldAction == CrossPointSettings::WORD_HOLD_CLIP && hasPendingClippingRequest_))) {
+    if (applyAction && ((wordHoldAction_ == CrossPointSettings::WORD_HOLD_LOOKUP && touchLookupEnabled_) ||
+                        (wordHoldAction_ == CrossPointSettings::WORD_HOLD_CLIP && hasPendingClippingRequest_))) {
       lock.unlock();
-      performTouchSelectionAction(SETTINGS.wordHoldAction == CrossPointSettings::WORD_HOLD_LOOKUP
+      performTouchSelectionAction(wordHoldAction_ == CrossPointSettings::WORD_HOLD_LOOKUP
                                       ? TextSelectionOverlay::lookupAction
                                       : TextSelectionOverlay::clipAction);
       return true;
@@ -1393,7 +1392,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   }
   if (page->hasImages()) {
     GfxRenderer::FrameBufferLoan loan(renderer);
-    page->prepareImageCaches();
+    page->prepareImageCaches(/*grayscale=*/false);
     loan.end();
     renderer.clearScreen(ReaderUtils::readerBackgroundColor());
   }
@@ -1408,7 +1407,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   scope.endScanAndPrewarm();
   page->renderText(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);
   ReaderRuling::drawSelectionPage(renderer, *page, SETTINGS.getReaderFontId(), marginLeft, marginTop);
-  page->renderImages(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);
+  page->renderImages(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack, false);
 
   // Set up snapshot AND draw the highlight via the differential entry point with
   // prevWordIdx = -1 (no previous highlight to wipe). This both draws the highlight

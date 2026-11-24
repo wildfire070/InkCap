@@ -34,6 +34,7 @@
 #include "Epub/image/OptimizerCachePublish.h"
 #include "Epub/image/OptimizerIndex.h"
 #include "Epub/image/PxcHeaderSink.h"
+#include "Epub/parsers/AdobeFontObfuscation.h"
 #include "Epub/parsers/ContainerParser.h"
 #include "Epub/parsers/ContentOpfParser.h"
 #include "Epub/parsers/TocNavParser.h"
@@ -51,14 +52,9 @@ constexpr char kOptimizerManifestFormat[] = "crossink-optimizer";
 constexpr size_t kOptimizerManifestMaxBytes = 64 * 1024;
 constexpr size_t kOptimizerMaxPxcBytes = 4 + 128 * 1024;
 constexpr uint16_t kOptimizerMaxPxcDimension = 1024;
-constexpr size_t kOptimizerMaxPxcRowBytes = (kOptimizerMaxPxcDimension + 3) / 4;
 // Legacy sidecar inflation borrows framebuffer scratch during page preflight.
 // Keep the remaining ZIP input/output allocations bounded.
 constexpr size_t kOptimizerPxcExtractionChunkSize = 256;
-// The parser is single-threaded. Static row buffers avoid a cold-path heap
-// allocation and cap resize working memory at 512 bytes.
-uint8_t optimizerSourceRow[kOptimizerMaxPxcRowBytes];
-uint8_t optimizerTargetRow[kOptimizerMaxPxcRowBytes];
 
 bool isSupportedLocationsFormat(const char* format) {
   return std::strcmp(format, kXLocationsFormat) == 0 || std::strcmp(format, kLegacyXLocationsFormat) == 0;
@@ -158,65 +154,6 @@ bool readOptimizerImageMetadata(JsonObjectConst image, const size_t maxHrefLengt
 
 bool readPxcHeader(FsFile& file, uint16_t& width, uint16_t& height) {
   return file.read(&width, sizeof(width)) == sizeof(width) && file.read(&height, sizeof(height)) == sizeof(height);
-}
-
-bool rescalePxcFile(const std::string& sourcePath, const std::string& destinationPath, const int expectedWidth,
-                    const int expectedHeight) {
-  FsFile source;
-  if (!Storage.openFileForRead("EBP", sourcePath, source)) return false;
-  uint16_t sourceWidth = 0;
-  uint16_t sourceHeight = 0;
-  if (!readPxcHeader(source, sourceWidth, sourceHeight) || sourceWidth == 0 || sourceHeight == 0 ||
-      sourceWidth > kOptimizerMaxPxcDimension || sourceHeight > kOptimizerMaxPxcDimension ||
-      source.size() != pxcByteCount(sourceWidth, sourceHeight)) {
-    LOG_ERR("EBP", "Invalid optimizer PXC resize source: %s", sourcePath.c_str());
-    source.close();
-    return false;
-  }
-
-  const size_t sourceRowBytes = (sourceWidth + 3) / 4;
-  const size_t targetRowBytes = (expectedWidth + 3) / 4;
-  if (sourceRowBytes > sizeof(optimizerSourceRow) || targetRowBytes > sizeof(optimizerTargetRow)) {
-    source.close();
-    return false;
-  }
-
-  const std::string tempDestination = destinationPath + ".optimizer.tmp";
-  Storage.remove(tempDestination.c_str());
-  FsFile destination;
-  if (!Storage.openFileForWrite("EBP", tempDestination, destination)) {
-    source.close();
-    return false;
-  }
-  const uint16_t targetWidth = static_cast<uint16_t>(expectedWidth);
-  const uint16_t targetHeight = static_cast<uint16_t>(expectedHeight);
-  bool ok = destination.write(&targetWidth, sizeof(targetWidth)) == sizeof(targetWidth) &&
-            destination.write(&targetHeight, sizeof(targetHeight)) == sizeof(targetHeight);
-  int loadedSourceRow = -1;
-  for (int targetY = 0; ok && targetY < expectedHeight; targetY++) {
-    const int wantedSourceRow = static_cast<int>((static_cast<int64_t>(targetY) * sourceHeight) / expectedHeight);
-    while (ok && loadedSourceRow < wantedSourceRow) {
-      ok = source.read(optimizerSourceRow, sourceRowBytes) == static_cast<int>(sourceRowBytes);
-      loadedSourceRow++;
-    }
-    if (!ok) break;
-    memset(optimizerTargetRow, 0, targetRowBytes);
-    for (int targetX = 0; targetX < expectedWidth; targetX++) {
-      const int sourceX = static_cast<int>((static_cast<int64_t>(targetX) * sourceWidth) / expectedWidth);
-      const uint8_t value = (optimizerSourceRow[sourceX >> 2] >> (6 - ((sourceX & 3) * 2))) & 0x03;
-      optimizerTargetRow[targetX >> 2] |= static_cast<uint8_t>(value << (6 - ((targetX & 3) * 2)));
-    }
-    ok = destination.write(optimizerTargetRow, targetRowBytes) == targetRowBytes;
-  }
-  ok = source.close() && ok;
-  const std::string backup = destinationPath + ".optimizer.previous";
-  ok = OptimizerFormat::finishCache(destination, Storage, ok, tempDestination.c_str(), destinationPath.c_str(),
-                                    backup.c_str());
-  if (!ok) {
-    LOG_ERR("EBP", "Failed to publish resized optimizer image cache");
-    Storage.remove(tempDestination.c_str());
-  }
-  return ok;
 }
 
 float clampUnit(const float value) {
@@ -884,7 +821,7 @@ void Epub::releaseCssFileList() {
   std::vector<std::string>().swap(cssFiles);
 }
 
-Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
+Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild, const bool preserveExistingPartialOnFailure) const {
   const size_t maxCssFileSize = CssParser::maxSourceBytes();
   // Minimum heap required before attempting CSS parsing
   constexpr size_t MIN_HEAP_FOR_CSS_PARSING = 64 * 1024;  // 64KB
@@ -911,6 +848,9 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
         LOG_DBG("EBP", "CSS cache invalid, rebuilding CSS rules");
         cssParser->deleteCache();
         break;
+      case CssParser::CacheStatus::ReadError:
+        LOG_ERR("EBP", "Could not inspect CSS cache; retaining it for a later retry");
+        return CssParseStatus::Failed;
       case CssParser::CacheStatus::Missing:
         break;
     }
@@ -921,8 +861,10 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
   // chapter layout can still use most of the book's stylesheet.
   CssCacheSource::Identity sourceIdentity{};
   const bool sourceKnown = CssCacheSource::read(filepath, CssParser::CSS_CACHE_VERSION, maxCssFileSize, sourceIdentity);
-  // Remove before replacing rules, so a crash cannot pair a new cache with an old marker.
-  const bool markerRemoved = CssCacheSource::invalidate(cachePath);
+  // Remove before replacing rules, so a crash cannot pair a new cache with an old marker. A
+  // completion retry starts with a known-usable partial cache; keep its source marker too until
+  // the replacement cache has been written successfully.
+  const bool markerRemoved = preserveExistingPartialOnFailure ? false : CssCacheSource::invalidate(cachePath);
   bool transientFailure = false;
   bool parsedAllCss = true;
   size_t parsedCssFileCount = 0;
@@ -1017,7 +959,15 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
       continue;
     }
     // Explicitly close() file before reopening for reading
-    tempCssFile.close();
+    if (!tempCssFile.close()) {
+      LOG_ERR("EBP", "Could not finish writing temporary CSS file: %s", cssPath.c_str());
+      transientFailure = true;
+      parsedAllCss = false;
+      failedCssFileIndex = cssFileIndex + 1;
+      failedCssPath = cssPath;
+      Storage.remove(tmpCssPath.c_str());
+      continue;
+    }
 
     // Parse the CSS file
     if (!Storage.openFileForRead("EBP", tmpCssPath, tempCssFile)) {
@@ -1050,6 +1000,21 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
     }
   }
 
+  CssCacheSource::Identity finalIdentity{};
+  const bool terminalSource =
+      !transientFailure && cssParser->ruleLimitReached() && sourceKnown &&
+      CssCacheSource::read(filepath, CssParser::CSS_CACHE_VERSION, maxCssFileSize, finalIdentity) &&
+      sourceIdentity == finalIdentity;
+
+  // A hard rule cap is a stable terminal result, unlike a temporary heap or ZIP
+  // read failure. Persist that canonical result and let the caller rebuild the
+  // layout once so the new stylesheet and pages stay in sync.
+  if (!parsedAllCss && preserveExistingPartialOnFailure && !terminalSource) {
+    LOG_ERR("EBP", "CSS completion retry stopped; keeping the existing partial rules cache and section layout");
+    cssParser->clear();
+    return CssParseStatus::Partial;
+  }
+
   if (!parsedAllCss && cssParser->empty()) {
     LOG_ERR("EBP", "CSS parsing failed for %s before any usable rules were loaded; CSS cache will not be written",
             failedCssPath.empty() ? "<unknown>" : failedCssPath.c_str());
@@ -1063,14 +1028,18 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
   }
 
   // Save to cache for next time
-  CssCacheSource::Identity finalIdentity{};
-  const bool terminal = !transientFailure && cssParser->ruleLimitReached() && sourceKnown && markerRemoved &&
-                        CssCacheSource::read(filepath, CssParser::CSS_CACHE_VERSION, maxCssFileSize, finalIdentity) &&
-                        sourceIdentity == finalIdentity;
+  const bool terminal = terminalSource && (preserveExistingPartialOnFailure || markerRemoved);
   if (!cssParser->saveToCache(parsedAllCss, terminal)) {
     LOG_ERR("EBP", "Failed to save CSS rules to cache");
     cssParser->clear();
-    return CssParseStatus::Failed;
+    return preserveExistingPartialOnFailure ? CssParseStatus::Partial : CssParseStatus::Failed;
+  }
+
+  // A successful completion retry has replaced the partial cache. Its old terminal marker is no
+  // longer applicable, but only remove it after the cache write succeeds so a failed write keeps
+  // the previous cache state intact.
+  if (preserveExistingPartialOnFailure && parsedAllCss) {
+    CssCacheSource::invalidate(cachePath);
   }
 
   if (terminal && !CssCacheSource::save(cachePath, sourceIdentity)) {
@@ -1083,6 +1052,7 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
     LOG_DBG("EBP", "Skipped %zu byte-identical CSS files", skippedDuplicateCount);
   }
   cssParser->clear();
+  if (terminal) return CssParseStatus::RuleLimited;
   return parsedAllCss ? CssParseStatus::Complete : CssParseStatus::Partial;
 }
 
@@ -1097,6 +1067,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
                 const bool cacheCumulativeSpineSizes, const bool skipScraping, const bool retryLostToc,
                 const bool prewarmSpineStats) {
   zipDirectoryCache.clear();
+  cssCacheReady = false;
   lastLoadFailure = OpenFailure::InvalidOrUnreadable;
   // Enforce access before loading any previously rendered cache.
   if (!openProtection()) {
@@ -1140,6 +1111,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
       bool rebuildCssCache = false;
       bool forceCssRebuild = false;
       bool retryingPartialCssCache = false;
+      bool cssCacheAvailable = false;
       switch (cssParser->inspectCache()) {
         case CssParser::CacheStatus::Missing:
           LOG_DBG("EBP", "CSS rules cache missing, attempting to parse CSS files");
@@ -1149,6 +1121,9 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
           LOG_DBG("EBP", "CSS rules cache invalid, attempting to parse CSS files");
           cssParser->deleteCache();
           rebuildCssCache = true;
+          break;
+        case CssParser::CacheStatus::ReadError:
+          LOG_ERR("EBP", "Could not inspect CSS cache; preserving it and existing section caches");
           break;
         case CssParser::CacheStatus::Partial:
           LOG_DBG("EBP", "CSS rules cache is partial, attempting to rebuild complete CSS cache");
@@ -1161,6 +1136,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
           if (CssCacheSource::read(filepath, CssParser::CSS_CACHE_VERSION, CssParser::maxSourceBytes(), identity) &&
               CssCacheSource::matches(cachePath, identity)) {
             LOG_DBG("EBP", "CSS rule-cap cache source unchanged; skipping CSS extraction and parse");
+            cssCacheAvailable = true;
             break;
           }
           LOG_DBG("EBP", "CSS rule-cap source identity changed or unavailable; rebuilding");
@@ -1169,20 +1145,25 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
           break;
         }
         case CssParser::CacheStatus::Complete:
+          cssCacheAvailable = true;
           break;
       }
 
       if (rebuildCssCache) {
         BookMetadataCache::BookMetadata cachedMetadata = bookMetadataCache->coreMetadata;
-        if (!parseContentOpf(cachedMetadata, /*writeSpineEntries=*/false, /*collectCssFiles=*/true)) {
+        const bool cssSourcesReady =
+            parseContentOpf(cachedMetadata, /*writeSpineEntries=*/false, /*collectCssFiles=*/true);
+        if (!cssSourcesReady) {
           LOG_ERR("EBP", "Could not parse content.opf from cached bookMetadata for CSS files");
-          // continue anyway - book will work without CSS and we'll still load any inline style CSS
         } else {
           discoverCssFilesFromZip();
         }
         bookMetadataCache.reset();
-        const CssParseStatus cssStatus = parseCssFiles(forceCssRebuild);
+        const CssParseStatus cssStatus =
+            cssSourcesReady ? parseCssFiles(forceCssRebuild, retryingPartialCssCache)
+                            : (retryingPartialCssCache ? CssParseStatus::Partial : CssParseStatus::Failed);
         releaseCssFileList();
+        cssCacheAvailable = cssStatus != CssParseStatus::Failed;
         bookMetadataCache = makeBookMetadataCacheNoThrow(cachePath, cacheCumulativeSpineSizes);
         if (!bookMetadataCache) {
           lastLoadFailure = OpenFailure::OutOfMemory;
@@ -1192,7 +1173,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
           LOG_ERR("EBP", "Failed to reload cache after CSS rebuild");
           return false;
         }
-        if (cssStatus == CssParseStatus::Complete ||
+        if (cssStatus == CssParseStatus::Complete || cssStatus == CssParseStatus::RuleLimited ||
             (cssStatus == CssParseStatus::Partial && !retryingPartialCssCache)) {
           // Invalidate section caches so they are rebuilt with the new CSS.
           Storage.removeDir((cachePath + "/layout").c_str());
@@ -1202,6 +1183,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
           LOG_ERR("EBP", "CSS cache rebuild failed; preserving existing section caches");
         }
       }
+      cssCacheReady = cssCacheAvailable;
     }
     // Release the resolved CSS rule map: it is only needed transiently while building
     // section caches, and createSectionFile reloads it from cache on demand. Holding it
@@ -1347,7 +1329,9 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   if (!skipLoadingCss) {
     // Parse CSS before reloading book.bin to keep heap as open as possible for rule-table growth.
     bookMetadataCache.reset();
-    if (parseCssFiles() != CssParseStatus::Failed) {
+    const CssParseStatus cssStatus = parseCssFiles();
+    cssCacheReady = cssStatus != CssParseStatus::Failed;
+    if (cssCacheReady) {
       Storage.removeDir((cachePath + "/layout").c_str());
     } else {
       LOG_ERR("EBP", "CSS cache build failed; leaving any existing section caches in place");
@@ -1385,6 +1369,72 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   }
 
   lastLoadFailure = OpenFailure::None;
+  return true;
+}
+
+bool Epub::ensureCssCache() {
+  if (!cssParser) {
+    cssParser = makeCssParserNoThrow(cachePath);
+    if (!cssParser) return false;
+  }
+  if (cssCacheReady && cssParser->hasCache()) return true;
+  cssCacheReady = false;
+
+  bool forceCssRebuild = false;
+  switch (cssParser->inspectCache()) {
+    case CssParser::CacheStatus::Complete:
+    case CssParser::CacheStatus::Partial:
+      // Empty stylesheets are valid complete caches; partial caches are
+      // explicit and remain usable through the regular disk-backed lookup.
+      cssCacheReady = true;
+      return true;
+    case CssParser::CacheStatus::RuleLimited: {
+      CssCacheSource::Identity identity{};
+      if (CssCacheSource::read(filepath, CssParser::CSS_CACHE_VERSION, CssParser::maxSourceBytes(), identity) &&
+          CssCacheSource::matches(cachePath, identity)) {
+        cssCacheReady = true;
+        return true;
+      }
+      forceCssRebuild = true;
+      break;
+    }
+    case CssParser::CacheStatus::Invalid:
+      forceCssRebuild = true;
+      break;
+    case CssParser::CacheStatus::ReadError:
+      LOG_ERR("EBP", "Could not inspect CSS cache; preserving it for a later retry");
+      return false;
+    case CssParser::CacheStatus::Missing:
+      break;
+  }
+
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    LOG_ERR("EBP", "Cannot build optional CSS without the already-loaded book metadata");
+    return false;
+  }
+
+  BookMetadataCache::BookMetadata cachedMetadata = bookMetadataCache->coreMetadata;
+  releaseCssFileList();
+  cssParser->clear();
+  if (!parseContentOpf(cachedMetadata, /*writeSpineEntries=*/false, /*collectCssFiles=*/true)) {
+    LOG_ERR("EBP", "Could not parse content.opf for requested CSS styles");
+    releaseCssFileList();
+    return false;
+  }
+  discoverCssFilesFromZip();
+
+  // Keep the active metadata index alive while optional styles are built. The
+  // reader may already be using it, and a second SD open after CSS parsing
+  // could fail and make a healthy book look like it has no chapters.
+  const CssParseStatus cssStatus = parseCssFiles(forceCssRebuild);
+  releaseCssFileList();
+  cssParser->clear();
+  cssCacheReady = cssStatus != CssParseStatus::Failed;
+  if (!cssCacheReady) {
+    LOG_ERR("EBP", "Requested CSS cache could not be built; styles remain unavailable");
+    return false;
+  }
+  LOG_INF("EBP", "Requested embedded styles are ready%s", cssStatus == CssParseStatus::Partial ? " (partial)" : "");
   return true;
 }
 
@@ -2185,6 +2235,47 @@ bool Epub::getItemSize(const std::string& itemHref, size_t* size) const {
   return ZipFile(filepath, &zipDirectoryCache).getInflatedFileSize(path.c_str(), size);
 }
 
+bool Epub::getItemIdentity(const std::string& itemHref, ItemIdentity& identity) const {
+  identity = {};
+  const std::string path = FsHelpers::normalisePath(itemHref);
+  if (path.empty() || path.size() > UINT16_MAX) return false;
+  ZipFile::EntryTarget target{ZipFile::fnvHash64(path.data(), path.size()), static_cast<uint16_t>(path.size()), 0,
+                              path.c_str()};
+  ZipFile::EntryIdentity source;
+  if (ZipFile(filepath, &zipDirectoryCache).fillEntryIdentities(&target, 1, &source, 1) != 1 || !source.found)
+    return false;
+  identity.crc32 = source.crc32;
+  identity.compressedSize = source.compressedSize;
+  identity.uncompressedSize = source.uncompressedSize;
+  identity.encrypted = decryptor && decryptor->isEncrypted(path);
+  if (!identity.encrypted) {
+    // Adobe's font obfuscation is a separate transform from the AES/LCP
+    // decryptor. Its output also depends on the package UUID, so include that
+    // exact public key in the cache identity before reusing extracted bytes.
+    size_t manifestSize = 0;
+    if (getItemSize("META-INF/encryption.xml", &manifestSize)) {
+      AdobeFontObfuscation fontManifest(&path);
+      if (!fontManifest.setup() || !readItemContentsToStream("META-INF/encryption.xml", fontManifest, 512) ||
+          !fontManifest.finish()) {
+        LOG_ERR("EBP", "Cannot identify publisher font obfuscation: %s", path.c_str());
+        return false;
+      }
+      if (fontManifest.isAdobeFont()) {
+        std::string opfPath;
+        AdobeFontObfuscation package;
+        if (!findContentOpfFile(&opfPath) || !package.setup() || !readItemContentsToStream(opfPath, package, 512) ||
+            !package.finish() || !package.hasKey()) {
+          LOG_ERR("EBP", "Cannot identify Adobe font key: %s", path.c_str());
+          return false;
+        }
+        identity.adobeObfuscated = true;
+        identity.adobeKey = package.key();
+      }
+    }
+  }
+  return true;
+}
+
 namespace {
 constexpr char kOptimizerIndexPath[] = "META-INF/crossink/optimizer-images-v1.idx";
 using OptimizerFormat::IndexScratch;
@@ -2258,6 +2349,12 @@ bool Epub::seedOptimizerImageCache(const std::string& itemHref, const int expect
   }
   if (!findOptimizerImage(itemHref)) return false;
   const auto& entry = optimizerLastHit;
+  // Both sidecar formats contain final 2-bit pixels. Do not resample their
+  // dither pattern; a different layout size must decode the original image.
+  if (entry.width != expectedWidth || entry.height != expectedHeight) {
+    LOG_DBG("EBP", "Optimizer image dimensions differ; decoding source: %s", itemHref.c_str());
+    return false;
+  }
   size_t bytes = 0;
   if (!getItemSize(entry.pxcHref, &bytes) || bytes != entry.bytes) return false;
   const std::string temp = destPxcPath + ".optimizer.tmp";
@@ -2287,29 +2384,17 @@ bool Epub::seedOptimizerImageCache(const std::string& itemHref, const int expect
     if (ok) LOG_DBG("EBP", "Materialized PXC2 image: %s", entry.pxcHref);
     return ok;
   }
-  if (entry.width == expectedWidth && entry.height == expectedHeight) {
-    // No resize is needed: validate while inflating directly to the publish temp file.
-    FsFile output;
-    if (!Storage.openFileForWrite("EBP", temp, output)) return false;
-    PxcHeaderSink sink(output);
-    bool ok = readItemContentsToStream(entry.pxcHref, sink, kOptimizerPxcExtractionChunkSize) &&
-              sink.width() == entry.width && sink.height() == entry.height && output.size() == entry.bytes;
-    ok = OptimizerFormat::finishCache(output, Storage, ok, temp.c_str(), destPxcPath.c_str(), backup.c_str());
-    if (!ok) {
-      LOG_ERR("EBP", "PXC extraction failed: %s", entry.pxcHref);
-      Storage.remove(temp.c_str());
-    }
-    return ok;
+  // No resize is needed: validate while inflating directly to the publish temp file.
+  FsFile output;
+  if (!Storage.openFileForWrite("EBP", temp, output)) return false;
+  PxcHeaderSink sink(output);
+  bool ok = readItemContentsToStream(entry.pxcHref, sink, kOptimizerPxcExtractionChunkSize) &&
+            sink.width() == entry.width && sink.height() == entry.height && output.size() == entry.bytes;
+  ok = OptimizerFormat::finishCache(output, Storage, ok, temp.c_str(), destPxcPath.c_str(), backup.c_str());
+  if (!ok) {
+    LOG_ERR("EBP", "PXC extraction failed: %s", entry.pxcHref);
+    Storage.remove(temp.c_str());
   }
-  const std::string source = destPxcPath + ".optimizer.source";
-  Storage.remove(source.c_str());
-  if (!extractItemToFile(entry.pxcHref, source, kOptimizerPxcExtractionChunkSize)) return false;
-  FsFile verify;
-  bool ok = Storage.openFileForRead("EBP", source, verify) && readPxcHeader(verify, w, h) && w == entry.width &&
-            h == entry.height && verify.size() == entry.bytes;
-  verify.close();
-  if (ok) ok = rescalePxcFile(source, destPxcPath, expectedWidth, expectedHeight);
-  Storage.remove(source.c_str());
   return ok;
 }
 

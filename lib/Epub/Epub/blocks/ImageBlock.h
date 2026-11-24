@@ -16,9 +16,9 @@ class ImageBlock final : public Block {
   int16_t getWidth() const { return width; }
   int16_t getHeight() const { return height; }
 
-  void prepareCache() const;
-  bool hasValidCache() const;
-  bool needsDecode() const;
+  void prepareCache(bool grayscale) const;
+  bool hasValidCache(bool grayscale) const;
+  bool needsDecode(bool grayscale) const;
   // Decodes into the on-SD pixel cache ahead of time, without touching the live framebuffer --
   // used by the reader's forward-page-turn prefetch to warm the cache for an upcoming page's
   // image before the user actually turns to it. (x, y) must be where the image will actually be
