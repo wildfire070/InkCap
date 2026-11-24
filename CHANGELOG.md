@@ -207,6 +207,7 @@
 - Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
 - Show a Delete button when viewing a clipping (#936).
 - Add an optional Dutch hyphenation pack for EPUBs (#970).
+- Add optional Sync on Sleep for EPUB progress, plus bookmarks, clippings, and reading sessions on compatible servers (CrossPoint #4531).
 
 ### Changed
 
@@ -215,14 +216,17 @@
 
 ### Fixed
 
+- Clear the DNS cache safely when Wi-Fi addresses change to prevent a possible crash.
 - Preserve the original line breaks and indentation in EPUB preformatted text, such as shaped poems.
-
 - Stay in the selected chapter when following EPUB Contents links, including links to positions within a chapter.
 - Indent EPUB blockquotes that rely on default margins (#956).
 - Keep the last readable EPUB chapter when an SD read or write interrupts full or incremental indexing.
 - Fix slow EPUB indexing and page turns caused by repeated glyph scans, stylesheet checks, and small chapter-index writes.
 - On X3 and X4, look up publisher styles on the SD card before retrying a chapter in Safe Mode when memory runs low.
 - Keep wide EPUB tables in a grid on X3 and X4 when an SD-card font leaves less memory for indexing.
+- Remove stray spaces inside EPUB words split by publisher page numbers.
+- Keep the EPUB’s Time Left estimate visible while relearning after a layout change.
+- Keep larger EPUB headings visible on X3 and X4, including with Ruled Lines on. SD-card fonts reuse the loaded bitmap for larger text to reduce memory use.
 
 ## [v2.0.0] - 2026-11-19
 

@@ -91,11 +91,12 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v121 (upstream): Size compact EPUB table columns to fit their contents.
 // v122 (upstream): Prefer bounded EPUB table layout on ESP32-C3.
 // v124 (upstream): Keep wide EPUB tables in a grid -- jumps from v122, no v123 landed here.
-constexpr uint8_t SECTION_FILE_VERSION = 124;
+// v125 (upstream): Keep EPUB words joined across publisher page markers.
+constexpr uint8_t SECTION_FILE_VERSION = 125;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.
-constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xED;
+constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xEE;
 constexpr uint32_t SHAPING_STAMP_MAGIC = 0x31524853;  // "SHR1"
 constexpr uint32_t SHAPING_STAMP_BYTES = 7 * sizeof(uint32_t);
 

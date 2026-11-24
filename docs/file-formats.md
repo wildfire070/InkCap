@@ -39,6 +39,33 @@ saving for that session, preserving both source files until a successful
 reload. This also fails closed on corrupt canonical files rather than replacing
 them with a potentially incomplete legacy subset.
 
+### Bookmark sync ledger
+
+For EPUBs with bookmark sync, `/.crosspoint/bookmark-sync/<path-crc32>`
+is a separate atomic sync file. The checksum-protected version 2 record
+contains the server/account and remote document fingerprints, a revision cursor,
+a separate tombstone-scan cursor used at capacity, and up to 128
+ID-to-local-position mappings. Each mapping keeps the opaque server ID and its
+settled or pending exchange state. Upload and deletion intents are journaled
+before the request; deletions also record the last observed server revision.
+The receive cursor advances only after local changes are durable. A server
+restart that rewinds revisions is not inferred from an empty response. Neither old-account IDs nor old-document deletions are sent to a
+new scope. A different account is rejected rather than exporting the previous
+account's imported bookmarks.
+
+A bookmark move guards the destination with a durable
+`<path-crc32>.moving` file before writing bookmarks there, and guards the
+source before moving its ledger. These markers block network exchange but
+not local reading. The destination guard is cleared only once the ledger
+arrives or the copy is rolled back. The source guard remains until the old
+snapshots and backups are removed. A failed move leaves any ambiguous path
+guarded rather than treating previously synced bookmarks as fresh local data.
+
+Intentional removal of the last bookmark retains a valid zero-record bookmark
+file while a ledger exists. A missing or unreadable bookmark file is not treated
+as a request to delete server bookmarks. Local deletion of the whole EPUB
+clears its local ledger without sending remote bookmark tombstones.
+
 ## Settings: menu navigation
 
 `menuNavigation` in `/.crosspoint/crossink-settings.json` selects Directional
@@ -1016,7 +1043,7 @@ identity used by stats uploads: `crossink-` followed by the twelve lowercase hex
 MAC digits. Only the current reader's paths are read, updated, reset, or uploaded:
 
 - `/.crosspoint/global_stats_<reader>.bin` (and `.bak`/`.tmp`).
-- Per-book `stats_v7_<reader>.bin`, older versioned variants, and
+- Per-book `stats_v8_<reader>.bin`, older versioned variants, and
   `stats_<reader>.bin` inside the book cache directory.
 - `/.crosspoint/daily_reading_<reader>/` for daily counters.
 - `/.crosspoint/reading_sessions_<reader>/` for the session outbox.
@@ -1050,10 +1077,10 @@ require an updated Sync server.
 
 ## Reading-stat save slots
 
-Local `global_stats.bin` (version 4) and per-book `stats_v7.bin` use the same alternating
-primary/`.bak` policy. Their payloads are 175 and 91 bytes,
+Local `global_stats.bin` (version 4) and per-book `stats_v8.bin` use the same alternating
+primary/`.bak` policy. Their payloads are 175 and 95 bytes,
 respectively; each slot appends a 4-byte sequence and a 4-byte IEEE CRC-32 of
-the payload plus sequence. Thus stored records are 183 and 99 bytes. Readers
+the payload plus sequence. Thus stored records are 183 and 103 bytes. Readers
 validate the entire record before choosing its sequence. The first migration
 preserves the legacy primary. Previous per-book versions and recoverable
 legacy `.tmp` files are still accepted by the migration loader.
@@ -1099,6 +1126,16 @@ in total. Upload buffers remain fixed at 1536 bytes, with a 33-byte stack buffer
 for hex serialization and no new device heap allocation for identities.
 The optional nearby-sharing activity also grows by 144 bytes (eight queued
 snapshots and its local export); its existing activity allocation gate is unchanged.
+
+## `stats_v8.bin`
+
+Version 8 appends a 4-byte EPUB pace layout signature (`uint32_t` LE) at offsets
+91–94, for a 95-byte payload. It uses the same render settings signature as EPUB
+layout. A zero signature identifies older snapshots or formats without EPUB
+layout data. An EPUB with a missing or changed signature learns its page pace
+again and keeps its recorded reading history. The signature travels with the
+pace through the local save slots. Stats uploads and EPUB layout caches use
+their existing formats.
 
 ## `stats_v7.bin`
 
@@ -1179,6 +1216,10 @@ through cache cleanup, so measurement and drawing use the same glyph substitutio
 The new identity rebuilds existing full and partial layouts for these families;
 body-only and built-in font identities stay unchanged. No binary payload changes.
 
+On X3 and X4, larger EPUB text uses the loaded bitmap. A larger SD font no
+longer participates in the reader font identity, so cached layouts that used
+one rebuild automatically.
+
 ## Inline EPUB image pixel cache (`.pxc`)
 
 Inline images use separate target-sized Gray (`_gray_v4.pxc`) and monochrome
@@ -1190,7 +1231,13 @@ and at their exact dimensions; mismatches fall back to the source EPUB image.
 
 ## `section.bin`
 
-### Version 124 (current development)
+### Version 125 (current development)
+
+Inline publisher page markers no longer introduce a space inside a word.
+Complete sections use version 125 and suspended sections use `0xEE` so
+previously laid-out pages rebuild automatically. The binary payload is unchanged.
+
+### Version 124
 
 Simple EPUB tables can measure widths for up to eight logical columns before
 layout when they contain enough numeric values. Numeric cells after a spanning

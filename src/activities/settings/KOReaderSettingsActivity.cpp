@@ -40,6 +40,8 @@ enum Row : uint8_t {
   ROW_SYNC_ALL,
   ROW_INCLUDE_STATS,
   ROW_INCLUDE_CLIPPINGS,
+  ROW_INCLUDE_BOOKMARKS,
+  ROW_SYNC_ON_SLEEP,
   ROW_SYNC_BEHAVIOR,
   ROW_KOREADER_AUTOSYNC,
   ROW_DOCUMENT_MATCHING,
@@ -48,14 +50,17 @@ enum Row : uint8_t {
 };
 // Positional: must match the Row enum above entry-for-entry. ROW_SYNC_ALL/ROW_KOREADER_AUTOSYNC
 // are this branch's own rows (STR_SYNC_ALL_BOOKS, STR_KOREADER_AUTOSYNC); ROW_SERVER_TYPE/
-// ROW_CUSTOM_HEADER_1/ROW_CUSTOM_HEADER_2 are upstream's (3d815cf3, custom HTTP headers +
-// server-type selector) -- combined here since the enum itself already has all 15 (auto-merged
-// clean), but this array hadn't been updated to match on either side.
+// ROW_CUSTOM_HEADER_1/ROW_CUSTOM_HEADER_2/ROW_INCLUDE_BOOKMARKS/ROW_SYNC_ON_SLEEP are upstream's
+// (custom HTTP headers + server-type selector, then Sync on Sleep) -- combined here since the
+// enum itself already has all 17 (auto-merged clean), but this array hadn't been updated to
+// match on either side.
 constexpr StrId ROW_LABELS[ROW_COUNT] = {
-    StrId::STR_USERNAME,          StrId::STR_PASSWORD,          StrId::STR_SYNC_SERVER_URL, StrId::STR_SERVER_TYPE,
-    StrId::STR_CUSTOM_HEADER_1,   StrId::STR_CUSTOM_HEADER_2,   StrId::STR_SIGN_UP,         StrId::STR_AUTHENTICATE,
-    StrId::STR_SYNC_ALL_BOOKS,    StrId::STR_READING_STATS,     StrId::STR_CLIPPINGS,       StrId::STR_SYNC_BEHAVIOR,
-    StrId::STR_KOREADER_AUTOSYNC, StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA};
+    StrId::STR_USERNAME,          StrId::STR_PASSWORD,         StrId::STR_SYNC_SERVER_URL,
+    StrId::STR_SERVER_TYPE,       StrId::STR_CUSTOM_HEADER_1,  StrId::STR_CUSTOM_HEADER_2,
+    StrId::STR_SIGN_UP,           StrId::STR_AUTHENTICATE,     StrId::STR_SYNC_ALL_BOOKS,
+    StrId::STR_READING_STATS,     StrId::STR_CLIPPINGS,        StrId::STR_BOOKMARKS,
+    StrId::STR_SYNC_ON_SLEEP,     StrId::STR_SYNC_BEHAVIOR,    StrId::STR_KOREADER_AUTOSYNC,
+    StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA};
 constexpr StrId SERVER_TYPES[] = {StrId::STR_CROSSPOINT, StrId::STR_KOSYNC_SERVER, StrId::STR_OTHER};
 // Reuses the same generic value labels BookFusionSettingsActivity's Auto-Sync row uses --
 // "Every Chapter"/"Every 5%"/etc. aren't BookFusion-specific wording.
@@ -287,6 +292,18 @@ void KOReaderSettingsActivity::handleSelection() {
       requestUpdate();
       break;
     }
+    case ROW_INCLUDE_BOOKMARKS:
+      if (!KOREADER_STORE.hasCredentials() || KOREADER_STORE.getServerType() == KOReaderServerType::KOSYNC) return;
+      KOREADER_STORE.setSyncBookmarks(!KOREADER_STORE.getSyncBookmarks());
+      if (!KOREADER_STORE.saveToFile()) LOG_ERR("KOSync", "Cannot save bookmark sync setting");
+      requestUpdate();
+      break;
+    case ROW_SYNC_ON_SLEEP:
+      if (!KOREADER_STORE.hasCredentials()) return;
+      KOREADER_STORE.setSyncOnSleep(!KOREADER_STORE.getSyncOnSleep());
+      if (!KOREADER_STORE.saveToFile()) LOG_ERR("KOSync", "Cannot save sleep sync setting");
+      requestUpdate();
+      break;
     case ROW_SYNC_BEHAVIOR: {
       const auto current = KOREADER_STORE.getSyncBehavior();
       KOREADER_STORE.setSyncBehavior(current == KOReaderSyncBehavior::ASK_EVERY_TIME
@@ -387,8 +404,25 @@ void KOReaderSettingsActivity::fillRow(const uint16_t row, fui::ListItem& item) 
             row == ROW_INCLUDE_STATS ? KOREADER_STORE.getSyncStats() : KOREADER_STORE.getSyncClippings();
       }
       break;
+    case ROW_INCLUDE_BOOKMARKS:
+      if (KOREADER_STORE.getServerType() == KOReaderServerType::KOSYNC) {
+        rowValue = tr(STR_REQUIRES_CROSSPOINT_SYNC);
+        item.enabled = false;
+        break;
+      }
+      [[fallthrough]];
+    case ROW_SYNC_ON_SLEEP:
+      if (row == ROW_SYNC_ON_SLEEP) item.sectionHeading = tr(STR_SYNC_OPTIONS);
+      if (needsCredentials) {
+        rowValue = tr(STR_SET_CREDENTIALS_FIRST);
+        item.enabled = false;
+      } else {
+        item.toggle = true;
+        item.toggleChecked =
+            row == ROW_SYNC_ON_SLEEP ? KOREADER_STORE.getSyncOnSleep() : KOREADER_STORE.getSyncBookmarks();
+      }
+      break;
     case ROW_SYNC_BEHAVIOR:
-      item.sectionHeading = tr(STR_SYNC_OPTIONS);
       rowValue =
           KOREADER_STORE.getSyncBehavior() == KOReaderSyncBehavior::SMART ? tr(STR_SMART_SYNC) : tr(STR_ASK_EVERY_TIME);
       break;

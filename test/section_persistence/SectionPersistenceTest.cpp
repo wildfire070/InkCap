@@ -98,8 +98,12 @@ namespace {
 // retires 120/0xE9 through 122/0xEB below in turn. v123/0xEC never existed as
 // a real on-disk value -- one upstream commit bundled it with v124 in a
 // single jump, so there is nothing to reject at that byte.
-constexpr uint8_t kFullVersion = 124;
-constexpr uint8_t kPartialVersion = 0xED;
+// This sync (upstream v125: keep EPUB words joined across publisher page markers)
+// retires 124/0xED below.
+constexpr uint8_t kFullVersion = 125;
+constexpr uint8_t kPartialVersion = 0xEE;
+constexpr uint8_t kPreWordJoinFullVersion = 124;  // former-current, superseded by v125 (keep
+constexpr uint8_t kPreWordJoinPartialVersion = 0xED;  // EPUB words joined across page markers)
 constexpr uint8_t kHeadingRedactionFullVersion = 119;  // upstream v118+v119 bundled (centered heading spans +
 constexpr uint8_t kHeadingRedactionPartialVersion = 0xE8;  // inline redactions), superseded by v120 (preformatted verse)
 constexpr uint8_t kPreWideTableGridFullVersion = 122;  // former-current, superseded by v124 (wide tables keep a
@@ -998,6 +1002,7 @@ TEST_F(SectionPersistenceTest, FailedAppendCursorRestoreAbandonsTempAndKeepsLast
 
 TEST_F(SectionPersistenceTest, RejectsCachesFromPreviousLayoutRevisions) {
   for (const uint8_t staleVersion : {uint8_t{123}, uint8_t{0xEC},  // never a real on-disk value; bundled with v124 in one jump
+                                     kPreWordJoinFullVersion, kPreWordJoinPartialVersion,
                                      kPreWideTableGridFullVersion, kPreWideTableGridPartialVersion,
                                      kPreBoundedTableLayoutFullVersion, kPreBoundedTableLayoutPartialVersion,
                                      kPreCompactColumnSizingFullVersion, kPreCompactColumnSizingPartialVersion,
