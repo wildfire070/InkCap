@@ -1393,11 +1393,14 @@ void showRestoreReindexFailedAlert(const std::string& title) {
 // Goes through BookMoveUtils::archiveBook() rather than a hand-rolled rename+migrate, so a finish-triggered
 // archive still leaves the restore marker the standalone Restore action (and the two-way Unfinished->Restore
 // sync) depend on to find its way back.
-void archiveFinishedBook(const std::string& srcPath, const std::string& title) {
+void archiveFinishedBook(const std::string& srcPath, const std::string& title, SleepSyncBook* sleepSyncBook) {
   LOG_INF("ERS", "Moving finished epub: %s", srcPath.c_str());
-  if (BookMoveUtils::archiveBook(srcPath).empty()) {
+  const std::string result = BookMoveUtils::archiveBook(srcPath);
+  if (result.empty()) {
     LOG_ERR("ERS", "Failed to archive finished book");
     showArchiveMoveFailedAlert(/*restoring=*/false, title);
+  } else if (sleepSyncBook) {
+    sleepSyncBook->path = result;
   }
 }
 
@@ -2670,7 +2673,7 @@ void EpubReaderActivity::onExit() {
     const std::string srcPath = epub->getPath();
     const std::string title = epub->getTitle();
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
-    archiveFinishedBook(srcPath, title);
+    archiveFinishedBook(srcPath, title, sleepSyncBook);
   } else if (pendingReadFolderMove && epub) {
     const std::string srcPath = epub->getPath();
     const std::string oldCachePath = epub->getCachePath();
@@ -2698,6 +2701,9 @@ void EpubReaderActivity::onExit() {
       LOG_ERR("ERS", "Failed to %s: %s", restoring ? "restore" : "archive", path.c_str());
       showArchiveMoveFailedAlert(restoring, title);
     } else {
+      // Both archiveBook()/restoreBook() roll back the move on their own failure, so result is only
+      // ever empty when the book is still at its original path (already what sleepSyncBook holds).
+      if (sleepSyncBook) sleepSyncBook->path = result;
       // Two-way sync: the standalone Archive/Restore action (and this same path when a Restore was
       // armed by un-finishing an archived book -- see requestArchiveRestore()) also flips Finished,
       // silently. A no-op when it's already at the target value (e.g. un-finishing already set it).
@@ -2715,8 +2721,13 @@ void EpubReaderActivity::onExit() {
     if (result.empty()) {
       LOG_ERR("ERS", "Failed to %s AO3 fic: %s", restoring ? "restore" : "archive", path.c_str());
       showArchiveMoveFailedAlert(restoring, title);
-    } else if (restoring && reindexFailed) {
-      showRestoreReindexFailedAlert(title);
+    } else {
+      // Both archiveFic()/restoreFic() roll back the move on their own failure, so result is only
+      // ever empty when the fic is still at its original path (already what sleepSyncBook holds).
+      if (sleepSyncBook) sleepSyncBook->path = result;
+      if (restoring && reindexFailed) {
+        showRestoreReindexFailedAlert(title);
+      }
     }
   } else {
     epub.reset();
