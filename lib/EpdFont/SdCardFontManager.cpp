@@ -11,6 +11,7 @@
 #include <Logging.h>
 #include <SdCardFont.h>
 #include <SdCardFontRegistry.h>
+#include <SymbolEmojiFallback.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -73,6 +74,9 @@ int SdCardFontManager::loadFilePath(const char* path, const char* familyName, ui
   LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u", path, pointSize, fontId, font->styleCount());
 
   EpdFontFamily fontFamily(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3));
+  if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+    fontFamily = fontFamily.withFallbackFonts(symbolFallback);
+  }
   // Dictionary-only extra sizes must not change the reader's available set
   // behind its cache identity; only body and budgeted content sizes participate.
   if (loaded_.size() == 1 || residentLimit) fontFamily = fontFamily.withSize(loaded_.front().fontId, pointSize);
@@ -245,9 +249,11 @@ void SdCardFontManager::loadContentSizes(const SdCardFontFamilyInfo& family, Gfx
     // before publishing the final body identity shared by all content sizes.
     renderer.removeFont(loaded.fontId);
     renderer.registerSdCardFont(loaded.fontId, font);
-    renderer.insertFont(
-        loaded.fontId, EpdFontFamily(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3))
-                           .withSize(newId, loaded.size));
+    EpdFontFamily fam(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3));
+    if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+      fam = fam.withFallbackFonts(symbolFallback);
+    }
+    renderer.insertFont(loaded.fontId, fam.withSize(newId, loaded.size));
   }
   // Optional sizes draw one glyph at a time. Keep only the largest fallback
   // scratch allocation; its owner tag prevents reuse after another size draws.
@@ -356,7 +362,11 @@ int SdCardFontManager::registerScalableSize(GfxRenderer& renderer, uint8_t size)
   }
   loaded_.reserve(ScalableContentMaxPointSize - ScalableContentMinPointSize + 1);
   loaded_.push_back({nullptr, id, size});
-  renderer.insertFont(id, EpdFontFamily(styles[0], styles[1], styles[2], styles[3]));
+  EpdFontFamily fam(styles[0], styles[1], styles[2], styles[3]);
+  if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+    fam = fam.withFallbackFonts(symbolFallback);
+  }
+  renderer.insertFont(id, fam);
   return id;
 }
 bool SdCardFontManager::registerScalableContentSizes(GfxRenderer& renderer) {
