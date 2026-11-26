@@ -9,6 +9,7 @@
 #include "../../src/fontIds.h"
 #include "HalScalableFont.h"
 #include "ScalableAssets.generated.h"
+#include "SymbolEmojiFallback.h"
 namespace {
 std::optional<HalScalableFont> faces[8];
 bool ready[2] = {};
@@ -68,6 +69,9 @@ void ensureScalableBuiltinFamily(GfxRenderer& renderer, unsigned family) {
     if (ok) {
       EpdFontFamily font(faces[family * 4]->atSize(points), faces[family * 4 + 1]->atSize(points),
                          faces[family * 4 + 2]->atSize(points), faces[family * 4 + 3]->atSize(points));
+      if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+        font = font.withFallbackFonts(symbolFallback);
+      }
       renderer.insertFont(scalableBuiltinReaderFontId(family, points), font);
       for (unsigned size = 0; size < 4; ++size)
         if (points == 10 + size * 2) renderer.insertFont(ids[family][size], font);

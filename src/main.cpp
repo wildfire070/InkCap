@@ -23,6 +23,7 @@
 #include <MemoryBudget.h>
 #include <RestartHooks.h>
 #include <SPI.h>
+#include <SymbolEmojiFallback.h>
 #include <TrustedTime.h>
 
 #include <cstdlib>
@@ -1462,6 +1463,13 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, c
   renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily.withSize(BITTER_10_FONT_ID, 14));
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily.withSize(BITTER_10_FONT_ID, 16));
 #endif
+  // PSRAM/SD-font boards only: attach a symbol/emoji fallback loaded from the
+  // SD card, if present, so UI text can render glyphs the UI fonts lack.
+  if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+    ui10FontFamily = ui10FontFamily.withFallbackFonts(symbolFallback);
+    ui12FontFamily = ui12FontFamily.withFallbackFonts(symbolFallback);
+    smallFontFamily = smallFontFamily.withFallbackFonts(symbolFallback);
+  }
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
