@@ -9,6 +9,17 @@
 
 #include "../../lib/EpdFont/FontFileTypes.h"
 
+// GCC's libstdc++ provides unique_ptr<T[]>::data() as a long-standing, widely
+// used extension (production code, and the real ESP32 GCC toolchain, rely on
+// it); libc++ on this host does not. Give the mock buffers the same method
+// rather than touching the verbatim-extracted production call sites below.
+template <typename T>
+struct DataPtr : std::unique_ptr<T[]> {
+  DataPtr() = default;
+  DataPtr(std::unique_ptr<T[]> p) : std::unique_ptr<T[]>(std::move(p)) {}
+  T* data() const { return this->get(); }
+};
+
 #define LOG_DBG(...) ((void)0)
 #define LOG_ERR(...) ((void)0)
 #define CROSSINK_SCALABLE_FONTS 1
@@ -140,7 +151,7 @@ class CrossPointWebServer {
     bool success = false;
     size_t size = 0;
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;
-    std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(UPLOAD_BUFFER_SIZE);
+    DataPtr<uint8_t> buffer = std::make_unique<uint8_t[]>(UPLOAD_BUFFER_SIZE);
     size_t bufferPos = 0;
   } upload;
   struct FontUploadState {
@@ -152,7 +163,7 @@ class CrossPointWebServer {
     int errorStatus = 0;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
-    std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(BUFFER_SIZE);
+    DataPtr<uint8_t> buffer = std::make_unique<uint8_t[]>(BUFFER_SIZE);
     size_t bufferPos = 0;
   } fontUpload;
   using UploadCancelCheck = bool (*)(void*);
@@ -214,7 +225,7 @@ int main() {
       Storage.removed.clear();
       CrossPointWebServer swapFailed;
       send(swapFailed, true, UPLOAD_FILE_WRITE, 80);
-      send(swapFailed, true, UPLOAD_FILE_END);
+      send(swapFailed, true, UPLOAD_FILE_END, 0, 80);
       assert(!swapFailed.fontUpload.valid);
       assert(Storage.removed == std::vector<std::string>{swapFailed.fontUpload.filePath});
       DownloadFileSwap::succeeds = true;

@@ -83,6 +83,15 @@ class HalFile : public Print {
   uint32_t modificationTime() const { return data_ ? data_->modified : 0; }
   bool isOpen() const { return static_cast<bool>(data_); }
   explicit operator bool() const { return isOpen(); }
+  size_t fileSize64() const { return size(); }
+  // Directory iteration is not modeled by this flat-file-map stub; every
+  // opened handle presents as a plain file with no entries to enumerate.
+  bool isDirectory() const { return false; }
+  HalFile openNextFile() { return HalFile(); }
+  size_t getName(char* buf, size_t) const {
+    if (buf) buf[0] = '\0';
+    return 0;
+  }
 
  private:
   std::shared_ptr<HostFileData> data_;
@@ -110,7 +119,7 @@ class HalStorage {
     return true;
   }
 
-  HalFile open(const char* path, oflag_t) {
+  HalFile open(const char* path, oflag_t = O_RDONLY) {
     const auto found = files_.find(path);
     return found == files_.end() || found->second->openFail ? HalFile{} : HalFile(found->second);
   }

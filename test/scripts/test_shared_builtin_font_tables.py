@@ -22,17 +22,10 @@ def normalize(initializer):
 
 
 class BuiltinFontTablesTest(unittest.TestCase):
-    def test_inter_ui_faces_include_azerbaijani_and_persian_coverage(self):
-        for face in ("inter_8_regular", "inter_10_regular", "inter_10_bold", "inter_12_regular", "inter_12_bold"):
-            with self.subTest(face=face):
-                header = (FONT_DIR / f"{face}.h").read_text()
-                intervals = header.split(f"{face}Intervals[] = {{", 1)[1].split("};", 1)[0]
-                ranges = [
-                    (int(start, 16), int(end, 16))
-                    for start, end in re.findall(r"\{\s*(0x[0-9A-Fa-f]+),\s*(0x[0-9A-Fa-f]+),", intervals)
-                ]
-                for cp in (0x018F, 0x0259, 0x064B, 0x0650, 0x0654, 0x066A):
-                    self.assertTrue(any(start <= cp <= end for start, end in ranges), f"missing U+{cp:04X}")
+    # test_inter_ui_faces_include_azerbaijani_and_persian_coverage (upstream's own
+    # addition) deliberately not carried here: this branch keeps the Inter UI font
+    # English-only (custom_i18n_builtin_langs=en) to save ~31.5KB of flash -- see
+    # the sanctioned-deviation note in lib/EpdFont/scripts/convert-builtin-fonts.sh.
 
     def test_real_header_payloads_and_inputs_are_preserved(self):
         source = {entry.name: entry.read_text() for entry in FONT_DIR.glob("*.h")}

@@ -1222,7 +1222,7 @@ static unsigned long uploadStartTime = 0;
 
 static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
   if (state.bufferPos > 0 && state.file) {
-    if (!FsHelpers::writeAndCheckpoint(state.file, state.buffer.data(), state.bufferPos)) {
+    if (!FsHelpers::writeAndCheckpoint(state.file, state.buffer.get(), state.bufferPos)) {
       LOG_DBG("WEB", "[UPLOAD] Buffer flush failed or checkpoint failed");
       state.bufferPos = 0;
       return false;
@@ -2800,7 +2800,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         const bool synced = wsUploadFile.sync();
         const bool closed = wsUploadFile.close();
         if (!synced || !closed || !FilePublication::publish(WS_STAGE, filePath.c_str(), false)) {
-          abortWsUpload("WS");
+          abortWsUpload("WS", "Could not finish upload");
           wsServer->sendTXT(num, "ERROR:Could not finish upload");
           return;
         }
@@ -3047,7 +3047,7 @@ void CrossPointWebServer::handleFontUploadData() {
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          if (!FsHelpers::writeAndCheckpoint(fontUpload.file, fontUpload.buffer.data(), fontUpload.bufferPos)) {
+          if (!FsHelpers::writeAndCheckpoint(fontUpload.file, fontUpload.buffer.get(), fontUpload.bufferPos)) {
             abortFontUpload();
             break;
           }
@@ -3071,7 +3071,7 @@ void CrossPointWebServer::handleFontUploadData() {
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
         fontUpload.valid =
-            FsHelpers::writeAndCheckpoint(fontUpload.file, fontUpload.buffer.data(), fontUpload.bufferPos);
+            FsHelpers::writeAndCheckpoint(fontUpload.file, fontUpload.buffer.get(), fontUpload.bufferPos);
         fontUpload.bytesWritten += fontUpload.bufferPos;
         fontUpload.bufferPos = 0;
       }

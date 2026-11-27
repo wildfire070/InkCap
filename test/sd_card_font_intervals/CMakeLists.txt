@@ -1,5 +1,6 @@
 add_executable(sd_card_font_intervals SdCardFontIntervalsTest.cpp
   ../../lib/EpdFont/SdCardFont.cpp ../../lib/EpdFont/SdCardFontManager.cpp
+  ../../lib/EpdFont/SymbolEmojiFallback.cpp
   ../../lib/EpdFont/EpdFontFamily.cpp ../../lib/EpdFont/EpdFont.cpp ../../lib/Utf8/Utf8.cpp)
 target_compile_features(sd_card_font_intervals PRIVATE cxx_std_20)
 target_include_directories(sd_card_font_intervals PRIVATE stubs ../../src ../../lib/EpdFont ../../lib/Memory
