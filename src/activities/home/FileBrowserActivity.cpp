@@ -207,9 +207,10 @@ std::string getFileExtension(const std::string& filename);
 }  // namespace
 
 FileBrowserActivity::FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                         std::string initialPath, const Mode mode)
+                                         std::string initialPath, const Mode mode, const StrId directoryPickerTitle)
     : Activity("FileBrowser", renderer, mappedInput),
       mode(mode),
+      directoryPickerTitle(directoryPickerTitle),
       basepath(initialPath.empty() ? "/" : std::move(initialPath)),
       uiTarget(makeUiTarget(renderer)),
       app(uiTarget, uiTarget.deviceContext()) {}
@@ -220,6 +221,8 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
 
   auto root = Storage.open(basepath.c_str());
   if (!root || !root.isDirectory()) {
+    LOG_ERR("FileBrowser", "Could not open directory: %s", basepath.c_str());
+    fileListReadFailed = true;
     if (root) {
       root.close();
     }
@@ -230,6 +233,7 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
 
   if (!fileNameBuffer) {
     LOG_ERR("FileBrowser", "fileNameBuffer not allocated");
+    fileListMemoryLimited = true;
     root.close();
     return false;
   }
@@ -1928,6 +1932,8 @@ void FileBrowserActivity::buildListScreen(UiApp::ScreenType& screen) {
 
   const size_t totalEntries = entryCount();
   if (totalEntries == 0) {
+    // Files are filtered out here. The current folder is still selectable.
+    if (mode == Mode::PickDirectory && !fileListMemoryLimited && !fileListReadFailed) return;
     const char* emptyMessage =
         fileListMemoryLimited
             ? tr(STR_MEMORY_ERROR)
@@ -2075,7 +2081,7 @@ void FileBrowserActivity::render(RenderLock&&) {
       mode == Mode::PickFirmware
           ? std::string(tr(STR_SELECT_FIRMWARE_FILE))
           : (mode == Mode::PickDirectory
-                 ? std::string(tr(STR_SELECT_RECEIVE_FOLDER))
+                 ? std::string(I18N.get(directoryPickerTitle))
                  : ((basepath == "/") ? std::string(tr(STR_SD_CARD)) : basepath.substr(basepath.rfind('/') + 1)));
   // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
   // indicator; the rest of the screen renders through the app.

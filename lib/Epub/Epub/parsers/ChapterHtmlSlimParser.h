@@ -620,6 +620,9 @@ class ChapterHtmlSlimParser {
   // already-long positional constructor unchanged.
   void setFontSizeLadder(const FontSizeLadder& ladder) { fontSizeLadder_ = ladder; }
   uint32_t getVisibleTextLength() const { return visibleTextOffset; }
+  bool unfinishedPageStartsAfter(uint32_t offset) const {
+    return currentPage && currentPageVisibleOffsetSet && currentPageVisibleOffset > offset;
+  }
   uint32_t getReferenceTextLength() const { return referenceTextOffset; }
   bool parseAndBuildPages();
   static uint32_t publisherBodyFontFamily(const std::string& path, const CssParser& css);

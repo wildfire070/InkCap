@@ -3,6 +3,7 @@
 #include <FileIndex.h>
 #include <FreeInkApp.h>
 #include <FreeInkUIGfxRenderer.h>
+#include <I18n.h>
 
 #include <array>
 #include <atomic>
@@ -87,6 +88,7 @@ class FileBrowserActivity final : public Activity {
   bool lockNextConfirmRelease = false;
 
   Mode mode = Mode::Books;
+  StrId directoryPickerTitle;
 
   // Files state
   static constexpr size_t INDEX_ROW_CACHE_SIZE = 32;
@@ -188,7 +190,7 @@ class FileBrowserActivity final : public Activity {
   freeink::ui::Rect simulatorDirectorySelectRect() const { return directorySelectRect; }
 #endif
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
-                               Mode mode = Mode::Books);
+                               Mode mode = Mode::Books, StrId directoryPickerTitle = StrId::STR_SELECT_RECEIVE_FOLDER);
   bool handleFrontlightPanelResult(const FrontlightPanelResult& result) override;
   void onFrontlightPanelClosed() override;
   void onEnter() override;

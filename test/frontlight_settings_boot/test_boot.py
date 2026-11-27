@@ -100,6 +100,10 @@ int main(int argc, char** argv) {
   frontlight_test::warmChannel = mode != "mono";
   SETTINGS.path = argv[2];
   const bool restoreLightOn = std::string(argv[3]) == "on";
+  // Not the charging-while-asleep boot path this harness isn't exercising --
+  // false reduces the extracted call's "restoreLightOn && !cablePreparation"
+  // back to the plain restoreLightOn this test's own assertions expect.
+  const bool cablePreparation = false;
 ''' + '\n'.join(calls) + r'''
   assert(frontlight_test::begins == 1);  // Applying settings must not reinitialize the driver.
   assert(Frontlight.present() == frontlight_test::fitted);

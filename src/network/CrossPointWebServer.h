@@ -55,6 +55,7 @@ class CrossPointWebServer {
     String path = "/";
     size_t size = 0;
     bool success = false;
+    int errorStatus = 0;
     String error = "";
 
     // Upload write buffer - batches small writes into larger SD card operations
@@ -161,13 +162,17 @@ class CrossPointWebServer {
   struct FontUploadState {
     HalFile file;
     std::string familyName;
-    // Where the upload is actually written: finalPath + ".part", so a font
-    // that already exists under this name is never truncated in place --
+    // filePath = finalPath + ".part": the validated-upload name a font that
+    // already exists under finalPath is never truncated in place for --
     // only published over it (via DownloadFileSwap, rename-aside-then-swap)
-    // once the complete upload has validated.
+    // once the complete upload has validated. The raw bytes are written to
+    // stagePath (a FilePublication-managed, crash-safe staging location)
+    // first, then FilePublication::publish()'d to filePath once complete.
     std::string filePath;
     std::string finalPath;
+    std::string stagePath;
     bool valid = false;
+    int errorStatus = 0;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
     // Nothrow: see UploadState::buffer above.

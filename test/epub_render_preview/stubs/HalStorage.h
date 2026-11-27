@@ -77,6 +77,15 @@ class HalFile : public Print {
   bool isOpen() const { return open_; }
   operator bool() const { return open_; }
   bool sync() const { return open_; }
+  // Directory iteration is not needed by any real EpubRenderPreview invocation
+  // (bitmap drop-cap strike lookups just find nothing and fall back cleanly).
+  bool isDirectory() const { return false; }
+  HalFile openNextFile() { return HalFile(); }
+  size_t getName(char* buf, size_t) const {
+    if (buf) buf[0] = '\0';
+    return 0;
+  }
+  size_t fileSize64() const { return size(); }
 
   size_t write(const uint8_t value) override { return write(&value, 1); }
   size_t write(const uint8_t* data, const size_t length) override {
@@ -106,6 +115,11 @@ class HalStorage {
   }
   bool openFileForRead(const char*, const std::string& path, HalFile& file) { return file.openForRead(path); }
   bool openFileForWrite(const char*, const std::string& path, HalFile& file) { return file.openForWrite(path); }
+  HalFile open(const std::string& path) {
+    HalFile file;
+    file.openForRead(path);
+    return file;
+  }
   bool remove(const char* path) { return std::remove(path) == 0; }
   bool exists(const char* path) const {
     std::ifstream in(path);

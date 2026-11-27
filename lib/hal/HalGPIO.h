@@ -147,6 +147,10 @@ class HalGPIO {
 #endif
   void setSharedConfirmPowerShortPressEmitsPower(bool enabled);
 
+#if FREEINK_DEVICE_PICCO && !defined(SIMULATOR)
+  bool isPowerButtonPhysicallyPressed() const { return inputMgr.isPowerButtonPhysicallyPressed(); }
+#endif
+
   // Verify the physical power button through debounce, then require a long
   // hold when the saved shortcut does not permit short-press wake.
   // Returns true if verification succeeded, false if device should return to sleep.
@@ -159,6 +163,9 @@ class HalGPIO {
   // Return the latest loop-owned sample. Before the first update(), fall back
   // to a direct probe so setup-time callers still report external power.
   bool isUsbConnectedCached() const;
+#if FREEINK_DEVICE_X3
+  bool isUsbHostConnected() const;
+#endif
 
   // Whether a cold boot with no USB detected can be trusted to mean a held
   // power button on the active board's power topology.

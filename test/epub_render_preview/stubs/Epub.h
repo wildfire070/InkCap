@@ -11,8 +11,11 @@ class Epub {
   uint16_t optimizerImageHeight = 0;
   mutable size_t streamReadCount = 0;
 
+  enum class StreamEarlyStop { Disabled, Probe, Immediate };
+
   template <typename Output>
-  bool readItemContentsToStream(const std::string&, Output&, size_t, bool = false) const {
+  bool readItemContentsToStream(const std::string&, Output&, size_t,
+                                StreamEarlyStop = StreamEarlyStop::Disabled) const {
     ++streamReadCount;
     return false;
   }

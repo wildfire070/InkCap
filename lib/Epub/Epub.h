@@ -14,6 +14,7 @@
 
 #include "../GfxRenderer/ImageToneProfile.h"
 #include "Epub/BookMetadataCache.h"
+#include "Epub/EpubCancellation.h"
 #include "Epub/css/CssParser.h"
 #include "Epub/image/PxcV2.h"
 
@@ -29,6 +30,8 @@ class Epub {
   bool loadSyncMetadata(SyncMetadata& metadata);
 
  private:
+  const EpubCancellation* cancellation = nullptr;
+  bool cancelled() const { return cancellation && cancellation->isCancellationRequested(); }
   mutable std::unique_ptr<freeink::content::ContentDecryptor> decryptor;
   bool openProtection() const;
   mutable std::string protectionError;
@@ -65,6 +68,7 @@ class Epub {
   };
 
  public:
+  void setCancellation(const EpubCancellation* token) { cancellation = token; }
   bool ensureOptimizerImageIndex();
   enum class OpenFailure : uint8_t {
     None,
@@ -156,6 +160,7 @@ class Epub {
 
   explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
+  static uint64_t legacyCachePathHash(const std::string& filepath);
   static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
   // Resolve the stable cache path and migrate an older hash-named directory if
   // needed, without opening the EPUB or loading its metadata/location indexes.
@@ -257,8 +262,11 @@ class Epub {
   std::string getDescription() const;
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
+  // Probes finish validating protected content. A cancelled extraction can stop
+  // immediately because its caller discards the incomplete output.
+  enum class StreamEarlyStop { Disabled, Probe, Immediate };
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize,
-                                bool allowEarlyStop = false) const;
+                                StreamEarlyStop earlyStop = StreamEarlyStop::Disabled) const;
   // Publisher-font access also reverses declared Adobe font obfuscation.
   bool readFontContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
   bool extractItemToFile(const std::string& itemHref, const std::string& destPath, size_t chunkSize = 4096) const;

@@ -106,7 +106,6 @@ class NearbyBookTransferActivity final : public Activity {
   std::string destinationFolder_;
   std::string finalPath_;
   std::string tempPath_;
-  std::string backupPath_;
   std::string errorMessage_;
 
   ButtonNavigator buttonNavigator_;
@@ -118,6 +117,7 @@ class NearbyBookTransferActivity final : public Activity {
   std::atomic<bool> uiReady_{false};
   std::atomic<bool> receivingScreenDrawn_{false};
   bool acceptPending_ = false;
+  bool replaceExisting_ = false;
 
   bool startRadio();
   void stopRadio();

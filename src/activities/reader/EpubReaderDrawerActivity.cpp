@@ -987,7 +987,10 @@ void EpubReaderDrawerActivity::buildDrawer(UiApp::ScreenType& screen) {
   if (buttonDevice) {
     const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
     const auto header = TouchHeaderBackButton::headerRect(renderer, mappedInput, safe);
-    const int summaryHeight = ReaderBookSummary::height(renderer, chapterTitle.c_str());
+    char progress[96];
+    formatReaderBookProgress(progress, sizeof(progress), chapterPage, chapterPageCount, chapterPageCountEstimated,
+                             percentSeed / 100);
+    const int summaryHeight = ReaderBookSummary::height(renderer, chapterTitle.c_str(), progress, timeLeft, safe.width);
     buttonHeaderHeight =
         static_cast<int16_t>(std::max(0, header.y + header.height + summaryHeight - screen.contentRect().y));
     screen.takeTop(buttonHeaderHeight);
@@ -1086,7 +1089,7 @@ void EpubReaderDrawerActivity::drawButtonBookHeader() {
   formatReaderBookProgress(progress, sizeof(progress), chapterPage, chapterPageCount, chapterPageCountEstimated,
                            percentSeed / 100);
   ReaderBookSummary::draw(renderer, Rect{safe.x, header.y + header.height, safe.width, 0}, chapterTitle.c_str(),
-                          progress);
+                          progress, timeLeft);
 }
 
 void EpubReaderDrawerActivity::buildTabBar(UiApp::ScreenType& screen, const fui::Rect rect, const bool drawBottomRule) {
@@ -2165,7 +2168,9 @@ void EpubReaderDrawerActivity::showEnumOptions(const RowId row) {
       title = StrId::STR_WORD_HOLD_ACTION;
       raw = {CrossPointSettings::WORD_HOLD_USE_GLOBAL, CrossPointSettings::WORD_HOLD_LOOKUP,
              CrossPointSettings::WORD_HOLD_CLIP, CrossPointSettings::WORD_HOLD_ASK};
-      for (const auto action : raw) labels.emplace_back(I18N.get(WORD_HOLD_LABELS[action]));
+      labels.reserve(raw.size());
+      std::transform(raw.begin(), raw.end(), std::back_inserter(labels),
+                     [](const auto action) { return I18N.get(WORD_HOLD_LABELS[action]); });
       currentRaw = bookWordHoldAction;
       break;
     case RowId::DictionaryFontFamily: {

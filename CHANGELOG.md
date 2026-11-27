@@ -204,15 +204,21 @@
 - Show the Picco charging indicator and battery level on black-and-white sleep screens as well as supported grayscale covers; update it when charging stops or resumes, even if the percentage stays the same.
 - Preserve detail in pale EPUB artwork and use portrait dimensions consistently when optimizing images in the web uploader.
 - Show a Delete button when opening a clipping on button-only readers (#936).
+- Show the configured book or chapter time remaining beside book progress in the reader drawer and button menu.
 - Support ten new Indic scripts when you using a compatible font. (CrossPoint #3787).
 - Show a Delete button when viewing a clipping (#936).
 - Add an optional Dutch hyphenation pack for EPUBs (#970).
 - Add optional Sync on Sleep for EPUB progress, plus bookmarks, clippings, and reading sessions on compatible servers (CrossPoint #4531).
+- Download more EPUB hyphenation packs over Wi-Fi and install compatible community packs from an SD card.
+- Record and sync start and end book progress for EPUB and XTC reading sessions (#941).
+- Prepare EPUBs in a selected folder and its subfolders while plugged in and asleep. Unplugging keeps the pages already prepared. Choose **Prepare Books While Charging** in System settings.
 
 ### Changed
 
 - With Incremental indexing, devices with PSRAM finish laying out the current EPUB chapter while you read instead of stopping after a set number of pages.
 - Focus Reading bolds the first letter of short words and half of longer words, rounded up to a maximum of nine letters.
+- Return to the reading position sooner after EPUB font and layout changes in Incremental mode. Update Chapter Page Count when background indexing finishes if the display can refresh the status bar on its own.
+- With Incremental indexing, PSRAM devices prepare the first pages of the next EPUB chapter while you read for a smoother chapter turn.
 
 ### Fixed
 
@@ -226,9 +232,10 @@
 - Keep wide EPUB tables in a grid on X3 and X4 when an SD-card font leaves less memory for indexing.
 - Remove stray spaces inside EPUB words split by publisher page numbers.
 - Keep the EPUB’s Time Left estimate visible while relearning after a layout change.
-- Keep larger EPUB headings visible on X3 and X4, including with Ruled Lines on. SD-card fonts reuse the loaded bitmap for larger text to reduce memory use.
+- Turn off the frontlight as soon as sleep starts, including when plugins or Sync on Sleep are still working.
+- Use font filenames to pick the correct styles when scalable SD fonts have incorrect style metadata (adapted from CrossPoint #4325).
 
-## [v2.0.0] - 2026-11-19
+## [v2.0.0] - 2026-11-24
 
 ### Added
 
@@ -243,10 +250,11 @@
 - Set each OPDS server’s download folder and optionally use its filenames to match reading progress across devices. Downloads fall back to the chosen filename format when the option is off or the server supplies an unsafe or missing name.
 - Enable SD card plugins in `Settings > System` and open Plugins from Home. Plugins support browser interfaces, on-device catalogs, sign-in, and download folders. The optional Plugin Hub discovers, installs, and updates compatible plugins. Hold Confirm or long-press an installed plugin to open its uninstall prompt (CrossPoint #4100).
 - Install and edit interface language packs from SD. Missing strings fall back to English. Browser editors and release downloads use a versioned English template and compatibility catalog.
+- Download Azerbaijani, Bosnian, Bulgarian, Indonesian, Norwegian Bokmål, and Persian for the interface. Only English is built in.
 - Install, update, or remove EPUB hyphenation packs. English is built in, and affected book layouts rebuild after a pack changes.
 - On your first upgrade to v2.0.0, What’s New explains how to install interface languages and hyphenation packs. It also shows where to enable SD card plugins and sync reading stats and clippings with CrossPoint Sync. Reopen the screen from `Settings > System > Release Notes`.
 - On ESP32-S3 readers, install static OpenType fonts from SD or the web uploader, including CFF fonts with .otf or .ttf extensions. EPUBs can also use embedded publisher fonts, including Adobe-obfuscated fonts, through `Off`, `Ignore Body Font`, and `All Text` modes. Variable fonts and collections remain unsupported (CrossPoint #3646, #3717).
-- Render EPUB drop caps, borders, shading, fieldsets that span pages, preserved whitespace, and more CSS selectors. Scalable fonts support mixed sizes within a line, and X3/X4 use available bitmap sizes for headings and other publisher sizes (CrossPoint #3891).
+- Render EPUB drop caps, borders, shading, fieldsets that span pages, preserved whitespace, and more CSS selectors. Scalable fonts support mixed sizes within a line, and X3/X4 scale their loaded bitmap fonts for larger publisher text (CrossPoint #3891).
 - Choose grayscale or black-and-white EPUB images independently of text smoothing, globally or per book. EPUBs also display non-interlaced GIFs, using the first frame of an animation. The web uploader can keep embedded fonts when optimizing an EPUB.
 - Choose Normal, Dark, or Darker text with smooth edges and add ruled lines in three shades to EPUB and plain-text books. EEGO has a two-tone text option.
 - Adjust word spacing from −4 to +4 and character spacing from −5 to +5, with live previews in Reader settings and the in-book Font menu. When `All Text` is set for Publisher Fonts, the font name is displayed as the reader Font Family.
@@ -279,9 +287,11 @@
 - Use clearer web dialogs, dropdowns, and upload feedback. Plugin files skip redundant transfers through ETags, and plugin automation waits until a job starts to allocate job storage (CrossPoint #3984, #4090, #4193, adapted from CrossPoint #4085 and #4288).
 - Make dictionary lookups quicker, move definition pagination to the bottom right, and add a close button on touch devices. Use side-by-side number pads in landscape and consistent labels for covers, time sync, shortcuts, and loading.
 - Reduce font lookup and kerning memory use and validate TTFs faster. Tuned firmware builds omit unused Arduino, Bluetooth, and Zigbee components (adapted from serialx and CrossPoint #3831, #3838, #3857).
+- Reopen EPUBs with many chapters faster by reading cached chapter offsets together.
 
 ### Fixed
 
+- Fix an occasional reboot when putting an X3 or X4 to sleep with plugins enabled (#973).
 - Index EPUBs faster when many table-of-contents entries point to the same chapter file or chapter files are stored out of reading order.
 - Credit EPUB and XTC reading to the correct local day across midnight. Preserve live stats if a save fails, retry updates after SD errors, and finish pending saves before sleep, reader restart, or USB Drive handoff.
 - Preserve unreadable stats and offer to restore them from a verified backup. Keep daily, manual, and clockless backups separate and prune numbered backups in the correct order beyond 999.
@@ -311,13 +321,20 @@
 - Connect to TLS 1.3 servers using SHA-384 certificate signatures.
 - Keep File Transfer responsive when uploads or browser requests stall or fail. Remove incomplete uploads, preserve files after failed WebDAV replacements, report failed copies and web settings saves, and route captive-portal probes without intercepting WebDAV writes (CrossPoint #4472).
 - Keep web dialogs open when a selection drag ends outside them, keep font notifications visible while scrolling, and normalize accented filenames on upload and duplicate checks (adapted from CrossPoint #3931, #3961, #3984).
-- Retry saved Wi-Fi after scanning, show clear Forget and Cancel choices on button devices
+- Retry saved Wi-Fi after scanning, and show clear Forget and Cancel choices on button devices.
 - Keep multibyte network names and masked password previews intact (CrossPoint #4079, #4106).
 - Keep Nearby and firmware transfers responsive during storage checks and let USB waits yield to other tasks. Preserve serial screenshots and pre-crash logs, including after low-power USB interruptions (CrossPoint #3737).
 - Hide tilt controls when the sensor cannot support page turning or fails its startup check, while keeping saved preferences (CrossPoint 8fc2b66 and #4078).
-- Make EPUB highlight handles easier to grab and drag across lines on touch readers.
+- Make EPUB highlight handles easier to grab and keep them following your finger across lines during e-ink refreshes, including when you lift to look up or clip the selection.
 - Reduce repeated SD card reads when indexing EPUBs with ruled lines and a custom reader font.
 - Dither EPUB illustrations only after resizing, with separate output for Gray and B&W (including Night Mode).
+- Readest and other plugins can send several queued reading sessions on one sleep instead of one per sleep.
+- Preserve existing books, fonts, settings, and reading positions when SD saves or transfers are interrupted. Keep USB Drive mounted while the computer sleeps and finish pending writes before ejecting.
+- Explain SD card startup errors and show how to reconnect the card or check its filesystem.
+- Make reading progress sync more reliable on large SD libraries. Reuse saved book paths to avoid repeatedly scanning the card.
+- Keep large EPUB drop caps sharp by drawing them at their intended size.
+- Show the Back button hint while viewing EPUB footnotes on button-only readers.
+- Releasing Power after starting Picco no longer selects a menu item on the first screen.
 
 ## [v1.6.1] - 2026-10-03
 
