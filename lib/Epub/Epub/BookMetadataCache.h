@@ -7,8 +7,10 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "EpubCancellation.h"
 #include "TocSpineMemo.h"
 
 class BookMetadataCache {
@@ -96,7 +98,7 @@ class BookMetadataCache {
   // writes interleave with zip-inflate SD reads, and unbuffered they thrash
   // SdFat's shared sector cache (one 512B transaction per 4-byte pod). One
   // wrapper serves whichever pass is active (spine, then toc).
-  std::unique_ptr<serialization::BufferedFileWriter> passOut;
+  std::optional<serialization::BufferedFileWriter> passOut;
 
   // Index for fast href→spineIndex lookup (used only for large EPUBs)
   struct SpineHrefIndexEntry {
@@ -109,6 +111,7 @@ class BookMetadataCache {
   TocSpineMemo tocSpineMemo;
   bool useSpineHrefIndex = false;
   bool lowMemoryFailure = false;
+  bool buildIoFailure = false;
 
   static constexpr uint16_t LARGE_SPINE_THRESHOLD = 300;
 
@@ -122,10 +125,8 @@ class BookMetadataCache {
     return hash;
   }
 
-  uint32_t writeSpineEntry(HalFile& file, const SpineEntry& entry) const;
-  uint32_t writeTocEntry(HalFile& file, const TocEntry& entry) const;
-  SpineEntry readSpineEntry(HalFile& file) const;
-  TocEntry readTocEntry(HalFile& file) const;
+  bool readEntryBounds(bool spineEntry, int index, size_t& start, size_t& end, bool& ioFailure);
+  void invalidateReadCache(bool discardCache);
   void cacheSpineCumulativeSizes();
 
  public:
@@ -154,7 +155,8 @@ class BookMetadataCache {
   bool cleanupTmpFiles() const;
 
   // Post-processing to update mappings and sizes
-  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata);
+  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata,
+                    const EpubCancellation* cancellation = nullptr);
 
   // Cheap check (no parsing) for whether a metadata cache exists at cachePath.
   // Lets callers predict a fast cached open without doing the full load().

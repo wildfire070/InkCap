@@ -30,7 +30,8 @@ struct HalFile {
   bool opened = false;
   explicit operator bool() const { return opened; }
   bool isDirectory() const { return false; }
-  bool available() const { return pos < io.files.at(path).size(); }
+  size_t size() const { return io.files.at(path).size(); }
+  bool available() const { return pos < size(); }
   int read(uint8_t* out, size_t count) {
     if (io.failAt >= 0 && pos >= static_cast<size_t>(io.failAt)) return -1;
     if (io.zeroAt >= 0 && pos >= static_cast<size_t>(io.zeroAt)) return 0;
@@ -45,9 +46,11 @@ struct HalFile {
     io.files[path].append(reinterpret_cast<const char*>(bytes), count);
     return count;
   }
-  void close() {
+  bool sync() const { return opened; }
+  bool close() {
     if (opened) --io.openHandles;
     opened = false;
+    return true;
   }
 };
 struct StorageMock {
@@ -73,6 +76,20 @@ struct StorageMock {
     return true;
   }
 } Storage;
+namespace FilePublication {
+constexpr char copyStage[] = "/.crosspoint/xfer/dav-copy";
+bool recover() { return true; }
+bool stagePath(const char*, const char*, std::string& path) {
+  path = copyStage;
+  return true;
+}
+bool publish(const char* staged, const char* destination, bool replace, bool) {
+  assert(io.openHandles == 0);
+  assert(replace || !Storage.exists(destination));
+  io.files[destination] = std::move(io.files.at(staged));
+  return Storage.remove(staged);
+}
+}  // namespace FilePublication
 struct WebServer {
   int code = 0;
   void send(int c, const char* = nullptr, const char* = nullptr) { code = c; }
@@ -103,6 +120,10 @@ bool clearBookCachePreservingUserState(const char*, bool) {
 // URL normalization is outside this regression; the production resolver consumes
 // already decoded, normalized paths in these cases.
 namespace FsHelpers {
+bool writeAndCheckpoint(HalFile& file, const uint8_t* data, size_t length) {
+  const auto written = file.write(data, length);
+  return file.sync() && written == length;
+}
 std::string normalisePath(const std::string& s) { return s; }
 std::string decodeUriEscapes(const std::string& s) { return s; }
 }  // namespace FsHelpers
@@ -168,6 +189,7 @@ int main() {
       WebServer server;
       handler.handleCopy(server);
       assert(io.openHandles == 0);
+      assert(!Storage.exists(FilePublication::copyStage));
       assert(io.files.at("/src") == std::string(9000, 'x'));
       if (failure < 0) {
         assert(server.code == (overwrite ? 204 : 201));
@@ -176,11 +198,10 @@ int main() {
       } else {
         assert(server.code == 500 && io.cacheClears == 0);
         if (overwrite) {
-          // The previous destination is backed up (.davbak) before the copy
-          // starts and renamed back on any failure, so it survives intact.
+          // The copy is written to a separate staged path and only published
+          // over /dst once complete, so a failure never touches /dst at all.
           assert(io.files.at("/dst") == "previous destination");
         } else {
-          // Nothing existed at /dst to back up, so a failure leaves it absent.
           assert(!io.files.contains("/dst"));
         }
       }

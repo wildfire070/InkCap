@@ -14,6 +14,7 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 }  // namespace BidiUtils
 
 class FontCacheManager;
+class DropCapStrikeCache;
 class SdCardFont;
 
 #include <array>
@@ -82,6 +83,10 @@ class GfxRenderer {
   RenderMode renderMode;
   uint8_t textDarkness_ = 0;
   mutable bool absoluteGrayPlanes = false;
+  bool scaledGlyphGrayscaleBase_ = false;
+#if !CROSSINK_SCALABLE_FONTS
+  DropCapStrikeCache* dropCapStrikes_ = nullptr;
+#endif
   Orientation orientation;
   bool fadingFix;
   uint8_t* frameBuffer = nullptr;
@@ -104,6 +109,26 @@ class GfxRenderer {
   // the render task itself, already holding this same lock via RenderLock -- a plain
   // mutex would deadlock there; recursive re-entry from the same task is a no-op.
   mutable SemaphoreHandle_t frameBufferMutex_ = nullptr;
+  struct BitmapTextSize {
+    int sourceId;
+    int sourcePoints = 1;
+    int points = 1;
+
+    bool enlarged() const { return points > sourcePoints; }
+    int scale(int value) const {
+      if (!enlarged()) return value;
+      return (value * points + (value >= 0 ? sourcePoints / 2 : -sourcePoints / 2)) / sourcePoints;
+    }
+  };
+#if !CROSSINK_SCALABLE_FONTS
+  // Eight built-in reader faces and up to three active SD sizes, with room
+  // for temporary fonts. Slots own no font data and are used only at runtime.
+  static constexpr int BITMAP_SIZE_ID_BASE = 0x7FFD0000;
+  std::array<int, 16> bitmapSizeSources_{};
+  BitmapTextSize bitmapTextSize(int fontId) const;
+#else
+  static constexpr BitmapTextSize bitmapTextSize(int fontId) { return {fontId}; }
+#endif
   void* bookFontContext_ = nullptr;
   int (*bookFontResolver_)(void*, uint32_t, uint8_t) = nullptr;
   uint32_t (*bookFontUsage_)(void*) = nullptr;
@@ -214,11 +239,7 @@ class GfxRenderer {
   // Clears both the flash-font map and any SD-font registration for fontId.
   // Coupled to avoid dangling SdCardFont* in sdCardFonts_ when callers free
   // the underlying SdCardFont and forget the SD-side unregister.
-  void removeFont(int fontId) {
-    ruledFontCached_ = false;
-    fontMap.erase(fontId);
-    sdCardFonts_.erase(fontId);
-  }
+  void removeFont(int fontId);
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   bool isFontCacheScanning() const;
@@ -243,7 +264,7 @@ class GfxRenderer {
     sdCardFonts_.clear();
   }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
-  bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
+  bool isSdCardFont(int fontId) const { return sdCardFonts_.count(bitmapTextSize(fontId).sourceId) > 0; }
   // Shared UI families fill missing characters; legacy metadata aliases use
   // the same composites. Clear all borrowed pointers before releasing faces.
   int filenameFontId(int primaryFontId) const;
@@ -295,8 +316,9 @@ class GfxRenderer {
   bool supportsDeferredGrayscaleBase() const;
   bool displayGrayscaleBaseAsync(HalDisplay::RefreshMode fallback) const;
   void copyGrayscalePlanes(const uint8_t* lsb, const uint8_t* msb) const;
-  // EXPERIMENTAL: Windowed update - display only a rectangular region
-  // void displayWindow(int x, int y, int width, int height) const;
+  // Repaint a logical rectangle. Grayscale pages require a driver that can preserve the rest of the image.
+  bool canUpdateGrayscaleWindow() const;
+  bool displayWindow(int x, int y, int width, int height, bool preserveGrayscale) const;
   void invertScreen() const;
   void invertRect(int x, int y, int width, int height) const;
   void clearScreen(uint8_t color = 0xFF) const;
@@ -320,6 +342,37 @@ class GfxRenderer {
     TextCullingScope(const TextCullingScope&) = delete;
     TextCullingScope& operator=(const TextCullingScope&) = delete;
   };
+  // An AA overlay expects all nonzero edge coverage to have a matching
+  // foreground pixel in the B/W base. Standalone monochrome draws instead
+  // use the original half-coverage threshold.
+  class ScaledGlyphAntialiasScope {
+    GfxRenderer& renderer_;
+    const bool previous_;
+
+   public:
+    explicit ScaledGlyphAntialiasScope(GfxRenderer& renderer, bool enabled)
+        : renderer_(renderer), previous_(renderer.scaledGlyphGrayscaleBase_) {
+      renderer_.scaledGlyphGrayscaleBase_ = enabled;
+    }
+    ~ScaledGlyphAntialiasScope() { renderer_.scaledGlyphGrayscaleBase_ = previous_; }
+    ScaledGlyphAntialiasScope(const ScaledGlyphAntialiasScope&) = delete;
+    ScaledGlyphAntialiasScope& operator=(const ScaledGlyphAntialiasScope&) = delete;
+  };
+#if !CROSSINK_SCALABLE_FONTS
+  class DropCapStrikeScope {
+    GfxRenderer& renderer_;
+    DropCapStrikeCache* previous_;
+
+   public:
+    DropCapStrikeScope(GfxRenderer& renderer, DropCapStrikeCache& cache)
+        : renderer_(renderer), previous_(renderer.dropCapStrikes_) {
+      renderer_.dropCapStrikes_ = &cache;
+    }
+    ~DropCapStrikeScope() { renderer_.dropCapStrikes_ = previous_; }
+    DropCapStrikeScope(const DropCapStrikeScope&) = delete;
+    DropCapStrikeScope& operator=(const DropCapStrikeScope&) = delete;
+  };
+#endif
   uint64_t textCullGeneration() const { return _stripActive ? textCullGeneration_ : 0; }
   void beginTextBounds(int* bounds) const;
   void endTextBounds() const;
@@ -484,7 +537,7 @@ class GfxRenderer {
                           bool pixelState = true) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
-  // Zero means bitmap font: EPUB content sizing stays disabled.
+  // Zero means the font has no reader point-size registration.
   uint8_t getFontPointSize(int fontId) const;
   int getFontIdForSize(int fontId, uint8_t points) const;
   void setBookFontResolver(void* context, int (*resolve)(void*, uint32_t, uint8_t), uint32_t (*usage)(void*) = nullptr,

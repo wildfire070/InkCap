@@ -4,6 +4,11 @@ set -e
 
 cd "$(dirname "$0")"
 
+case "${1:-}" in
+  ""|--ui-only) ;;
+  *) echo "Usage: $0 [--ui-only]" >&2; exit 2 ;;
+esac
+
 SYMBOLS_FONT="../builtinFonts/source/NotoSymbols/NotoSansSymbols-Regular.ttf"
 PHM_FONT="../builtinFonts/source/NotoSansCJKsc/NotoSansCJKsc-Regular.otf"
 
@@ -168,11 +173,13 @@ generate_reading_fonts() {
   echo ""
 }
 
-# Built-in reader fonts retain the PHM fallback ranges, but exclude emoticons.
-generate_reading_fonts
+if [[ "${1:-}" != "--ui-only" ]]; then
+  # Built-in reader fonts retain the PHM fallback ranges, but exclude emoticons.
+  generate_reading_fonts
 
-# Shared fixed-size UI symbols
-bash ./generate-ui-symbols.sh
+  # Shared fixed-size UI symbols
+  bash ./generate-ui-symbols.sh
+fi
 
 # UI Font - Inter
 

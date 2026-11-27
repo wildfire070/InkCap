@@ -27,7 +27,7 @@ code = r'''
 #define LOG_DBG(...) ((void)0)
 unsigned long millis() { return 100; }
 bool edge = false;
-bool idleFontInputWakePending() { return edge; }
+bool readerInputWakePending() { return edge; }
 struct MemoryBudget {
   static int snapshot() { return 1; }
   static bool hasHeap(int, int, int) { return heap; }

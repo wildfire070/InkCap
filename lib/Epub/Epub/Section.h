@@ -1,12 +1,14 @@
 #pragma once
 #include <ShapingRecovery.h>
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 
 #include "Epub.h"
+#include "EpubCancellation.h"
 #include "EpubRenderMode.h"
 #include "ReaderRenderSpec.h"
 #include "SectionPageIndex.h"
@@ -16,13 +18,11 @@ class GfxRenderer;
 class ChapterHtmlSlimParser;
 class CssParser;
 
-struct SectionBuildOptions {
+// Full builds can stop between parser chunks. Incremental setup uses the
+// cancellation callback only during startBuild().
+struct SectionBuildOptions : EpubCancellation {
   const char* previewAnchor = nullptr;
   uint16_t previewMaxPages = 0;
-  // Full-section callers can stop between parser chunks without creating a
-  // readable partial cache. The callback must remain valid for the build.
-  bool (*shouldCancel)(void* context) = nullptr;
-  void* cancelContext = nullptr;
   bool* cancellationObserved = nullptr;
   // Leave the whole-section font advance prewarm out of the first chunk so the first
   // page lays out sooner; the caller then runs it with prewarmSomeMore().
@@ -41,7 +41,6 @@ struct SectionBuildOptions {
   void (*onBuildCheckpoint)() = nullptr;
 
   bool isPreview() const { return previewAnchor && previewAnchor[0] != '\0' && previewMaxPages > 0; }
-  bool isCancellationRequested() const { return shouldCancel && shouldCancel(cancelContext); }
 };
 
 class Section {
@@ -154,7 +153,12 @@ class Section {
                    const char* cacheSuffix = "");
   explicit Section(Epub& epub, int spineIndex, GfxRenderer& renderer, const char* cacheSuffix = "");
   ~Section();
-  bool loadSectionFile(const ReaderRenderSpec& spec);
+  bool loadSectionFile(const ReaderRenderSpec& spec, bool* layoutMismatch = nullptr);
+  static constexpr int ChaptersPerDirectory = 32;
+  static std::string layoutDirectory(const Epub& epub, int spineIndex);
+  static std::array<uint32_t, 3> completedLayoutIdentity(const Epub& epub, const ReaderRenderSpec& spec);
+  bool collectPreparedFaces(uint32_t& faces) const;
+
   bool clearCache() const;
   // Stamp a bounded retry before rebuilding. If it fails, the original page
   // and position data remain on disk and readable.
@@ -188,8 +192,9 @@ class Section {
   // watermark trailer) instead of discarding it, so the next open of this spine can show
   // its pages instantly and only rebuild in the background. Called by the destructor, so
   // any teardown path (exit, sleep, navigation) keeps the work already done. Keeps a
-  // pre-existing partial when it covers more pages than this build reached.
-  void suspendBuild();
+  // pre-existing partial when it covers more pages than this build reached. A
+  // completed prefetch may replace a cache known to use different layout settings.
+  void suspendBuild(bool replaceIncompatibleLayout = false);
   // True when a partial file was loaded: pageCount is a watermark, not the chapter total.
   bool isPartial() const { return partial_; }
 
@@ -207,6 +212,7 @@ class Section {
   // True if this spine's unzipped HTML is already cached, so a build won't pay the (multi-second on a
   // giant spine) zip inflation. Lets the reader skip the indexing popup on a fast reopen/rebuild.
   bool hasHtmlCache() const;
+  bool hasLayoutCache() const;
 
   // Look up the page number for an anchor id from the section cache file.
   bool openAnchorMap(FsFile& f, uint16_t& count) const;

@@ -14,7 +14,13 @@ void testLog(Args&&...) {}
 unsigned errors = 0;
 struct Input {
   size_t index = 0;
-  void seek(size_t position) { index = position; }
+  size_t count = 0;
+  bool failSeek = false;
+  bool seek(size_t position) {
+    index = position;
+    return !failSeek && position <= count;
+  }
+  size_t position() const { return index; }
 } spineIn;
 struct Entry {
   std::string href;
@@ -22,6 +28,12 @@ struct Entry {
 Entry readSpineEntryFrom(Input& input) {
   // Repeated paths span batches; reverse order exercises sorting.
   return {std::to_string(101 - (input.index++ % 101))};
+}
+using SpineEntry = Entry;
+bool readSpineEntryChecked(Input& input, SpineEntry& entry, size_t fileSize) {
+  if (input.position() >= fileSize) return false;
+  entry = readSpineEntryFrom(input);
+  return true;
 }
 namespace FsHelpers {
 std::string normalisePath(const std::string& path) { return path; }
@@ -56,21 +68,34 @@ struct ZipFile {
   void close() { closed = true; }
 };
 
-bool runBatch(uint16_t spineCount, unsigned failAllocation = 0, unsigned failFromAllocation = 0) {
+bool runBatch(uint16_t spineCount, unsigned failAllocation = 0, unsigned failFromAllocation = 0,
+              bool failSeek = false) {
   Arena metadataArena;
   metadataArena.failAllocation = failAllocation;
   metadataArena.failFromAllocation = failFromAllocation;
   ArenaVector<uint32_t> spineSizes(metadataArena);
   bool lowMemoryFailure = false, filesClosed = false, useBatchSizes = false;
   auto closeBuildFiles = [&] { filesClosed = true; };
+  const auto stopIfCancelled = [] { return false; };
   ZipFile zip;
   constexpr uint16_t LARGE_SPINE_THRESHOLD = 300;
   // Generated directly from BookMetadataCache.cpp, including allocation/cleanup paths.
   auto run = [&]() -> bool {
+    spineIn = {};
+    spineIn.count = spineCount;
+    spineIn.failSeek = failSeek;
+    bool inputOk = true;
+    bool buildIoFailure = false;
+    const size_t spineInputSize = spineCount;
 #include "SizeLookup.inc"
+    assert(!buildIoFailure);
     return true;
   };
   const bool success = run();
+  if (failSeek) {
+    assert(!success && filesClosed && zip.closed);
+    return false;
+  }
   assert(success && !lowMemoryFailure && !filesClosed && !zip.closed);
   if (spineCount < LARGE_SPINE_THRESHOLD) {
     assert(!useBatchSizes && zip.batchSizes.empty());
@@ -109,5 +134,6 @@ int main() {
   assert(runBatch(5000, 1));
   assert(runBatch(5000, 2));
   assert(runBatch(5000, 0, 2));
-  assert(errors == 0);
+  assert(!runBatch(5000, 0, 0, true));
+  assert(errors == 1);  // The injected seek failure logs once and stops cache creation.
 }

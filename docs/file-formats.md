@@ -1042,6 +1042,21 @@ override a surviving versioned slot on re-upgrade. Export or back up both slots
 before switching firmware. This change does not invalidate EPUB layout caches.
 TXT and XTC progress formats are unchanged.
 
+### EPUB `progress-path.bin`
+
+This optional file in an EPUB cache lets progress sync find the book without
+walking the SD card. It uses the SyncFiles format with a trailing CRC. The
+payload is a one-byte version (1) and a length-prefixed absolute EPUB path
+(`uint16` length followed by at most 1024 bytes). Progress is still validated
+from the existing save slots. Sync checks that the stored path hashes to the
+cache directory and that the EPUB exists.
+
+CrossInk records the path on progress writes and updates it on in-app moves
+and renames. When a usable older cache lacks a valid path, sync can rediscover
+it by walking the card and repair the association for later runs. Orphan lookups are
+remembered in retained memory until the card is reconciled, files change
+through the reader, or the reader cold-boots after external card edits.
+
 ## Reading-stat device ownership
 
 Reading stats now use device-qualified paths. The qualifier is the same hardware
@@ -1235,6 +1250,18 @@ pixel-cache names are ignored and can be regenerated without invalidating
 chapter layout or reading progress. Optimizer sidecars are only usable for Gray
 and at their exact dimensions; mismatches fall back to the source EPUB image.
 
+## Prepared EPUB layout
+
+Charging preparation writes `layout/prepared.bin` inside the book cache after all
+chapters are complete. Version 1 is a 48-byte little-endian record with the EPUB
+size and layout directory fingerprint as 64-bit values. The remaining fields are
+32-bit values in this order. EPUB modification time in packed FAT format, receipt
+version, section cache version, render settings signature, word layout identity,
+spine count, publisher font mask, and publisher font signature.
+
+Replacing or deleting a section through the firmware invalidates the record.
+A missing or mismatched record falls back to individual chapter cache checks.
+
 ## `section.bin`
 
 ### Version 125 (current development)
@@ -1242,6 +1269,11 @@ and at their exact dimensions; mismatches fall back to the source EPUB image.
 Inline publisher page markers no longer introduce a space inside a word.
 Complete sections use version 125 and suspended sections use `0xEE` so
 previously laid-out pages rebuild automatically. The binary payload is unchanged.
+
+The stored word-layout identity also rebuilds older non-Light layouts on
+bitmap-only devices and older publisher-styled, non-Light layouts on
+scalable-font devices. The v2.0.0 release uses the same identity update with
+its section version. The header and page payloads keep the same format.
 
 ### Version 124
 
@@ -2141,7 +2173,7 @@ limits and lifecycle.
 
 ## `/.crosspoint/font-catalog.bin`
 
-### Versions 1–3
+### Versions 1–4
 
 Disposable font metadata cache, shared by reader, settings and web font controls.
 The 24-byte little-endian header contains magic `0x46434931`, version, a 64-bit
@@ -2173,11 +2205,14 @@ including failed dedicated font uploads; USB Drive invalidates before handing
 the card to the host. Manage Fonts performs a full rescan; alternatively remove
 this cache to force reinspection after external same-length font changes.
 
-EPUB layout cache versions and identities are unchanged by this catalog.
+The reader's font identity includes the selected faces and their styles, so a
+change in the selected faces invalidates the affected EPUB layout cache.
 
 Version 2 (2.0.0) normalizes development versions 2–3 into one release bump.
 It rescans static `.ttf` and `.otf` files, including OpenType CFF faces rejected
-by earlier firmware, without a manual font refresh. The binary layout is unchanged.
+by earlier firmware, without a manual font refresh. Version 4 rebuilds catalogs on
+scalable-font builds to apply filename style selection. Bitmap-only builds stay
+on version 2. The binary layout is unchanged.
 
 ### Daily reading counters (v2)
 
@@ -2369,6 +2404,16 @@ are rejected. Boot selects the highest fully valid generation. Generations do
 not wrap; exhausting u32 rejects a further update. A successful update requires
 a restart before another operation or activation of its new mapping.
 
+Local-only packs use an optional 256-byte header at bank offset 256. It shares
+the entry format, generation, and CRC rules of the first header, but uses
+`CIHX` version 1 and has zero at offset 24. Its entries begin immediately after
+the ordinary payloads, and both headers together describe at most ten packs.
+The legacy `CIHP` header describes only the ordinary prefix. Installing either
+kind writes and verifies all payloads before programming the original `CIHP`
+commit marker. If the optional header or its data fails validation, only the
+legacy prefix is exposed. Older firmware can still read the prefix; rewriting
+the bank with older firmware drops the extension without deleting its SD sources.
+
 ## OPDS server filenames
 
 Each server in `/.crosspoint/opds.json` stores `filenameFormat` (`author_title` or
@@ -2411,18 +2456,27 @@ in the firmware's little-endian integer representation, without struct padding:
 
 | Field                                     | Bytes |
 | ----------------------------------------- | ----: |
-| Format version (1)                        |     1 |
+| Format version (1 or 2)                   |     1 |
 | Session ID, ASCII hex without terminator  |    32 |
 | Document ID, ASCII hex without terminator |    32 |
-| UTC start timestamp, seconds              |     8 |
-| UTC end timestamp, seconds                |     8 |
+| UTC start timestamp, seconds             |     8 |
+| UTC end timestamp, seconds               |     8 |
 | Cumulative active reading seconds         |     4 |
 | Signed UTC offset, minutes                |     2 |
+| Start progress, signed permille (v2 only) |     2 |
+| End progress, signed permille (v2 only)   |     2 |
 | CRC32 over preceding bytes                |     4 |
 
+Version 2 stores the displayed book progress of the first and last accepted reading intervals.
+Values range from 0 to 1000 (100%), or -1 when unavailable. The end may precede the start
+when reading backwards. A jump alone contributes no reading time. Version 1 has no endpoints.
+Session uploads include `start_progress_permille` and `end_progress_permille` as integers or JSON null.
+Older servers may acknowledge the session without storing its positions.
+
 Session IDs remain unchanged as checkpoints grow and across upload retries.
-Uploads use the existing stats credentials and privacy switches, with at most
-20 records per network pass. A specific `accepted_session_ids` acknowledgment is
+Uploads use the existing stats credentials and privacy switches. Manual stats sync
+drains the outbox. Sync on Sleep processes a bounded batch. A specific
+`accepted_session_ids` acknowledgment is
 required before deleting the local file and its recovery copies. An older server
 without `/api/v1/stats/sessions` leaves the outbox intact and does not invalidate
 support for the older stats endpoints. Corrupt/unreadable records and failed
