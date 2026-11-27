@@ -70,6 +70,10 @@ bool CrossPointState::saveToFile() const {
   std::lock_guard<std::mutex> stateLock(_mutex);
   JsonDocument doc;
   toJson(doc);
+  if (doc.overflowed()) {
+    LOG_ERR("CPS", "Incomplete state snapshot");
+    return false;
+  }
   StateCrcWriter checksum;
   serializeJson(doc, checksum);
   if (lastSavedCrcValid && checksum.crc == lastSavedCrc && Storage.exists(STATE_FILE_JSON)) return true;
@@ -88,13 +92,12 @@ bool CrossPointState::loadFromFile() {
     std::lock_guard<std::mutex> storeLock(storeMutex);
     lastSavedCrcValid = false;
     // Try JSON first. A reload invalidates the remembered on-disk snapshot.
-    if (Storage.exists(STATE_FILE_JSON)) {
-      JsonDocument doc;
-      if (PersistableStoreBase::readDocFromFile(STATE_FILE_JSON, doc)) {
-        std::lock_guard<std::mutex> stateLock(_mutex);
-        return fromJson(doc.as<JsonVariantConst>());
-      }
+    JsonDocument doc;
+    if (PersistableStoreBase::readDocFromFile(STATE_FILE_JSON, doc)) {
+      std::lock_guard<std::mutex> stateLock(_mutex);
+      return fromJson(doc.as<JsonVariantConst>());
     }
+    if (hasStoreFile(STATE_FILE_JSON)) return false;
   }
 
   // Fall back to binary migration
@@ -117,6 +120,7 @@ bool CrossPointState::loadFromFile() {
 void CrossPointState::toJson(JsonDocument& doc) const {
   doc["openEpubPath"] = openEpubPath;
   doc["favoriteSleepImagePath"] = favoriteSleepImagePath;
+  doc["chargePreparationFolder"] = chargePreparationFolder;
   doc["preferredSleepFolderPath"] = preferredSleepFolderPath;
   JsonArray recentArr = doc["recentSleepImages"].to<JsonArray>();
   for (int i = 0; i < SLEEP_RECENT_COUNT; i++) recentArr.add(recentSleepImages[i]);
@@ -158,6 +162,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
 bool CrossPointState::fromJson(JsonVariantConst doc) {
   openEpubPath = doc["openEpubPath"] | "";
   favoriteSleepImagePath = doc["favoriteSleepImagePath"] | "";
+  chargePreparationFolder = doc["chargePreparationFolder"] | "";
   preferredSleepFolderPath = doc["preferredSleepFolderPath"] | "";
   std::fill_n(recentSleepImages, SLEEP_RECENT_COUNT, static_cast<uint16_t>(0));
   JsonArrayConst recentArr = doc["recentSleepImages"];

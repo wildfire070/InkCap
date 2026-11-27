@@ -167,8 +167,7 @@ int main() {
     assets.catalogReady_ = loaded;
     assets.onExit();
     assert(!assets.catalogReady_);
-    std::vector<std::string> expected{"popup"};
-    expected.insert(expected.end(), {"disconnect", "off"});
+    std::vector<std::string> expected{"popup", "disconnect", "off"};
 #ifdef SIMULATOR
     expected.push_back("fonts");
 #endif

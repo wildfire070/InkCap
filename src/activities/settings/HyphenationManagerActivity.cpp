@@ -47,22 +47,22 @@ void HyphenationManagerActivity::showLanguages() {
   int builtInIndex = -1;
   for (size_t i = 0; i < languages.size; ++i) {
     const auto& entry = languages.data[i];
-    const char uiCode[] = {static_cast<char>(entry.primaryTag[0] - 'a' + 'A'),
-                           static_cast<char>(entry.primaryTag[1] - 'a' + 'A'), '\0'};
-    const char* name = I18N.getLanguageName(I18n::languageFromCode(uiCode));
-    const char* status = entry.hyphenator                                      ? tr(STR_HYPHENATION_BUILT_IN)
-                         : HyphenationPackStore::isInstalled(entry.primaryTag) ? tr(STR_INSTALLED)
-                                                                               : tr(STR_HYPHENATION_INSTALL_ACTION);
-    std::snprintf(catalog_->labels[i], sizeof(catalog_->labels[i]), "%s (%s): %s", name, entry.primaryTag, status);
+    catalog_->installed[i] = HyphenationPackStore::isInstalled(entry.primaryTag);
     if (entry.hyphenator) builtInIndex = static_cast<int>(i);
     if (!std::strcmp(wanted_, entry.primaryTag)) selected_ = static_cast<int>(i);
   }
+  catalog_->localCount = HyphenationPackStore::listLocalPacks(catalog_->local, LOCAL_CAPACITY);
+  for (size_t i = 0; i < catalog_->localCount; ++i) {
+    if (!std::strcmp(wanted_, catalog_->local[i].code)) selected_ = static_cast<int>(languages.size + i);
+  }
+  if (selected_ < 0 || size_t(selected_) >= languages.size + catalog_->localCount) selected_ = 0;
   wanted_[0] = '\0';
   popup_.showBorrowed(
       StrId::STR_HYPHENATION_PACKS,
-      OptionLabels(
-          catalog_.get(), languages.size,
-          [](const void* context, size_t index) { return static_cast<const Catalog*>(context)->labels[index]; }),
+      OptionLabels(this, languages.size + catalog_->localCount,
+                   [](const void* context, size_t index) {
+                     return static_cast<const HyphenationManagerActivity*>(context)->labelAt(index);
+                   }),
       selected_,
       [this](int index) {
         selected_ = index;
@@ -73,30 +73,81 @@ void HyphenationManagerActivity::showLanguages() {
   popup_.setCancelCallback([this] { finish(); });
   requestUpdate();
 }
-void HyphenationManagerActivity::select() {
+const char* HyphenationManagerActivity::codeAt(size_t index) const {
   const auto languages = getLanguageEntries();
-  if (selected_ < 0 || size_t(selected_) >= languages.size || languages.data[selected_].hyphenator) return;
-  const char* code = languages.data[selected_].primaryTag;
+  if (index < languages.size) return languages.data[index].primaryTag;
+  index -= languages.size;
+  return index < catalog_->localCount ? catalog_->local[index].code : nullptr;
+}
+const char* HyphenationManagerActivity::nameAt(size_t index) const {
+  const char* code = codeAt(index);
+  if (!code) return "";
+  const auto* entry = findLanguageEntry(code);
+  if (entry && entry->displayName) return entry->displayName;
+  const char uiCode[] = {static_cast<char>(code[0] - 'a' + 'A'), static_cast<char>(code[1] - 'a' + 'A'), '\0'};
+  const auto language = I18n::languageFromCode(uiCode);
+  return language == Language::EN && std::strcmp(code, "en") ? code : I18N.getLanguageName(language);
+}
+const char* HyphenationManagerActivity::labelAt(size_t index) const {
+  const char* code = codeAt(index);
+  if (!code) return "";
+  const auto languages = getLanguageEntries();
+  const bool builtIn = index < languages.size && languages.data[index].hyphenator;
+  const bool installed =
+      index < languages.size ? catalog_->installed[index] : catalog_->local[index - languages.size].installed;
+  const char* status = builtIn     ? tr(STR_HYPHENATION_BUILT_IN)
+                       : installed ? tr(STR_INSTALLED)
+                                   : tr(STR_HYPHENATION_INSTALL_ACTION);
+  // This is a normal borrowed list, not a paired action popup. It measures
+  // and draws each label immediately under the activity's render lock.
+  const char* name = nameAt(index);
+  if (std::strcmp(name, code))
+    std::snprintf(label_, sizeof(label_), "%s (%s): %s", name, code, status);
+  else
+    std::snprintf(label_, sizeof(label_), "%s: %s", code, status);
+  return label_;
+}
+void HyphenationManagerActivity::select() {
+  const char* code = selected_ < 0 ? nullptr : codeAt(size_t(selected_));
+  const auto* entry = findLanguageEntry(code);
+  if (!code || (entry && entry->hyphenator)) return;
+  const bool localOnly = !entry;
+  const bool hasSource = HyphenationPackStore::hasSource(code);
   if (!HyphenationPackStore::isInstalled(code)) {
     // An SD copy installs offline; otherwise the Wi-Fi screen downloads and installs it.
-    if (HyphenationPackStore::hasSource(code))
+    if (hasSource)
       apply(false);
+    else if (localOnly)
+      showLanguages();
     else
       connect();
     return;
   }
   RenderLock lock(*this);
+  const bool canUpdate = !localOnly || hasSource;
   const char* options[] = {tr(STR_UPDATE), tr(STR_DELETE), tr(STR_CANCEL)};
+  const int firstOption = canUpdate ? 0 : 1;
   popup_.show(
-      catalog_->labels[selected_], options, 3, 2,
-      [this](int index) { pending_ = index == 0   ? Pending::Connect
-                                     : index == 1 ? Pending::Remove
-                                                  : Pending::List; },
+      nameAt(size_t(selected_)), options + firstOption, 3 - firstOption, 2 - firstOption,
+      [this, firstOption, localOnly](int index) {
+        switch (index + firstOption) {
+          case 0:
+            pending_ = localOnly ? Pending::Install : Pending::Connect;
+            break;
+          case 1:
+            pending_ = Pending::Remove;
+            break;
+          default:
+            pending_ = Pending::List;
+            break;
+        }
+      },
       OptionPopup::Note(tr(STR_HYPHENATION_APPLY_HINT), ""));
   popup_.setCancelCallback([this] { pending_ = Pending::List; });
   requestUpdate();
 }
 void HyphenationManagerActivity::connect() {
+  if (selected_ < 0 || size_t(selected_) >= getLanguageEntries().size) return;
   APP_STATE.pendingOverlayResume.clear();
   if (APP_STATE.saveToFile() && SETTINGS.saveToFile()) {
     RenderLock restartLock(*this);
@@ -109,9 +160,9 @@ void HyphenationManagerActivity::connect() {
 }
 void HyphenationManagerActivity::apply(bool remove) {
   RenderLock lock(*this);
-  const auto languages = getLanguageEntries();
-  if (selected_ < 0 || size_t(selected_) >= languages.size || languages.data[selected_].hyphenator) return;
-  const char* code = languages.data[selected_].primaryTag;
+  const char* code = selected_ < 0 ? nullptr : codeAt(size_t(selected_));
+  const auto* entry = findLanguageEntry(code);
+  if (!code || (entry && entry->hyphenator)) return;
   popup_.clear();
   GUI.drawPopup(renderer, tr(STR_LOADING), true);
   // Do not commit a pack if SD state cannot be saved for the following restart.
@@ -160,6 +211,9 @@ void HyphenationManagerActivity::loop() {
     }
     case Pending::Connect:
       connect();
+      return;
+    case Pending::Install:
+      apply(false);
       return;
     case Pending::Remove:
       apply(true);

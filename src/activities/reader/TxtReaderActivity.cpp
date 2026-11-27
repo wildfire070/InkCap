@@ -7,6 +7,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
+#include <OwnedFileSwap.h>
 #include <Serialization.h>
 #include <Utf8.h>
 
@@ -60,7 +61,7 @@ void drawToast(const GfxRenderer& renderer, const char* msg) {
 // Parses and word-wraps lines from a file chunk into outLines.
 // Returns the number of bytes consumed from the start of buffer.
 size_t TxtReaderActivity::parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOffset, size_t fileSize,
-                                            int linesPerPage, GfxRenderer& renderer, int fontId, int vw,
+                                            int linesPerPage, const GfxRenderer& renderer, int fontId, int vw,
                                             std::vector<PageLine>* outLines, int8_t characterSpacing,
                                             int ruledViewportHeight, int requestedHeight) {
   // Indexing only needs the next byte offset. Keep text and geometry for visible pages.
@@ -141,6 +142,8 @@ size_t TxtReaderActivity::parseAndWrapLines(const uint8_t* buffer, size_t chunkS
       if (breakPos < line.length() && line[breakPos] == ' ') skipChars++;
       lineBytePos += skipChars;
       line = line.substr(skipChars);
+      // appendLine increments lineCount through its capture.
+      // cppcheck-suppress knownConditionTrueFalse
     } while (!line.empty() && lineCount < linesPerPage);
 
     if (line.empty()) {
@@ -1005,10 +1008,7 @@ bool TxtReaderActivity::saveProgress(const int page) {
   if (!txt) {
     return false;
   }
-  HalFile f;
-  if (!Storage.openFileForWrite("TRS", txt->getCachePath() + "/progress.bin", f)) {
-    return false;
-  }
+
   // 6-byte format: page(2 bytes LE) + file offset(4 bytes LE)
   // The offset lets drawCurrentPageToBuffer render without requiring index.bin.
   const bool offsetKnown = page >= 0 && page < static_cast<int>(pageOffsets.size());
@@ -1022,12 +1022,7 @@ bool TxtReaderActivity::saveProgress(const int page) {
   data[5] = (offset >> 24) & 0xFF;
   // Retain the existing six-byte format even while a font rebuild leaves only
   // the page known. An out-of-range offset lets old and new readers use that page.
-  const bool written = f.write(data, sizeof(data)) == sizeof(data);
-  f.close();
-  if (!written) {
-    LOG_ERR("TRS", "Short write saving reader progress");
-    return false;
-  }
+  if (!OwnedFileSwap::save("TRS", txt->getCachePath() + "/progress.bin", data, sizeof(data))) return false;
   progressSaveDebouncer.markPersisted(static_cast<uint32_t>(page));
   return true;
 }
@@ -1046,7 +1041,8 @@ bool TxtReaderActivity::flushQueuedProgress() {
 
 void TxtReaderActivity::loadProgress() {
   HalFile f;
-  if (Storage.openFileForRead("TRS", txt->getCachePath() + "/progress.bin", f)) {
+  if (OwnedFileSwap::recover(txt->getCachePath() + "/progress.bin") &&
+      Storage.openFileForRead("TRS", txt->getCachePath() + "/progress.bin", f)) {
     uint8_t data[6]{};
     const int bytes = f.read(data, sizeof(data));
     if (bytes >= 2) {
@@ -1319,7 +1315,8 @@ bool TxtReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gfx
   bool offsetKnown = false;
   {
     FsFile progFile;
-    if (Storage.openFileForRead("SLP", txt.getCachePath() + "/progress.bin", progFile)) {
+    if (OwnedFileSwap::recover(txt.getCachePath() + "/progress.bin") &&
+        Storage.openFileForRead("SLP", txt.getCachePath() + "/progress.bin", progFile)) {
       uint8_t data[6] = {0};
       const int n = progFile.read(data, 6);
       progFile.close();

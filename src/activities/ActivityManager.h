@@ -24,14 +24,27 @@ struct portMUX_TYPE {};
   }
 #endif
 
+enum class SleepTrigger : uint8_t { PowerButton, Timeout, CableBoot };
+
+struct SleepRequest {
+  SleepTrigger trigger = SleepTrigger::PowerButton;
+  bool hasSavedPage = false;
+
+  bool isCableBoot() const { return trigger == SleepTrigger::CableBoot; }
+  bool allowsTimeoutQuickResume() const { return trigger == SleepTrigger::Timeout || hasSavedPage; }
+};
+
 struct SleepSyncBook {
   std::string path;
   bool progressSafe = false;
   bool pluginJoinAttempted = false;
 };
 
+enum class StrId : uint16_t;
+
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
+class ChargingBookPreparation;
 
 #if CROSSINK_APP_CAP_TOUCH
 struct LiveLightSwipeState {
@@ -90,8 +103,6 @@ class ActivityManager {
   void processPendingActivities();
   bool prepareSleepPlugins(bool quickResume, bool fromReaderOrHome, bool& attemptedJoin);
 
-  unsigned long idleWorkMs = 0;  // Main task only, reset at the start of each dispatch.
-
   // Pending activity to be launched on next loop iteration
   std::unique_ptr<Activity> pendingActivity;
   enum class PendingAction { None, Push, Pop, Replace };
@@ -118,6 +129,10 @@ class ActivityManager {
 
   // Task to render and display the activity
   TaskHandle_t renderTaskHandle = nullptr;
+  bool hasReaderRenderStack = false;
+  enum RenderWork : uint8_t { FullRender = 1, IdleRender = 2 };
+  std::atomic<uint8_t> queuedRenderWork{0};
+  void notifyRenderTask(RenderWork work);
   // Guarded by RenderLock. Entry may explicitly render a ready loading screen
   // with requestUpdateAndWait(), but stale/asynchronous notifications must wait.
   bool enteringActivity = false;
@@ -154,10 +169,10 @@ class ActivityManager {
   }
   ~ActivityManager() { assert(false); /* should never be called */ };
 
-  void begin(uint32_t renderTaskStackBytes = 16384);
+  // Scalable-font rasterization also uses the S3 render task stack.
+  static constexpr uint32_t ReaderRenderStackBytes = FREEINK_MCU_S3 ? 24576 : 16384;
+  void begin(uint32_t renderTaskStackBytes = ReaderRenderStackBytes);
   void loop();
-  void recordIdleWork(unsigned long durationMs) { idleWorkMs += durationMs; }
-  unsigned long lastLoopIdleWorkMs() const { return idleWorkMs; }
 
   // Will replace currentActivity and drop all activities on stack
   void replaceActivity(std::unique_ptr<Activity>&& newActivity);
@@ -186,9 +201,10 @@ class ActivityManager {
                   bool cleanImageBaseOnEntry = false, bool keepWakeFrame = false);
   void goToReaderAndRunMenuAction(std::string path, uint8_t action);
   // Returns true only when sleep rendered a known complete B/W frame.
-  bool goToSleep(bool fromTimeout = false, SleepSyncBook* syncBook = nullptr);
+  bool goToSleep(SleepRequest request = {}, ChargingBookPreparation* preparation = nullptr,
+                 SleepSyncBook* syncBook = nullptr);
   void goToBoot();
-  void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
+  void goToFullScreenMessage(StrId title, StrId message);
   void goToCrashReport();
   void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE,
               HalDisplay::RefreshMode initialRefreshMode = HalDisplay::FAST_REFRESH);
@@ -228,6 +244,9 @@ class ActivityManager {
 #endif
   bool isCurrentActivity(const Activity* activity) const { return currentActivity.get() == activity; }
   bool canSnapshotForSleepOverlay() const;
+  bool canUpdateBackdropInPlace() const {
+    return !restoredActivityNeedsRender && !requestedUpdate && !(queuedRenderWork.load() & FullRender);
+  }
   bool requestManualReaderRefresh();
   bool handleShortcutAction(CrossPointSettings::SHORT_PWRBTN action);
   bool handleQuickLockUnlock(QuickLockTrigger trigger);
@@ -244,6 +263,7 @@ class ActivityManager {
   // If immediate is true, the update will be triggered immediately.
   // Otherwise, it will be deferred until the end of the current loop iteration.
   void requestUpdate(bool immediate = false);
+  void requestIdleRender() { notifyRenderTask(IdleRender); }
 
   // Main-loop only, without RenderLock: restore the reader pixels covered by
   // a dismissed popup inside a partial-screen overlay.

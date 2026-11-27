@@ -40,8 +40,9 @@ bool legacyHyphenationCode(const char* code) {
 }  // namespace
 
 bool canFallbackHyphenationCatalog(const Options& options, const int httpStatus, const char* code) {
-  return options.expectedKind == Kind::Hyphenation && options.hyphenationCatalog == HyphenationCatalog::Extended &&
-         (httpStatus == 404 || httpStatus == 403) && legacyHyphenationCode(code);
+  if (options.expectedKind != Kind::Hyphenation || (httpStatus != 404 && httpStatus != 403) || !code) return false;
+  return (options.hyphenationCatalog == HyphenationCatalog::Extended && legacyHyphenationCode(code)) ||
+         (options.hyphenationCatalog == HyphenationCatalog::Supplemental && std::strcmp(code, "fi") == 0);
 }
 
 bool catalogPath(const Options& options, char* output, size_t capacity) {
@@ -52,12 +53,23 @@ bool catalogPath(const Options& options, char* output, size_t capacity) {
                       !isHex(options.expectedKeyset, 64)))
     return false;
   const char* channel = options.expectedChannel == Channel::Rc ? "rc" : "stable";
-  const int size =
-      translation ? std::snprintf(output, capacity, "catalogs/%s/translation/%s/%s.json", channel,
-                                  options.expectedSource, options.expectedKeyset)
-                  : std::snprintf(output, capacity, "catalogs/%s/%s", channel,
-                                  options.hyphenationCatalog == HyphenationCatalog::Extended ? "hyphenation-v2.json"
-                                                                                             : "hyphenation.json");
+  const char* hyphenationFilename = "hyphenation.json";
+  switch (options.hyphenationCatalog) {
+    case HyphenationCatalog::Legacy:
+      break;
+    case HyphenationCatalog::Extended:
+      hyphenationFilename = "hyphenation-v2.json";
+      break;
+    case HyphenationCatalog::Supplemental:
+      hyphenationFilename = "hyphenation-supplement.json";
+      break;
+    case HyphenationCatalog::Finnish:
+      hyphenationFilename = "hyphenation/fi.json";
+      break;
+  }
+  const int size = translation ? std::snprintf(output, capacity, "catalogs/%s/translation/%s/%s.json", channel,
+                                               options.expectedSource, options.expectedKeyset)
+                               : std::snprintf(output, capacity, "catalogs/%s/%s", channel, hyphenationFilename);
   if (size < 0 || static_cast<size_t>(size) >= capacity) {
     output[0] = '\0';
     return false;
@@ -358,9 +370,24 @@ bool Parser::stringComplete() {
       break;
     case Code:
       if (!validCode(token_) || sameCode(token_, "en")) return fail("Invalid or built-in code");
-      if (options_.expectedKind == Kind::Hyphenation && !legacyHyphenationCode(token_) &&
-          !(options_.hyphenationCatalog == HyphenationCatalog::Extended && std::strcmp(token_, "nl") == 0))
-        return fail("Unsupported language code");
+      if (options_.expectedKind == Kind::Hyphenation) {
+        bool supported = false;
+        switch (options_.hyphenationCatalog) {
+          case HyphenationCatalog::Legacy:
+            supported = legacyHyphenationCode(token_);
+            break;
+          case HyphenationCatalog::Extended:
+            supported = legacyHyphenationCode(token_) || std::strcmp(token_, "nl") == 0;
+            break;
+          case HyphenationCatalog::Supplemental:
+            supported = options_.supportedSupplementalHyphenation && options_.supportedSupplementalHyphenation(token_);
+            break;
+          case HyphenationCatalog::Finnish:
+            supported = std::strcmp(token_, "fi") == 0;
+            break;
+        }
+        if (!supported) return fail("Unsupported language code");
+      }
       destination = catalog_.entries[catalog_.count].code;
       break;
     case Sha256:
@@ -384,7 +411,9 @@ bool Parser::numberComplete() {
   switch (field_) {
     case Schema:
       if (number_ !=
-          (options_.expectedKind == Kind::Hyphenation ? static_cast<unsigned>(options_.hyphenationCatalog) : 1u))
+          (options_.expectedKind == Kind::Hyphenation && options_.hyphenationCatalog != HyphenationCatalog::Finnish
+               ? static_cast<unsigned>(options_.hyphenationCatalog)
+               : 1u))
         return fail("Unsupported schema or format");
       break;
     case Format:
@@ -404,9 +433,23 @@ bool Parser::numberComplete() {
   return true;
 }
 bool Parser::beginEntry() {
-  const size_t limit = options_.expectedKind == Kind::Translation                    ? MAX_ENTRIES
-                       : options_.hyphenationCatalog == HyphenationCatalog::Extended ? MAX_HYPHENATION_ENTRIES
-                                                                                     : MAX_LEGACY_HYPHENATION_ENTRIES;
+  size_t limit = MAX_ENTRIES;
+  if (options_.expectedKind == Kind::Hyphenation) {
+    switch (options_.hyphenationCatalog) {
+      case HyphenationCatalog::Legacy:
+        limit = MAX_LEGACY_HYPHENATION_ENTRIES;
+        break;
+      case HyphenationCatalog::Extended:
+        limit = MAX_HYPHENATION_ENTRIES;
+        break;
+      case HyphenationCatalog::Supplemental:
+        limit = MAX_SUPPLEMENTAL_HYPHENATION_ENTRIES;
+        break;
+      case HyphenationCatalog::Finnish:
+        limit = 1;
+        break;
+    }
+  }
   if (catalog_.count >= limit) return fail("Too many entries");
   auto& entry = catalog_.entries[catalog_.count];
   entry.code[0] = entry.name[0] = entry.sha256[0] = entry.previous[0] = '\0';
