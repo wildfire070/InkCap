@@ -23,6 +23,8 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "AssetDownloadSmokeTest.h"
 #include "BookFontSystem.h"
@@ -35,13 +37,13 @@
 #include "StatsUploadSmokeTest.h"
 #include "UpstreamFeatureSmokeTest.h"
 #include "util/DictionaryRegistry.h"
+#include "util/FolderBookIterator.h"
 #include "util/ImageDisplayMode.h"
 #include "util/WordSelectNavigator.h"
 #if CROSSINK_SCALABLE_FONTS
 #include <HalScalableFont.h>
+#include <ScalableBuiltins.h>
 #include <builtinFonts/bitter_12_regular.h>
-
-#include <fstream>
 
 #include "FontInstaller.h"
 #include "TtfRenderProfileStore.h"
@@ -74,6 +76,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
+#include "activities/boot_sleep/ChargingBookPreparation.h"
 #include "activities/boot_sleep/SleepActivity.h"
 #include "activities/boot_sleep/SleepCoverAssets.h"
 #include "activities/home/AlertActivity.h"
@@ -107,6 +110,7 @@
 #include "activities/reader/QrDisplayActivity.h"
 #include "activities/reader/ReaderButtonShortcuts.h"
 #include "activities/reader/ReaderFontLoading.h"
+#include "activities/reader/ReaderRuling.h"
 #include "activities/reader/ReaderUtils.h"
 #include "activities/reader/TxtReaderActivity.h"
 #include "activities/reader/XtcReaderActivity.h"
@@ -136,6 +140,7 @@
 #include "components/CoverGridHomeUi.h"
 #include "components/HeaderDate.h"
 #include "components/TouchHeaderBackButton.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "components/themes/dashboard/DashboardTheme.h"
 #include "components/themes/minimal/MinimalTheme.h"
@@ -160,6 +165,64 @@ extern CrossPointSettings::SHORT_PWRBTN getPowerButtonAction();
 // Use a detached reader so these boundary checks cannot race its render task.
 struct EpubReaderCompletionSmokeTest {
   static std::optional<uint32_t> statusAnchor;
+
+  static std::optional<bool> nextChapterPrefetch(EpubReaderActivity& reader) {
+    static bool interrupted = false;
+    static bool turned = false;
+    RenderLock lock(RenderLock::Mode::Try);
+    if (!lock.ownsLock() || !reader.section || reader.lastPresentedPage < 0) return std::nullopt;
+    if (turned) {
+      if (reader.lastPresentedSpine != 1) return std::nullopt;
+      return reader.lastPresentedPage == 0 && reader.section->isPartial() && reader.section->pageCount >= 3;
+    }
+    if (reader.section->isBuilding() || reader.section->isPartial()) return std::nullopt;
+    if (!reader.hasIndexingPsram) {
+      if (reader.nextChapterBuildAttempted || reader.nextChapterBuild ||
+          SETTINGS.indexingMethod != CrossPointSettings::INDEXING_INCREMENTAL || reader.epub->getSpineItemsCount() < 2)
+        return false;
+
+      // Cancel during cold XHTML extraction and verify that the partial stream is not published.
+      Section next(reader.epub, 1, renderer);
+      auto spec = SETTINGS.readerRenderSpec(reader.buildViewportWidth, reader.buildViewportHeight,
+                                            EpubRenderMode::CrossInkDefault);
+      int checks = 0;
+      bool cancelled = false;
+      SectionBuildOptions options{};
+      options.shouldCancel = [](void* context) { return ++*static_cast<int*>(context) >= 3; };
+      options.cancelContext = &checks;
+      options.cancellationObserved = &cancelled;
+      if (next.hasHtmlCache() || next.startBuild(spec, options) || !cancelled || next.isBuilding() ||
+          next.hasHtmlCache())
+        return false;
+
+      // Seed a different layout and verify that prefetch can prepare a replacement.
+      --spec.viewportWidth;
+      if (!next.createSectionFile(spec)) return false;
+
+      // Exercise the reader's PSRAM policy while keeping the simulator's host allocator.
+      reader.hasIndexingPsram = true;
+    }
+    if (reader.nextChapterBuild && !interrupted) {
+      lock.unlock();
+      reader.onUserInput();
+      RenderLock inputLock;
+      if (reader.nextChapterBuild || reader.nextChapterBuildAttempted) return false;
+      Section next(reader.epub, 1, renderer);
+      const auto oldSpec = SETTINGS.readerRenderSpec(reader.buildViewportWidth - 1, reader.buildViewportHeight,
+                                                     EpubRenderMode::CrossInkDefault);
+      if (!next.loadSectionFile(oldSpec) || next.isPartial() || next.pageCount < 3) return false;
+      interrupted = true;
+      return std::nullopt;
+    }
+    if (!reader.nextChapterBuildAttempted || reader.nextChapterBuild) return std::nullopt;
+    if (!interrupted || reader.currentSpineIndex != 0) return false;
+
+    reader.section->currentPage = reader.section->pageCount - 1;
+    turned = true;
+    reader.pageTurn(lock, true, "prefetch smoke");
+    return std::nullopt;
+  }
+
   static bool fontBrowserReturn(EpubReaderActivity& reader, const char* family) {
     RenderLock lock;
     const int fontId = sdFontSystem.resolveFontId(family, SETTINGS.readerFontPointSize);
@@ -226,6 +289,78 @@ struct EpubReaderCompletionSmokeTest {
         page + 1 < reader.section->pageCount ? reader.section->getVisibleTextOffsetForPage(page + 1) : std::nullopt;
     return !statusAnchor || (start && *start <= *statusAnchor && (!next || *next > *statusAnchor));
   }
+
+  static bool turnDuringRelayout(EpubReaderActivity& reader, const bool touch) {
+    {
+      RenderLock lock;
+      if (!reader.section || reader.section->pageCount == 0) return false;
+      reader.section->currentPage = 0;
+      reader.prepareCurrentSectionForRelayout();
+      reader.section.reset();
+      reader.lastPageTurnTime = millis() - 250;
+    }
+    using Button = MappedInputManager::Button;
+    if (touch) {
+#if CROSSINK_APP_CAP_TOUCH
+      const int x = renderer.getScreenWidth() * 3 / 4;
+      const int y = renderer.getScreenHeight() / 2;
+      mappedInputManager.simulatorInjectTouchDown(x, y);
+      mappedInputManager.simulatorInjectTouchRelease(x, y);
+#else
+      return false;
+#endif
+    } else {
+      mappedInputManager.simulatorInjectPress(Button::Down);
+    }
+    reader.loop();
+    mappedInputManager.simulatorClearInputFrame();
+    if (!touch) {
+      mappedInputManager.simulatorInjectRelease(Button::Down);
+      reader.loop();
+      mappedInputManager.simulatorClearInputFrame();
+    }
+    if (reader.pendingManualPageTurns.size() != 1) return false;
+    int restoredSpine = -1;
+    bool chapterEnd = false;
+    {
+      RenderLock lock;
+      reader.render(std::move(lock));
+      if (!reader.section || reader.section->currentPage != 0) return false;
+      restoredSpine = reader.currentSpineIndex;
+      chapterEnd = reader.section->pageCount == 1 && !reader.section->isBuilding() && !reader.section->isPartial();
+    }
+    reader.loop();
+    RenderLock lock;
+    if (reader.pendingManualPageTurns.hasPending()) return false;
+    if (!chapterEnd) return reader.section && reader.section->currentPage == 1;
+    if (reader.section || reader.currentSpineIndex != restoredSpine + 1) return false;
+    reader.currentSpineIndex = restoredSpine;
+    reader.render(std::move(lock));
+    return reader.section && reader.section->currentPage == 0;
+  }
+
+#if CROSSINK_APP_CAP_TOUCH
+  static bool deferFootnoteWhileBusy(EpubReaderActivity& reader) {
+    const int x = renderer.getScreenWidth() / 2;
+    const int y = renderer.getScreenHeight() / 2;
+    {
+      RenderLock lock;
+      auto& registry = TouchRegistry::getInstance();
+      registry.beginFrame();
+      registry.add(Rect(x - 8, y - 8, 16, 16), reader.footnoteTouchFrame, TouchRegistry::Kind::Footnote);
+      registry.publish();
+      mappedInputManager.simulatorInjectTouchDown(x, y);
+      mappedInputManager.simulatorInjectTouchRelease(x, y);
+      reader.loop();
+      mappedInputManager.simulatorClearInputFrame();
+      if (!reader.deferredFootnoteTap || reader.pendingManualPageTurns.hasPending()) return false;
+
+      // A new page invalidates a link from the old published frame.
+      ++reader.footnoteTouchFrame;
+    }
+    return !reader.replayDeferredFootnoteTap() && !reader.deferredFootnoteTap;
+  }
+#endif
   static bool readingPace(EpubReaderActivity& reader) {
     for (const uint32_t sample : {20U, 40U}) {
       reader.stats.setAverageForwardPageMillis(30000);
@@ -324,8 +459,9 @@ struct EpubReaderCompletionSmokeTest {
       const double start = reader->stableTextPosition;
       reader->paceSampleWarmupPending = false;
       for (int page = 1; page <= 3; ++page) {
+        RenderLock lock;
         reader->pageShownAtMs = millis() - 10000UL;
-        reader->pageTurn(true, "stable_eta_smoke");
+        reader->pageTurn(lock, true, "stable_eta_smoke");
         if (reader->pendingStableReadSeconds != 10 || reader->section->currentPage != page) return false;
         reader->refreshStableTextProgress();
         if (page < 3 && (!reader->estimateTimeLeftSeconds(true, retained) || retained != 1800)) return false;
@@ -542,9 +678,6 @@ struct EpubReaderCompletionSmokeTest {
       reader->handleShortcutAction(static_cast<uint8_t>(action));
       if (reader->section || reader->currentSpineIndex != 0) return false;
     }
-    reader->pageTurn(true, "auto");
-    reader->pageTurn(false, "test");
-
     // Previous-page shortcuts on the plain end screen return to the final page.
     for (const bool homeButton : {false, true}) {
       reader->currentSpineIndex = spineCount;
@@ -886,7 +1019,8 @@ struct ReaderDrawerLayoutSmokeTest {
               verifyScreen(screen, "saved-items");
             }
             {
-              XtcReaderMenuActivity screen(renderer, mappedInputManager, "Short XTC title", true, false, true, true);
+              XtcReaderMenuActivity screen(renderer, mappedInputManager, "Short XTC title", true, false, true, true, 0,
+                                           {});
               verifyScreen(screen, "xtc-menu");
             }
             {
@@ -894,7 +1028,7 @@ struct ReaderDrawerLayoutSmokeTest {
                   renderer, mappedInputManager,
                   "A very long XTC book title that needs to wrap across multiple lines without "
                   "making its Back header taller than Settings or other reader screens",
-                  true, false, true, true);
+                  true, false, true, true, 0, {});
               verifyScreen(screen, "xtc-menu-long-title");
             }
             ++cases;
@@ -4833,6 +4967,249 @@ class SimulatorSmokeTest {
     LOG_INF("SMOKE", "Simulator smoke test passed: Rotate Page 180 shortcut pickers and EPUB/TXT handlers");
   }
 
+  static void verifyChargePreparation() {
+    const std::string path = std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK");
+    const std::string leaf = "/books/Author/Series";
+    const std::string sibling = "/books/Second Author/Other.epub";
+    const std::string hidden = "/books/.hidden/Skip.epub";
+    std::filesystem::create_directories("fs_" + leaf);
+    std::filesystem::create_directories("fs_/books/Second Author");
+    std::filesystem::create_directories("fs_/books/.hidden");
+    std::string deep = "/books";
+    for (int i = 0; i < 16; ++i) deep += "/deep";
+    std::filesystem::create_directories("fs_" + deep);
+    deep += "/Skip.epub";
+    std::filesystem::copy_file("fs_" + path, "fs_" + deep);
+    std::vector<std::string> expectedBooks{path, sibling};
+    for (int i = 1; i <= 4; ++i) {
+      expectedBooks.push_back(leaf + "/Book " + std::to_string(i) + ".EPUB");
+    }
+    for (size_t i = 1; i < expectedBooks.size(); ++i) {
+      std::filesystem::copy_file("fs_" + path, "fs_" + expectedBooks[i]);
+    }
+    std::filesystem::copy_file("fs_" + path, "fs_" + hidden);
+
+    SETTINGS.menuNavigation = CrossPointSettings::MENU_NAV_DIRECTIONAL;
+    APP_STATE.chargePreparationFolder = leaf;
+    activityManager.replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInputManager));
+    activityManager.loop();
+    const auto tap = [&](MappedInputManager::Button button) {
+      mappedInputManager.simulatorInjectPress(button);
+      activityManager.loop();
+      mappedInputManager.simulatorClearInputFrame();
+      mappedInputManager.simulatorInjectRelease(button);
+      activityManager.loop();
+      mappedInputManager.simulatorClearInputFrame();
+    };
+    const auto capture = [&](const char* name) {
+      RenderLock lock;
+      activityManager.simulatorCurrentActivity()->render(std::move(lock));
+      captureStatusBarScreen(name);
+    };
+    const auto openOptions = [&] {
+      const auto system = buildSystemSettingsParentList(getSettingsList());
+      const auto row = std::find_if(system.begin(), system.end(), [](const SettingInfo& info) {
+        return info.action == SettingAction::PrepareBooksCharging;
+      });
+      if (row == system.end()) fail("Missing charging preparation setting");
+      for (size_t i = 0; i <= static_cast<size_t>(row - system.begin()); ++i)
+        tap(mappedInputManager.menuButton(MappedInputManager::Button::Down));
+      capture("charging-system");
+      tap(MappedInputManager::Button::Confirm);
+      const auto* editor = dynamic_cast<SettingsActivity*>(activityManager.simulatorCurrentActivity());
+      if (!editor || !editor->simulatorOptionPopupActive()) fail("Charging folder options did not open");
+      capture("charging-options");
+      tap(MappedInputManager::Button::Confirm);
+    };
+    for (int i = 0; i < 3; ++i) tap(MappedInputManager::Button::Confirm);
+    openOptions();
+    const auto* picker = dynamic_cast<FileBrowserActivity*>(activityManager.simulatorCurrentActivity());
+    if (!picker || picker->simulatorFolderPath() != leaf) fail("Could not open EPUB-only folder");
+    capture("charging-book-only-folder");
+    tap(MappedInputManager::Button::Right);
+    if (APP_STATE.chargePreparationFolder != leaf || !activityManager.isCurrentActivityNamed("Settings"))
+      fail("Could not select EPUB-only folder");
+    tap(MappedInputManager::Button::Confirm);
+    tap(MappedInputManager::Button::Confirm);
+    tap(MappedInputManager::Button::Back);
+    tap(MappedInputManager::Button::Back);
+    tap(MappedInputManager::Button::Right);
+    if (APP_STATE.chargePreparationFolder != "/books") fail("Could not select parent Books folder");
+    APP_STATE.chargePreparationFolder.clear();
+    if (!APP_STATE.loadFromFile() || APP_STATE.chargePreparationFolder != "/books") fail("Charging folder lost");
+    Epub book(path, "/.crosspoint");
+    const std::string cache = book.getCachePath();
+    SETTINGS.sleepScreen = CrossPointSettings::BLANK;
+    const std::string previousBook = APP_STATE.openEpubPath;
+    const auto chargeWhileAsleep = [](SleepTrigger trigger = SleepTrigger::PowerButton) {
+      ChargingBookPreparation preparation;
+      const bool monochrome = activityManager.goToSleep({.trigger = trigger}, &preparation);
+      return std::pair{monochrome, preparation.pollWake()};
+    };
+    if (std::getenv("CROSSINK_SIMULATOR_SMOKE_CHARGE_PREPARATION_SMALL_STACK")) {
+      const auto [monochrome, woke] = chargeWhileAsleep();
+      if (!monochrome || woke || Storage.exists(cache.c_str()))
+        fail("Small render stack ran charging preparation or failed to sleep normally");
+      LOG_INF("SMOKE", "Simulator smoke test passed: charging skips the small render stack");
+      return;
+    }
+    const auto [cablePainted, cableWoke] = chargeWhileAsleep(SleepTrigger::CableBoot);
+    if (cablePainted || cableWoke) fail("Charging cable boot replaced its retained sleep screen");
+    for (const auto& expected : expectedBooks) {
+      Epub prepared(expected, "/.crosspoint");
+      if (!prepared.load(false, true, Epub::XLocationLoadMode::Skip) || prepared.getSpineItemsCount() < 1)
+        fail("Missing book metadata for %s", expected.c_str());
+      const auto preparedCache = prepared.getCachePath();
+      for (int i = 0; i < prepared.getSpineItemsCount(); ++i) {
+        const auto chapter = preparedCache + "/layout/" + std::to_string(i / 32) + "/" + std::to_string(i) + ".bin";
+        if (!Storage.exists(chapter.c_str())) fail("Charging session missed chapter %d of %s", i, expected.c_str());
+      }
+      if (Storage.exists((preparedCache + "/progress.bin").c_str())) fail("Charging session wrote reading progress");
+    }
+    FolderBookIterator walker("/books", FolderBookIterator::TraversalLimit::Skip);
+    std::string nextBook;
+    size_t visited = 0;
+    for (auto result = walker.next(nextBook); result != FolderBookIterator::Result::Done;
+         result = walker.next(nextBook)) {
+      if (result == FolderBookIterator::Result::Error) fail("Skip traversal rejected the depth limit");
+      if (result == FolderBookIterator::Result::Book) ++visited;
+    }
+    if (visited != expectedBooks.size()) fail("Skip traversal lost valid siblings or visited an excluded book");
+    for (const auto& excluded : {hidden, deep}) {
+      const Epub skipped(excluded, "/.crosspoint");
+      if (Storage.exists(skipped.getCachePath().c_str())) fail("Charging session scanned %s", excluded.c_str());
+    }
+    if (APP_STATE.openEpubPath != previousBook) fail("Charging session changed the current book");
+    const std::string first = cache + "/layout/0/0.bin";
+    const auto stamp = std::filesystem::last_write_time("fs_" + first);
+    const std::string added = leaf + "/Added.epub";
+    std::filesystem::copy_file("fs_" + path, "fs_" + added);
+    chargeWhileAsleep(SleepTrigger::CableBoot);
+    if (std::filesystem::last_write_time("fs_" + first) != stamp) fail("Rewrote a prepared chapter");
+    Epub addedBook(added, "/.crosspoint");
+    if (!Section(addedBook, 0, renderer).getCachedPageCount()) fail("Did not prepare the newly added EPUB");
+
+    const auto originalMargin = SETTINGS.screenMarginHorizontal;
+    SETTINGS.screenMarginHorizontal = originalMargin == 5 ? 10 : 5;
+    const auto readChapter = [&] {
+      std::ifstream input("fs_" + first, std::ios::binary);
+      return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+    const auto previousLayout = readChapter();
+    chargeWhileAsleep(SleepTrigger::CableBoot);
+    if (readChapter() == previousLayout) fail("Skipped a changed charging layout");
+    SETTINGS.screenMarginHorizontal = originalMargin;
+    chargeWhileAsleep(SleepTrigger::CableBoot);
+
+    if (!Storage.remove(first.c_str())) fail("Could not clear charging-test chapter");
+    {
+      RenderLock lock;
+      bool cancelled = false;
+      SectionBuildOptions options{};
+      options.cancellationObserved = &cancelled;
+      // Stop at the first parser checkpoint. A retry should see only completed chapters.
+      static bool stopAtCheckpoint;
+      stopAtCheckpoint = false;
+      options.onBuildCheckpoint = [] { stopAtCheckpoint = true; };
+      options.shouldCancel = [](void*) { return stopAtCheckpoint; };
+      if (EpubReaderActivity::prepareBookWhileCharging(path, renderer, options) || !cancelled ||
+          Storage.exists(first.c_str()) || Storage.exists((first + ".part").c_str()))
+        fail("Cancelled charging build published an incomplete chapter");
+    }
+    chargeWhileAsleep();
+    if (!Storage.exists(first.c_str())) fail("Interrupted chapter was not prepared on retry");
+
+    const std::string longBook = "/charging-partial/book.epub";
+    Epub partialBook(longBook, "/.crosspoint");
+    Section shortChapter(partialBook, 0, renderer);
+    Section longChapter(partialBook, 1, renderer);
+    struct StopDuringChapter {
+      std::string temporaryCache;
+      int checks = 0;
+    };
+    const auto interruptLongChapter = [&] {
+      RenderLock lock;
+      StopDuringChapter stop{partialBook.getCachePath() + "/layout/0/1.bin.part"};
+      bool cancelled = false;
+      SectionBuildOptions options{};
+      options.cancellationObserved = &cancelled;
+      options.cancelContext = &stop;
+      options.shouldCancel = [](void* context) {
+        auto& stop = *static_cast<StopDuringChapter*>(context);
+        // Let the short first chapter finish and the second parse several pages.
+        return Storage.exists(stop.temporaryCache.c_str()) && ++stop.checks > 12;
+      };
+      const bool finished = EpubReaderActivity::prepareBookWhileCharging(longBook, renderer, options);
+      return !finished && cancelled && shortChapter.getCachedPageCount() && !longChapter.getCachedPageCount() &&
+             longChapter.getParagraphIndexForPage(0) && !Storage.exists(stop.temporaryCache.c_str());
+    };
+    if (!interruptLongChapter()) fail("Interrupted charging build did not preserve a readable partial chapter");
+    const auto shortPath = "fs_" + partialBook.getCachePath() + "/layout/0/0.bin";
+    const auto shortStamp = std::filesystem::last_write_time(shortPath);
+    APP_STATE.chargePreparationFolder = "/charging-partial";
+    chargeWhileAsleep();
+    if (!longChapter.getCachedPageCount() || std::filesystem::last_write_time(shortPath) != shortStamp ||
+        Storage.exists((partialBook.getCachePath() + "/progress.bin").c_str())) {
+      fail("Charging retry did not finish the partial chapter safely");
+    }
+    const auto margin = SETTINGS.screenMarginHorizontal;
+    SETTINGS.screenMarginHorizontal = margin == 5 ? 10 : 5;
+    if (!interruptLongChapter()) fail("Interrupted charging build did not save pages after a layout change");
+    SETTINGS.screenMarginHorizontal = margin;
+    SETTINGS.shortPwrBtn = CrossPointSettings::WAKE_ONLY;
+    SDL_Event powerTap{};
+    powerTap.type = SDL_KEYDOWN;
+    powerTap.key.keysym.scancode = SDL_SCANCODE_P;
+    if (SDL_PushEvent(&powerTap) != 1) fail("Could not inject wake request");
+    const auto [paintedOnWake, wakeRequested] = chargeWhileAsleep();
+    if (!wakeRequested || paintedOnWake) fail("Charging sleep did not go directly to the pending wake");
+    verifyChargingImageCancellation();
+    LOG_INF("SMOKE", "Simulator smoke test passed: charging preparation");
+  }
+
+  static void verifyChargingImageCancellation() {
+    const std::string path = "/charging-image.epub";
+    const Epub book(path, "/.crosspoint");
+    const auto cache = book.getCachePath();
+    RenderLock lock;
+
+    const auto staged = cache + "/book.bin.tmp";
+    bool reachedMetadataWrite = false;
+    std::pair metadataState{&staged, &reachedMetadataWrite};
+    SectionBuildOptions metadataOptions{};
+    metadataOptions.cancelContext = &metadataState;
+    metadataOptions.shouldCancel = [](void* context) {
+      const auto& [path, reached] = *static_cast<decltype(metadataState)*>(context);
+      *reached = Storage.exists(path->c_str());
+      return *reached;
+    };
+    if (EpubReaderActivity::prepareBookWhileCharging(path, renderer, metadataOptions) || !reachedMetadataWrite ||
+        Storage.exists(staged.c_str()) || Storage.exists((cache + "/book.bin").c_str()))
+      fail("Cancelling during book metadata creation did not discard the staged metadata");
+
+    // The whole chapter fits in one parser step. Once the checkpoint admits the step,
+    // a subsequent cancellation check inside the image read would drop the image and
+    // finalize that altered page before control returns to charging preparation.
+    static bool parsing;
+    parsing = false;
+    bool admittedStep = false;
+    SectionBuildOptions options{};
+    options.onBuildCheckpoint = [] { parsing = true; };
+    options.cancelContext = &admittedStep;
+    options.shouldCancel = [](void* context) {
+      auto& admitted = *static_cast<bool*>(context);
+      if (!parsing) return false;
+      return std::exchange(admitted, true);
+    };
+    if (!EpubReaderActivity::prepareBookWhileCharging(path, renderer, options) || !admittedStep)
+      fail("An admitted image parse step did not finish while cancellation was pending");
+    std::ifstream chapter("fs_" + cache + "/layout/0/0.bin", std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(chapter), std::istreambuf_iterator<char>()};
+    if (bytes.find("pixel.gif") == std::string::npos)
+      fail("Charging cancellation committed a chapter without its image");
+    LOG_INF("SMOKE", "Simulator smoke test passed: charging cancellation preserved the image");
+  }
+
   static void verifyWifiTransmitPowerSettings() {
     JsonDocument original;
     SETTINGS.toJson(original);
@@ -7038,8 +7415,50 @@ class SimulatorSmokeTest {
   }
 
 #if CROSSINK_SCALABLE_FONTS
+  void verifyScalableDropCaps() {
+    const std::string htmlPath = "/scalable-drop-cap.xhtml";
+    if (!Storage.writeFile(htmlPath.c_str(),
+                           "<html><body><p><span style=\"float:left;font-size:2em\">R</span>"
+                           "eading should start with a sharp letter. This paragraph wraps alongside the opening "
+                           "letter for two lines before returning to the left margin.</p></body></html>"))
+      fail("Cannot write scalable drop-cap excerpt");
+
+    Epub book("/scalable-drop-cap.epub", "/.crosspoint");
+    CssParser css(book.getCachePath());
+    ensureScalableBuiltinFamily(renderer, CrossPointSettings::BITTER);
+    for (const uint8_t points : {14, 16, 22}) {
+      const int body = scalableBuiltinReaderFontId(CrossPointSettings::BITTER, points);
+      if (renderer.getFontPointSize(body) != points) fail("Bitter body font is unavailable at %u pt", unsigned(points));
+      const unsigned expected = points == 14 ? 42 : ScalableContentMaxPointSize;
+      unsigned caps = 0;
+      ChapterHtmlSlimParser parser(
+          book, htmlPath, renderer, body, 1.0f, false, false, CrossPointSettings::BOOK_STYLE,
+          renderer.getScreenWidth() - 40, renderer.getScreenHeight() - 40, false, false, false, 0,
+          [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
+            for (const auto& element : page->elements) {
+              if (element->getTag() != TAG_PageDropCap) continue;
+              const auto& cap = static_cast<const PageDropCap&>(*element);
+              if (std::strcmp(cap.getText(), "R") || cap.getFontSize() != expected)
+                fail("Bitter %u pt drop cap used a %u pt glyph, expected %u pt", unsigned(points),
+                     unsigned(cap.getFontSize()), expected);
+              ++caps;
+            }
+            renderer.setRenderMode(GfxRenderer::BW);
+            renderer.clearScreen();
+            page->renderText(renderer, body, 20, 20);
+            char name[32];
+            std::snprintf(name, sizeof(name), "bitter-drop-cap-%u-pt", unsigned(points));
+            captureStatusBarScreen(name);
+          },
+          true, "", "", 0, {}, nullptr, &css);
+      if (!parser.parseAndBuildPages() || caps != 1) fail("Expected one Bitter %u pt drop cap", unsigned(points));
+    }
+    LOG_INF("SMOKE", "Bitter drop caps use 42/44/44 pt glyphs at 14/16/22 pt body sizes");
+  }
+
   void verifyPublisherFonts() {
     RenderLock lock;
+    verifyScalableDropCaps();
     const auto savedMode = SETTINGS.publisherFonts;
     if (savedMode != static_cast<uint8_t>(PublisherFonts::Accents))
       fail("Fresh settings did not default to Ignore Body Font");
@@ -7758,6 +8177,75 @@ class SimulatorSmokeTest {
     LOG_INF("SMOKE", "Font identity: equivalent requests reuse fonts/pages; changed sets and files reload");
   }
 
+#if !CROSSINK_SCALABLE_FONTS
+  void verifyEnlargedRuledHeading(const int bodyFont, const char* captureName) {
+    RenderLock lock;
+    const std::string path = "/ruled-font-size.xhtml";
+    if (!Storage.writeFile(path.c_str(),
+                           "<html><body><p>Heading control</p>"
+                           "<h2 style=\"font-size:1.45em; margin:0\">Heading</h2>"
+                           "<p>Next paragraph</p></body></html>"))
+      fail("Cannot write ruled heading fixture");
+    Epub book("/ruled-font-size.epub", "/.crosspoint");
+    CssParser css("/.crosspoint/ruled-font-size");
+    unsigned rows = 0;
+    const int width = renderer.getScreenWidth() - 40;
+    const int height = renderer.getScreenHeight() - 40;
+    ChapterHtmlSlimParser parser(
+        book, path, renderer, bodyFont, 1.0f, false, false, 1, width, height, false, false, false, 0,
+        [&](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t, uint32_t) {
+          constexpr const char* pagePath = "/ruled-font-page";
+          FsFile file;
+          if (!Storage.openFileForWrite("SMOKE", pagePath, file) || !page->serialize(file))
+            fail("Cannot save ruled heading page");
+          file.close();
+          if (!Storage.openFileForRead("SMOKE", pagePath, file)) fail("Cannot read ruled heading page");
+          auto restored = Page::deserialize(file);
+          file.close();
+          if (!restored) fail("Cannot restore ruled heading page");
+
+          renderer.setRenderMode(GfxRenderer::BW);
+          renderer.clearScreen();
+          restored->renderText(renderer, bodyFont, 20, 20);
+          int previousBottom = 0;
+          int bodyInkHeight = 0;
+          for (const auto& element : restored->elements) {
+            if (element->getTag() != TAG_PageLine) continue;
+            const auto& line = static_cast<const PageLine&>(*element);
+            const auto& block = *line.getBlock();
+            const auto& style = block.getBlockStyle();
+            const int rowTop = line.yPos - style.ruledTextOffset;
+            const int rowBottom = rowTop + style.lineHeight;
+            const int font = block.resolvedFontId(renderer, bodyFont);
+            const unsigned expected = rows == 1 ? 23 : 16;
+            if (renderer.getFontPointSize(font) != expected || rowTop < previousBottom || rowBottom > height)
+              fail("%s row %u (%s): %u pt, expected %u pt, row [%d, %d), previous bottom %d, viewport %d", captureName,
+                   rows, block.wordText(0), unsigned(renderer.getFontPointSize(font)), expected, rowTop, rowBottom,
+                   previousBottom, height);
+            const int x = line.xPos + block.wordXpos(0) + 20;
+            const int y = rowTop + 20;
+            const int wordWidth = renderer.getTextAdvanceX(font, block.wordText(0), block.wordStyle(0));
+            int top = y, bottom = y + style.lineHeight;
+            while (top < bottom && !renderer.hasBlackPixels(x, top, wordWidth, 1)) ++top;
+            while (bottom > top && !renderer.hasBlackPixels(x, bottom - 1, wordWidth, 1)) --bottom;
+            if (rows == 0) bodyInkHeight = bottom - top;
+            if (rows == 1 && (bodyInkHeight <= 0 || bottom - top <= bodyInkHeight))
+              fail("Ruled heading glyphs did not get taller");
+            previousBottom = rowBottom;
+            ++rows;
+          }
+          ReaderRuling{1, 20, width, height + 20, 100}.drawPage(renderer, *restored, bodyFont, 20);
+          captureStatusBarScreen(captureName);
+          Storage.remove(pagePath);
+        },
+        true, "", "", 0, {}, nullptr, &css);
+    parser.setRuled(true);
+    if (!parser.parseAndBuildPages() || rows != 3) fail("Ruled heading did not render all three rows");
+    Storage.remove(path.c_str());
+    LOG_INF("SMOKE", "Ruled heading: 16pt body, 23pt heading, cache and visible glyph height passed");
+  }
+#endif
+
   void verifyBitmapFontSizes() {
     const auto orientation = renderer.getOrientation();
 #if CROSSINK_SCALABLE_FONTS
@@ -7765,11 +8253,13 @@ class SimulatorSmokeTest {
 #else
     for (const int base : {BITTER_12_FONT_ID, LEXENDDECA_12_FONT_ID}) {
       if (renderer.getFontPointSize(base) != 12) fail("Bitmap body size missing");
-      for (const auto pair : {std::pair<uint8_t, uint8_t>{8, 10}, {11, 10}, {13, 14}, {15, 16}, {44, 16}}) {
+      for (const auto pair : {std::pair<uint8_t, uint8_t>{8, 10}, {11, 10}, {13, 14}, {15, 16}, {44, 44}}) {
         const int chosen = renderer.getFontIdForSize(base, pair.first);
         if (renderer.getFontPointSize(chosen) != pair.second) fail("Bitmap size snapping failed");
       }
       renderer.setOrientation(GfxRenderer::Portrait);
+      verifyEnlargedRuledHeading(renderer.getFontIdForSize(base, 16),
+                                 base == BITTER_12_FONT_ID ? "c3-bitter-ruled-heading" : "c3-lexend-ruled-heading");
       verifyBlockFontSizes(base, base == BITTER_12_FONT_ID ? "c3-bitter" : "c3-lexend");
       renderer.setOrientation(GfxRenderer::LandscapeClockwise);
       verifyBlockFontSizes(base, base == BITTER_12_FONT_ID ? "c3-bitter-landscape" : "c3-lexend-landscape");
@@ -8260,8 +8750,9 @@ class SimulatorSmokeTest {
       case 17: {
         RenderLock lock;
         captureStatusBarScreen("metadata-clipping-detail");
-        activityManager.replaceActivity(std::make_unique<XtcReaderMenuActivity>(
-            renderer, mappedInputManager, "Latin book title 一 Հայերեն", true, false, true, true));
+        activityManager.replaceActivity(
+            std::make_unique<XtcReaderMenuActivity>(renderer, mappedInputManager, "Latin book title 一 Հայերեն", true,
+                                                    false, true, true, 0, ReaderTimeLeftLabels{}));
         queueStep("Metadata book menu", SmokeStep::Start, 6);
         break;
       }
@@ -8459,6 +8950,12 @@ class SimulatorSmokeTest {
         if (!std::strstr(manager->simulatorLabel(2), expected) ||
             std::strstr(manager->simulatorLabel(2), tr(STR_ASSET_USE)))
           fail("Hyphenation row status does not match pack state");
+        const auto communityIndex = getLanguageEntries().size;
+        const auto* communityLabel = manager->simulatorLabel(communityIndex);
+        if (std::strncmp(communityLabel, "zz:", 3) ||
+            !std::strstr(communityLabel, tr(STR_HYPHENATION_INSTALL_ACTION)) ||
+            *manager->simulatorLabel(communityIndex + 1))
+          fail("Hyphenation list did not filter community packs by header identity");
         {
           RenderLock lock;
           captureStatusBarScreen(stage ? "hyphenation-installed" : "hyphenation-sd");
@@ -10318,7 +10815,7 @@ class SimulatorSmokeTest {
           LOG_INF("SMOKE", "EPUB and XTC live reader counter resets passed");
           std::_Exit(0);
         }
-        if (std::getenv("CROSSINK_SYNC_DIAGNOSTICS_CAPTURES"))
+        if (std::getenv("CROSSINK_SYNC_DIAGNOSTICS_CAPTURES") || std::getenv("CROSSINK_PROGRESS_DISCOVERY_TEST"))
           verifySyncDiagnosticsScreens(renderer, mappedInputManager);
         verifyStatsUploadContract();
         if (prepareReadingUploadSmokeTest()) {
@@ -10755,6 +11252,10 @@ class SimulatorSmokeTest {
           activityManager.goToReader(std::getenv("CROSSINK_SIMULATOR_SMOKE_BOOK"), true);
           queueStep("Frontlight layout reader", SmokeStep::FrontlightLayout, 12);
           break;
+        }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_CHARGE_PREPARATION")) {
+          verifyChargePreparation();
+          std::_Exit(0);
         }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_WIFI_POWER")) {
           verifyWifiTransmitPowerSettings();
@@ -11784,12 +12285,23 @@ class SimulatorSmokeTest {
           SETTINGS.orientation = CrossPointSettings::LANDSCAPE_CCW;
           LOG_INF("SMOKE", "Opening smoke reader in landscape");
         }
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_NEXT_CHAPTER_PREFETCH"))
+          SETTINGS.indexingMethod = CrossPointSettings::INDEXING_INCREMENTAL;
         activityManager.goToReader(bookPath, true);
         queueStep("Reader", SmokeStep::Reader, 8);
         break;
       }
 
       case SmokeStep::Reader:
+        if (std::getenv("CROSSINK_SIMULATOR_SMOKE_NEXT_CHAPTER_PREFETCH")) {
+          if (!activityManager.isCurrentActivityNamed("EpubReader")) fail("Chapter prefetch test requires EPUB reader");
+          const auto result = EpubReaderCompletionSmokeTest::nextChapterPrefetch(
+              *static_cast<EpubReaderActivity*>(activityManager.simulatorCurrentActivity()));
+          if (!result) break;
+          if (!*result) fail("Next chapter prefetch did not yield to input and reuse a readable partial");
+          LOG_INF("SMOKE", "Simulator smoke test passed: next chapter prefetch");
+          std::_Exit(0);
+        }
         if (std::getenv("CROSSINK_SIMULATOR_SMOKE_READER_TOP_DRAWER")) {
           buildReaderTopDrawerScript();
           step = SmokeStep::ReaderInput;
@@ -11955,6 +12467,17 @@ class SimulatorSmokeTest {
           if (!EpubReaderCompletionSmokeTest::openStatusSettings(reader)) fail("Repeated reader status edit failed");
           queueStep("Repeated reader status settings", SmokeStep::StatusBarReaderSettings, 4);
         } else {
+          if (!EpubReaderCompletionSmokeTest::turnDuringRelayout(reader, false) ||
+              (mappedInputManager.hasTouchHardware() &&
+               !EpubReaderCompletionSmokeTest::turnDuringRelayout(reader, true))) {
+            fail("EPUB lost the first page turn during relayout");
+          }
+#if CROSSINK_APP_CAP_TOUCH
+          if (mappedInputManager.hasTouchHardware() && !EpubReaderCompletionSmokeTest::deferFootnoteWhileBusy(reader)) {
+            fail("EPUB treated a footnote tap during rendering as a page turn");
+          }
+#endif
+          LOG_INF("SMOKE", "EPUB page turns queued during relayout passed");
           LOG_INF("SMOKE", "EPUB repeated hide/show, actual Settings return and text-anchor reflow passed");
           buildReaderInputScript();
           step = SmokeStep::ReaderInput;

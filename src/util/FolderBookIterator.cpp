@@ -2,18 +2,24 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 
-FolderBookIterator::FolderBookIterator(std::string root) : directory(std::move(root)) {
+FolderBookIterator::FolderBookIterator(std::string root, const TraversalLimit limit)
+    : limit(limit), directory(std::move(root)), pathRevision(library::libraryPathRevision()) {
   while (directory.size() > 1 && directory.back() == '/') directory.pop_back();
 }
 
 FolderBookIterator::Result FolderBookIterator::next(std::string& bookPath) {
   if (done) return Result::Done;
+  if (pathRevision != library::libraryPathRevision()) {
+    LOG_ERR("Books", "The library changed during the folder scan");
+    return Result::Error;
+  }
   auto dir = Storage.open(directory.c_str());
-  if (!dir || !dir.isDirectory() || (positions[depth] && !dir.seekSet(positions[depth]))) {
+  if (!dir || !dir.isDirectory() || !seekDirectoryPosition(dir, positions[depth])) {
     if (dir) dir.close();
-    LOG_ERR("ReadingSync", "Cannot enumerate folder: %s", directory.c_str());
+    LOG_ERR("Books", "Cannot enumerate folder: %s", directory.c_str());
     return Result::Error;
   }
   auto entry = dir.openNextFile();
@@ -30,25 +36,25 @@ FolderBookIterator::Result FolderBookIterator::next(std::string& bookPath) {
     directory.resize(slash == 0 ? 1 : slash);
     return Result::Entry;
   }
-  positions[depth] = dir.position();
+  positions[depth] = directoryPosition(dir);
   name[0] = '\0';
   const size_t nameLength = entry.getName(name, sizeof(name));
   const bool folder = entry.isDirectory();
   entry.close();
   dir.close();
   if (nameLength >= sizeof(name) - 1) {
-    LOG_ERR("ReadingSync", "Folder entry name exceeds upload limit");
-    return Result::Error;
+    LOG_ERR("Books", "Folder entry name exceeds traversal limit");
+    return limit == TraversalLimit::Skip ? Result::Entry : Result::Error;
   }
   if (name[0] == '.' || !FsHelpers::isSafePathComponent(std::string_view(name))) return Result::Entry;
   const auto path = directory + (directory == "/" ? "" : "/") + name;
   if (path.size() > MAX_PATH || (folder && depth + 1 >= MAX_DEPTH)) {
-    LOG_ERR("ReadingSync", "Folder traversal limit reached: %s", path.c_str());
-    return Result::Error;
+    LOG_ERR("Books", "Folder traversal limit reached: %s", path.c_str());
+    return limit == TraversalLimit::Skip ? Result::Entry : Result::Error;
   }
   if (folder) {
     directory = path;
-    positions[++depth] = 0;
+    positions[++depth] = {};
     return Result::Entry;
   }
   // XTC books carry reading stats too; callers sync their stats without a position.

@@ -11,10 +11,13 @@
 #include "Epub/Page.h"
 #include "Epub/hyphenation/Hyphenator.h"
 #include "Epub/parsers/ChapterHtmlSlimParser.h"
+#include "sync/ProgressBookIterator.h"
 
 Epub::Epub(std::string path, const std::string& cacheDir) : filepath(std::move(path)), cachePath(cacheDir) {}
 
 const std::string& Epub::getCachePath() const { return cachePath; }
+const std::string& Epub::getPath() const { return filepath; }
+void ProgressBookIterator::rememberPath(const std::string&, const std::string&) {}
 const std::string& Epub::getLanguage() const {
   static const std::string language = "en";
   return language;
@@ -51,7 +54,7 @@ int Epub::getTocIndexForSpineIndex(int spine) const {
     if (testTocEntries[i].spineIndex == spine) return i;
   return -1;
 }
-bool Epub::readItemContentsToStream(const std::string&, Print& output, size_t, bool) const {
+bool Epub::readItemContentsToStream(const std::string&, Print& output, size_t, StreamEarlyStop) const {
   if (!testStreamHtml) return false;
   const auto* bytes = reinterpret_cast<const uint8_t*>(testStreamHtmlContents.data());
   return output.write(bytes, testStreamHtmlContents.size()) == testStreamHtmlContents.size();

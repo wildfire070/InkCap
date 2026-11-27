@@ -23,6 +23,7 @@ add_executable(EpubRenderPreview
   ${REPO_ROOT}/lib/EpdFont/EpdFontFamily.cpp
   ${REPO_ROOT}/lib/EpdFont/FontDecompressor.cpp
   ${REPO_ROOT}/lib/EpdFont/SdCardFont.cpp
+  ${REPO_ROOT}/lib/EpdFont/DropCapStrikeCache.cpp
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/Memory/BuildScratch.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp

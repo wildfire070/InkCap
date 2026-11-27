@@ -45,6 +45,7 @@ enum class SettingAction {
   ControlsEdgeGestures,
   ReleaseNotes,
   About,
+  PrepareBooksCharging,
   SystemDevice,
   SystemAdvanced,
   SystemFilesCache,

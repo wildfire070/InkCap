@@ -64,6 +64,9 @@ class HalDisplay {
     return true;
   }
   void drawImage(const uint8_t*, int, int, int, int) {}
+  bool canUpdateGrayscaleWindow() const { return false; }
+  bool displayGrayscaleWindow(uint16_t, uint16_t, uint16_t, uint16_t) { return false; }
+  void displayWindow(uint16_t, uint16_t, uint16_t, uint16_t, bool = false) {}
   void displayBuffer(RefreshMode, bool) { refreshHints.push_back(readerRefresh); }
   void displayBufferAsync(RefreshMode) {}
   void waitRefreshComplete() {}

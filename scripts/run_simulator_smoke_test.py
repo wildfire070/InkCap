@@ -459,6 +459,8 @@ def run_smoke(args: argparse.Namespace) -> int:
             data = pack_bytes("de")
             (packs / "hyph-de.cphyph").write_bytes(data)
             (packs / "hyph-fr.cphyph").write_bytes(data)  # mismatched header identity
+            (packs / "hyph-zz.cphyph").write_bytes(data[:5] + b"zz" + data[7:])
+            (packs / "hyph-zy.cphyph").write_bytes(data)  # mismatched community pack
             env["CROSSINK_SIMULATOR_SMOKE_HYPHENATION"] = "1"
             env["CROSSINK_HYPHENATION_SMOKE_UI"] = code if args.language_file else "EN"
         if args.hyphenation_captures:
@@ -570,6 +572,33 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.font_recovery:
             env["CROSSINK_SIMULATOR_SMOKE_FONT_RECOVERY"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
+        if args.charge_preparation or args.charge_preparation_small_stack:
+            env["CROSSINK_SIMULATOR_SMOKE_CHARGE_PREPARATION"] = "1"
+        if args.charge_preparation_small_stack:
+            env["CROSSINK_SIMULATOR_SMOKE_CHARGE_PREPARATION_SMALL_STACK"] = "1"
+        if args.charge_preparation:
+            charging_folder = temp_root / "fs_" / "charging-partial"
+            charging_folder.mkdir()
+            shutil.copy2(ROOT / "test" / "epubs" / "font-prewarm-benchmark.epub", charging_folder / "book.epub")
+            with zipfile.ZipFile(temp_root / "fs_" / "charging-image.epub", "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip")
+                archive.writestr("META-INF/container.xml",
+                                 '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                                 '<rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/>'
+                                 '</rootfiles></container>')
+                archive.writestr("book.opf",
+                                 '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+                                 '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                                 '<dc:identifier id="id">charging-image</dc:identifier><dc:title>Charging Image</dc:title>'
+                                 '<dc:language>en</dc:language></metadata>'
+                                 '<manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>'
+                                 '<item id="image" href="pixel.gif" media-type="image/gif"/></manifest>'
+                                 '<spine><itemref idref="chapter"/></spine></package>')
+                archive.writestr("chapter.xhtml",
+                                 '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Image</title></head>'
+                                 '<body><p>Before</p><img src="pixel.gif" alt="Unavailable image"/><p>After</p></body></html>')
+                archive.writestr("pixel.gif", bytes.fromhex(
+                    "47494638396101000100800000000000ffffff21f90401000000002c000000000100010000020144003b"))
         if args.wifi_transmit_power:
             env["CROSSINK_SIMULATOR_SMOKE_WIFI_POWER"] = "1"
         if args.image_display:
@@ -581,6 +610,8 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.receive_folder_captures:
             env["CROSSINK_SIMULATOR_SMOKE_STATUS_BAR_CAPTURES"] = str(Path(args.receive_folder_captures).resolve())
         env["CROSSINK_SIMULATOR_SMOKE_BOOK"] = simulator_book_path
+        if args.next_chapter_prefetch:
+            env["CROSSINK_SIMULATOR_SMOKE_NEXT_CHAPTER_PREFETCH"] = "1"
         env["CROSSINK_SIMULATOR_SMOKE_PAGE_TURNS"] = str(args.page_turns)
         if args.context_menu_sync_return:
             env["CROSSINK_SIMULATOR_SMOKE_CONTEXT_MENU_SYNC_RETURN"] = args.context_menu_sync_return
@@ -660,6 +691,16 @@ def run_smoke(args: argparse.Namespace) -> int:
         print(f"Simulator smoke test failed with exit code {proc.returncode}", file=sys.stderr)
         return proc.returncode
 
+    if args.charge_preparation_small_stack and "Simulator smoke test passed: charging skips the small render stack" not in proc.stdout:
+        print("Simulator did not exercise charging sleep on the small render stack", file=sys.stderr)
+        return 2
+    if args.charge_preparation and (
+        "Simulator smoke test passed: charging preparation" not in proc.stdout
+        or "Reused prepared layout for " not in proc.stdout
+    ):
+        print("Simulator did not complete charging preparation and reuse checks", file=sys.stderr)
+        return 2
+
     if args.publisher_fonts and "Simulator smoke test passed: publisher fonts" not in proc.stdout:
         print("Simulator did not complete publisher-font checks", file=sys.stderr)
         return 2
@@ -688,6 +729,10 @@ def run_smoke(args: argparse.Namespace) -> int:
 
     if "Simulator smoke test passed" not in proc.stdout:
         print("Simulator smoke test did not print its success marker", file=sys.stderr)
+        return 2
+
+    if args.next_chapter_prefetch and "Simulator smoke test passed: next chapter prefetch" not in proc.stdout:
+        print("Simulator did not complete next chapter prefetch checks", file=sys.stderr)
         return 2
 
     if args.text_darkness and "Simulator smoke test passed: text darkness" not in proc.stdout:
@@ -782,6 +827,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--factory-flash", action="store_true",
                         help="Use the reported 80 KiB factory partition; verify it remains unchanged (S3 profiles)")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
+    parser.add_argument("--next-chapter-prefetch", action="store_true",
+                        help="Verify PSRAM chapter prefetch yields to input and reuses its saved pages on a turn")
     parser.add_argument("--publisher-fonts", action="store_true",
                         help="Run publisher-font cache, registration and extraction checks")
     parser.add_argument("--css-toggle", action="store_true",
@@ -795,6 +842,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env", choices=("simulator", "simulator-X3", "x4-classic-simulator", "sticky-simulator", "x4-pro-simulator"), default="simulator",
                         help="PlatformIO simulator environment to build and run")
     parser.add_argument("--status-bar-lifecycle", action="store_true", help="Exercise reader settings return and reflow")
+    charging = parser.add_mutually_exclusive_group()
+    charging.add_argument("--charge-preparation", action="store_true",
+                          help="Check the System picker and charging sleep EPUB caches")
+    charging.add_argument("--charge-preparation-small-stack", action="store_true",
+                          help="Check charging sleep with the C3 network render stack budget")
     parser.add_argument("--wifi-transmit-power", action="store_true", help="Check Wi-Fi power defaults, device picker and persistence")
     parser.add_argument("--image-display", action="store_true", help="Check combined image choices and saved preference compatibility")
     parser.add_argument("--tilt-settings", action="store_true", help="Check tilt preference visibility, device editing and persistence")
@@ -867,6 +919,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window", dest="headless", action="store_false", help="Show the SDL window instead of using dummy video")
     parser.set_defaults(build=True, headless=True)
     args = parser.parse_args()
+    if args.next_chapter_prefetch and args.book == str(DEFAULT_BOOK):
+        args.book = str(ROOT / "test" / "epubs" / "font-prewarm-benchmark.epub")
     if args.touch_availability and args.env not in ("sticky-simulator", "x4-pro-simulator"):
         parser.error("--touch-availability requires a touch simulator")
     if args.settings_back and args.env not in ("x4-pro-simulator", "sticky-simulator"):

@@ -3,6 +3,7 @@ add_executable(ReaderDrawerModelTest
 )
 
 target_include_directories(ReaderDrawerModelTest PRIVATE
+  stubs
   ${REPO_ROOT}/src
   ${REPO_ROOT}/src/activities/reader
   ${REPO_ROOT}/src/activities/util
