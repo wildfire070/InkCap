@@ -960,32 +960,20 @@ struct DedupFrame {
   ~DedupFrame() { state.activeDedupCount = base; }
 };
 
-// preOpenedDir, when given, already IS this folder (the caller's own directory-listing entry,
-// already confirmed to be a directory) and is taken over rather than reopened: opening it by
-// path instead would search its parent from the first entry again, which costs real time in a
-// folder of many subfolders (measured 27ms each on a 1,800-subfolder card).
-void walk(WalkState& st, const std::string& path, const int depth, HalFile* preOpenedDir = nullptr) {
-  if (st.failed || depth > LIBRARY_MAX_DEPTH || isLibraryResourceDirectory(path)) {
-    if (preOpenedDir && *preOpenedDir) preOpenedDir->close();
-    return;
+bool openScanDirectory(HalFile& dir, const std::string& path) {
+  dir = Storage.open(path.c_str());
+  if (dir && dir.isDirectory()) {
+    dir.rewindDirectory();
+    return true;
   }
+  LOG_ERR("LIBIDX", "cannot open library directory %s", path.c_str());
+  dir.close();
+  return false;
+}
 
+void walk(WalkState& st, HalFile& dir, const std::string& path, const int depth) {
   const uint16_t dedupBase = st.activeDedupCount;
   const DedupFrame dedupFrame{st, dedupBase};
-
-  HalFile dir;
-  if (preOpenedDir) {
-    dir = std::move(*preOpenedDir);
-  } else {
-    dir = Storage.open(path.c_str());
-  }
-  if (!dir || !dir.isDirectory()) {
-    LOG_ERR("LIBIDX", "cannot open library directory %s", path.c_str());
-    if (dir) dir.close();
-    st.failed = true;
-    return;
-  }
-  dir.rewindDirectory();
 
   // Identities already staged from THIS directory. A damaged FAT can enumerate
   // the same entry twice; the second one would be a phantom book the user cannot
@@ -1019,41 +1007,41 @@ void walk(WalkState& st, const std::string& path, const int depth, HalFile* preO
     const uint32_t size = isDir ? 0 : static_cast<uint32_t>(entry.fileSize());
     const uint32_t creationTime = isDir ? 0 : entry.creationTime();
     const uint32_t modificationTime = isDir ? 0 : entry.modificationTime();
-    // A directory entry stays open: the recursive walk() below takes it over instead of
-    // reopening the same folder by path. A file entry has nothing further to do with it.
-    if (!isDir) entry.close();
-
     if (st.nameBuf[0] == '\0' || isHiddenOrSidecar(st.nameBuf) || (isDir && isSystemDirectory(st.nameBuf))) {
-      if (isDir) entry.close();
+      entry.close();
       continue;
     }
     const std::string name(st.nameBuf);
 
     if (isDir) {
-      const std::string childPath = joinLibraryPath(path, name);
+      if (depth >= LIBRARY_MAX_DEPTH) {
+        entry.close();
+        continue;
+      }
+      const auto childPath = joinLibraryPath(path, name);
       if (childPath == ARCHIVE_FOLDER) {
         entry.close();  // archived books stay out of the Library until restored
         continue;
       }
-      // dir stays open across the recursive descent instead of being closed
-      // and reopened by path afterward: it is this stack frame's own local
-      // variable, untouched by the callee, so its read position is already
-      // exactly where openNextFile() left it when the call returns -- no
-      // resume-position bookkeeping or path reopen needed. Bounded by
-      // LIBRARY_MAX_DEPTH (5): at most that many ancestor directory handles
-      // are ever open at once, each a thin HalFile wrapper over one FsFile.
-      entry.rewindDirectory();
-      walk(st, childPath, depth + 1, &entry);
-      if (st.failed) {
-        // dir is still open here (unlike before this change, the recursive
-        // call no longer closes and reopens it) -- close it explicitly on
-        // this early-abort path; the normal-completion path still does so at
-        // the end of the function.
-        dir.close();
-        return;
+      if (isLibraryResourceDirectory(childPath)) {
+        entry.close();
+        continue;
       }
+      // Use the enumerated child and retain the parent's cursor. For FAT
+      // names SdFat trims on path lookup, scan what the saved path will open.
+      if (name.front() == ' ' || name.back() == ' ' || name.back() == '.') {
+        entry.close();
+        if (!openScanDirectory(entry, childPath)) {
+          st.failed = true;
+          break;
+        }
+      }
+      walk(st, entry, childPath, depth + 1);
+      entry.close();
+      if (st.failed) break;
       continue;
     }
+    entry.close();
     if (!isBookName(name)) continue;
 
     // A zero-length book is a dangling directory entry: the name enumerates but
@@ -1126,7 +1114,6 @@ void walk(WalkState& st, const std::string& path, const int depth, HalFile* preO
     LOG_ERR("LIBIDX", "directory listing failed before EOF: %s", path.c_str());
     st.failed = true;
   }
-  dir.close();
 }
 
 // Shared by the offset and write passes so the name-blob layout has one source of
@@ -1528,13 +1515,13 @@ bool emitIndex(const char* folderStagePath, WalkState& st, BuildStats& stats) {
       uint16_t sc = 0;
       uint8_t canonicalAuthorLen = 0;
       if (!titles.next(s) || !canon.next(sc) || !stage.entry(s, entry) ||
-          !stage.read(stageOffset(sc) + offsetof(StagedEntry, authorLen), &canonicalAuthorLen,
-                      sizeof(canonicalAuthorLen))) {
+          (s != sc && !stage.read(stageOffset(sc) + offsetof(StagedEntry, authorLen), &canonicalAuthorLen,
+                                  sizeof(canonicalAuthorLen)))) {
         ioFailed = true;
         break;
       }
       entry.record.nameOff = nameCursor;
-      nameCursor += blobBytesFor(entry, canonicalAuthorLen);
+      nameCursor += blobBytesFor(entry, s == sc ? entry.authorLen : canonicalAuthorLen);
       put(&entry.record, sizeof(ClixRecord));
     }
   }
@@ -1668,14 +1655,15 @@ bool emitIndex(const char* folderStagePath, WalkState& st, BuildStats& stats) {
       serviceBuilder(serviceUnits);
       uint16_t s = 0;
       uint16_t sc = 0;
-      if (!titles.next(s) || !canon.next(sc) || !stage.entry(s, entry) || !stage.entry(sc, canonical)) {
+      if (!titles.next(s) || !canon.next(sc) || !stage.entry(s, entry) || (s != sc && !stage.entry(sc, canonical))) {
         ioFailed = true;
         break;
       }
+      const auto& chosen = s == sc ? entry : canonical;
       put(&entry.pathHash, sizeof(entry.pathHash));
       put(entry.name, entry.record.nameLen);
-      put(&canonical.authorLen, 1);
-      if (canonical.authorLen > 0) put(canonical.author, canonical.authorLen);
+      put(&chosen.authorLen, 1);
+      if (chosen.authorLen > 0) put(chosen.author, chosen.authorLen);
       put(&entry.titleLen, 1);
       if (entry.titleLen > 0) put(entry.title, entry.titleLen);
       put(&entry.authorLen, 1);
@@ -1685,7 +1673,7 @@ bool emitIndex(const char* folderStagePath, WalkState& st, BuildStats& stats) {
       put(&entry.genreLen, 1);
       if (entry.genreLen > 0) put(entry.genre, entry.genreLen);
       put(&entry.seriesPosition, sizeof(entry.seriesPosition));
-      blobWritten += blobBytesFor(entry, canonical.authorLen);
+      blobWritten += blobBytesFor(entry, chosen.authorLen);
     }
   }
   if (ioFailed || stage.isFailed()) return fail("writing names");
@@ -1969,7 +1957,15 @@ static bool rebuildLibraryIndex(const char* rootPath, BuildStats& stats, const b
   {
     serialization::BufferedFileWriter stageOut(st.stage, LIBRARY_IO_BUFFER_SIZE);
     st.stageOut = &stageOut;
-    walk(st, rootPath, 0);
+    if (!isLibraryResourceDirectory(rootPath)) {
+      HalFile root;
+      if (openScanDirectory(root, rootPath)) {
+        walk(st, root, rootPath, 0);
+        root.close();
+      } else {
+        st.failed = true;
+      }
+    }
     st.stageOut = nullptr;
     stageFlushed = stageOut.flush();
   }

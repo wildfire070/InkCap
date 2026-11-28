@@ -125,13 +125,17 @@ def main():
                 elif self.path in ('/book/Caf%C3%A9%20stories', '/bundle/Caf%C3%A9%20scripts/plugin.js'):
                     encoded_downloads.add(self.path)
                     data = b'fixture book contents\n'
+                elif self.path in ('/ignore-range', '/ignore-range-empty'):
+                    data = (b'' if self.path == '/ignore-range-empty' and self.headers.get('Range')
+                            else b'full body from byte zero\n' if self.headers.get('Range')
+                            else b'old staged prefix differs\n')
                 elif self.path == '/echo':
                     data = json.dumps({'authorization': self.headers.get('Authorization')}).encode()
                 else:
                     data = b'fixture book contents\n'
                 status = 200
                 total = len(data)
-                if self.headers.get('Range'):
+                if self.headers.get('Range') and self.path not in ('/ignore-range', '/ignore-range-empty'):
                     offset = int(self.headers['Range'].split('=')[1].split('-')[0])
                     data = data[offset:]
                     status = 206
@@ -183,6 +187,11 @@ def main():
         write('/plugins/installed/plugin.js', 'old')
         write('/plugins/installed/.config.json', {'keep': True})
         write('/plugins/installed/.secrets/value', 'preserve')
+        content_plugin_dir = '/.crosspoint/plugins/protected-content'
+        write(content_plugin_dir + '/plugin.js', 'CrossPoint.registerPlugin(() => {});')
+        write(content_plugin_dir + '/other.json', {'unrelated': True})
+        write('/.crosspoint/content.key', 'legacy fixture')
+        write('/.hidden/content.key', 'unrelated fixture')
         write('/.crosspoint/wifi.json', {'private': True})
         with socket.socket() as port_probe:
             port_probe.bind(('127.0.0.1', 0)); port = port_probe.getsockname()[1]
@@ -279,6 +288,27 @@ def main():
 
                 request('/api/fetch', {'url': origin + '/book', 'dest': '/.crosspoint/wifi.json'}, expected=400)
                 request('/download?path=/.crosspoint/wifi.json', expected=403)
+                # Match the plugin's two-step read with Show Hidden Files off.
+                body, _ = request('/api/files?path=/')
+                assert '.crosspoint' not in {row['name'] for row in json.loads(body)}
+                body, _ = request(f'/api/files?path={content_plugin_dir}')
+                assert json.loads(body) == []
+                body, _ = request('/api/files?path=/.crosspoint')
+                assert {row['name'] for row in json.loads(body)} == {'content.key'}
+                body, _ = request('/download?path=/.crosspoint/content.key')
+                assert body == b'legacy fixture'
+                for name in ('content.key', 'activation.json'):
+                    write(f'{content_plugin_dir}/{name}', 'current fixture')
+                    body, _ = request(f'/download?path={content_plugin_dir}/{name}')
+                    assert body == b'current fixture'
+                body, _ = request(f'/api/files?path={content_plugin_dir}')
+                assert {row['name'] for row in json.loads(body)} == {'content.key', 'activation.json'}
+                request(f'/download?path={content_plugin_dir}/other.json', expected=403)
+                request('/api/files?path=/.hidden', expected=403)
+                request('/download?path=/.hidden/content.key', expected=403)
+                write(content_plugin_dir + '/.installing', '')
+                request('/download?path=/.crosspoint/content.key', expected=403)
+                (sd / (content_plugin_dir + '/.installing').lstrip('/')).unlink()
                 write('/Books/browser.txt', 'old book')
                 offset = 0
                 for _ in range(20):
@@ -315,6 +345,23 @@ def main():
                 result, _ = request('/api/fetch', {'url': origin + '/missing', 'dest': '/Books/browser.txt'})
                 assert json.loads(result).get('error') or not json.loads(result)['complete']
                 assert (sd / 'Books/browser.txt').read_bytes() == b'fixture book contents\n'
+                for endpoint, succeeds in [('ignore-range', True), ('ignore-range-empty', False)]:
+                    dest = '/Books/range-fallback.txt'
+                    published = sd / dest.lstrip('/')
+                    write(dest, 'original installed book')
+                    args = {'url': f'{origin}/{endpoint}', 'dest': dest, 'maxBytes': 5}
+                    body, _ = request('/api/fetch', args)
+                    first = json.loads(body)
+                    assert not first['complete'] and first['bytes'] == 5, first
+                    assert published.read_bytes() == b'original installed book'
+                    args['offset'] = first['bytes']
+                    body, _ = request('/api/fetch', args, expected=200 if succeeds else 502)
+                    result = json.loads(body)
+                    assert result['complete'] == succeeds, result
+                    assert published.read_bytes() == (b'full body from byte zero\n' if succeeds
+                                                      else b'original installed book')
+                    if succeeds:
+                        assert result['status'] == 200 and result['bytes'] == len(published.read_bytes()), result
                 boundary = 'plugin-test-boundary'
                 multipart = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="file"\r\n'
                              'Content-Type: application/octet-stream\r\n\r\nupdated\r\n'
