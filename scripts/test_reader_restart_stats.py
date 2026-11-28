@@ -22,8 +22,10 @@ FIXTURE = r'''
 #include <cassert>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include "ReadingSessionStats.h"
 #define LOG_ERR(...) ((void)0)
+enum class StrId { STR_SAVE_READING_STATS_FAILED, STR_SAVE_PROGRESS_FAILED, STR_SAVE_FOOTNOTE_RETURN_FAILED };
 bool bookFails=false, globalFails=false, dailyFails=false, journalFails=false;
 bool s_blockDestructiveSave=false, lockHeld=false, restartFails=false;
 int bookWrites=0, globalWrites=0, dailyFlushes=0, restarts=0, armed=0, transfers=0;
@@ -93,9 +95,14 @@ struct Reader {
   void resumeReadingStatsTimer(const char*){++resumes;}
   void requestUpdate(){++updates;}
 };
+struct BuildHandle{void releaseBuildFile(){}};
 struct EpubReaderActivity:Reader {
  bool paceDirty=false;
- bool checkpointReadingStatsBeforeRestart();bool saveProgressBeforeRestart();
+ BuildHandle sectionObj,nextChapterBuildObj;
+ BuildHandle* section=&sectionObj;BuildHandle* nextChapterBuild=&nextChapterBuildObj;
+ bool checkpointReadingStatsBeforeRestart();
+ std::optional<StrId> checkpointBeforeRestart();
+ bool saveProgressBeforeRestart(){return !checkpointBeforeRestart();}
  bool retryLayout(int targetPage,int savedPage,int pageCount,const char* stage);
  void network0();void network1();void network2();
 };
@@ -215,8 +222,11 @@ def main():
                for reader in ("EpubReaderActivity", "XtcReaderActivity")}
     methods = ""
     for reader, source in sources.items():
-        for name in ("checkpointReadingStatsBeforeRestart", "saveProgressBeforeRestart"):
-            methods += method(source, f"bool {reader}::{name}(")
+        methods += method(source, f"bool {reader}::checkpointReadingStatsBeforeRestart(")
+        if reader == "EpubReaderActivity":
+            methods += method(source, "std::optional<StrId> EpubReaderActivity::checkpointBeforeRestart(")
+        else:
+            methods += method(source, f"bool {reader}::saveProgressBeforeRestart(")
     epub = sources["EpubReaderActivity"]
     low_memory = method(epub, "  const auto restartForLowMemoryLayout = [this](")
     methods += "bool EpubReaderActivity::retryLayout(int targetPage,int savedPage,int pageCount,const char* stage) "

@@ -1931,6 +1931,17 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     std::sort(readOrder.get(), readOrder.get() + readCount,
               [&](uint32_t a, uint32_t b) { return glyphs[a].dataOffset < glyphs[b].dataOffset; });
 
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+    // Borrow PSRAM only for this prewarm, with the usual font headroom.
+    // Missing PSRAM or a failed admission preserves the one-glyph path.
+    constexpr size_t BITMAP_BATCH_BYTES = 16 * 1024;
+    constexpr size_t BITMAP_BATCH_MAX_GAP = 1024;
+    const auto batch = readCount > 1 && MemoryBudget::canAllocatePsram(BITMAP_BATCH_BYTES)
+                           ? makePsramByteBufferNoThrow(BITMAP_BATCH_BYTES)
+                           : HeapByteBuffer{};
+    uint32_t batchStart = 0;
+    uint64_t batchEnd = 0;
+#endif
     uint32_t miniBitmapOffset = incremental ? s.miniBitmapUsed : 0;
     uint32_t lastBitmapEnd = UINT32_MAX;
     for (uint32_t i = 0; i < readCount; i++) {
@@ -1943,28 +1954,62 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       }
 
       uint32_t fileOff = s.bitmapFileOffset + glyph.dataOffset;
-      if (fileOff != lastBitmapEnd) {
-        if (!file.seekSet(fileOff)) {
-          LOG_ERR("SDCF", "Prewarm: failed to seek to bitmap (style %u)", styleIdx);
-          return failed();
-        }
-        seekCount++;
-      }
       // Belt-and-suspenders against the allocation above: even with the
       // per-glyph cap and overflow-checked sum, verify this write can't run
-      // past the buffer before it happens. totalBitmapSize (not
-      // s.miniBitmapCapacity, which can be stale on the incremental/staged
-      // path above) is what `bitmap`'s active buffer was actually sized for.
+      // past the buffer before it happens, whichever path below performs it.
+      // totalBitmapSize (not s.miniBitmapCapacity, which can be stale on the
+      // incremental/staged path above) is what `bitmap`'s active buffer was
+      // actually sized for.
       if (miniBitmapOffset > totalBitmapSize || glyph.dataLength > totalBitmapSize - miniBitmapOffset) {
         LOG_ERR("SDCF", "Prewarm: bitmap write would overflow buffer (style %u)", styleIdx);
         freeStyleMiniData(s);
         return failPrewarm(static_cast<int>(cpCount));
       }
-      if (file.read(bitmap + miniBitmapOffset, glyph.dataLength) != static_cast<int>(glyph.dataLength)) {
-        LOG_ERR("SDCF", "Prewarm: short bitmap read (style %u)", styleIdx);
-        return failed();
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+      if (batch && glyph.dataLength <= BITMAP_BATCH_BYTES) {
+        const uint64_t glyphEnd = static_cast<uint64_t>(fileOff) + glyph.dataLength;
+        if (fileOff < batchStart || glyphEnd > batchEnd) {
+          batchStart = fileOff;
+          batchEnd = glyphEnd;
+          for (uint32_t next = i + 1; next < readCount; ++next) {
+            const auto& candidate = glyphs[readOrder[next]];
+            if (!candidate.dataLength) continue;
+            const uint64_t start = static_cast<uint64_t>(s.bitmapFileOffset) + candidate.dataOffset;
+            const uint64_t end = start + candidate.dataLength;
+            if (start > batchEnd + BITMAP_BATCH_MAX_GAP || end - batchStart > BITMAP_BATCH_BYTES) break;
+            batchEnd = std::max(batchEnd, end);
+          }
+          const auto bytes = static_cast<size_t>(batchEnd - batchStart);
+          if (batchStart != lastBitmapEnd) {
+            if (!file.seekSet(batchStart)) {
+              LOG_ERR("SDCF", "Prewarm: failed to seek to bitmap batch (style %u)", styleIdx);
+              return failed();
+            }
+            ++seekCount;
+          }
+          if (file.read(batch.get(), bytes) != static_cast<int>(bytes)) {
+            LOG_ERR("SDCF", "Prewarm: short bitmap batch (style %u)", styleIdx);
+            return failed();
+          }
+          lastBitmapEnd = static_cast<uint32_t>(batchEnd);
+        }
+        memcpy(bitmap + miniBitmapOffset, batch.get() + (fileOff - batchStart), glyph.dataLength);
+      } else
+#endif
+      {
+        if (fileOff != lastBitmapEnd) {
+          if (!file.seekSet(fileOff)) {
+            LOG_ERR("SDCF", "Prewarm: failed to seek to bitmap (style %u)", styleIdx);
+            return failed();
+          }
+          seekCount++;
+        }
+        if (file.read(bitmap + miniBitmapOffset, glyph.dataLength) != static_cast<int>(glyph.dataLength)) {
+          LOG_ERR("SDCF", "Prewarm: short bitmap read (style %u)", styleIdx);
+          return failed();
+        }
+        lastBitmapEnd = fileOff + glyph.dataLength;
       }
-      lastBitmapEnd = fileOff + glyph.dataLength;
 
       glyph.dataOffset = miniBitmapOffset;
       miniBitmapOffset += glyph.dataLength;

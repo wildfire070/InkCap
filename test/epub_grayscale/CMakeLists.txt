@@ -18,7 +18,6 @@ add_executable(EpubTextGrayscaleTest EpubTextGrayscaleTest.cpp FontRenderingTest
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/EpdFont/FontDecompressor.cpp
   ${REPO_ROOT}/lib/EpdFont/SdCardFont.cpp
-  ${REPO_ROOT}/lib/EpdFont/DropCapStrikeCache.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/TextBlock.cpp
   ${REPO_ROOT}/lib/Epub/Epub/Page.cpp
   ${REPO_ROOT}/lib/Epub/Epub/RuledLineLayout.cpp
