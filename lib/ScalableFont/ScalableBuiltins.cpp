@@ -69,7 +69,7 @@ void ensureScalableBuiltinFamily(GfxRenderer& renderer, unsigned family) {
     if (ok) {
       EpdFontFamily font(faces[family * 4]->atSize(points), faces[family * 4 + 1]->atSize(points),
                          faces[family * 4 + 2]->atSize(points), faces[family * 4 + 3]->atSize(points));
-      if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
+      if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded(points)) {
         font = font.withFallbackFonts(symbolFallback);
       }
       renderer.insertFont(scalableBuiltinReaderFontId(family, points), font);
