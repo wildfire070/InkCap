@@ -219,6 +219,7 @@
 - Focus Reading bolds the first letter of short words and half of longer words, rounded up to a maximum of nine letters.
 - Return to the reading position sooner after EPUB font and layout changes in Incremental mode. Update Chapter Page Count when background indexing finishes if the display can refresh the status bar on its own.
 - With Incremental indexing, PSRAM devices prepare the first pages of the next EPUB chapter while you read for a smoother chapter turn.
+- Smaller firmware downloads, especially on X3 and X4, by packing built-in glyph records, sharing font and icon data, and including the BMI270 motion driver only on compatible hardware.
 
 ### Fixed
 
@@ -234,6 +235,8 @@
 - Keep the EPUB’s Time Left estimate visible while relearning after a layout change.
 - Turn off the frontlight as soon as sleep starts, including when plugins or Sync on Sleep are still working.
 - Use font filenames to pick the correct styles when scalable SD fonts have incorrect style metadata (adapted from CrossPoint #4325).
+- Fix Protected Content activation with legacy-encrypted certificates or when Show Hidden Files is off (#976).
+- Finish browser plugin downloads even when the server ignores requests to resume a partial file (CrossPoint #4576).
 
 ## [v2.0.0] - 2026-11-24
 

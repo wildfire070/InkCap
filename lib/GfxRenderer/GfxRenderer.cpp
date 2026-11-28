@@ -81,7 +81,7 @@ int32_t resolveSdCardAdvanceFP(const SdCardFont& sdFont, const EpdFontFamily& fo
     return advanceFP || !syntheticGlyph::isSpaceFallback(cp) ? advanceFP : font.getSpaceAdvanceX(cp, style);
   }
 
-  const EpdGlyph* glyph = font.getGlyph(cp, style);
+  const auto glyph = font.getGlyph(cp, style);
   return glyph ? glyph->advanceX : 0;
 }
 
@@ -116,6 +116,12 @@ int scaled75SourceEnd(const int dst, const int srcLimit) {
 void draw2BitFontPixel(const GfxRenderer& renderer, const GfxRenderer::RenderMode renderMode, const int x, const int y,
                        uint8_t raw, const bool pixelState) {
   if (renderMode != GfxRenderer::BW) raw = textDarkness::coverage(raw, renderer.getTextDarkness());
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (renderer.isGrayPairTargetActive()) {
+    renderer.drawGrayPairFontPixel(x, y, raw);
+    return;
+  }
+#endif
   const uint8_t bmpVal = 3 - raw;
   if (renderer.grayPlanesAreAbsolute() && renderMode != GfxRenderer::BW) {
     if (raw) {
@@ -181,7 +187,8 @@ void GfxRenderer::setBwBufferAllocatorForTest(const BwBufferAllocateForTest allo
 }
 #endif
 
-const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const {
+const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontFamily::GlyphData& resolved) const {
+  const auto [fontData, glyph, glyphIndex] = resolved;
 #if CROSSINK_SCALABLE_FONTS
   if (fontData->bitmapHandler) return fontData->bitmapHandler(fontData->glyphMissCtx, glyph);
 #endif
@@ -191,7 +198,6 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
       LOG_ERR("GFX", "Compressed font but no FontDecompressor set");
       return nullptr;
     }
-    uint32_t glyphIndex = static_cast<uint32_t>(glyph - fontData->glyph);
     // For page-buffer hits the pointer is stable for the page lifetime.
     // For hot-group hits it is valid only until the next getBitmap() call — callers
     // must consume it (draw the glyph) before requesting another bitmap.
@@ -656,8 +662,9 @@ static void drawPixelClipped(const GfxRenderer& renderer, const int x, const int
 
 static SyntheticSolidGlyphMetrics getSyntheticSolidGlyphMetrics(const EpdFontFamily& font,
                                                                 const EpdFontFamily::Style style, const uint32_t cp) {
+  EpdGlyph decoded;
   const EpdFontData* data = font.getData(style);
-  const uint16_t advanceX = syntheticGlyph::solidAdvanceX(data, font.getGlyph('M', style));
+  const uint16_t advanceX = syntheticGlyph::solidAdvanceX(data, font.getGlyph(decoded, 'M', style));
   const int height = syntheticGlyph::solidHeight(data, cp);
   const int width = syntheticGlyph::solidWidth(cp, advanceX, height);
   const int ascender = data && data->ascender > 0 ? data->ascender : height;
@@ -668,8 +675,9 @@ static SyntheticSolidGlyphMetrics getSyntheticSolidGlyphMetrics(const EpdFontFam
 
 static SyntheticSolidGlyphMetrics getSyntheticGreekGlyphMetrics(const EpdFontFamily& font,
                                                                 const EpdFontFamily::Style style, const uint32_t cp) {
+  EpdGlyph decoded;
   const EpdFontData* data = font.getData(style);
-  const uint16_t advanceX = syntheticGlyph::greekAdvanceX(data, font.getGlyph('M', style), cp);
+  const uint16_t advanceX = syntheticGlyph::greekAdvanceX(data, font.getGlyph(decoded, 'M', style), cp);
   const int height = syntheticGlyph::greekHeight(data, cp);
   const int width = syntheticGlyph::greekWidth(cp, advanceX, height);
   const int ascender = data && data->ascender > 0 ? data->ascender : height;
@@ -680,8 +688,9 @@ static SyntheticSolidGlyphMetrics getSyntheticGreekGlyphMetrics(const EpdFontFam
 
 static SyntheticSolidGlyphMetrics getSyntheticReplacementGlyphMetrics(const EpdFontFamily& font,
                                                                       const EpdFontFamily::Style style) {
+  EpdGlyph decoded;
   const EpdFontData* data = font.getData(style);
-  const uint16_t advanceX = syntheticGlyph::replacementAdvanceX(data, font.getGlyph('M', style));
+  const uint16_t advanceX = syntheticGlyph::replacementAdvanceX(data, font.getGlyph(decoded, 'M', style));
   const int height = syntheticGlyph::replacementHeight(data);
   const int width = syntheticGlyph::replacementWidth(advanceX, height);
   const int ascender = data && data->ascender > 0 ? data->ascender : height;
@@ -857,8 +866,9 @@ static void drawSyntheticGreekGlyphRotated90CW(const GfxRenderer& renderer, cons
 static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                              const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                              const bool pixelState, const EpdFontFamily::Style style) {
+  EpdGlyph decoded;
   if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
-  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  const auto glyphData = fontFamily.getGlyphData(decoded, cp, style);
   const EpdGlyph* glyph = glyphData.glyph;
   const EpdFontData* fontData = glyphData.fontData;
   if (!glyph || !fontData) return;
@@ -873,7 +883,7 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
   const int baseY = cursorY - glyph->top / 2;
 
   if (!renderer.glyphIntersectsStrip(baseX, baseY, baseX + dstW - 1, baseY + dstH - 1)) return;
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  const uint8_t* bitmap = renderer.getGlyphBitmap(glyphData);
   if (!bitmap) return;
 
   if (fontData->is2Bit) {
@@ -927,7 +937,8 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
 static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                                 const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                                 const bool pixelState, const EpdFontFamily::Style style) {
-  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  EpdGlyph decoded;
+  const auto glyphData = fontFamily.getGlyphData(decoded, cp, style);
   const EpdGlyph* glyph = glyphData.glyph;
   const EpdFontData* fontData = glyphData.fontData;
   if (!glyph || !fontData) return;
@@ -940,7 +951,7 @@ static void renderCharSmallCaps(const GfxRenderer& renderer, GfxRenderer::Render
   const int baseY = cursorY - scaleSmallCapsMetric(glyph->top);
 
   if (!renderer.glyphIntersectsStrip(baseX, baseY, baseX + dstW - 1, baseY + dstH - 1)) return;
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  const uint8_t* bitmap = renderer.getGlyphBitmap(glyphData);
   if (!bitmap) return;
 
   if (fontData->is2Bit) {
@@ -1002,11 +1013,13 @@ static void renderCharAtScale(const GfxRenderer& renderer, GfxRenderer::RenderMo
                               const EpdFontFamily& fontFamily, const uint32_t cp, const int cursorX, const int cursorY,
                               const bool pixelState, const EpdFontFamily::Style style, const float scale) {
   if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
+  EpdGlyph decoded;
+  const auto resolved = fontFamily.getGlyphData(decoded, cp, style);
+  const EpdGlyph* glyph = resolved.glyph;
   if (!glyph) return;
 
-  const EpdFontData* fontData = fontFamily.getData(style);
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  const EpdFontData* fontData = resolved.fontData;
+  const uint8_t* bitmap = renderer.getGlyphBitmap(resolved);
   if (!bitmap) return;
 
   const int srcW = glyph->width;
@@ -1062,7 +1075,8 @@ template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                            const bool pixelState, const EpdFontFamily::Style style) {
-  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  EpdGlyph decoded;
+  const auto glyphData = fontFamily.getGlyphData(decoded, cp, style);
   const EpdGlyph* glyph = glyphData.glyph;
   const EpdFontData* fontData = glyphData.fontData;
   if (!glyph || !fontData) {
@@ -1093,7 +1107,7 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
     }
   }
 
-  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  const uint8_t* bitmap = renderer.getGlyphBitmap(glyphData);
   if (bitmap == nullptr) return;
 
   // Logical placement of glyph pixel (0, 0) and the logical step for one move
@@ -1117,7 +1131,7 @@ static void drawEnlargedGlyph(const GfxRenderer& renderer, GfxRenderer::RenderMo
   if (!data.glyph || !data.fontData || width <= 0 || height <= 0 ||
       !renderer.glyphIntersectsStrip(left, top, left + width - 1, top + height - 1))
     return;
-  const auto* bitmap = renderer.getGlyphBitmap(data.fontData, data.glyph);
+  const auto* bitmap = renderer.getGlyphBitmap(data);
   if (!bitmap) return;
   const int srcWidth = data.glyph->width;
   const int srcHeight = data.glyph->height;
@@ -1180,9 +1194,32 @@ void GfxRenderer::drawGlyphBitmap(const uint8_t* bitmap, const int width, const 
   }
 
   const auto target = glyphTarget(*this, frame, orientation, panelWidth, panelHeight, panelWidthBytes);
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (grayPairMsb_) {
+    glyphBitmap::drawGrayPair(bitmap, width, height, twoBit, state, target, grayPairMsb_, clip, textDarkness_);
+    return;
+  }
+#endif
   glyphBitmap::draw(bitmap, width, height, twoBit, glyphPlane(mode), state, target, clip, absoluteGrayPlanes,
                     textDarkness_);
 }
+
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+void GfxRenderer::drawGrayPairFontPixel(int x, int y, const uint8_t coverage) const {
+  if (coverage == 2) {
+    drawPixel(x, y, false);  // Dark gray writes both overlay masks.
+  } else if (coverage == 1) {
+    // Light gray only updates MSB. Reuse ordinary rotation and clip handling.
+    auto* const low = _stripBuf;
+    auto* const high = grayPairMsb_;
+    _stripBuf = high;
+    grayPairMsb_ = nullptr;
+    drawPixel(x, y, false);
+    grayPairMsb_ = high;
+    _stripBuf = low;
+  }
+}
+#endif
 
 // IMPORTANT: This function is in critical rendering path and is called for every pixel. Please keep it as simple and
 // efficient as possible.
@@ -1274,6 +1311,14 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   // Calculate byte position and bit position
   const uint32_t byteIndex = rowY * panelWidthBytes + (phyX / 8);
   const uint8_t bitPosition = 7 - (phyX % 8);  // MSB first
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (grayPairMsb_) {
+    const uint8_t mask = 1u << bitPosition;
+    if (state) grayPairMsb_[byteIndex] &= static_cast<uint8_t>(~mask);
+    else grayPairMsb_[byteIndex] |= mask;
+  }
+#endif
+
 
   if (state) {
     target[byteIndex] &= ~(1 << bitPosition);  // Clear bit
@@ -1440,6 +1485,7 @@ void GfxRenderer::selectRuledFont(int fontId) const {
 }
 
 bool GfxRenderer::getLatinBodyBounds(int fontId, TextVerticalBounds& body, TextVerticalBounds& extent) const {
+  EpdGlyph decoded;
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
@@ -1459,13 +1505,13 @@ bool GfxRenderer::getLatinBodyBounds(int fontId, TextVerticalBounds& body, TextV
   const auto& font = it->second;
   const int baseline = font.getData(EpdFontFamily::REGULAR)->ascender;
   // The h stem spans the ordinary ascender-to-baseline band without a tail.
-  const auto* stem = font.findGlyphData('h').glyph;
+  const auto* stem = font.findGlyphData(decoded, 'h').glyph;
   if (!stem || !stem->width || !stem->height || stem->top <= 0) return false;
   body = {baseline - stem->top, baseline};
   extent = body;
   // Paired punctuation often reaches higher than capitals and lower than the baseline.
   for (const char cp : {'H', 'l', 'f', 'j', 'g', '(', ')', '[', ']'}) {
-    const auto* glyph = font.findGlyphData(cp).glyph;
+    const auto* glyph = font.findGlyphData(decoded, cp).glyph;
     if (glyph && glyph->width) extent.include(baseline - glyph->top, glyph->height);
   }
   body = {size.scale(body.top), size.scale(body.bottom)};
@@ -1537,6 +1583,7 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
                                     const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir,
                                     const int8_t characterSpacing, TextVerticalBounds* bounds, const char* display,
                                     LetterInk* letters, const float scale) const {
+  EpdGlyph decoded;
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;
@@ -1576,7 +1623,7 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
   const auto drawGlyph = [&](uint32_t cp, int cursorX, int baseline, bool supSub, bool smallCaps = false) {
 #if !CROSSINK_SCALABLE_FONTS
     if (size.enlarged()) {
-      const auto data = font.getGlyphData(cp, style);
+      const auto data = font.getGlyphData(decoded, cp, style);
       if (!data.glyph || !data.glyph->width || !data.glyph->height) return;
       const auto bearing = [supSub, smallCaps](int value) {
         return supSub ? value / 2 : smallCaps ? scaleSmallCapsMetric(value) : value;
@@ -1623,7 +1670,7 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
       const bool scaled = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
       const int gx = lastBaseX + (scaled ? position.dx / 2 : position.dx);
       const int gy = yPos + (scaled ? position.dy / 2 : position.dy);
-      const auto* glyph = font.getGlyph(cp, style);
+      const auto* glyph = font.getGlyph(decoded, cp, style);
       const int advance = position.advanceOr(glyph ? glyph->advanceX : 0);
       prevAdvanceFP = scaled ? halfAdvanceFP(advance) : advance;
       if (glyph && glyph->width && glyph->height) {
@@ -1640,7 +1687,7 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
     if (utf8IsVariationSelector(cp)) continue;
 
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
-      const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
+      const EpdGlyph* combiningGlyph = font.getGlyph(decoded, cp, style);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);
       const int raiseBy =
@@ -1674,13 +1721,14 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
     const uint32_t originalCp = cp;
     const auto failures = letter ? EpdFont::glyphLookupFailureCount() : 0;
     const EpdGlyph* measuredGlyph = nullptr;
-    cp = font.getFallbackCodepoint(cp, style, bounds ? &measuredGlyph : nullptr);
+    cp = font.getFallbackCodepoint(decoded, cp, style, bounds ? &measuredGlyph : nullptr);
     if (letter && measuredGlyph && cp == originalCp && measuredGlyph->top >= -127 && measuredGlyph->top <= 127 &&
         failures == EpdFont::glyphLookupFailureCount()) {
       letter->encodedTop = static_cast<uint8_t>(measuredGlyph->top + 128);
       letter->height = measuredGlyph->width ? measuredGlyph->height : 0;
     }
-    const bool hasRealGlyph = bounds ? measuredGlyph != nullptr : font.findGlyphData(cp, style).glyph != nullptr;
+    const bool hasRealGlyph =
+        bounds ? measuredGlyph != nullptr : font.findGlyphData(decoded, cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) as one unit so
     // identical character pairs always produce the same pixel step regardless of
@@ -1763,7 +1811,7 @@ void GfxRenderer::drawOrMeasureText(const int fontId, const int x, const int y, 
       continue;
     }
 
-    const EpdGlyph* glyph = bounds ? measuredGlyph : font.getGlyph(cp, style);
+    const EpdGlyph* glyph = bounds ? measuredGlyph : font.getGlyph(decoded, cp, style);
 
     if (!glyph) {
       // Advance was already flushed into lastBaseX above; clear base metrics so the
@@ -2045,6 +2093,19 @@ void GfxRenderer::fillRectDither(const int x, const int y, const int width, cons
 template <Color C>
 void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const int height) const {
   if constexpr (C == Color::Clear) return;
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (grayPairMsb_) {
+    auto* const low = _stripBuf;
+    auto* const high = grayPairMsb_;
+    grayPairMsb_ = nullptr;
+    _stripBuf = high;
+    fillRectImpl<C>(x, y, width, height);
+    _stripBuf = low;
+    fillRectImpl<C>(x, y, width, height);
+    grayPairMsb_ = high;
+    return;
+  }
+#endif
   if (width <= 0 || height <= 0) return;
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
 
@@ -2770,6 +2831,9 @@ void GfxRenderer::clearScreen(const uint8_t color) const {
   if (_stripActive) {
     // Clear only the active band's scratch, not the shared framebuffer.
     memset(_stripBuf, color, static_cast<size_t>(panelWidthBytes) * _stripRows);
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+    if (grayPairMsb_) memset(grayPairMsb_, color, static_cast<size_t>(panelWidthBytes) * _stripRows);
+#endif
     return;
   }
   display.clearScreen(color);
@@ -2786,7 +2850,18 @@ void GfxRenderer::beginStripTarget(uint8_t* scratch, int stripY0, int stripRows)
   _stripActive = true;
 }
 
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+void GfxRenderer::beginGrayPairTarget(uint8_t* lsb, uint8_t* msb) const {
+  assert(!absoluteGrayPlanes && renderMode == GRAYSCALE_LSB && msb && lsb != msb);
+  beginStripTarget(lsb, 0, panelHeight);
+  grayPairMsb_ = msb;
+}
+#endif
+
 void GfxRenderer::endStripTarget() const {
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  grayPairMsb_ = nullptr;
+#endif
   _stripActive = false;
   _stripBuf = nullptr;
   _stripY0 = 0;
@@ -2859,6 +2934,19 @@ void GfxRenderer::invertScreen() const {
 
 void GfxRenderer::invertRect(const int x, const int y, const int width, const int height) const {
   if (frameBuffer == nullptr || width <= 0 || height <= 0) return;
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (grayPairMsb_) {
+    auto* const low = _stripBuf;
+    auto* const high = grayPairMsb_;
+    grayPairMsb_ = nullptr;
+    _stripBuf = high;
+    invertRect(x, y, width, height);
+    _stripBuf = low;
+    invertRect(x, y, width, height);
+    grayPairMsb_ = high;
+    return;
+  }
+#endif
 
   const int lx0 = std::max(0, x);
   const int ly0 = std::max(0, y);
@@ -3274,7 +3362,7 @@ int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style styl
     return 0;
   }
 
-  const EpdGlyph* spaceGlyph = fontIt->second.getGlyph(' ', style);
+  const auto spaceGlyph = fontIt->second.getGlyph(' ', style);
   return spaceGlyph ? size.scale(fp4::toPixel(spaceGlyph->advanceX)) : 0;  // snap 12.4 fixed-point to nearest pixel
 }
 
@@ -3300,7 +3388,7 @@ int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const 
   const auto fontIt = fontMap.find(size.sourceId);
   if (fontIt == fontMap.end()) return 0;
   const auto& font = fontIt->second;
-  const EpdGlyph* spaceGlyph = font.getGlyph(' ', style);
+  const auto spaceGlyph = font.getGlyph(' ', style);
   const int32_t spaceAdvanceFP = spaceGlyph ? static_cast<int32_t>(spaceGlyph->advanceX) : 0;
   // Combine space advance + flanking kern into one fixed-point sum before snapping.
   // Snapping the combined value avoids the +/-1 px error from snapping each component separately.
@@ -3325,6 +3413,7 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFontFamily::Style style,
                                  const uint32_t followingCp, const int8_t characterSpacing, const char* display) const {
+  EpdGlyph decoded;
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
@@ -3451,7 +3540,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       cp = font.applyLigatures(cp, text, style);
     }
     cp = font.getFallbackCodepoint(cp, style);
-    const bool hasRealGlyph = font.findGlyphData(cp, style).glyph != nullptr;
+    const bool hasRealGlyph = font.findGlyphData(decoded, cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) together,
     // matching drawText so measurement and rendering agree exactly.
@@ -3497,7 +3586,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       continue;
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdGlyph* glyph = font.getGlyph(decoded, cp, style);
     prevAdvanceFP = glyph ? glyph->advanceX : 0;
     if ((style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
       prevAdvanceFP = halfAdvanceFP(prevAdvanceFP);
@@ -3561,6 +3650,7 @@ bool GfxRenderer::resolveForDisplay(int fontId, const char* text, EpdFontFamily:
 
 bool GfxRenderer::getCodepointMetrics(const int fontId, const uint32_t cp, const EpdFontFamily::Style style,
                                       int32_t& advanceFP, int& top) const {
+  EpdGlyph decoded;
 #if CROSSINK_SCALABLE_FONTS
   ScalableFontAccess access;
 #endif
@@ -3569,12 +3659,12 @@ bool GfxRenderer::getCodepointMetrics(const int fontId, const uint32_t cp, const
   if (fontIt == fontMap.end()) return false;
   const auto sd = sdCardFonts_.find(size.sourceId);
   SdCardFont::MetricsScope metrics(sd == sdCardFonts_.end() ? nullptr : sd->second);
-  if (syntheticGlyph::isBlankSpace(cp, cp == 0x1680 && fontIt->second.findGlyphData(cp, style).glyph)) {
+  if (syntheticGlyph::isBlankSpace(cp, cp == 0x1680 && fontIt->second.findGlyphData(decoded, cp, style).glyph)) {
     advanceFP = size.scale(fontIt->second.getSpaceAdvanceX(cp, style));
     top = 0;
     return true;
   }
-  const EpdGlyph* glyph = fontIt->second.getGlyph(cp, style);
+  const EpdGlyph* glyph = fontIt->second.getGlyph(decoded, cp, style);
   if (!glyph) return false;
   advanceFP = size.scale(glyph->advanceX);
   top = size.scale(glyph->top);
@@ -3583,6 +3673,7 @@ bool GfxRenderer::getCodepointMetrics(const int fontId, const uint32_t cp, const
 
 int GfxRenderer::drawScaledCodepoint(int fontId, const uint32_t cp, const EpdFontFamily::Style style, const int x,
                                      const int baselineY, int scale256, const bool pixelState) const {
+  EpdGlyph decoded;
   const auto size = bitmapTextSize(fontId);
   fontId = size.sourceId;
   scale256 = size.scale(scale256);
@@ -3599,10 +3690,12 @@ int GfxRenderer::drawScaledCodepoint(int fontId, const uint32_t cp, const EpdFon
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) return 0;
   const EpdFontFamily& font = fontIt->second;
-  if (syntheticGlyph::isBlankSpace(cp, cp == 0x1680 && font.findGlyphData(cp, style).glyph)) {
+  if (syntheticGlyph::isBlankSpace(cp, cp == 0x1680 && font.findGlyphData(decoded, cp, style).glyph)) {
     return fp4::toPixel(static_cast<int32_t>(font.getSpaceAdvanceX(cp, style)) * scale256 / 256);
   }
-  const auto [fontData, glyph] = font.getGlyphData(cp, style);
+  const auto resolved = font.getGlyphData(decoded, cp, style);
+  const auto* fontData = resolved.fontData;
+  const auto* glyph = resolved.glyph;
   if (!glyph || !fontData) return 0;
   const int advance = fp4::toPixel(static_cast<int32_t>(glyph->advanceX) * scale256 / 256);
   if (glyph->width == 0 || glyph->height == 0 || (renderMode != BW && !fontData->is2Bit)) return advance;
@@ -3638,7 +3731,7 @@ int GfxRenderer::drawScaledCodepoint(int fontId, const uint32_t cp, const EpdFon
     }
   }
 #endif
-  if (!bitmap) bitmap = getGlyphBitmap(fontData, glyph);
+  if (!bitmap) bitmap = getGlyphBitmap(resolved);
   if (!bitmap) return advance;
   const glyphBitmap::Frame frame{paintX, paintY, 1, 0, 0, 1};
   glyphBitmap::Clip clip{0, 0, glyphBitmap::scaledExtent(srcW, paintScale),
@@ -3649,6 +3742,14 @@ int GfxRenderer::drawScaledCodepoint(int fontId, const uint32_t cp, const EpdFon
   const auto target = glyphTarget(*this, frame, orientation, panelWidth, panelHeight, panelWidthBytes);
   glyphBitmap::drawScaled(bitmap, srcW, srcH, paintScale, fontData->is2Bit, glyphPlane(renderMode), pixelState, target,
                           clip, scaledGlyphGrayscaleBase_, absoluteGrayPlanes, textDarkness_);
+#if defined(BOARD_HAS_PSRAM) || (defined(FREEINK_FB_PSRAM) && FREEINK_FB_PSRAM) || defined(CROSSINK_MEMORY_TEST)
+  if (grayPairMsb_) {
+    auto second = target;
+    second.buffer = grayPairMsb_;
+    glyphBitmap::drawScaled(bitmap, srcW, srcH, paintScale, fontData->is2Bit, glyphBitmap::Plane::GrayMSB, pixelState,
+                            second, clip, scaledGlyphGrayscaleBase_, absoluteGrayPlanes, textDarkness_);
+  }
+#endif
   return advance;
 }
 
@@ -3684,6 +3785,7 @@ int GfxRenderer::getTextHeight(const int fontId) const { return getFontAscenderS
 
 void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y, const char* text, const bool black,
                                       const EpdFontFamily::Style style) const {
+  EpdGlyph decoded;
   // Cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;
@@ -3734,7 +3836,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     // font-native position. Fonts without their glyphs — the built-ins — miss
     // the getGlyph lookup and skip them, as before.
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
-      const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
+      const EpdGlyph* combiningGlyph = font.getGlyph(decoded, cp, style);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);
       const int raiseBy =
@@ -3748,7 +3850,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
     cp = font.applyLigatures(cp, text, style);
     cp = font.getFallbackCodepoint(cp, style);
-    const bool hasRealGlyph = font.findGlyphData(cp, style).glyph != nullptr;
+    const bool hasRealGlyph = font.findGlyphData(decoded, cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) as one unit,
     // subtracting for the rotated coordinate direction.
@@ -3801,7 +3903,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       continue;
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdGlyph* glyph = font.getGlyph(decoded, cp, style);
 
     if (!glyph) {
       // Advance was already flushed into lastBaseY above; clear base metrics so the
