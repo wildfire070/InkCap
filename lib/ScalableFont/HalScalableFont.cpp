@@ -1027,6 +1027,12 @@ const EpdGlyph* HalScalableFont::glyph(void* ctx, uint32_t cp) {
                              : cp >= 0xfb00 && cp <= 0xfb04 ? s.owner->ligatureGlyphs_[cp - 0xfb00]
                                                             : 0;
   const uint32_t glyphOrCodepoint = shaping::isGlyphToken(cp) || ligatureGlyph ? GlyphIdMarker | ligatureGlyph : cp;
+  // A direct codepoint lookup that isn't actually in this font's cmap falls
+  // through to FreeType's glyph index 0 (.notdef). Some fonts' .notdef is
+  // itself a blank, zero-ink glyph (still with a real advance), which would
+  // otherwise look like a successful lookup below and silently block
+  // EpdFontFamily's fallback-font chain from ever being consulted.
+  if (glyphOrCodepoint == cp && s.owner->font_.glyphId(cp) == 0) return nullptr;
   auto& g = s.glyphs[s.cursor++ % 32];
   if (!runtime().glyphMetrics(s.owner->font_, s.owner->cacheId_, glyphOrCodepoint, s.points, g)) {
     const auto failure = s.owner->font_.lastGlyphFailure();
