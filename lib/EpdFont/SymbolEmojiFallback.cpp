@@ -1,39 +1,43 @@
 #include "SymbolEmojiFallback.h"
 
 #if CROSSINK_SCALABLE_FONTS
+#include <HalScalableFont.h>
 #include <HalStorage.h>
 #include <Logging.h>
-#include <Memory.h>
-#include <SdCardFont.h>
 
-#include <memory>
+#include <optional>
 
 namespace {
 constexpr const char* kFallbackFontPath = "/fonts/_system/NotoEmoji.ttf";
+enum class State : uint8_t { kUntried, kUnavailable, kReady };
+State state = State::kUntried;
+std::optional<HalScalableFont> face;
 }  // namespace
 
 namespace SymbolEmojiFallback {
-const EpdFont* ensureLoaded() {
-  static bool attempted = false;
-  static std::unique_ptr<SdCardFont> font;
-  if (attempted) return font ? font->getEpdFont(0) : nullptr;
-  attempted = true;
-  if (!Storage.exists(kFallbackFontPath)) return nullptr;
-  auto candidate = makeUniqueNoThrow<SdCardFont>();
-  if (!candidate || !candidate->load(kFallbackFontPath)) {
-    LOG_ERR("SYMFB", "Failed to load symbol/emoji fallback font %s", kFallbackFontPath);
-    return nullptr;
+const EpdFont* ensureLoaded(const uint8_t pointSize) {
+  if (state == State::kUntried) {
+    state = State::kUnavailable;
+    if (Storage.exists(kFallbackFontPath)) {
+      face.emplace();
+      if (face->openFile(kFallbackFontPath)) {
+        state = State::kReady;
+        LOG_INF("SYMFB", "Loaded symbol/emoji fallback font %s", kFallbackFontPath);
+      } else {
+        LOG_ERR("SYMFB", "Failed to load symbol/emoji fallback font %s", kFallbackFontPath);
+        face.reset();
+      }
+    }
   }
-  font = std::move(candidate);
-  LOG_INF("SYMFB", "Loaded symbol/emoji fallback font %s", kFallbackFontPath);
-  return font->getEpdFont(0);
+  if (state != State::kReady) return nullptr;
+  return face->atSize(pointSize);
 }
 }  // namespace SymbolEmojiFallback
 
 #else
 
 namespace SymbolEmojiFallback {
-const EpdFont* ensureLoaded() { return nullptr; }
+const EpdFont* ensureLoaded(uint8_t) { return nullptr; }
 }  // namespace SymbolEmojiFallback
 
 #endif
