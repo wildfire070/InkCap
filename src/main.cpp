@@ -1491,10 +1491,14 @@ void setupDisplayAndFonts(const bool seamless, const bool loadReaderResources, b
 #endif
   // PSRAM/SD-font boards only: attach a symbol/emoji fallback loaded from the
   // SD card, if present, so UI text can render glyphs the UI fonts lack.
-  if (const EpdFont* symbolFallback = SymbolEmojiFallback::ensureLoaded()) {
-    ui10FontFamily = ui10FontFamily.withFallbackFonts(symbolFallback);
-    ui12FontFamily = ui12FontFamily.withFallbackFonts(symbolFallback);
-    smallFontFamily = smallFontFamily.withFallbackFonts(symbolFallback);
+  if (const EpdFont* symbolFallback10 = SymbolEmojiFallback::ensureLoaded(10)) {
+    ui10FontFamily = ui10FontFamily.withFallbackFonts(symbolFallback10);
+  }
+  if (const EpdFont* symbolFallback12 = SymbolEmojiFallback::ensureLoaded(12)) {
+    ui12FontFamily = ui12FontFamily.withFallbackFonts(symbolFallback12);
+  }
+  if (const EpdFont* symbolFallback8 = SymbolEmojiFallback::ensureLoaded(8)) {
+    smallFontFamily = smallFontFamily.withFallbackFonts(symbolFallback8);
   }
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
